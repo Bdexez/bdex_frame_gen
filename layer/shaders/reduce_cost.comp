@@ -1,0 +1,25 @@
+#version 450
+// Averages the per-block matching cost of the finest level into a single
+// value used by the interpolation pass to detect scene cuts.
+layout(local_size_x = 256) in;
+
+layout(binding = 0, r32f) uniform readonly image2D costImg;
+layout(std430, binding = 1) writeonly buffer Out { float meanCost; } outBuf;
+
+layout(push_constant) uniform PC { ivec2 size; } pc;
+
+shared float sSum[256];
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+    int n = pc.size.x * pc.size.y;
+    float sum = 0.0;
+    for (int i = int(tid); i < n; i += 256) sum += imageLoad(costImg, ivec2(i % pc.size.x, i / pc.size.x)).r;
+    sSum[tid] = sum;
+    barrier();
+    for (uint s = 128u; s > 0u; s >>= 1u) {
+        if (tid < s) sSum[tid] += sSum[tid + s];
+        barrier();
+    }
+    if (tid == 0u) outBuf.meanCost = sSum[0] / float(max(n, 1));
+}

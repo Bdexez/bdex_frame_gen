@@ -1,0 +1,16 @@
+# Invoked with -DOUT -DSPV_FILES -DSYMBOLS (lists, ';' separated).
+set(content "// Generated file - do not edit.\n#pragma once\n#include <cstddef>\n#include <cstdint>\n\n")
+list(LENGTH SPV_FILES n)
+math(EXPR last "${n} - 1")
+foreach(i RANGE ${last})
+  list(GET SPV_FILES ${i} spv)
+  list(GET SYMBOLS ${i} sym)
+  file(READ "${spv}" hex HEX)
+  string(LENGTH "${hex}" hexlen)
+  math(EXPR words "${hexlen} / 8")
+  # SPIR-V is a stream of little-endian 32-bit words: swap each 4-byte group.
+  string(REGEX REPLACE "([0-9a-f][0-9a-f])([0-9a-f][0-9a-f])([0-9a-f][0-9a-f])([0-9a-f][0-9a-f])" "0x\\4\\3\\2\\1," hex "${hex}")
+  string(APPEND content "static const uint32_t ${sym}[] = {\n${hex}\n};\n")
+  string(APPEND content "static const size_t ${sym}_size = ${words} * sizeof(uint32_t);\n\n")
+endforeach()
+file(WRITE "${OUT}" "${content}")

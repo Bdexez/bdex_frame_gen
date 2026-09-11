@@ -1,0 +1,38 @@
+#version 450
+// 3x3 per-component median filter on the block flow field: removes isolated
+// mismatches while preserving motion boundaries.
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0, rg32f) uniform readonly image2D srcImg;
+layout(binding = 1, rg32f) uniform writeonly image2D dstImg;
+
+layout(push_constant) uniform PC { ivec2 size; } pc;
+
+void sortSwap(inout float a, inout float b) { float lo = min(a, b); b = max(a, b); a = lo; }
+
+float median9(float v[9]) {
+    // Sorting network (19 compare-exchanges) for the median of 9.
+    sortSwap(v[1], v[2]); sortSwap(v[4], v[5]); sortSwap(v[7], v[8]);
+    sortSwap(v[0], v[1]); sortSwap(v[3], v[4]); sortSwap(v[6], v[7]);
+    sortSwap(v[1], v[2]); sortSwap(v[4], v[5]); sortSwap(v[7], v[8]);
+    sortSwap(v[0], v[3]); sortSwap(v[5], v[8]); sortSwap(v[4], v[7]);
+    sortSwap(v[3], v[6]); sortSwap(v[1], v[4]); sortSwap(v[2], v[5]);
+    sortSwap(v[4], v[7]); sortSwap(v[4], v[2]); sortSwap(v[6], v[4]);
+    sortSwap(v[4], v[2]);
+    return v[4];
+}
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, pc.size))) return;
+    float xs[9], ys[9];
+    int i = 0;
+    for (int dy = -1; dy <= 1; ++dy)
+        for (int dx = -1; dx <= 1; ++dx) {
+            vec2 f = imageLoad(srcImg, clamp(p + ivec2(dx, dy), ivec2(0), pc.size - 1)).xy;
+            xs[i] = f.x;
+            ys[i] = f.y;
+            ++i;
+        }
+    imageStore(dstImg, p, vec4(median9(xs), median9(ys), 0.0, 0.0));
+}

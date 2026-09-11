@@ -1,0 +1,143 @@
+#version 450
+#ifndef LUMA_FMT
+#define LUMA_FMT r32f
+#endif
+// Hierarchical block matching: one workgroup per 8x8 block of the reference
+// image, searching the target image in a (2R+1)^2 window centred on the
+// displacement predicted by the coarser pyramid level. The block and the
+// search region are staged in shared memory. The 64 threads are split into
+// four groups of 16, one per 4x4 quadrant of the block: each group evaluates
+// every candidate on its quadrant, the partial SADs are summed, and a tree
+// reduction picks the best candidate.
+//
+// Output flow is the displacement (in pixels of this level) that maps a
+// position in the reference image to the matching position in the target.
+#include "common.glsl"
+
+#define BS   8
+#define MAXR 4
+#define REG  (BS + 2 * MAXR)
+#define NT   (BS * BS)
+#define MAXCAND ((2 * MAXR + 1) * (2 * MAXR + 1) + 1)  // + the zero-motion candidate
+
+layout(local_size_x = BS, local_size_y = BS) in;
+
+layout(binding = 0, LUMA_FMT) uniform readonly image2D refImg;
+layout(binding = 1, LUMA_FMT) uniform readonly image2D tgtImg;
+layout(binding = 2) uniform sampler2D coarseFlow;
+layout(binding = 3, rg32f) uniform writeonly image2D flowOut;
+layout(binding = 4, r32f) uniform writeonly image2D costOut;
+
+layout(push_constant) uniform PC {
+    ivec2 size;        // level resolution
+    ivec2 blocks;      // flow resolution (blocks)
+    int radius;        // search radius, <= MAXR
+    int hasCoarse;     // 1: use coarseFlow as the search centre
+    float smoothness;  // penalty per pixel of deviation from the prediction
+    float zeroBias;    // penalty per pixel of absolute displacement
+} pc;
+
+shared float refBlk[NT];
+shared float tgt[REG * REG];
+shared float qsad[4][MAXCAND];
+shared float sCost[NT];
+shared float sSad[NT];
+shared int   sIdx[NT];
+shared ivec2 sBase;
+
+float loadRef(ivec2 p) { return imageLoad(refImg, clamp(p, ivec2(0), pc.size - 1)).r; }
+float loadTgt(ivec2 p) { return imageLoad(tgtImg, clamp(p, ivec2(0), pc.size - 1)).r; }
+
+void main() {
+    ivec2 blk = ivec2(gl_WorkGroupID.xy);
+    ivec2 lp = ivec2(gl_LocalInvocationID.xy);
+    int tid = lp.y * BS + lp.x;
+    ivec2 origin = blk * BS;
+    int R = clamp(pc.radius, 1, MAXR);
+    int W = 2 * R + 1;
+    int reg = BS + 2 * R;
+    int ncand = W * W;
+
+    if (tid == 0) {
+        vec2 pred = vec2(0.0);
+        if (pc.hasCoarse != 0) {
+            vec2 uv = (vec2(blk) + 0.5) / vec2(pc.blocks);
+            pred = texture(coarseFlow, uv).xy * 2.0;
+        }
+        sBase = ivec2(round(pred));
+    }
+    refBlk[tid] = loadRef(origin + lp);
+    barrier();
+
+    ivec2 base = sBase;
+    ivec2 regOrigin = origin + base - R;
+    for (int i = tid; i < reg * reg; i += NT) {
+        ivec2 o = ivec2(i % reg, i / reg);
+        tgt[i] = loadTgt(regOrigin + o);
+    }
+    barrier();
+
+    // Partial SADs: quadrant q = tid / 16, candidates c = tid % 16 + 16k.
+    // Candidate `ncand` is "no motion" (always considered so that static HUD
+    // elements stay perfectly stable); it may fall outside the staged region
+    // and is read from the image directly.
+    int quad = tid >> 4;
+    int qtid = tid & 15;
+    ivec2 qo = ivec2((quad & 1) * 4, (quad >> 1) * 4);
+    bool zeroInWindow = all(equal(base, ivec2(0)));
+    int total = zeroInWindow ? ncand : ncand + 1;
+    for (int c = qtid; c < total; c += 16) {
+        float sad = 0.0;
+        if (c < ncand) {
+            ivec2 d = ivec2(c % W, c / W);
+            for (int y = 0; y < 4; ++y) {
+                int ry = qo.y + y;
+                int row = (ry + d.y) * reg + d.x + qo.x;
+                for (int x = 0; x < 4; ++x) sad += abs(refBlk[ry * BS + qo.x + x] - tgt[row + x]);
+            }
+        } else {
+            for (int y = 0; y < 4; ++y)
+                for (int x = 0; x < 4; ++x) {
+                    ivec2 o = qo + ivec2(x, y);
+                    sad += abs(refBlk[o.y * BS + o.x] - loadTgt(origin + o));
+                }
+        }
+        qsad[quad][c] = sad;
+    }
+    barrier();
+
+    float best = 1e30, bestSad = 1e30;
+    int bestIdx = 0;
+    for (int c = tid; c < total; c += NT) {
+        float sad = (qsad[0][c] + qsad[1][c] + qsad[2][c] + qsad[3][c]) * (1.0 / float(NT));
+        float cost;
+        if (c < ncand) {
+            ivec2 d = ivec2(c % W, c / W);
+            vec2 disp = vec2(base + d - R);
+            cost = sad + pc.smoothness * length(vec2(d - R)) + pc.zeroBias * length(disp);
+        } else {
+            cost = sad;
+        }
+        if (cost < best) { best = cost; bestSad = sad; bestIdx = c; }
+    }
+    sCost[tid] = best;
+    sSad[tid] = bestSad;
+    sIdx[tid] = bestIdx;
+    barrier();
+
+    for (int s = NT / 2; s > 0; s >>= 1) {
+        if (tid < s && sCost[tid + s] < sCost[tid]) {
+            sCost[tid] = sCost[tid + s];
+            sSad[tid] = sSad[tid + s];
+            sIdx[tid] = sIdx[tid + s];
+        }
+        barrier();
+    }
+
+    if (tid == 0) {
+        int bi = sIdx[0];
+        vec2 flow = (bi >= ncand) ? vec2(0.0) : vec2(base + ivec2(bi % W, bi / W) - R);
+        imageStore(flowOut, blk, vec4(flow, 0.0, 0.0));
+        imageStore(costOut, blk, vec4(sSad[0]));
+    }
+}
