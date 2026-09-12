@@ -1,81 +1,146 @@
-# bdex-framegen
+<div align="center">
 
-Génération de frames (« frame generation ») pour les jeux Vulkan sous Linux,
-sous la forme d'un **layer Vulkan implicite**. Le layer s'insère entre le jeu
-et le pilote, récupère chaque image rendue par le jeu, estime le mouvement
-entre deux images consécutives (flux optique sur GPU) et insère une ou
-plusieurs images intermédiaires synthétisées : un jeu qui tourne à 30 fps est
-affiché à 60 fps (x2), 90 (x3) ou 120 (x4).
+# 🎮 bdex-framegen
 
-Fonctionne avec les jeux Vulkan natifs et avec les jeux Direct3D via
-DXVK / VKD3D-Proton (Steam Play), sans modification du jeu.
+**Génération de frames pour les jeux Vulkan sous Linux — un layer, zéro modification du jeu.**
+
+[![Licence MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
+[![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C.svg?logo=cplusplus&logoColor=white)](#)
+[![Vulkan](https://img.shields.io/badge/Vulkan-1.0%2B-AC162C.svg?logo=vulkan&logoColor=white)](#)
+[![Plateforme](https://img.shields.io/badge/plateforme-Linux-FCC624.svg?logo=linux&logoColor=black)](#)
+[![Validation Khronos](https://img.shields.io/badge/validation%20Khronos-0%20erreur-success.svg)](#-validation)
+
+30 fps rendus → **60, 90 ou 120 fps affichés**, sur n'importe quel jeu Vulkan
+(natif ou Direct3D via DXVK / VKD3D-Proton).
+
+<img src="docs/comparaison.png" alt="Image réelle, image générée, image réelle suivante" width="900">
+
+*L'image du milieu n'a jamais été rendue par le jeu : elle est synthétisée par le layer à partir des deux images voisines.*
+
+</div>
+
+---
+
+## Sommaire
+
+- [Comment ça marche](#-comment-ça-marche)
+- [Installation](#-installation)
+- [Utilisation](#-utilisation)
+- [Configuration](#-configuration)
+- [Performances et qualité](#-performances-et-qualité)
+- [Limites](#-limites)
+- [Validation](#-validation)
+- [Développement](#-développement)
+- [Arborescence](#-arborescence)
+
+---
+
+## 🧠 Comment ça marche
+
+`bdex-framegen` est un **layer Vulkan implicite** (`VK_LAYER_BDEX_framegen`).
+Il s'insère entre le jeu et le pilote graphique, récupère chaque image que le
+jeu présente, estime le mouvement entre deux images consécutives, puis insère
+une ou plusieurs images intermédiaires avant l'image réelle.
 
 ```
-Jeu ──► vkQueuePresentKHR ──► [layer bdex-framegen] ──► écran
-                                │
-                                │  thread du jeu (≈0,1 ms) :
-                                ├─ copie de l'image dans un historique
-                                ├─ pyramide de luminance + block matching hiérarchique
-                                │  (flux optique avant et arrière, affinage 4x4)
-                                ├─ synthèse des images intermédiaires (warping bidirectionnel
-                                │  pondéré par la cohérence photométrique, détection de cut)
-                                │
-                                │  thread de présentation du layer :
-                                └─ copie dans la vraie swapchain, cadencement, présentation :
-                                   image(s) générée(s) puis image réelle
+Jeu ──► vkQueuePresentKHR ──► [ bdex-framegen ] ──► écran
+                                     │
+      thread du jeu (≈ 0,1 ms) :     │
+      ├─ copie de l'image dans un historique
+      ├─ pyramide de luminance + block matching hiérarchique
+      │  (flux optique avant et arrière, filtre médian, affinage 4×4)
+      └─ synthèse des images intermédiaires : warping bidirectionnel
+         pondéré par la cohérence photométrique, détection de changement
+         de plan, fondu dans les zones d'occlusion
+                                     │
+      thread de présentation :       │
+      └─ copie dans la vraie swapchain, cadencement, présentation :
+         image(s) générée(s) puis image réelle
 ```
 
-Le jeu rend dans des images privées fournies par le layer ; la swapchain réelle
-appartient au layer et est présentée depuis un thread dédié, sur une file
-(queue) Vulkan séparée de celle du jeu quand le GPU en a une. Le jeu n'est
-jamais bloqué par la présentation des images générées.
+Quelques points de conception :
 
-## Prérequis
+| | |
+|---|---|
+| 🪟 **Swapchain virtuelle** | Le jeu rend dans des images privées fournies par le layer. La vraie swapchain appartient au layer, qui décide quoi présenter et quand. |
+| 🧵 **Thread dédié** | Le jeu n'est jamais bloqué par la présentation des images générées : `vkQueuePresentKHR` lui coûte ≈ 0,1 ms. |
+| ⚙️ **Queue séparée** | Le travail du layer tourne sur une file de calcul distincte de celle du jeu quand le GPU en a une (sinon la file est partagée et FIFO est remplacé par mailbox + cadencement). |
+| 🎞️ **Tout sur GPU** | Cinq shaders de calcul (pyramide, matching, médian, affinage, interpolation), aucun aller-retour CPU. |
+| ✂️ **Changements de plan** | Quand le mouvement n'est pas explicable, le layer affiche l'image réelle plutôt qu'un mélange. |
 
-* Linux, Vulkan 1.1+ (loader ≥ 1.3.234), GPU avec support compute (RADV, ANV, NVIDIA).
-* Pour compiler : CMake ≥ 3.20, un compilateur C++20, `glslc` (shaderc),
-  les en-têtes Vulkan ; GLFW (optionnel) pour l'application de démo.
+<details>
+<summary>Voir le flux optique estimé (<code>BDEX_FG_DEBUG=flow</code>)</summary>
+<br>
+<img src="docs/flux.png" alt="Visualisation du flux optique" width="480">
 
-Sous Arch : `pacman -S cmake gcc vulkan-headers shaderc glfw`.
+*Teinte = direction du mouvement, saturation = amplitude. Le HUD immobile reste gris.*
+</details>
 
-## Compilation et installation
+---
+
+## 📦 Installation
+
+### Prérequis
+
+- Linux, Vulkan 1.0+ (loader ≥ 1.3.234), un GPU avec support compute (RADV, ANV, NVIDIA…)
+- Pour compiler : CMake ≥ 3.20, un compilateur C++20, `glslc` (shaderc), les en-têtes Vulkan ; GLFW (optionnel) pour la démo
 
 ```sh
-tools/install.sh              # compile et installe dans ~/.local
-# ou manuellement :
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-cmake --install build --prefix ~/.local
+# Arch Linux
+sudo pacman -S cmake gcc vulkan-headers shaderc glfw vulkan-tools
+```
+
+### En une commande
+
+```sh
+tools/install.sh      # compile et installe dans ~/.local (64 bits + 32 bits si multilib)
 ```
 
 L'installation dépose :
 
-* `~/.local/lib/libVkLayer_bdex_framegen.so`
-* `~/.local/share/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen.json`
-* `~/.local/bin/bdex-framegen` (lanceur)
+```
+~/.local/lib/libVkLayer_bdex_framegen.so
+~/.local/lib32/libVkLayer_bdex_framegen.so                      (jeux 32 bits)
+~/.local/share/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen.json
+~/.local/share/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen_32.json
+~/.local/bin/bdex-framegen                                      (lanceur)
+```
 
 Désinstallation : `tools/uninstall.sh`.
 
-`install.sh` compile aussi la variante 32 bits (`VK_LAYER_BDEX_framegen_32`,
-dans `~/.local/lib32`) quand un compilateur multilib et `/usr/lib32/libvulkan.so.1`
-sont présents, pour les jeux 32 bits. À la main : `cmake -DBDEX_32BIT=ON`.
+<details>
+<summary>Compilation manuelle</summary>
 
-## Utilisation
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+cmake --install build --prefix ~/.local
 
-Le layer est **implicite mais désactivé par défaut** : il ne fait rien tant que
-la variable d'environnement `BDEX_FG=1` n'est pas définie.
+# variante 32 bits (multilib requis)
+cmake -S . -B build32 -DCMAKE_BUILD_TYPE=Release -DBDEX_32BIT=ON
+cmake --build build32 -j && cmake --install build32 --prefix ~/.local
+```
+</details>
+
+---
+
+## 🚀 Utilisation
+
+Le layer est installé de façon **implicite mais inerte** : il ne fait rien
+tant que la variable `BDEX_FG=1` n'est pas définie.
 
 ```sh
 BDEX_FG=1 ./mon_jeu                      # x2 (défaut)
 bdex-framegen -m 3 -- ./mon_jeu          # x3 via le lanceur
 bdex-framegen --fullres --profile -- vkcube
+bdex-framegen --check                    # le loader trouve-t-il le layer ?
 ```
 
-Steam → propriétés du jeu → options de lancement :
+**Steam** → propriétés du jeu → *Options de lancement* :
 
 ```
 BDEX_FG=1 %command%
-BDEX_FG=1 BDEX_FG_MULTIPLIER=3 %command%
+BDEX_FG=1 BDEX_FG_MULTIPLIER=3 BDEX_FG_PRESENT_MODE=mailbox %command%
 ```
 
 Sans installation, depuis l'arbre de build :
@@ -84,27 +149,57 @@ Sans installation, depuis l'arbre de build :
 VK_ADD_IMPLICIT_LAYER_PATH=$PWD/build/layer BDEX_FG=1 ./build/demo/bdex_demo --fps 30
 ```
 
-### Démo
+Le layer affiche périodiquement ses statistiques dans le terminal :
 
-`bdex_demo` rend une scène procédurale (objets en mouvement, HUD statique,
-compteur de frames) à un débit plafonné :
-
-```sh
-build/demo/bdex_demo --fps 30                 # sans le layer : 30 fps
-BDEX_FG=1 build/demo/bdex_demo --fps 30       # avec : 60 fps affichés
+```
+[bdex-fg  4.128 INFO] game 30.0 fps -> output 60.0 fps (x2.00), present call 0.14 ms avg
 ```
 
-Le layer affiche périodiquement dans le terminal : `game 30.0 fps -> output 60.0 fps (x2.00)`.
+### La démo
 
-## Options
+`bdex_demo` rend une scène procédurale (objets en mouvement, HUD statique,
+compteur de frames) à un débit plafonné, pour tester sans jeu :
+
+```sh
+build/demo/bdex_demo --fps 30               # sans le layer : 30 fps
+BDEX_FG=1 build/demo/bdex_demo --fps 30     # avec : 60 fps affichés
+build/demo/bdex_demo --help                 # --size, --mode, --speed, --cut, --srgb…
+```
+
+---
+
+## 🔧 Configuration
 
 Toutes les options se donnent par variables d'environnement `BDEX_FG_<CLÉ>`
 ou dans `~/.config/bdex-framegen.conf` (`clé = valeur`, une par ligne ;
-l'environnement est prioritaire). Le fichier accepte des sections `[nom]`
-qui ne s'appliquent qu'au processus dont la ligne de commande contient un
-exécutable de ce nom (`.exe` facultatif, insensible à la casse) :
+l'environnement est prioritaire).
+
+| Clé | Défaut | Description |
+|---|:---:|---|
+| `BDEX_FG` | – | `1` active le layer, `0` le désactive |
+| `MULTIPLIER` | `2` | images affichées par image rendue : 2, 3 ou 4 |
+| `FULLRES` | `0` | flux optique en pleine résolution (plus net, ~2× plus coûteux) |
+| `LEVELS` | `4` | niveaux de la pyramide de flux (1–6) |
+| `SEARCH` / `SEARCH_FINE` | `4` / `2` | rayon de recherche au niveau grossier / aux niveaux fins (1–4) |
+| `REFINE` | `1` | passe d'affinage du flux en blocs 4×4 |
+| `PRESENT_MODE` | `app` | force `fifo`, `mailbox`, `immediate` ou `relaxed` |
+| `PACING` | `1` | espacement temporel des images en modes non-FIFO |
+| `SCENE_CUT_LOW` / `SCENE_CUT_HIGH` | `0.05` / `0.09` | seuils de détection d'un changement de plan |
+| `DEBUG` | `none` | `flow` (visualise le flux), `split` (gauche générée / droite réelle), `passthrough` |
+| `STATS` / `STATS_INTERVAL` | `1` / `5` | statistiques dans le terminal, période en secondes |
+| `PROFILE` | `0` | temps GPU par étape dans les statistiques |
+| `LOG` / `LOG_FILE` | `1` / – | verbosité 0–3, fichier de sortie |
+| `DUMP` / `DUMP_FRAMES` | – / `24` | écrit les images présentées (PPM) dans un dossier |
+| `SHARED_QUEUE` | `0` | force le partage de la file du jeu (test) |
+
+### Réglages par jeu
+
+Le fichier de configuration accepte des sections `[nom]` qui ne s'appliquent
+qu'aux processus dont la ligne de commande contient un exécutable de ce nom
+(`.exe` facultatif, insensible à la casse) :
 
 ```ini
+# ~/.config/bdex-framegen.conf
 multiplier = 2
 log = 1
 
@@ -116,84 +211,98 @@ present_mode = mailbox
 debug = flow
 ```
 
-`bdex-framegen --check` vérifie que le loader Vulkan trouve bien le layer.
+---
 
-| Clé | Défaut | Description |
-|---|---|---|
-| `BDEX_FG` | – | `1` active le layer, `0` le désactive |
-| `MULTIPLIER` | `2` | images affichées par image rendue : 2, 3 ou 4 |
-| `FULLRES` | `0` | flux optique calculé en pleine résolution (plus net, ~3× plus coûteux) |
-| `LEVELS` | `4` | niveaux de la pyramide de flux (1–6) |
-| `SEARCH` | `4` | rayon de recherche au niveau le plus grossier (1–4) |
-| `SEARCH_FINE` | `2` | rayon de recherche aux niveaux fins (1–4) |
-| `REFINE` | `1` | passe d'affinage du flux en blocs 4×4 |
-| `PRESENT_MODE` | `app` | force le mode de présentation : `fifo`, `mailbox`, `immediate`, `relaxed` |
-| `PACING` | `1` | espacement temporel des images en modes non-FIFO |
-| `SCENE_CUT_LOW` / `SCENE_CUT_HIGH` | `0.05` / `0.09` | seuils de coût de matching pour détecter un changement de plan |
-| `DEBUG` | `none` | `flow` (visualise le flux), `split` (gauche générée / droite réelle), `passthrough` (layer actif sans génération) |
-| `STATS` / `STATS_INTERVAL` | `1` / `5` | statistiques dans le terminal |
-| `PROFILE` | `0` | temps GPU par étape dans les statistiques |
-| `SHARED_QUEUE` | `0` | force l'utilisation de la file du jeu (test) ; dans ce cas FIFO est remplacé par mailbox + cadencement |
-| `LOG` | `1` | verbosité 0–3 ; `LOG_FILE` pour écrire dans un fichier |
-| `DUMP` / `DUMP_FRAMES` | – / `24` | écrit les images présentées (PPM) dans un dossier, pour le débogage |
+## 📊 Performances et qualité
 
-## Comportement et limites
+Mesures sur une **AMD Radeon Vega 8** intégrée (≈ 1,1 TFLOPS), démo en 955×1036 :
 
-* **Latence** : comme toute génération de frames, l'image réelle est affichée
-  une demi-frame plus tard (à x2). Le layer ne modifie pas les entrées.
-* **Vsync (FIFO)** : sur un écran 60 Hz, x2 impose au jeu un maximum de 30 fps,
-  x3 de 20 fps, etc. – la file de présentation FIFO absorbe les images
-  supplémentaires. Utilisez `PRESENT_MODE=mailbox` ou `immediate` (ou un écran
-  VRR) pour ne pas brider le jeu.
-* **Coût** : sur une Vega 8 intégrée (≈1,1 TFLOPS), ~3,5 ms de GPU par image
-  rendue en 1000×1000 avec les réglages par défaut (flux en demi-résolution),
-  ~8 ms en pleine résolution. Le thread du jeu passe ≈0,1 ms dans
-  `vkQueuePresentKHR`. Sur un GPU dédié le coût est négligeable.
-* **Qualité** : le flux optique par block matching gère bien les translations et
-  les HUD statiques ; les rotations rapides, les occlusions importantes et les
-  motifs répétitifs produisent des artefacts locaux. Un changement de plan
-  désactive la synthèse pour cette image. `DEBUG=flow` permet de voir ce que
-  le layer « comprend » du mouvement.
-* Formats de swapchain pris en charge : RGBA/BGRA 8 bits (UNORM et sRGB),
+| Configuration | GPU / image rendue | Sortie |
+|---|:---:|:---:|
+| Défaut (flux en demi-résolution) | ≈ 3,5 ms | 30 → 60 fps |
+| `FULLRES=1` | ≈ 8 ms | 30 → 60 fps |
+| `MULTIPLIER=4`, mailbox | ≈ 4 ms | 30 → 120 fps |
+
+Sur un GPU dédié, le coût est négligeable. Le thread du jeu passe ≈ 0,1 ms
+dans `vkQueuePresentKHR`.
+
+Qualité mesurée avec `tools/run_eval.sh` (PSNR des images générées contre la
+vraie image rendue à 60 fps) :
+
+| Méthode | PSNR |
+|---|:---:|
+| Duplication de l'image précédente | ≈ 22 dB |
+| Fondu des deux images voisines | ≈ 25 dB |
+| **bdex-framegen** | **≈ 30 dB** |
+
+---
+
+## ⚠️ Limites
+
+- **Latence** : comme toute génération de frames, l'image réelle est affichée
+  une demi-frame plus tard (à x2). Les entrées ne sont pas modifiées.
+- **Vsync (FIFO)** : sur un écran 60 Hz, x2 impose au jeu un maximum de 30 fps,
+  x3 de 20 fps… Utilisez `PRESENT_MODE=mailbox` / `immediate` ou un écran VRR
+  pour ne pas brider le jeu.
+- **Artefacts** : le flux optique par block matching gère bien les
+  translations et les HUD statiques ; rotations rapides, grandes occlusions et
+  motifs répétitifs produisent des artefacts locaux. `DEBUG=flow` montre ce
+  que le layer « comprend » du mouvement.
+- **Formats** pris en charge : RGBA/BGRA 8 bits (UNORM et sRGB),
   A2B10G10R10 / A2R10G10B10, RGBA16F. Les autres passent sans génération.
-* Non pris en charge (transparent) : swapchains multi-couches (VR), protégées.
-* Extensions de présentation gérées : `VK_KHR_present_id` / `present_wait`
-  (l'identifiant est attaché à l'image réelle), `VK_EXT_swapchain_maintenance1`
-  (fence de présentation, changement de mode, `vkReleaseSwapchainImagesEXT`).
-* Testé avec : la démo, `vkcube` (Wayland et XWayland), `vkgears`, le
-  conteneur Steam Linux Runtime (le layer y est visible et chargé).
+- Non pris en charge (transparents) : swapchains multi-couches (VR), protégées.
+- Extensions gérées : `VK_KHR_present_id` / `present_wait`,
+  `VK_EXT_swapchain_maintenance1` (fence de présentation, changement de mode,
+  `vkReleaseSwapchainImagesEXT`).
 
-## Développement
+---
 
-```sh
-cmake -S . -B build && cmake --build build -j
-ctest --test-dir build --output-on-failure       # tests unitaires + test bout-en-bout
-tools/run_eval.sh build 40                        # PSNR des images générées vs vérité terrain
-```
+## ✅ Validation
 
-`tools/run_eval.sh` rend la démo à 60 fps (référence) puis à 30 fps à travers
-le layer et compare chaque image générée à l'image réelle correspondante.
-À titre indicatif : ~30 dB pour les images générées, contre ~25 dB pour un
-simple fondu des deux images voisines et ~22 dB pour une duplication.
-
-Arborescence :
-
-* `layer/src/layer.cpp` – points d'entrée du layer, dispatch, hooks Vulkan
-* `layer/src/swapchain.cpp` – swapchain virtuelle (acquire / present)
-* `layer/src/framegen.cpp` – ressources et enregistrement des passes GPU
-* `layer/shaders/` – shaders de calcul (pyramide, block matching, affinage, interpolation)
-* `demo/` – application de test GLFW
-* `tools/` – lanceur, scripts d'installation et d'évaluation
-
-## Licence
-
-MIT.
-
-## Validation
-
-Le layer est propre sous `VK_LAYER_KHRONOS_validation` (y compris la validation
-de synchronisation) avec la démo, `vkcube` et `vkgears` :
+Le layer est propre sous `VK_LAYER_KHRONOS_validation`, validation de
+synchronisation comprise, avec la démo, `vkcube` et `vkgears` :
 
 ```sh
 VK_LOADER_LAYERS_ENABLE='*validation' BDEX_FG=1 build/demo/bdex_demo --fps 30 --frames 90
 ```
+
+Il se charge également dans le conteneur Steam Linux Runtime (pressure-vessel).
+
+---
+
+## 🛠️ Développement
+
+```sh
+cmake -S . -B build && cmake --build build -j
+ctest --test-dir build --output-on-failure     # tests unitaires + test bout-en-bout
+tools/run_eval.sh build 40                      # PSNR vs vérité terrain
+BDEX_EVAL_ARGS="--speed 2.5" tools/run_eval.sh build 40   # scène à mouvement rapide
+```
+
+`tools/run_eval.sh` rend la démo à 60 fps (référence) puis à 30 fps à travers
+le layer, et compare chaque image générée à l'image réelle correspondante
+grâce au compteur de frames dessiné à l'écran.
+
+---
+
+## 🗂️ Arborescence
+
+```
+layer/
+├─ src/layer.cpp        points d'entrée du layer, dispatch, hooks Vulkan
+├─ src/swapchain.cpp    swapchain virtuelle (acquire / present, thread de présentation)
+├─ src/framegen.cpp     ressources GPU et enregistrement des passes
+├─ src/config.cpp       options (environnement, fichier, sections par jeu)
+└─ shaders/             downsample, block_match, flow_smooth, flow_refine, interpolate
+demo/                   application de test GLFW (scène procédurale)
+tests/                  tests unitaires et test d'intégration
+tools/                  lanceur, install/uninstall, évaluation de qualité
+```
+
+---
+
+<div align="center">
+
+Licence [MIT](LICENSE) — fait avec ❤️ et beaucoup de shaders de calcul.
+
+</div>
