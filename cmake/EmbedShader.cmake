@@ -36,7 +36,7 @@ function(bdex_add_shaders target)
     add_custom_command(
       OUTPUT "${spv}"
       COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/spv"
-      COMMAND ${GLSLC} --target-env=vulkan1.1 -O ${defflags} -o "${spv}" "${CMAKE_CURRENT_SOURCE_DIR}/${src}"
+      COMMAND ${GLSLC} --target-env=vulkan1.0 -O ${defflags} -o "${spv}" "${CMAKE_CURRENT_SOURCE_DIR}/${src}"
       DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${src}" ${ARG_DEPENDS}
       COMMENT "glslc ${src} ${defflags}"
       VERBATIM)
