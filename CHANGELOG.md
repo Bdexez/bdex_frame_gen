@@ -17,7 +17,8 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   `LOW_LATENCY`.
 - `real frame delayed` latency measurement in the statistics; GPU profiling
   now covers the worker's copies.
-- Launcher options `-x/--extrapolate` and `-P/--preset`.
+- Launcher options `-x/--extrapolate`, `-P/--preset` and `--gl` (OpenGL
+  games through Zink).
 
 ### Changed
 
