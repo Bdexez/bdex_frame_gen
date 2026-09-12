@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🎮 bdex-framegen
+# bdex-framegen
 
 **Génération de frames pour les jeux Vulkan sous Linux — un layer, zéro modification du jeu.**
 
@@ -8,14 +8,14 @@
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C.svg?logo=cplusplus&logoColor=white)](#)
 [![Vulkan](https://img.shields.io/badge/Vulkan-1.0%2B-AC162C.svg?logo=vulkan&logoColor=white)](#)
 [![Plateforme](https://img.shields.io/badge/plateforme-Linux-FCC624.svg?logo=linux&logoColor=black)](#)
-[![Validation Khronos](https://img.shields.io/badge/validation%20Khronos-0%20erreur-success.svg)](#-validation)
+[![Validation Khronos](https://img.shields.io/badge/validation%20Khronos-0%20erreur-success.svg)](#validation)
 
 30 fps rendus → **60, 90 ou 120 fps affichés**, sur n'importe quel jeu Vulkan
 (natif ou Direct3D via DXVK / VKD3D-Proton).
 
-<img src="docs/comparaison.png" alt="Image réelle, image générée, image réelle suivante" width="900">
+<img src="docs/demo.gif" alt="Démo : 30 fps à gauche, 60 fps avec bdex-framegen à droite (ralenti ×4)" width="812">
 
-*L'image du milieu n'a jamais été rendue par le jeu : elle est synthétisée par le layer à partir des deux images voisines.*
+*La démo rendue à 30 fps (gauche) et ce que le layer affiche (droite), au ralenti ×4 : une image sur deux est synthétisée.*
 
 </div>
 
@@ -23,19 +23,19 @@
 
 ## Sommaire
 
-- [Comment ça marche](#-comment-ça-marche)
-- [Installation](#-installation)
-- [Utilisation](#-utilisation)
-- [Configuration](#-configuration)
-- [Performances et qualité](#-performances-et-qualité)
-- [Limites](#-limites)
-- [Validation](#-validation)
-- [Développement](#-développement)
-- [Arborescence](#-arborescence)
+- [Comment ça marche](#comment-ça-marche)
+- [Installation](#installation)
+- [Utilisation](#utilisation)
+- [Configuration](#configuration)
+- [Performances et qualité](#performances-et-qualité)
+- [Limites](#limites)
+- [Validation](#validation)
+- [Développement](#développement)
+- [Arborescence](#arborescence)
 
 ---
 
-## 🧠 Comment ça marche
+## Comment ça marche
 
 `bdex-framegen` est un **layer Vulkan implicite** (`VK_LAYER_BDEX_framegen`).
 Il s'insère entre le jeu et le pilote graphique, récupère chaque image que le
@@ -62,11 +62,15 @@ Quelques points de conception :
 
 | | |
 |---|---|
-| 🪟 **Swapchain virtuelle** | Le jeu rend dans des images privées fournies par le layer. La vraie swapchain appartient au layer, qui décide quoi présenter et quand. |
-| 🧵 **Thread dédié** | Le jeu n'est jamais bloqué par la présentation des images générées : `vkQueuePresentKHR` lui coûte ≈ 0,1 ms. |
-| ⚙️ **Queue séparée** | Le travail du layer tourne sur une file de calcul distincte de celle du jeu quand le GPU en a une (sinon la file est partagée et FIFO est remplacé par mailbox + cadencement). |
-| 🎞️ **Tout sur GPU** | Cinq shaders de calcul (pyramide, matching, médian, affinage, interpolation), aucun aller-retour CPU. |
-| ✂️ **Changements de plan** | Quand le mouvement n'est pas explicable, le layer affiche l'image réelle plutôt qu'un mélange. |
+| **Swapchain virtuelle** | Le jeu rend dans des images privées fournies par le layer. La vraie swapchain appartient au layer, qui décide quoi présenter et quand. |
+| **Thread dédié** | Le jeu n'est jamais bloqué par la présentation des images générées : `vkQueuePresentKHR` lui coûte ≈ 0,1 ms. |
+| **Queue séparée** | Le travail du layer tourne sur une file de calcul distincte de celle du jeu quand le GPU en a une (sinon la file est partagée et FIFO est remplacé par mailbox + cadencement). |
+| **Tout sur GPU** | Cinq shaders de calcul (pyramide, matching, médian, affinage, interpolation), aucun aller-retour CPU. |
+| **Changements de plan** | Quand le mouvement n'est pas explicable, le layer affiche l'image réelle plutôt qu'un mélange. |
+
+<img src="docs/comparaison.png" alt="Image réelle, image générée, image réelle suivante" width="900">
+
+*L'image du milieu n'a jamais été rendue par le jeu : elle est synthétisée à partir des deux images voisines.*
 
 <details>
 <summary>Voir le flux optique estimé (<code>BDEX_FG_DEBUG=flow</code>)</summary>
@@ -78,7 +82,7 @@ Quelques points de conception :
 
 ---
 
-## 📦 Installation
+## Installation
 
 ### Prérequis
 
@@ -124,7 +128,7 @@ cmake --build build32 -j && cmake --install build32 --prefix ~/.local
 
 ---
 
-## 🚀 Utilisation
+## Utilisation
 
 Le layer est installé de façon **implicite mais inerte** : il ne fait rien
 tant que la variable `BDEX_FG=1` n'est pas définie.
@@ -168,7 +172,7 @@ build/demo/bdex_demo --help                 # --size, --mode, --speed, --cut, --
 
 ---
 
-## 🔧 Configuration
+## Configuration
 
 Toutes les options se donnent par variables d'environnement `BDEX_FG_<CLÉ>`
 ou dans `~/.config/bdex-framegen.conf` (`clé = valeur`, une par ligne ;
@@ -213,7 +217,7 @@ debug = flow
 
 ---
 
-## 📊 Performances et qualité
+## Performances et qualité
 
 Mesures sur une **AMD Radeon Vega 8** intégrée (≈ 1,1 TFLOPS), démo en 955×1036 :
 
@@ -237,7 +241,7 @@ vraie image rendue à 60 fps) :
 
 ---
 
-## ⚠️ Limites
+## Limites
 
 - **Latence** : comme toute génération de frames, l'image réelle est affichée
   une demi-frame plus tard (à x2). Les entrées ne sont pas modifiées.
@@ -257,7 +261,7 @@ vraie image rendue à 60 fps) :
 
 ---
 
-## ✅ Validation
+## Validation
 
 Le layer est propre sous `VK_LAYER_KHRONOS_validation`, validation de
 synchronisation comprise, avec la démo, `vkcube` et `vkgears` :
@@ -270,7 +274,7 @@ Il se charge également dans le conteneur Steam Linux Runtime (pressure-vessel).
 
 ---
 
-## 🛠️ Développement
+## Développement
 
 ```sh
 cmake -S . -B build && cmake --build build -j
@@ -285,7 +289,7 @@ grâce au compteur de frames dessiné à l'écran.
 
 ---
 
-## 🗂️ Arborescence
+## Arborescence
 
 ```
 layer/
@@ -303,6 +307,6 @@ tools/                  lanceur, install/uninstall, évaluation de qualité
 
 <div align="center">
 
-Licence [MIT](LICENSE) — fait avec ❤️ et beaucoup de shaders de calcul.
+Licence [MIT](LICENSE).
 
 </div>
