@@ -129,7 +129,7 @@ debug = flow
 | `REFINE` | `1` | passe d'affinage du flux en blocs 4×4 |
 | `PRESENT_MODE` | `app` | force le mode de présentation : `fifo`, `mailbox`, `immediate`, `relaxed` |
 | `PACING` | `1` | espacement temporel des images en modes non-FIFO |
-| `SCENE_CUT_LOW` / `SCENE_CUT_HIGH` | `0.10` / `0.22` | seuils de coût de matching pour détecter un changement de plan |
+| `SCENE_CUT_LOW` / `SCENE_CUT_HIGH` | `0.05` / `0.09` | seuils de coût de matching pour détecter un changement de plan |
 | `DEBUG` | `none` | `flow` (visualise le flux), `split` (gauche générée / droite réelle), `passthrough` (layer actif sans génération) |
 | `STATS` / `STATS_INTERVAL` | `1` / `5` | statistiques dans le terminal |
 | `PROFILE` | `0` | temps GPU par étape dans les statistiques |

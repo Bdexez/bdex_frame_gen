@@ -338,6 +338,9 @@ void FrameGen::destroyAll() {
         dumpMapped_[i] = nullptr;
         dev_.destroyBuffer(dumpBuf_[i]);
     }
+    if (costMapped_) vt.UnmapMemory(d, costReadback_.memory);
+    costMapped_ = nullptr;
+    dev_.destroyBuffer(costReadback_);
 }
 
 void FrameGen::recordDump(VkCommandBuffer cmd, uint32_t which, uint32_t parity) {
@@ -347,7 +350,15 @@ void FrameGen::recordDump(VkCommandBuffer cmd, uint32_t which, uint32_t parity) 
         dumpBuf_[which] = dev_.createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
         VK_CHECK(vt.MapMemory(dev_.device, dumpBuf_[which].memory, 0, VK_WHOLE_SIZE, 0, &dumpMapped_[which]));
     }
+    if (!costReadback_.buffer) {
+        costReadback_ = dev_.createBuffer(16, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
+        VK_CHECK(vt.MapMemory(dev_.device, costReadback_.memory, 0, VK_WHOLE_SIZE, 0, &costMapped_));
+    }
     memoryBarrier(cmd);
+    if (which == 0) {
+        VkBufferCopy bc{0, 0, 16};
+        vt.CmdCopyBuffer(cmd, costBuf_.buffer, costReadback_.buffer, 1, &bc);
+    }
     VkBufferImageCopy region{};
     region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     region.imageExtent = {extent_.width, extent_.height, 1};
@@ -362,6 +373,7 @@ void FrameGen::recordDump(VkCommandBuffer cmd, uint32_t which, uint32_t parity) 
 
 bool FrameGen::writeDump(const std::string& path, uint32_t which) {
     if (!dumpMapped_[which] || enc_.is64) return false;
+    if (which == 0 && costMapped_) BDEX_DBG("%s: mean matching cost %.4f", path.c_str(), *static_cast<const float*>(costMapped_));
     const uint32_t enc = enc_.encoding & 0xffu;
     FILE* f = fopen(path.c_str(), "wb");
     if (!f) return false;
