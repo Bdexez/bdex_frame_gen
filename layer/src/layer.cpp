@@ -191,7 +191,7 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
 
     int chosen = -1;
     std::vector<std::vector<float>> prioStorage;
-    for (uint32_t f = 0; f < nf && chosen < 0; ++f) {
+    for (uint32_t f = 0; f < nf && chosen < 0 && !data->config.sharedQueue; ++f) {
         if (!(data->families[f].queueFlags & VK_QUEUE_COMPUTE_BIT)) continue;
         if (requested[f] < data->families[f].queueCount) {
             chosen = static_cast<int>(f);
@@ -336,6 +336,9 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device, const VkSwapc
     if (virtualise && !encodingForFormat(pCreateInfo->imageFormat).supported) {
         BDEX_WARN("swapchain format %d not supported: passing through", static_cast<int>(pCreateInfo->imageFormat));
         virtualise = false;
+    }
+    if (pCreateInfo->oldSwapchain) {
+        if (VirtualSwapchain* old = dev->findSwapchain(pCreateInfo->oldSwapchain)) old->retire();
     }
     if (virtualise) {
         try {

@@ -76,6 +76,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "refine_bias")                 return parseFloat(value, refineBias, 0.f, 64.f);
     if (key == "stats")                       return parseBool(value, stats);
     if (key == "profile")                     return parseBool(value, profile);
+    if (key == "shared_queue")                return parseBool(value, sharedQueue);
     if (key == "stats_interval")              return parseFloat(value, statsInterval, 0.5f, 3600.f);
     if (key == "dump" || key == "dump_dir")   { dumpDir = value; return true; }
     if (key == "dump_frames")                 return parseInt(value, dumpFrames, 1, 100000);

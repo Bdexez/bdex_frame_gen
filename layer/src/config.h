@@ -30,6 +30,7 @@ struct Config {
     float refineBias    = 0.5f;   // SAD bonus (sum over 64 px) for keeping a block's own flow in the refinement
     bool  stats         = true;   // print FPS statistics periodically
     bool  profile       = false;  // measure GPU time per pass (printed with the statistics)
+    bool  sharedQueue   = false;  // force sharing a queue with the application (testing)
     float statsInterval = 5.0f;   // seconds
     std::string dumpDir;          // when set, presented frames are written there as PPM files
     int   dumpFrames    = 24;     // how many presented frames to dump

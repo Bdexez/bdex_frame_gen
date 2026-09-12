@@ -12,32 +12,36 @@ namespace bdex {
 // command recording that ties everything together.
 class FrameGen {
 public:
-    FrameGen(DeviceData& dev, VkFormat format, VkExtent2D extent);
+    // `outputs` is the number of generated frames per real frame (multiplier
+    // minus one); 0 creates a pass-through instance with only the history
+    // images and the copy helpers.
+    FrameGen(DeviceData& dev, VkFormat format, VkExtent2D extent, uint32_t outputs);
     ~FrameGen();
     FrameGen(const FrameGen&) = delete;
     FrameGen& operator=(const FrameGen&) = delete;
 
     // Copies `src` (a swapchain-like image in PRESENT_SRC layout) into the
-    // history slot `parity` and rebuilds its luma pyramid. Returns `src` to
-    // PRESENT_SRC layout.
+    // history slot `parity`; returns `src` to PRESENT_SRC layout.
+    void recordCopyToHistory(VkCommandBuffer cmd, uint32_t parity, VkImage src);
+    // recordCopyToHistory + rebuild of the luma pyramid of that slot.
     void recordAnalysis(VkCommandBuffer cmd, uint32_t parity, VkImage src);
     // Computes the flow fields between history[1-parity] (previous frame) and
     // history[parity] (current frame). Requires both to have been analysed.
     void recordFlow(VkCommandBuffer cmd, uint32_t parity);
-    // Writes the frame at time t (between previous and current) into `dst`
-    // (UNDEFINED -> PRESENT_SRC).
-    void recordInterpolate(VkCommandBuffer cmd, uint32_t parity, float t, VkImage dst);
+    // Writes the frame at time t (between previous and current) into the
+    // internal output image `output`.
+    void recordInterpolate(VkCommandBuffer cmd, uint32_t parity, float t, uint32_t output);
+    // Copies output image `output` into `dst` (UNDEFINED -> PRESENT_SRC).
+    void recordCopyOutput(VkCommandBuffer cmd, uint32_t output, VkImage dst);
     // Copies history[parity] into `dst` (UNDEFINED -> PRESENT_SRC).
     void recordCopyHistory(VkCommandBuffer cmd, uint32_t parity, VkImage dst);
-    // Copies `src` (PRESENT_SRC) directly into `dst` (UNDEFINED -> PRESENT_SRC).
-    // Usable without a FrameGen instance (pass-through mode).
-    static void recordCopyDirect(DeviceData& dev, VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent2D extent);
 
     // Debug frame dumping: records a copy of the image that was just written
     // to `dst` (the generated output or the current history) into a staging
     // buffer; writeDump() decodes it to a PPM file once the GPU is done.
-    void recordDump(VkCommandBuffer cmd, bool generated, uint32_t parity);
-    bool writeDump(const std::string& path);
+    // `which`: 0 = first generated output, 1 = history[parity] (the real frame).
+    void recordDump(VkCommandBuffer cmd, uint32_t which, uint32_t parity);
+    bool writeDump(const std::string& path, uint32_t which);
 
     int levels() const { return levels_; }
 
@@ -89,16 +93,17 @@ private:
 
     AllocatedImage history_[2];
     std::vector<Level> levels_v_;
-    AllocatedImage out_;
+    std::vector<AllocatedImage> out_;
+    uint32_t outputs_ = 0;
     AllocatedBuffer costBuf_;
-    AllocatedBuffer dumpBuf_;
+    AllocatedBuffer dumpBuf_[2];
     VkQueryPool queryPool_ = VK_NULL_HANDLE;
     static constexpr uint32_t kProfileSlots = 8;
     double profileMs_[StageCount]{};
     uint32_t profileFrames_[StageCount]{};
     bool profileWritten_[kProfileSlots][StageCount + 1]{};
     float timestampPeriodNs_ = 1.f;
-    void* dumpMapped_ = nullptr;
+    void* dumpMapped_[2]{};
     VkSampler sampler_ = VK_NULL_HANDLE;
     VkDescriptorPool pool_ = VK_NULL_HANDLE;
 
@@ -110,7 +115,7 @@ private:
     std::vector<VkDescriptorSet> dsSmooth_[2];        // [dir] per level
     std::vector<VkDescriptorSet> dsRefine_[2][2];     // [parity][dir] per level
     VkDescriptorSet dsReduce_ = VK_NULL_HANDLE;
-    VkDescriptorSet dsInterp_[2]{};
+    std::vector<VkDescriptorSet> dsInterp_[2];        // [parity] per output
 };
 
 } // namespace bdex
