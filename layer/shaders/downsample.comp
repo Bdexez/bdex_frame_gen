@@ -1,0 +1,35 @@
+#version 450
+#ifndef LUMA_FMT
+#define LUMA_FMT r32f
+#endif
+// Builds one level of the luma pyramid. Level 0 reads the colour history
+// image (fromColor=1); deeper levels read the previous luma level. Bilinear
+// sampling at the centre of the 2x2 footprint is an exact box filter when the
+// source is exactly twice the destination size.
+#include "common.glsl"
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0) uniform sampler2D srcTex;
+layout(binding = 1, LUMA_FMT) uniform writeonly image2D dstImg;
+
+layout(push_constant) uniform PC {
+    ivec2 dstSize;
+    int fromColor;
+    int srgbSource;  // source values are linear (decoded sRGB): re-encode perceptually
+} pc;
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, pc.dstSize))) return;
+    vec2 uv = (vec2(p) + 0.5) / vec2(pc.dstSize);
+    float l;
+    if (pc.fromColor != 0) {
+        vec4 c = texture(srcTex, uv);
+        l = luma(c.rgb);
+        if (pc.srgbSource != 0) l = perceptual(l);
+    } else {
+        l = texture(srcTex, uv).r;
+    }
+    imageStore(dstImg, p, vec4(l));
+}

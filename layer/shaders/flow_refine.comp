@@ -1,0 +1,83 @@
+#version 450
+#ifndef LUMA_FMT
+#define LUMA_FMT r32f
+#endif
+// Flow refinement: re-evaluates the flow at 4x4 granularity by testing, for
+// each fine block, the flows of the surrounding 3x3 coarse blocks (smoothed),
+// its own raw flow and zero motion, keeping the candidate with the lowest
+// SAD over a 6x6 window. This sharpens motion boundaries (a block only
+// adopts a neighbour's motion when that motion actually explains it) and
+// removes remaining outliers. Duplicate candidates are skipped, so smooth
+// regions cost only a few evaluations.
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0, LUMA_FMT) uniform readonly image2D refImg;
+layout(binding = 1, LUMA_FMT) uniform readonly image2D tgtImg;
+layout(binding = 2, rg32f) uniform readonly image2D rawFlow;      // block resolution
+layout(binding = 3, rg32f) uniform readonly image2D smoothFlow;   // block resolution
+layout(binding = 4, rg32f) uniform writeonly image2D fineFlow;    // fine resolution
+
+layout(push_constant) uniform PC {
+    ivec2 size;        // level resolution
+    ivec2 blocks;      // coarse flow resolution
+    ivec2 fine;        // fine flow resolution
+    int coarseBlock;   // coarse block size in pixels (8)
+    int fineBlock;     // fine block size in pixels (4)
+    float ownBias;     // cost bonus for keeping the block's own flow
+} pc;
+
+float loadRef(ivec2 p) { return imageLoad(refImg, clamp(p, ivec2(0), pc.size - 1)).r; }
+float loadTgt(ivec2 p) { return imageLoad(tgtImg, clamp(p, ivec2(0), pc.size - 1)).r; }
+
+float sad(ivec2 origin, ivec2 d, float refWin[36]) {
+    float s = 0.0;
+    int i = 0;
+    for (int y = -1; y < 5; ++y)
+        for (int x = -1; x < 5; ++x) s += abs(refWin[i++] - loadTgt(origin + ivec2(x, y) + d));
+    return s;
+}
+
+void main() {
+    ivec2 fb = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(fb, pc.fine))) return;
+    ivec2 origin = fb * pc.fineBlock;
+    ivec2 cb = clamp(origin / pc.coarseBlock, ivec2(0), pc.blocks - 1);
+
+    float refWin[36];
+    {
+        int i = 0;
+        for (int y = -1; y < 5; ++y)
+            for (int x = -1; x < 5; ++x) refWin[i++] = loadRef(origin + ivec2(x, y));
+    }
+
+    vec2 cands[11];
+    int n = 0;
+    cands[n++] = imageLoad(smoothFlow, cb).xy;
+    vec2 best = cands[0];
+    float bestCost = sad(origin, ivec2(round(best)), refWin) - pc.ownBias;
+
+    vec2 extra[2];
+    extra[0] = imageLoad(rawFlow, cb).xy;
+    extra[1] = vec2(0.0);
+    for (int k = 0; k < 2; ++k) {
+        bool dup = false;
+        for (int j = 0; j < n; ++j) dup = dup || (cands[j] == extra[k]);
+        if (dup) continue;
+        cands[n++] = extra[k];
+        float c = sad(origin, ivec2(round(extra[k])), refWin);
+        if (c < bestCost) { bestCost = c; best = extra[k]; }
+    }
+    for (int dy = -1; dy <= 1; ++dy)
+        for (int dx = -1; dx <= 1; ++dx) {
+            if (dx == 0 && dy == 0) continue;
+            ivec2 nb = clamp(cb + ivec2(dx, dy), ivec2(0), pc.blocks - 1);
+            vec2 f = imageLoad(smoothFlow, nb).xy;
+            bool dup = false;
+            for (int j = 0; j < n; ++j) dup = dup || (cands[j] == f);
+            if (dup) continue;
+            cands[n++] = f;
+            float c = sad(origin, ivec2(round(f)), refWin);
+            if (c < bestCost) { bestCost = c; best = f; }
+        }
+    imageStore(fineFlow, fb, vec4(best, 0.0, 0.0));
+}
