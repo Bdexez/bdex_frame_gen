@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Launcher: runs a program with the BDEX frame generation layer enabled.
+#
+#   bdex-framegen [options] -- <command> [args...]
+#
+# Options map to BDEX_FG_* environment variables (see README.md):
+#   -m, --multiplier N     frames per real frame: 2 (default), 3 or 4
+#   -f, --fullres          compute the flow at full resolution (slower, sharper)
+#   -p, --present-mode M   fifo | mailbox | immediate | relaxed | app (default)
+#   -d, --debug M          none | flow | split | passthrough
+#   -l, --log N            log level 0..3
+#       --profile          print GPU timings with the statistics
+#       --no-stats         do not print frame rate statistics
+#       --off              run the program with the layer disabled
+#   -h, --help
+set -euo pipefail
+
+usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; }
+
+env_vars=(BDEX_FG=1)
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -m|--multiplier)   env_vars+=("BDEX_FG_MULTIPLIER=$2"); shift 2 ;;
+    -f|--fullres)      env_vars+=("BDEX_FG_FULLRES=1"); shift ;;
+    -p|--present-mode) env_vars+=("BDEX_FG_PRESENT_MODE=$2"); shift 2 ;;
+    -d|--debug)        env_vars+=("BDEX_FG_DEBUG=$2"); shift 2 ;;
+    -l|--log)          env_vars+=("BDEX_FG_LOG=$2"); shift 2 ;;
+    --profile)         env_vars+=("BDEX_FG_PROFILE=1"); shift ;;
+    --no-stats)        env_vars+=("BDEX_FG_STATS=0"); shift ;;
+    --off)             env_vars+=("BDEX_FG=0"); shift ;;
+    -h|--help)         usage; exit 0 ;;
+    --)                shift; break ;;
+    -*)                echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
+    *)                 break ;;
+  esac
+done
+if [ $# -eq 0 ]; then
+  echo "missing command" >&2
+  usage >&2
+  exit 2
+fi
+exec env "${env_vars[@]}" "$@"
