@@ -1,4 +1,6 @@
-set(BDEX_LAYER_NAME "VK_LAYER_BDEX_framegen")
+# The loader rejects two manifests with the same layer name, so the 32-bit
+# build gets its own (like the Steam overlay's _32/_64 layers).
+set(BDEX_LAYER_NAME "VK_LAYER_BDEX_framegen${BDEX_MANIFEST_SUFFIX}")
 
 bdex_add_shaders(bdex_layer_shaders
   OUT_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/shaders.h"
@@ -52,9 +54,9 @@ file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${BDEX_LAYER_NAME}.json"
      INPUT "${CMAKE_CURRENT_BINARY_DIR}/bdex_framegen.json.gen")
 
 # ... and one for the install tree.
-set(BDEX_LAYER_LIBRARY_PATH "${CMAKE_INSTALL_PREFIX}/lib/libVkLayer_bdex_framegen.so")
+set(BDEX_LAYER_LIBRARY_PATH "${CMAKE_INSTALL_PREFIX}/${BDEX_LIBDIR}/libVkLayer_bdex_framegen.so")
 configure_file(bdex_framegen.json.in "${CMAKE_CURRENT_BINARY_DIR}/install/${BDEX_LAYER_NAME}.json" @ONLY)
 
-install(TARGETS bdex_framegen LIBRARY DESTINATION lib)
+install(TARGETS bdex_framegen LIBRARY DESTINATION ${BDEX_LIBDIR})
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/install/${BDEX_LAYER_NAME}.json"
         DESTINATION share/vulkan/implicit_layer.d)
