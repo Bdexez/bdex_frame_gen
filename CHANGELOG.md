@@ -6,6 +6,33 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `MODE=extrapolate`: the real frame is presented immediately and the
+  generated frames are predicted from the motion of the last two, removing
+  the half-frame delay of interpolation. Predicted frames still pending when
+  the next real frame arrives are skipped.
+- `PRESET=quality|balanced|performance`, `FLOW_SCALE=auto|1|2|4` (replaces
+  `FULLRES`, kept as an alias), `REFINE_ALL`, `FLOW_ITERATIONS`,
+  `LOW_LATENCY`.
+- `real frame delayed` latency measurement in the statistics; GPU profiling
+  now covers the worker's copies.
+- Launcher options `-x/--extrapolate` and `-P/--preset`.
+
+### Changed
+
+- `PRESENT_MODE` defaults to `auto`: a game asking for FIFO is presented with
+  mailbox plus pacing, which removes the 2-3 refreshes of latency that FIFO
+  queueing added (`app` keeps the game's mode).
+- The images the game renders into are used directly as the frame history:
+  one full-resolution copy per frame and two history images less. The game
+  gets one more swapchain image in exchange.
+- The real swapchain has `multiplier + 2` images so that the real frame's
+  acquire does not block behind the generated ones.
+- Flow refinement compares 4×4 blocks instead of 6×6 windows (faster and
+  slightly better), the interpolation uses one fixed-point iteration by
+  default (two were measured to bring nothing).
+
 ## [0.1.0] - 2026-09-12
 
 First release.

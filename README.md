@@ -47,7 +47,6 @@ one or more intermediate frames before the real one.
 Game ──► vkQueuePresentKHR ──► [ bdex-framegen ] ──► display
                                       │
       game thread (≈ 0.1 ms):         │
-      ├─ copy the frame into a history
       ├─ luma pyramid + hierarchical block matching
       │  (forward and backward optical flow, median filter, 4×4 refinement)
       └─ synthesis of the intermediate frames: bidirectional warping
@@ -65,7 +64,9 @@ Design notes:
 |---|---|
 | **Virtual swapchain** | The game renders into private images handed out by the layer. The real swapchain belongs to the layer, which decides what to present and when. |
 | **Dedicated thread** | The game is never blocked by the presentation of generated frames: `vkQueuePresentKHR` costs it ≈ 0.1 ms. |
-| **Separate queue** | The layer's work runs on a compute queue distinct from the game's whenever the GPU has one (otherwise the queue is shared and FIFO is replaced by mailbox + pacing). |
+| **Separate queue** | The layer's work runs on a compute queue distinct from the game's whenever the GPU has one. |
+| **No frame copies** | The images the game renders into double as the frame history: nothing is copied before the analysis. |
+| **Latency first** | FIFO is replaced by mailbox + pacing (queued frames are pure display latency), and an extrapolation mode predicts the next frame instead of holding the real one back. |
 | **All on the GPU** | Five compute shaders (pyramid, matching, median, refinement, interpolation), no CPU round trip. |
 | **Scene cuts** | When the motion cannot be explained, the layer shows the real frame rather than a blend. |
 
@@ -137,7 +138,8 @@ The layer is installed as **implicit but inert**: it does nothing until the
 ```sh
 BDEX_FG=1 ./my_game                      # x2 (default)
 bdex-framegen -m 3 -- ./my_game          # x3 through the launcher
-bdex-framegen --fullres --profile -- vkcube
+bdex-framegen -x -- ./my_game            # extrapolation: no added latency
+bdex-framegen --preset performance --profile -- vkcube
 bdex-framegen --check                    # does the loader find the layer?
 ```
 
@@ -145,7 +147,7 @@ bdex-framegen --check                    # does the loader find the layer?
 
 ```
 BDEX_FG=1 %command%
-BDEX_FG=1 BDEX_FG_MULTIPLIER=3 BDEX_FG_PRESENT_MODE=mailbox %command%
+BDEX_FG=1 BDEX_FG_MULTIPLIER=3 BDEX_FG_MODE=extrapolate %command%
 ```
 
 Without installing, from the build tree:
@@ -157,7 +159,7 @@ VK_ADD_IMPLICIT_LAYER_PATH=$PWD/build/layer BDEX_FG=1 ./build/demo/bdex_demo --f
 The layer periodically prints its statistics to the terminal:
 
 ```
-[bdex-fg  4.128 INFO] game 30.0 fps -> output 60.0 fps (x2.00), present call 0.14 ms avg
+[bdex-fg  4.128 INFO] game 30.0 fps -> output 60.0 fps (x2.00), present call 0.14 ms, real frame delayed 17.1 ms
 ```
 
 ### The demo
@@ -183,12 +185,16 @@ takes precedence).
 |---|:---:|---|
 | `BDEX_FG` | – | `1` enables the layer, `0` disables it |
 | `MULTIPLIER` | `2` | frames displayed per rendered frame: 2, 3 or 4 |
-| `FULLRES` | `0` | optical flow at full resolution (sharper, ~2× the cost) |
+| `MODE` | `interpolate` | `extrapolate` predicts the next frame from the last two: no added latency, more artefacts on abrupt motion |
+| `PRESET` | `balanced` | `quality` (full-resolution flow, ~3× the cost), `balanced`, `performance` (quarter-resolution flow, ~2× cheaper) |
+| `FLOW_SCALE` | `auto` | resolution divisor of the flow: `1`, `2`, `4`; `auto` keeps the flow around 0.5 Mpixel |
 | `LEVELS` | `4` | flow pyramid levels (1–6) |
 | `SEARCH` / `SEARCH_FINE` | `4` / `2` | search radius at the coarsest level / at the finer levels (1–4) |
-| `REFINE` | `1` | 4×4 flow refinement pass |
-| `PRESENT_MODE` | `app` | force `fifo`, `mailbox`, `immediate` or `relaxed` |
+| `REFINE` / `REFINE_ALL` | `1` / `1` | 4×4 flow refinement pass, on every level or only the finest |
+| `FLOW_ITERATIONS` | `1` | fixed-point iterations of the flow lookup in the interpolation (0–3) |
+| `PRESENT_MODE` | `auto` | `auto` presents with mailbox when the game asks for FIFO; `app` keeps the game's mode; or force `fifo`, `mailbox`, `immediate`, `relaxed` |
 | `PACING` | `1` | even spacing of the frames in non-FIFO modes |
+| `LOW_LATENCY` | `0` | block the game until its previous frame has been handed to the display (only matters with FIFO) |
 | `SCENE_CUT_LOW` / `SCENE_CUT_HIGH` | `0.05` / `0.09` | scene cut detection thresholds |
 | `DEBUG` | `none` | `flow` (visualise the flow), `split` (left generated / right real), `passthrough` |
 | `STATS` / `STATS_INTERVAL` | `1` / `5` | terminal statistics, period in seconds |
@@ -220,16 +226,22 @@ debug = flow
 
 ## Performance and quality
 
-Measured on an integrated **AMD Radeon Vega 8** (≈ 1.1 TFLOPS), demo at 955×1036:
+GPU time per rendered frame, measured with `BDEX_FG_PROFILE=1` on an
+integrated **AMD Radeon Vega 8** (≈ 1.1 TFLOPS, laptop on battery), demo
+fullscreen at 1920×1080, x2:
 
-| Configuration | GPU / rendered frame | Output |
-|---|:---:|:---:|
-| Default (half-resolution flow) | ≈ 3.5 ms | 30 → 60 fps |
-| `FULLRES=1` | ≈ 8 ms | 30 → 60 fps |
-| `MULTIPLIER=4`, mailbox | ≈ 4 ms | 30 → 120 fps |
+| Preset | Analysis | Flow | Interpolation | Copies | Total |
+|---|:---:|:---:|:---:|:---:|:---:|
+| `performance` | 0.5 ms | 0.6 ms | 1.5 ms | 1.6 ms | ≈ 4.2 ms |
+| `balanced` (default) | 0.6 ms | 2.4 ms | 1.5 ms | 1.6 ms | ≈ 6.1 ms |
+| `quality` | 1.1 ms | 8.8 ms | 1.7 ms | 1.6 ms | ≈ 13 ms |
 
-On a discrete GPU the cost is negligible. The game thread spends ≈ 0.1 ms in
-`vkQueuePresentKHR`.
+The copies are the two 8 MB transfers into the real swapchain (generated +
+real frame); on this iGPU they are memory-bound. On a discrete GPU the whole
+budget is well under a millisecond. The game thread spends ≈ 0.1 ms in
+`vkQueuePresentKHR`; the layer adds one image to the game's swapchain and
+allocates `multiplier - 1` full-resolution output images plus the flow
+pyramids (a few megabytes).
 
 Quality measured with `tools/run_eval.sh` (PSNR of the generated frames
 against the real frame rendered at 60 fps):
@@ -238,17 +250,39 @@ against the real frame rendered at 60 fps):
 |---|:---:|
 | Duplicating the previous frame | ≈ 22 dB |
 | Blending the two neighbouring frames | ≈ 25 dB |
-| **bdex-framegen** | **≈ 30 dB** |
+| **bdex-framegen**, `performance` | ≈ 27 dB |
+| **bdex-framegen**, `balanced` | **≈ 30 dB** |
+| **bdex-framegen**, `quality` | ≈ 31 dB |
+| **bdex-framegen**, `MODE=extrapolate` | ≈ 23 dB |
+
+### Latency
+
+Delay between the game's `vkQueuePresentKHR` and the moment the real frame
+is handed to the presentation engine (`real frame delayed` in the
+statistics), demo at 30 fps on a 60 Hz display:
+
+| Configuration | Real frame delay |
+|---|:---:|
+| Game's FIFO kept (`PRESENT_MODE=app`) | ≈ 60 ms (frames queue up in the presentation engine) |
+| Default (`auto` → mailbox, interpolation) | ≈ 17 ms (half a game frame, by construction) |
+| `MODE=extrapolate` | **≈ 0.5 ms** |
+
+Interpolation must hold the real frame back by half a frame interval to show
+the in-between frame first; extrapolation shows the real frame immediately
+and predicts the following one from the motion of the last two, at the cost
+of prediction errors on abrupt changes of direction. Predicted frames that
+are still pending when the next real frame arrives are skipped rather than
+delaying it.
 
 ---
 
 ## Limitations
 
-- **Latency**: as with any frame generation, the real frame is displayed half
-  a frame later (at x2). Input is not touched.
-- **Vsync (FIFO)**: on a 60 Hz display, x2 caps the game at 30 fps, x3 at
-  20 fps… Use `PRESENT_MODE=mailbox` / `immediate` or a VRR display to leave
-  the game uncapped.
+- **Latency**: interpolation displays the real frame half a frame later (at
+  x2); `MODE=extrapolate` removes that delay but predicts. Input is not touched.
+- **Vsync**: by default the layer presents with mailbox (no tearing, no
+  queueing). With `PRESENT_MODE=app` and a FIFO game on a 60 Hz display, x2
+  caps the game at 30 fps, x3 at 20 fps, and queued frames add latency.
 - **Artefacts**: block-matching optical flow handles translations and static
   HUDs well; fast rotations, large occlusions and repetitive patterns produce
   local artefacts. `DEBUG=flow` shows what the layer "understands" of the

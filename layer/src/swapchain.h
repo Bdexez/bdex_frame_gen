@@ -51,6 +51,7 @@ private:
     struct VirtualImage {
         AllocatedImage img;
         bool acquired = false;
+        bool held = false;  // kept as the previous frame for the next synthesis
         bool pendingRelease = false;
         uint32_t releaseSlot = 0;
         uint64_t releaseGeneration = 0;
@@ -69,8 +70,10 @@ private:
     // One application present, handed to the worker thread.
     struct Job {
         uint32_t parity = 0;
+        uint32_t source = 0;         // virtual image holding the real frame
         int frames = 1;              // presents to perform (multiplier, or 1)
         bool generated = false;      // frames-1 generated images in out_[]
+        bool realFirst = false;      // extrapolation: the real frame goes out first
         clock::time_point start{};   // when the application presented
         double intervalMs = 16.6;    // frame interval estimate for pacing
         int presentMode = -1;        // VkSwapchainPresentModeInfoEXT (-1 = none), applied to every present
@@ -79,7 +82,7 @@ private:
     };
 
     void createReal(const VkSwapchainCreateInfoKHR& appInfo);
-    void createVirtualImages(const VkSwapchainCreateInfoKHR& appInfo);
+    void createVirtualImages(const VkSwapchainCreateInfoKHR& appInfo, bool forGeneration);
     void createSlots(std::vector<FrameSlot>& slots, uint32_t count, bool withSemaphore);
     void destroySlots(std::vector<FrameSlot>& slots);
     void destroyAll();
@@ -113,7 +116,7 @@ private:
     std::unique_ptr<FrameGen> fg_;
     bool retired_ = false;
     bool generating_ = false;   // frame generation active for this swapchain
-    bool havePrevious_ = false;  // history[1-parity] holds a valid frame
+    int prevIndex_ = -1;         // virtual image of the previous frame (held), -1 before the first present
     uint32_t parity_ = 0;
 
     // Worker state (guarded by workerMutex_).
@@ -134,6 +137,8 @@ private:
     clock::time_point statsStart_{};
     uint64_t statsAppFrames_ = 0;
     std::atomic<uint64_t> statsOutFrames_{0};
+    std::atomic<uint64_t> statsRealDelayUs_{0};
+    std::atomic<uint64_t> statsSkipped_{0};  // sum of (real frame present call - app present call)
     double statsCpuMs_ = 0;
     int dumpCount_ = 0;
     uint32_t dumpId_ = 0;

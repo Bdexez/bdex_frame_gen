@@ -12,7 +12,7 @@ TEST(config_defaults) {
     Config c;
     CHECK(c.enabled);
     CHECK(c.multiplier == 2);
-    CHECK(c.presentMode == -1);
+    CHECK(c.presentMode == -2);  // auto
     CHECK(c.debug == Config::Debug::None);
 }
 
@@ -25,6 +25,15 @@ TEST(config_apply_values) {
     CHECK(c.apply("enabled", "on") && c.enabled);
     CHECK(c.apply("present_mode", "mailbox") && c.presentMode == VK_PRESENT_MODE_MAILBOX_KHR);
     CHECK(c.apply("present_mode", "app") && c.presentMode == -1);
+    CHECK(c.apply("present_mode", "auto") && c.presentMode == -2);
+    CHECK(c.apply("mode", "extrapolate") && c.extrapolate);
+    CHECK(c.apply("mode", "interpolate") && !c.extrapolate);
+    CHECK(!c.apply("mode", "guess"));
+    CHECK(c.apply("flow_scale", "4") && c.flowScale == 4);
+    CHECK(!c.apply("flow_scale", "3"));
+    CHECK(c.apply("flow_scale", "auto") && c.flowScale == 0);
+    CHECK(c.flowScaleFor(1920, 1080) == 2 && c.flowScaleFor(3840, 2160) == 4 && c.flowScaleFor(800, 600) == 1);
+    CHECK(c.apply("fullres", "1") && c.flowScale == 1);
     CHECK(c.apply("debug", "flow") && c.debug == Config::Debug::Flow);
     CHECK(c.apply("debug", "passthrough") && c.debug == Config::Debug::Passthrough);
     CHECK(c.apply("search", "3") && c.searchRadius == 3);
@@ -103,4 +112,18 @@ TEST(config_section_matching) {
     CHECK(Config::sectionMatches("", names));
     CHECK(!Config::sectionMatches("othergame", names));
     CHECK(!Config::processNames().empty());  // at least our own executable
+}
+
+TEST(config_presets) {
+    Config c;
+    CHECK(c.apply("preset", "performance") && c.flowScale == 4 && !c.refineAll);
+    CHECK(c.apply("preset", "quality") && c.flowScale == 1 && c.flowIterations == 2);
+    CHECK(!c.apply("preset", "ultra"));
+    // A preset in the environment is applied before the individual variables.
+    setenv("BDEX_FG_FLOW_SCALE", "2", 1);
+    setenv("BDEX_FG_PRESET", "performance", 1);
+    Config d = Config::load();
+    CHECK(d.flowScale == 2 && !d.refineAll);
+    unsetenv("BDEX_FG_FLOW_SCALE");
+    unsetenv("BDEX_FG_PRESET");
 }

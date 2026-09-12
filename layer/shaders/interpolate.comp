@@ -30,6 +30,7 @@ layout(std430, binding = 5) readonly buffer Cost { float meanCost; } cost;
 #define ENC_RGBA16F    4u
 #define ENC_SRGB_FLAG  0x100u
 
+
 #define DBG_NONE  0
 #define DBG_FLOW  1
 #define DBG_SPLIT 2
@@ -43,6 +44,7 @@ layout(push_constant) uniform PC {
     float cutLow;
     float cutHigh;
     vec2 flowInvSize;  // 1 / (pixels covered by the flow textures)
+    int iterations;    // fixed-point iterations of the flow lookup
 } pc;
 
 vec2 fwdAt(vec2 p) { return texture(flowFwd, p * pc.flowInvSize).xy * pc.flowScale; }
@@ -78,20 +80,40 @@ void main() {
     vec2 q = vec2(p) + 0.5;
     vec2 uv = q / fsize;
     float t = pc.t;
+    vec4 cur = texture(curTex, uv);
+    float cut = smoothstep(pc.cutLow, pc.cutHigh, cost.meanCost);
+    vec4 c;
+    vec2 F;
 
+    if (t > 1.0) {
+        // Extrapolation: the frame after `cur`, assuming the motion measured
+        // between prev and cur continues. The pixel that lands on q moved
+        // from p = q + s*B(p) (B is the cur->prev flow, i.e. minus the
+        // motion). Forward/backward consistency at p tells whether the
+        // motion there is trustworthy; otherwise keep the pixel in place.
+        float s = t - 1.0;
+        vec2 B = bwdAt(q);
+        vec2 pb = q + s * B;
+        for (int i = 0; i < pc.iterations; ++i) { B = bwdAt(pb); pb = q + s * B; }
+        vec4 ce = texture(curTex, pb / fsize);
+        float inconsistency = length(B + fwdAt(pb + B));
+        float w = smoothstep(2.0, 6.0, inconsistency);
+        c = mix(ce, cur, w);
+        F = -B;
+    } else {
     // The flow fields are indexed by source-frame position, but we need the
     // motion of whatever lands on q at time t: a few fixed-point iterations
     // of p = q - t*F(p) find that source position.
-    vec2 F = fwdAt(q);
+    F = fwdAt(q);
     vec2 pf = q - t * F;
-    for (int i = 0; i < 2; ++i) { F = fwdAt(pf); pf = q - t * F; }
+    for (int i = 0; i < pc.iterations; ++i) { F = fwdAt(pf); pf = q - t * F; }
     vec4 cf = texture(prevTex, pf / fsize);
     vec4 cf2 = texture(curTex, (pf + F) / fsize);
     float ef = luma(abs(cf.rgb - cf2.rgb));
 
     vec2 B = bwdAt(q);
     vec2 pb = q - (1.0 - t) * B;
-    for (int i = 0; i < 2; ++i) { B = bwdAt(pb); pb = q - (1.0 - t) * B; }
+    for (int i = 0; i < pc.iterations; ++i) { B = bwdAt(pb); pb = q - (1.0 - t) * B; }
     vec4 cb = texture(curTex, pb / fsize);
     vec4 cb2 = texture(prevTex, (pb + B) / fsize);
     float eb = luma(abs(cb.rgb - cb2.rgb));
@@ -101,15 +123,14 @@ void main() {
     const float eps = 0.01;
     float wf = (1.0 - t) / ((ef + eps) * (ef + eps));
     float wb = t / ((eb + eps) * (eb + eps));
-    vec4 c = (wf * cf + wb * cb) / (wf + wb);
+    c = (wf * cf + wb * cb) / (wf + wb);
 
     // Neither candidate explains the pixel (occlusion the flow could not
     // resolve): a plain cross-fade is less objectionable than a smeared edge.
     float bad = smoothstep(0.12, 0.25, min(ef, eb));
-    c = mix(c, mix(texture(prevTex, uv), texture(curTex, uv), t), bad);
+    c = mix(c, mix(texture(prevTex, uv), cur, t), bad);
+    }
 
-    vec4 cur = texture(curTex, uv);
-    float cut = smoothstep(pc.cutLow, pc.cutHigh, cost.meanCost);
     c = mix(c, cur, cut);
 
     if (pc.debugMode == DBG_FLOW) {

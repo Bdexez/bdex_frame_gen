@@ -16,7 +16,7 @@ struct DownsamplePC { int32_t size[2]; int32_t fromColor; int32_t srgbSource; };
 struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; };
 struct SizePC { int32_t size[2]; };
 struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; };
-struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; };
+struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; };
 
 constexpr uint32_t kBlockSize = 8;
 constexpr uint32_t kFineBlock = 4;
@@ -26,22 +26,20 @@ uint32_t divUp(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
 
 } // namespace
 
-FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D extent, uint32_t outputs)
+FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D extent, uint32_t outputs, const std::vector<VkImage>& sources)
     : dev_(dev), format_(format), extent_(extent), outputs_(outputs) {
     enc_ = encodingForFormat(format);
     if (!enc_.supported) throw VkError(VK_ERROR_FORMAT_NOT_SUPPORTED, "swapchain format not supported by frame generation");
+    for (VkImage img : sources) sources_.push_back({img, VK_NULL_HANDLE});
+    if (outputs_ == 0) return;  // pass-through: only recordCopySource is used
     try {
-        if (outputs_ == 0) {
-            for (auto& h : history_)
-                h = dev_.createImage(format_, extent_, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, false);
-            dev_.immediate([&](VkCommandBuffer cmd) {
-                VkImageMemoryBarrier b[2];
-                for (int i = 0; i < 2; ++i)
-                    b[i] = imageBarrier(history_[i].image, 0, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
-                dev_.vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
-                                           nullptr, 2, b);
-            });
-            return;
+        for (auto& src : sources_) {
+            VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            vi.image = src.image;
+            vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            vi.format = format_;
+            vi.subresourceRange = colorRange();
+            VK_CHECK(dev_.vt.CreateImageView(dev_.device, &vi, nullptr, &src.view));
         }
         createPipelines();
         createResources();
@@ -122,23 +120,16 @@ void FrameGen::createResources() {
     const Config& cfg = dev_.config;
     const VkImageUsageFlags storageSampled = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 
-    if (!dev_.formatSupports(format_, VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT))
-        throw VkError(VK_ERROR_FORMAT_NOT_SUPPORTED, "history format cannot be sampled");
+    if (!dev_.formatSupports(format_, VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
+        throw VkError(VK_ERROR_FORMAT_NOT_SUPPORTED, "swapchain format cannot be sampled");
     if (!dev_.formatSupports(enc_.storageFormat, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT))
         throw VkError(VK_ERROR_FORMAT_NOT_SUPPORTED, "output storage format unsupported");
 
-    for (auto& h : history_)
-        h = dev_.createImage(format_, extent_,
-                             VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, true);
-
     // Pyramid: level 0 at full or half resolution, then halving. Stop early
     // when a level would have fewer than 2x2 blocks.
-    VkExtent2D size = extent_;
-    flowScale_ = 1.f;
-    if (!cfg.fullres) {
-        size = {divUp(extent_.width, 2), divUp(extent_.height, 2)};
-        flowScale_ = 2.f;
-    }
+    const int fs = cfg.flowScaleFor(extent_.width, extent_.height);
+    VkExtent2D size = {divUp(extent_.width, fs), divUp(extent_.height, fs)};
+    flowScale_ = float(fs);
     for (int l = 0; l < cfg.levels; ++l) {
         Level lv;
         lv.size = size;
@@ -149,7 +140,12 @@ void FrameGen::createResources() {
         for (int d = 0; d < 2; ++d) {
             lv.flowRaw[d] = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, lv.blocks, storageSampled, true);
             lv.flow[d] = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, lv.blocks, storageSampled, true);
-            if (cfg.refine) lv.flowFine[d] = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, lv.fine, storageSampled, true);
+            // Refinement runs on the finest level only unless refine_all is
+            // set: coarser levels just predict the search centre, where the
+            // smoothed flow is good enough.
+            const bool refined = cfg.refine && (l == 0 || cfg.refineAll);
+            lv.refined = refined;
+            if (refined) lv.flowFine[d] = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, lv.fine, storageSampled, true);
             else { lv.flowFine[d] = lv.flow[d]; lv.fine = lv.blocks; }
             lv.cost[d] = dev_.createImage(VK_FORMAT_R32_SFLOAT, lv.blocks, storageSampled, true);
         }
@@ -184,12 +180,11 @@ void FrameGen::createResources() {
             barriers.push_back(imageBarrier(img.image, 0, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
                                             VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL));
         };
-        for (auto& h : history_) add(h);
         for (auto& lv : levels_v_) {
             for (auto& i : lv.pyr) add(i);
             for (auto& i : lv.flowRaw) add(i);
             for (auto& i : lv.flow) add(i);
-            if (cfg.refine) for (auto& i : lv.flowFine) add(i);
+            if (lv.refined) for (auto& i : lv.flowFine) add(i);
             for (auto& i : lv.cost) add(i);
         }
         for (auto& o : out_) add(o);
@@ -235,11 +230,13 @@ void FrameGen::writeBuffer(VkDescriptorSet set, uint32_t binding, VkBuffer buffe
 void FrameGen::createDescriptors() {
     const uint32_t L = static_cast<uint32_t>(levels_);
     const uint32_t O = outputs_;
-    const uint32_t nSets = 2 * L + 4 * L + 2 * L + 4 * L + 1 + 2 * O;
+    const uint32_t N = static_cast<uint32_t>(sources_.size());
+    const uint32_t nInterp = N * N * O;
+    const uint32_t nSets = 2 * N + 2 * L + 4 * L + 2 * L + 4 * L + 1 + nInterp;
     VkDescriptorPoolSize sizes[] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * L + 4 * L + 8 * O},
-        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * L + 4 * L * 4 + 2 * L * 2 + 4 * L * 5 + 1 + 2 * O},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1 + 2 * O},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * N + 2 * L + 4 * L + 4 * nInterp},
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * N + 2 * L + 4 * L * 4 + 2 * L * 2 + 4 * L * 5 + 1 + nInterp},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1 + nInterp},
     };
     VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pi.maxSets = nSets;
@@ -251,9 +248,15 @@ void FrameGen::createDescriptors() {
     const VkDescriptorType SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
 
     for (uint32_t parity = 0; parity < 2; ++parity) {
+        for (uint32_t n = 0; n < N; ++n) {
+            VkDescriptorSet s = allocSet(downsample_.setLayout);
+            writeImage(s, 0, CIS, sources_[n].view);
+            writeImage(s, 1, SI, levels_v_[0].pyr[parity].view);
+            dsDownSrc_[parity].push_back(s);
+        }
         for (uint32_t l = 0; l < L; ++l) {
             VkDescriptorSet s = allocSet(downsample_.setLayout);
-            writeImage(s, 0, CIS, l == 0 ? history_[parity].view : levels_v_[l - 1].pyr[parity].view);
+            writeImage(s, 0, CIS, l == 0 ? sources_[0].view : levels_v_[l - 1].pyr[parity].view);  // level 0 unused
             writeImage(s, 1, SI, levels_v_[l].pyr[parity].view);
             dsDown_[parity].push_back(s);
         }
@@ -292,16 +295,18 @@ void FrameGen::createDescriptors() {
     writeImage(dsReduce_, 0, SI, levels_v_[0].cost[0].view);
     writeBuffer(dsReduce_, 1, costBuf_.buffer);
 
-    for (uint32_t parity = 0; parity < 2; ++parity) {
-        for (uint32_t o = 0; o < O; ++o) {
-            VkDescriptorSet s = allocSet(interp_.setLayout);
-            writeImage(s, 0, CIS, history_[1 - parity].view);
-            writeImage(s, 1, CIS, history_[parity].view);
-            writeImage(s, 2, CIS, levels_v_[0].flowFine[0].view);
-            writeImage(s, 3, CIS, levels_v_[0].flowFine[1].view);
-            writeImage(s, 4, SI, out_[o].view);
-            writeBuffer(s, 5, costBuf_.buffer);
-            dsInterp_[parity].push_back(s);
+    for (uint32_t prev = 0; prev < N; ++prev) {
+        for (uint32_t cur = 0; cur < N; ++cur) {
+            for (uint32_t o = 0; o < O; ++o) {
+                VkDescriptorSet s = allocSet(interp_.setLayout);
+                writeImage(s, 0, CIS, sources_[prev].view);
+                writeImage(s, 1, CIS, sources_[cur].view);
+                writeImage(s, 2, CIS, levels_v_[0].flowFine[0].view);
+                writeImage(s, 3, CIS, levels_v_[0].flowFine[1].view);
+                writeImage(s, 4, SI, out_[o].view);
+                writeBuffer(s, 5, costBuf_.buffer);
+                dsInterp_.push_back(s);
+            }
         }
     }
 }
@@ -319,12 +324,15 @@ void FrameGen::destroyAll() {
     }
     if (sampler_) vt.DestroySampler(d, sampler_, nullptr);
     sampler_ = VK_NULL_HANDLE;
-    for (auto& h : history_) dev_.destroyImage(h);
+    for (auto& src : sources_) {
+        if (src.view) vt.DestroyImageView(d, src.view, nullptr);
+        src.view = VK_NULL_HANDLE;
+    }
     for (auto& lv : levels_v_) {
         for (auto& i : lv.pyr) dev_.destroyImage(i);
         for (auto& i : lv.flowRaw) dev_.destroyImage(i);
         for (auto& i : lv.flow) dev_.destroyImage(i);
-        if (dev_.config.refine) for (auto& i : lv.flowFine) dev_.destroyImage(i);
+        if (lv.refined) for (auto& i : lv.flowFine) dev_.destroyImage(i);
         for (auto& i : lv.cost) dev_.destroyImage(i);
     }
     levels_v_.clear();
@@ -343,7 +351,7 @@ void FrameGen::destroyAll() {
     dev_.destroyBuffer(costReadback_);
 }
 
-void FrameGen::recordDump(VkCommandBuffer cmd, uint32_t which, uint32_t parity) {
+void FrameGen::recordDump(VkCommandBuffer cmd, uint32_t which, uint32_t cur) {
     auto& vt = dev_.vt;
     const VkDeviceSize bytes = VkDeviceSize(extent_.width) * extent_.height * (enc_.is64 ? 8 : 4);
     if (!dumpBuf_[which].buffer) {
@@ -363,7 +371,7 @@ void FrameGen::recordDump(VkCommandBuffer cmd, uint32_t which, uint32_t parity) 
     region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     region.imageExtent = {extent_.width, extent_.height, 1};
     // Both the output and the history images live in GENERAL layout.
-    vt.CmdCopyImageToBuffer(cmd, which == 0 ? out_[0].image : history_[parity].image, VK_IMAGE_LAYOUT_GENERAL,
+    vt.CmdCopyImageToBuffer(cmd, which == 0 ? out_[0].image : sources_[cur].image, VK_IMAGE_LAYOUT_GENERAL,
                             dumpBuf_[which].buffer, 1, &region);
     VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -407,44 +415,39 @@ void FrameGen::memoryBarrier(VkCommandBuffer cmd) {
                                0, nullptr);
 }
 
-void FrameGen::recordCopyToHistory(VkCommandBuffer cmd, uint32_t parity, VkImage src) {
-    auto& vt = dev_.vt;
-    AllocatedImage& hist = history_[parity];
-
-    VkImageMemoryBarrier pre[2] = {
-        imageBarrier(src, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL),
-        imageBarrier(hist.image, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
-                     VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL),
-    };
-    vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, pre);
-
-    VkImageCopy region{};
-    region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    region.extent = {extent_.width, extent_.height, 1};
-    vt.CmdCopyImage(cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, hist.image, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
-
-    VkImageMemoryBarrier post[2] = {
-        imageBarrier(src, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                     VK_IMAGE_LAYOUT_PRESENT_SRC_KHR),
-        imageBarrier(hist.image, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT,
-                     VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL),
-    };
-    vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                          VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 2, post);
+void FrameGen::recordAcquireSources(VkCommandBuffer cmd, int prev, int cur) {
+    VkImageMemoryBarrier b[2];
+    uint32_t n = 0;
+    for (int idx : {prev, cur}) {
+        if (idx < 0) continue;
+        b[n++] = imageBarrier(sources_[idx].image, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_SHADER_READ_BIT,
+                              VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_GENERAL);
+    }
+    dev_.vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               0, 0, nullptr, 0, nullptr, n, b);
 }
 
-void FrameGen::recordAnalysis(VkCommandBuffer cmd, uint32_t parity, VkImage src) {
-    auto& vt = dev_.vt;
-    recordCopyToHistory(cmd, parity, src);
+void FrameGen::recordReleaseSources(VkCommandBuffer cmd, int prev, int cur) {
+    VkImageMemoryBarrier b[2];
+    uint32_t n = 0;
+    for (int idx : {prev, cur}) {
+        if (idx < 0) continue;
+        b[n++] = imageBarrier(sources_[idx].image, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT,
+                              VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    }
+    dev_.vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                               0, 0, nullptr, 0, nullptr, n, b);
+}
 
+void FrameGen::recordAnalysis(VkCommandBuffer cmd, uint32_t parity, uint32_t cur) {
+    auto& vt = dev_.vt;
     vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, downsample_.pipeline);
     for (int l = 0; l < levels_; ++l) {
         const Level& lv = levels_v_[l];
         DownsamplePC pc{{(int32_t)lv.size.width, (int32_t)lv.size.height}, l == 0 ? 1 : 0, enc_.srgb ? 1 : 0};
         vt.CmdPushConstants(cmd, downsample_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
-        vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, downsample_.layout, 0, 1, &dsDown_[parity][l], 0, nullptr);
+        const VkDescriptorSet* set = l == 0 ? &dsDownSrc_[parity][cur] : &dsDown_[parity][l];
+        vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, downsample_.layout, 0, 1, set, 0, nullptr);
         vt.CmdDispatch(cmd, divUp(lv.size.width, 16), divUp(lv.size.height, 16), 1);
         memoryBarrier(cmd);
     }
@@ -475,11 +478,7 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
         }
         memoryBarrier(cmd);
 
-        if (!cfg.refine) {
-            // Without refinement the smoothed flow is copied into the fine slot's role
-            // by binding it directly (see createDescriptors): nothing to do here.
-            continue;
-        }
+        if (!lv.refined) continue;  // flowFine aliases the smoothed flow (see createResources)
         vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, refine_.pipeline);
         RefinePC rpc{{(int32_t)lv.size.width, (int32_t)lv.size.height},
                      {(int32_t)lv.blocks.width, (int32_t)lv.blocks.height},
@@ -523,7 +522,7 @@ void FrameGen::copyToPresent(VkCommandBuffer cmd, VkImage src, VkImageLayout src
     vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &post);
 }
 
-void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t parity, float t, uint32_t output) {
+void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cur, float t, uint32_t output) {
     auto& vt = dev_.vt;
     const Config& cfg = dev_.config;
     vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, interp_.pipeline);
@@ -531,10 +530,13 @@ void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t parity, float t, 
     InterpPC pc{{(int32_t)extent_.width, (int32_t)extent_.height}, t, flowScale_, enc_.encoding,
                 cfg.debug == Config::Debug::Flow ? 1 : cfg.debug == Config::Debug::Split ? 2 : 0,
                 cfg.sceneCutLow, cfg.sceneCutHigh,
-                {1.f / (fine.fine.width * (cfg.refine ? kFineBlock : kBlockSize) * flowScale_),
-                 1.f / (fine.fine.height * (cfg.refine ? kFineBlock : kBlockSize) * flowScale_)}};
+                {1.f / (fine.fine.width * (fine.refined ? kFineBlock : kBlockSize) * flowScale_),
+                 1.f / (fine.fine.height * (fine.refined ? kFineBlock : kBlockSize) * flowScale_)},
+                cfg.flowIterations};
     vt.CmdPushConstants(cmd, interp_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
-    vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, interp_.layout, 0, 1, &dsInterp_[parity][output], 0, nullptr);
+    const uint32_t N = static_cast<uint32_t>(sources_.size());
+    vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, interp_.layout, 0, 1,
+                             &dsInterp_[(prev * N + cur) * outputs_ + output], 0, nullptr);
     vt.CmdDispatch(cmd, divUp(extent_.width, 16), divUp(extent_.height, 16), 1);
     // Make the previous output copy (worker submission) precede this overwrite.
     memoryBarrier(cmd);
@@ -544,9 +546,27 @@ void FrameGen::recordCopyOutput(VkCommandBuffer cmd, uint32_t output, VkImage ds
     copyToPresent(cmd, out_[output].image, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, dst);
 }
 
-void FrameGen::recordCopyHistory(VkCommandBuffer cmd, uint32_t parity, VkImage dst) {
-    copyToPresent(cmd, history_[parity].image, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT,
-                  VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, dst);
+void FrameGen::recordCopySource(VkCommandBuffer cmd, uint32_t src, VkImage dst) {
+    auto& vt = dev_.vt;
+    VkImage image = sources_[src].image;
+    VkImageMemoryBarrier pre[2] = {
+        imageBarrier(image, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL),
+        imageBarrier(dst, 0, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL),
+    };
+    vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, pre);
+    VkImageCopy region{};
+    region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.extent = {extent_.width, extent_.height, 1};
+    vt.CmdCopyImage(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    VkImageMemoryBarrier post[2] = {
+        imageBarrier(image, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     VK_IMAGE_LAYOUT_PRESENT_SRC_KHR),
+        imageBarrier(dst, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     VK_IMAGE_LAYOUT_PRESENT_SRC_KHR),
+    };
+    vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 2, post);
 }
 
 } // namespace bdex
@@ -557,7 +577,9 @@ void FrameGen::profileBegin(VkCommandBuffer cmd, uint32_t slot) {
     if (!queryPool_ || slot >= kProfileSlots) return;
     const uint32_t base = slot * (StageCount + 1);
     dev_.vt.CmdResetQueryPool(cmd, queryPool_, base, StageCount + 1);
-    dev_.vt.CmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, queryPool_, base);
+    // Bottom-of-pipe so that a semaphore wait attached to the submission
+    // (swapchain acquire) is not counted as GPU time.
+    dev_.vt.CmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPool_, base);
     for (auto& w : profileWritten_[slot]) w = false;
     profileWritten_[slot][0] = true;
 }

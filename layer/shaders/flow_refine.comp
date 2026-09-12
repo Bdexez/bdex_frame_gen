@@ -5,7 +5,7 @@
 // Flow refinement: re-evaluates the flow at 4x4 granularity by testing, for
 // each fine block, the flows of the surrounding 3x3 coarse blocks (smoothed),
 // its own raw flow and zero motion, keeping the candidate with the lowest
-// SAD over a 6x6 window. This sharpens motion boundaries (a block only
+// SAD over the block. This sharpens motion boundaries (a block only
 // adopts a neighbour's motion when that motion actually explains it) and
 // removes remaining outliers. Duplicate candidates are skipped, so smooth
 // regions cost only a few evaluations.
@@ -29,11 +29,16 @@ layout(push_constant) uniform PC {
 float loadRef(ivec2 p) { return imageLoad(refImg, clamp(p, ivec2(0), pc.size - 1)).r; }
 float loadTgt(ivec2 p) { return imageLoad(tgtImg, clamp(p, ivec2(0), pc.size - 1)).r; }
 
-float sad(ivec2 origin, ivec2 d, float refWin[36]) {
+// Window margin around the 4x4 block (0 -> exactly the block). A larger
+// window was measured both slower and slightly worse.
+#define WIN 0
+#define WN ((4 + 2 * WIN) * (4 + 2 * WIN))
+
+float sad(ivec2 origin, ivec2 d, float refWin[WN]) {
     float s = 0.0;
     int i = 0;
-    for (int y = -1; y < 5; ++y)
-        for (int x = -1; x < 5; ++x) s += abs(refWin[i++] - loadTgt(origin + ivec2(x, y) + d));
+    for (int y = -WIN; y < 4 + WIN; ++y)
+        for (int x = -WIN; x < 4 + WIN; ++x) s += abs(refWin[i++] - loadTgt(origin + ivec2(x, y) + d));
     return s;
 }
 
@@ -43,11 +48,11 @@ void main() {
     ivec2 origin = fb * pc.fineBlock;
     ivec2 cb = clamp(origin / pc.coarseBlock, ivec2(0), pc.blocks - 1);
 
-    float refWin[36];
+    float refWin[WN];
     {
         int i = 0;
-        for (int y = -1; y < 5; ++y)
-            for (int x = -1; x < 5; ++x) refWin[i++] = loadRef(origin + ivec2(x, y));
+        for (int y = -WIN; y < 4 + WIN; ++y)
+            for (int x = -WIN; x < 4 + WIN; ++x) refWin[i++] = loadRef(origin + ivec2(x, y));
     }
 
     vec2 cands[11];

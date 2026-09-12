@@ -5,8 +5,10 @@
 #
 # Options map to BDEX_FG_* environment variables (see README.md):
 #   -m, --multiplier N     frames per real frame: 2 (default), 3 or 4
-#   -f, --fullres          compute the flow at full resolution (slower, sharper)
-#   -p, --present-mode M   fifo | mailbox | immediate | relaxed | app (default)
+#   -x, --extrapolate      predict frames instead of interpolating: no added latency
+#   -P, --preset NAME      quality | balanced (default) | performance
+#   -f, --fullres          compute the flow at full resolution (= --preset quality's flow)
+#   -p, --present-mode M   auto (default: fifo -> mailbox) | app | fifo | mailbox | immediate | relaxed
 #   -d, --debug M          none | flow | split | passthrough
 #   -l, --log N            log level 0..3
 #       --profile          print GPU timings with the statistics
@@ -16,7 +18,7 @@
 #   -h, --help
 set -euo pipefail
 
-usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; }
 
 check() {
   if ! command -v vulkaninfo >/dev/null; then
@@ -37,6 +39,8 @@ env_vars=(BDEX_FG=1)
 while [ $# -gt 0 ]; do
   case "$1" in
     -m|--multiplier)   env_vars+=("BDEX_FG_MULTIPLIER=$2"); shift 2 ;;
+    -x|--extrapolate)  env_vars+=("BDEX_FG_MODE=extrapolate"); shift ;;
+    -P|--preset)       env_vars+=("BDEX_FG_PRESET=$2"); shift 2 ;;
     -f|--fullres)      env_vars+=("BDEX_FG_FULLRES=1"); shift ;;
     -p|--present-mode) env_vars+=("BDEX_FG_PRESENT_MODE=$2"); shift 2 ;;
     -d|--debug)        env_vars+=("BDEX_FG_DEBUG=$2"); shift 2 ;;
