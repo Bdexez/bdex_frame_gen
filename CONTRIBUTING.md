@@ -1,37 +1,37 @@
-# Contribuer à bdex-framegen
+# Contributing to bdex-framegen
 
-Merci de vous intéresser au projet. Rapports de bugs, retours de tests sur de
-vrais jeux, idées et pull requests sont les bienvenus.
+Thanks for your interest in the project. Bug reports, test reports from real
+games, ideas and pull requests are all welcome.
 
-## Signaler un bug ou un jeu qui ne fonctionne pas
+## Reporting a bug or a game that does not work
 
-Le plus utile est un retour de test sur un vrai jeu, car le layer n'a pour
-l'instant été validé qu'avec la démo, `vkcube`, `vkgears` et le conteneur
-Steam Linux Runtime. Ouvrez une issue avec :
+The most useful thing is a test report from a real game: so far the layer has
+only been validated with the demo, `vkcube`, `vkgears` and the Steam Linux
+Runtime container. Open an issue with:
 
-1. **Le log du layer** en verbosité 2 (ou 3 si le problème survient au
-   chargement) :
+1. **The layer log** at verbosity 2 (or 3 if the problem happens while
+   loading):
    ```
    BDEX_FG=1 BDEX_FG_LOG=2 BDEX_FG_LOG_FILE=/tmp/bdex.log %command%
    ```
-   Les premières lignes indiquent la configuration, le GPU, la file utilisée
-   et le format de swapchain ; c'est souvent suffisant pour comprendre.
-2. **Votre environnement** : distribution, GPU et pilote (`vulkaninfo --summary`),
-   compositeur (Wayland/X11), version du loader Vulkan.
-3. **Le jeu** et la façon de le lancer (natif, DXVK, VKD3D-Proton, version de
-   Proton), ainsi que les options de lancement.
-4. **Le symptôme** : pas d'effet, crash, image noire, artefacts, saccades…
-   Pour les artefacts, une capture avec `BDEX_FG_DEBUG=flow` et une autre avec
-   `BDEX_FG_DEBUG=split` aident beaucoup.
+   The first lines show the configuration, the GPU, the queue in use and the
+   swapchain format; that is often enough to understand what is going on.
+2. **Your environment**: distribution, GPU and driver (`vulkaninfo --summary`),
+   compositor (Wayland/X11), Vulkan loader version.
+3. **The game** and how it is launched (native, DXVK, VKD3D-Proton, Proton
+   version), including the launch options.
+4. **The symptom**: no effect, crash, black screen, artefacts, stutter…
+   For artefacts, one screenshot with `BDEX_FG_DEBUG=flow` and one with
+   `BDEX_FG_DEBUG=split` help a lot.
 
-Si le jeu plante, vérifiez d'abord qu'il fonctionne avec
-`BDEX_FG_DEBUG=passthrough` (layer chargé, swapchain virtualisée, mais aucune
-génération) : cela distingue un problème d'intégration Vulkan d'un problème
-dans les shaders.
+If the game crashes, first check that it works with
+`BDEX_FG_DEBUG=passthrough` (layer loaded, swapchain virtualised, but no
+generation): this separates a Vulkan integration problem from a problem in
+the shaders.
 
-## Proposer une modification
+## Proposing a change
 
-### Mise en place
+### Setup
 
 ```sh
 git clone git@github.com:Bdexez/bdex_frame_gen.git
@@ -41,57 +41,59 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
-Le layer se teste sans l'installer :
+The layer can be tested without installing it:
 
 ```sh
 VK_ADD_IMPLICIT_LAYER_PATH=$PWD/build/layer BDEX_FG=1 ./build/demo/bdex_demo --fps 30
 ```
 
-### Avant d'ouvrir une pull request
+### Before opening a pull request
 
-- `ctest` passe (tests unitaires + test bout-en-bout).
-- Le layer reste propre sous la validation Khronos, synchronisation comprise :
+- `ctest` passes (unit tests + end-to-end test).
+- The layer stays clean under the Khronos validation layer, synchronization
+  validation included:
   ```sh
   VK_LOADER_LAYERS_ENABLE='*validation' BDEX_FG=1 build/demo/bdex_demo --fps 30 --frames 90
   ```
-  (pour activer la validation de synchronisation, voir `khronos_validation.validate_sync`
-  dans un fichier `vk_layer_settings.txt`).
-- Pour toute modification des shaders ou de l'interpolation, joignez les
-  chiffres de `tools/run_eval.sh build 40` avant / après, ainsi que
-  `BDEX_EVAL_ARGS="--speed 2.5" tools/run_eval.sh build 40` pour les
-  mouvements rapides. Une amélioration de PSNR sur la démo n'est pas une
-  preuve absolue, mais une régression en est une bonne.
-- Pour toute modification des performances, joignez une ligne de statistiques
-  avec `BDEX_FG_PROFILE=1` avant / après.
-- Une PR = un sujet. Les commits sont décrits à l'impératif, avec un corps
-  qui explique *pourquoi* quand ce n'est pas évident.
-- Ajoutez une entrée dans `CHANGELOG.md` (section *Non publié*).
+  (to enable synchronization validation, see `khronos_validation.validate_sync`
+  in a `vk_layer_settings.txt` file).
+- For any change to the shaders or the interpolation, attach the before/after
+  numbers from `tools/run_eval.sh build 40`, as well as
+  `BDEX_EVAL_ARGS="--speed 2.5" tools/run_eval.sh build 40` for fast motion.
+  A PSNR improvement on the demo is not absolute proof, but a regression is a
+  good one.
+- For any change affecting performance, attach a statistics line with
+  `BDEX_FG_PROFILE=1` before and after.
+- One PR = one topic. Commit messages are written in the imperative, with a
+  body explaining *why* when it is not obvious.
+- Add an entry to `CHANGELOG.md` (*Unreleased* section).
 
 ### Style
 
-- C++20, `-Wall -Wextra` sans avertissement. Pas de dépendance externe au-delà
-  des en-têtes Vulkan (le layer est chargé dans le processus du jeu : il doit
-  rester léger et ne rien tirer de surprenant).
-- Les fonctions Vulkan sont toujours appelées via les tables de dispatch
-  (`dev.vt.*`, `inst->vt.*`), jamais via le loader.
-- Tout objet dispatchable créé par le layer (queue, command buffer) passe par
-  `adoptDispatch()` ; tout objet créé doit être détruit dans `destroyAll()`.
-- Les shaders sont compilés pour SPIR-V 1.0 (`--target-env=vulkan1.0`) afin de
-  fonctionner avec les applications Vulkan 1.0 ; n'utilisez pas d'extension
-  SPIR-V sans repli.
-- Les options de configuration se déclarent dans `config.h`, se parsent dans
-  `Config::apply()`, sont testées dans `tests/test_config.cpp` et documentées
-  dans le tableau du README.
+- C++20, `-Wall -Wextra` with no warnings. No external dependency beyond the
+  Vulkan headers (the layer is loaded into the game's process: it must stay
+  light and pull in nothing surprising).
+- Vulkan functions are always called through the dispatch tables
+  (`dev.vt.*`, `inst->vt.*`), never through the loader.
+- Every dispatchable object created by the layer (queue, command buffer) goes
+  through `adoptDispatch()`; every object created must be destroyed in
+  `destroyAll()`.
+- Shaders are compiled for SPIR-V 1.0 (`--target-env=vulkan1.0`) so that they
+  work with Vulkan 1.0 applications; do not use a SPIR-V extension without a
+  fallback.
+- Configuration options are declared in `config.h`, parsed in
+  `Config::apply()`, tested in `tests/test_config.cpp` and documented in the
+  README table.
 
-## Idées de contributions
+## Ideas for contributions
 
-- Retours de tests sur des jeux DXVK / VKD3D-Proton et sur NVIDIA / Intel.
-- Estimation de flux plus fine (flux dense par pixel, gestion des occlusions).
-- Indicateur à l'écran (fps réel / affiché) sans dépendre du format de swapchain.
-- Prise en charge de formats supplémentaires (HDR 10 bits avec espace colorimétrique PQ).
-- Paquets pour les distributions (PKGBUILD, Flatpak).
+- Test reports from DXVK / VKD3D-Proton games and from NVIDIA / Intel GPUs.
+- Finer flow estimation (dense per-pixel flow, occlusion handling).
+- On-screen indicator (real / displayed fps) independent of the swapchain format.
+- Support for more formats (10-bit HDR with the PQ colour space).
+- Distribution packages (PKGBUILD, Flatpak).
 
-## Licence
+## License
 
-En contribuant, vous acceptez que votre code soit publié sous la licence MIT
-du projet.
+By contributing, you agree that your code is released under the project's MIT
+license.
