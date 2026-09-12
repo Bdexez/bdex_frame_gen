@@ -77,3 +77,30 @@ TEST(config_scene_cut_ordering) {
     unsetenv("BDEX_FG_SCENE_CUT_LOW");
     unsetenv("BDEX_FG_SCENE_CUT_HIGH");
 }
+
+TEST(config_sections) {
+    const std::string path = "/tmp/bdex_test_sections.conf";
+    {
+        std::ofstream f(path);
+        f << "multiplier = 2\n[MyGame.exe]\nmultiplier = 3\n[*]\nlevels = 5\n[other]\nlevels = 1\n";
+    }
+    Config c;
+    c.loadFile(path, "/games/bin/mygame.exe");
+    CHECK(c.multiplier == 3);   // section matched the process name
+    CHECK(c.levels == 5);       // [*] applies everywhere
+    Config d;
+    d.loadFile(path, "C:\\Games\\Other.EXE");
+    CHECK(d.multiplier == 2);
+    CHECK(d.levels == 1);
+    remove(path.c_str());
+}
+
+TEST(config_section_matching) {
+    std::vector<std::string> names = {"game", "wine64-preloader"};
+    CHECK(Config::sectionMatches("Game.exe", names));
+    CHECK(Config::sectionMatches("game", names));
+    CHECK(Config::sectionMatches("*", names));
+    CHECK(Config::sectionMatches("", names));
+    CHECK(!Config::sectionMatches("othergame", names));
+    CHECK(!Config::processNames().empty());  // at least our own executable
+}
