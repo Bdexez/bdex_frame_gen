@@ -49,7 +49,7 @@ VirtualSwapchain::VirtualSwapchain(DeviceData& dev, const VkSwapchainCreateInfoK
         throw;
     }
     statsStart_ = clock::now();
-    dumping_ = (generating_ || upscaling_) && !dev_.config.dumpDir.empty();
+    dumping_ = (generating_ || (fg_ && fg_->packReal())) && !dev_.config.dumpDir.empty();
     static uint32_t nextDumpId = 0;
     dumpId_ = nextDumpId++;
     BDEX_INFO("swapchain %ux%u format %d: %zu virtual images, %zu real images, present mode %s, generation %s",
@@ -158,7 +158,8 @@ void VirtualSwapchain::createVirtualImages(const VkSwapchainCreateInfoKHR& appIn
     dev_.inst->vt.GetPhysicalDeviceFormatProperties(dev_.physDev, format_, &fp);
     const VkFormatFeatureFlags feats = fp.optimalTilingFeatures;
     VkImageUsageFlags usage = appInfo.imageUsage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-    if (forGeneration || upscaling_) usage |= VK_IMAGE_USAGE_SAMPLED_BIT;  // upscaler samples the source
+    if (forGeneration || upscaling_ || dev_.config.overlay)
+        usage |= VK_IMAGE_USAGE_SAMPLED_BIT;  // the upscale/HUD pass samples the source
     auto dropUnless = [&](VkImageUsageFlags bit, VkFormatFeatureFlags feature) {
         if ((usage & bit) && !(feats & feature)) usage &= ~bit;
     };
@@ -413,6 +414,10 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     const int mult = generating_ ? std::max(1, dev_.config.multiplier) : 1;
     const bool interpolate = generating_ && prevIndex_ >= 0 && mult > 1;
     const int prev = prevIndex_;
+    if (dev_.config.overlay) {
+        const int gfps = frameIntervalMs_ > 0.05 ? static_cast<int>(1000.0 / frameIntervalMs_ + 0.5) : 0;
+        fg_->setHud(gfps, gfps * (interpolate ? mult : 1));
+    }
 
     // Synthesis: analyse the application's frame (in place, no copy) and
     // generate the intermediate frames into the internal output images.
@@ -436,15 +441,16 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
                 fg_->recordInterpolate(slot.cmd, static_cast<uint32_t>(prev), imageIndex, base + float(i) / mult, static_cast<uint32_t>(i - 1));
             fg_->profileMark(slot.cmd, slotIdx, FrameGen::StageInterp);
         }
-        // Upscale the real frame into the internal image the worker presents.
-        if (upscaling_) fg_->recordUpscaleReal(slot.cmd, imageIndex);
+        // Resample the real frame into the internal image the worker presents
+        // (for upscaling, or so the HUD can be drawn on it).
+        if (fg_->packReal()) fg_->recordUpscaleReal(slot.cmd, imageIndex);
         if (dumping_) {
             if (interpolate) fg_->recordDump(slot.cmd, 0, imageIndex);
             fg_->recordDump(slot.cmd, 1, imageIndex);
         }
         fg_->recordReleaseSources(slot.cmd, prev, static_cast<int>(imageIndex));
-    } else if (upscaling_) {
-        // Pure upscaling (no frame generation): resample the one real frame.
+    } else if (fg_->packReal()) {
+        // No frame generation: still process the one real frame (upscale / HUD).
         fg_->recordAcquireSources(slot.cmd, -1, static_cast<int>(imageIndex));
         fg_->recordUpscaleReal(slot.cmd, imageIndex);
         if (dumping_) fg_->recordDump(slot.cmd, 1, imageIndex);
@@ -654,7 +660,6 @@ VkResult VirtualSwapchain::presentOne(const Job& job, int index, const std::func
     si.pSignalSemaphores = &realImages_[ri].readySem;
 
     VkPresentIdKHR presentId{VK_STRUCTURE_TYPE_PRESENT_ID_KHR};
-    VkSwapchainPresentFenceInfoEXT presentFence{VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_EXT};
     VkSwapchainPresentModeInfoEXT presentMode{VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODE_INFO_EXT};
     const VkPresentModeKHR presentModeValue = static_cast<VkPresentModeKHR>(job.presentMode);
     VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
@@ -670,12 +675,12 @@ VkResult VirtualSwapchain::presentOne(const Job& job, int index, const std::func
         *tail = &presentId;
         tail = &presentId.pNext;
     }
-    if (real && job.presentFence) {
-        presentFence.swapchainCount = 1;
-        presentFence.pFences = &job.presentFence;
-        *tail = &presentFence;
-        tail = &presentFence.pNext;
-    }
+    // The application's present fence (VK_EXT_swapchain_maintenance1) signals
+    // when its swapchain image is free to reuse. Its image is our *virtual*
+    // image, freed once our copy has read it — not when the real frame finishes
+    // displaying. So we signal that fence ourselves after the copy (below),
+    // instead of tying it to the real present; otherwise the game blocks
+    // forever waiting on a display completion that our async worker owns.
     if (job.presentMode >= 0) {
         presentMode.swapchainCount = 1;
         presentMode.pPresentModes = &presentModeValue;
@@ -686,6 +691,12 @@ VkResult VirtualSwapchain::presentOne(const Job& job, int index, const std::func
     std::lock_guard<std::mutex> qlock(dev_.queueMutex(dev_.queue));
     r = dev_.vt.QueueSubmit(dev_.queue, 1, &si, slot.fence);
     if (r < 0) return r;
+    // Signal the application's present fence after the copy (queue-ordered): its
+    // virtual image is then free to reuse, so its next frame can proceed.
+    if (real && job.presentFence) {
+        VkSubmitInfo fs{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        dev_.vt.QueueSubmit(dev_.queue, 1, &fs, job.presentFence);
+    }
     slot.submitted = true;
     if (onSubmitted) (*onSubmitted)();
     if (real)

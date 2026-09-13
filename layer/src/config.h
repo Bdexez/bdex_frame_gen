@@ -33,6 +33,7 @@ struct Config {
     float renderScale   = 1.0f;   // render resolution / display resolution, 0.5..1.0 (1.0 = no upscaling)
     int   upscaleFilter = 2;      // 0 bilinear, 1 Catmull-Rom (bicubic), 2 Lanczos-2
     float sharpness     = 0.0f;   // contrast-adaptive sharpening after upscaling, 0 = off .. 1 = strong
+    bool  overlay       = false;  // draw an on-screen fps HUD (game fps -> output fps) on every frame
     int   presentMode   = -2;     // VkPresentModeKHR override; -1 = keep the game's; -2 = auto (fifo -> mailbox)
     bool  pacing        = true;   // sleep-based pacing when the present mode is not FIFO
     Debug debug         = Debug::None;

@@ -29,6 +29,9 @@ layout(push_constant) uniform PC {
     ivec2 srcSize;
     uint encoding;
     int filterMode;   // 0 bilinear, 1 Catmull-Rom (bicubic), 2 Lanczos-2
+    int overlay;      // draw the fps HUD
+    int hudGame;      // game fps (for the HUD)
+    int hudOut;       // output fps (for the HUD)
 } pc;
 
 void store(ivec2 p, vec4 c) {
@@ -76,7 +79,12 @@ void main() {
     if (any(greaterThanEqual(p, pc.outSize))) return;
 
     vec2 uv = (vec2(p) + 0.5) / vec2(pc.outSize);
-    if (pc.filterMode == 0) { store(p, texture(srcTex, uv)); return; }  // hardware bilinear
+    if (pc.filterMode == 0) {  // hardware bilinear
+        vec4 c = texture(srcTex, uv);
+        if (pc.overlay != 0) { vec3 hc; if (hudPixel(p, pc.hudGame, pc.hudOut, hc)) c = vec4(hc, 1.0); }
+        store(p, c);
+        return;
+    }
 
     // Reconstruct at the source position with a separable 4x4 kernel. The
     // sampler is clamp-to-edge; every fetch lands on a texel centre, so linear
@@ -97,5 +105,7 @@ void main() {
             wsum += w;
         }
     }
-    store(p, acc / wsum);
+    vec4 c = acc / wsum;
+    if (pc.overlay != 0) { vec3 hc; if (hudPixel(p, pc.hudGame, pc.hudOut, hc)) c = vec4(hc, 1.0); }
+    store(p, c);
 }
