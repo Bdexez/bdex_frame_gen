@@ -23,8 +23,8 @@ struct Config {
     Debug debug         = Debug::None;
     int   logLevel      = 1;
     std::string logFile;
-    float sceneCutLow   = 0.10f;  // mean matching cost above which we start fading to the real frame
-    float sceneCutHigh  = 0.22f;  // ... and above which the generated frame is a plain duplicate
+    float sceneCutLow   = 0.05f;  // mean matching cost above which we start fading to the real frame
+    float sceneCutHigh  = 0.09f;  // ... and above which the generated frame is a plain duplicate
     float smoothness    = 0.004f; // penalty per pixel of deviation from the coarse prediction
     float zeroBias      = 0.002f; // bias toward zero motion (helps static HUDs)
     bool  refine        = true;   // flow refinement pass (better motion boundaries, costs GPU time)

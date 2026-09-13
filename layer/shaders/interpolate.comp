@@ -103,6 +103,11 @@ void main() {
     float wb = t / ((eb + eps) * (eb + eps));
     vec4 c = (wf * cf + wb * cb) / (wf + wb);
 
+    // Neither candidate explains the pixel (occlusion the flow could not
+    // resolve): a plain cross-fade is less objectionable than a smeared edge.
+    float bad = smoothstep(0.12, 0.25, min(ef, eb));
+    c = mix(c, mix(texture(prevTex, uv), texture(curTex, uv), t), bad);
+
     vec4 cur = texture(curTex, uv);
     float cut = smoothstep(pc.cutLow, pc.cutHigh, cost.meanCost);
     c = mix(c, cur, cut);

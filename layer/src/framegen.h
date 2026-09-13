@@ -104,6 +104,8 @@ private:
     bool profileWritten_[kProfileSlots][StageCount + 1]{};
     float timestampPeriodNs_ = 1.f;
     void* dumpMapped_[2]{};
+    AllocatedBuffer costReadback_;
+    void* costMapped_ = nullptr;
     VkSampler sampler_ = VK_NULL_HANDLE;
     VkDescriptorPool pool_ = VK_NULL_HANDLE;
 

@@ -9,6 +9,7 @@ layout(push_constant) uniform PC {
     vec2 resolution;
     float time;
     uint frame;
+    uint variant;  // scene variant: 1 = different backdrop/objects (scene cut test)
 } pc;
 
 float sdBox(vec2 p, vec2 b) { vec2 d = abs(p) - b; return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0); }
@@ -46,6 +47,12 @@ void main() {
     vec2 g = floor((uv + vec2(t * 0.15, 0.0)) * 8.0);
     float chk = mod(g.x + g.y, 2.0);
     vec3 col = mix(vec3(0.12, 0.13, 0.18), vec3(0.18, 0.2, 0.26), chk);
+    if (pc.variant == 1u) {
+        // Completely different scene: warm vertical stripes scrolling the other way.
+        float st = step(0.5, fract((uv.x - t * 0.3) * 6.0));
+        col = mix(vec3(0.45, 0.2, 0.1), vec3(0.7, 0.5, 0.2), st);
+        t = -t * 1.7 + 100.0;
+    }
 
     // Fast horizontal bar bouncing across the screen.
     float bx = 0.5 * aspect + 0.45 * aspect * sin(t * 2.2);

@@ -3,7 +3,7 @@
 // can be exercised without a game.
 //
 //   bdex_demo [--fps N] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]
-//             [--deterministic] [--speed X]
+//             [--deterministic] [--speed X] [--srgb] [--cut N]
 //
 // Run it with BDEX_FG=1 (and VK_LAYER_PATH pointing at the build tree if the
 // layer is not installed) to see the generated frames.
@@ -38,12 +38,14 @@ struct Options {
     bool deterministic = false;  // animation time advances by 1/fps per frame instead of wall clock
     bool srgb = false;           // request an sRGB swapchain format
     float speed = 1.0f;          // animation speed multiplier
+    long cutEvery = 0;           // switch scene every N frames (0 = never), to test scene cut handling
 };
 
 struct PushConstants {
     float resolution[2];
     float time;
     uint32_t frame;
+    uint32_t variant;
 };
 
 class Demo {
@@ -387,7 +389,8 @@ void Demo::drawFrame() {
     const double animTime = opt_.deterministic
                                 ? frameCount_ / opt_.fps
                                 : std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-    PushConstants pc{{float(extent_.width), float(extent_.height)}, float(animTime * opt_.speed), frameCount_};
+    PushConstants pc{{float(extent_.width), float(extent_.height)}, float(animTime * opt_.speed), frameCount_,
+                     opt_.cutEvery > 0 ? uint32_t((frameCount_ / opt_.cutEvery) & 1) : 0u};
     vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRenderPass(cmd);
@@ -491,6 +494,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--frames") o.frames = atol(value().c_str());
         else if (a == "--deterministic") o.deterministic = true;
         else if (a == "--srgb") o.srgb = true;
+        else if (a == "--cut") o.cutEvery = atol(value().c_str());
         else if (a == "--speed") o.speed = atof(value().c_str());
         else if (a == "--size") {
             std::string v = value();
@@ -503,7 +507,7 @@ Options parseArgs(int argc, char** argv) {
             else throw std::runtime_error("bad --mode");
         } else if (a == "-h" || a == "--help") {
             printf("usage: bdex_demo [--fps N] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]\n"
-                   "                 [--deterministic] [--speed X] [--srgb]\n");
+                   "                 [--deterministic] [--speed X] [--srgb] [--cut N]\n");
             exit(0);
         } else {
             throw std::runtime_error("unknown option " + a);

@@ -52,6 +52,7 @@ namespace bdex {
     X(MapMemory)                      \
     X(UnmapMemory)                    \
     X(CmdCopyImageToBuffer)           \
+    X(CmdCopyBuffer)                  \
     X(CreateSampler)                  \
     X(DestroySampler)                 \
     X(CreateShaderModule)             \
