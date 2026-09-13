@@ -172,3 +172,12 @@ Arborescence :
 ## Licence
 
 MIT.
+
+## Validation
+
+Le layer est propre sous `VK_LAYER_KHRONOS_validation` (y compris la validation
+de synchronisation) avec la démo, `vkcube` et `vkgears` :
+
+```sh
+VK_LOADER_LAYERS_ENABLE='*validation' BDEX_FG=1 build/demo/bdex_demo --fps 30 --frames 90
+```
