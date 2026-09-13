@@ -23,6 +23,8 @@ struct Config {
     int   multiplier    = 2;      // generated frames per real frame: 2 = x2, 3 = x3, 4 = x4
     int   levels        = 4;      // optical flow pyramid levels
     bool  lowLatency    = false;  // block the game until the previous frames are handed to the display
+    bool  syncPresent   = false;  // block the game's present call until the worker has presented this frame (D3D12/VKD3D compat test)
+    bool  hidePresentExt = true;  // hide present-timing extensions (swapchain_maintenance1, present_id/wait) from the game; their semantics target the real swapchain we virtualise, and VKD3D-Proton hangs otherwise
     bool  extrapolate   = false;  // predict the frame after the last one instead of interpolating (no added latency)
     int   flowScale     = 0;      // finest flow level at 1/flowScale resolution: 1, 2, 4; 0 = auto from the resolution
     int   searchRadius  = 4;      // block matching search radius at the coarsest level, 1..4

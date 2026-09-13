@@ -76,15 +76,23 @@ void VirtualSwapchain::createReal(const VkSwapchainCreateInfoKHR& appInfo) {
         if (presentModeSupported(dev_, appInfo.surface, mode)) ci.presentMode = mode;
         else BDEX_WARN("present mode %s not supported by the surface, keeping %s", presentModeName(mode), presentModeName(appInfo.presentMode));
     } else if (dev_.config.presentMode == -2 &&
-               (ci.presentMode == VK_PRESENT_MODE_FIFO_KHR || ci.presentMode == VK_PRESENT_MODE_FIFO_RELAXED_KHR) &&
-               presentModeSupported(dev_, appInfo.surface, VK_PRESENT_MODE_MAILBOX_KHR)) {
-        // FIFO queues our extra frames in the presentation engine, which is
-        // pure display latency (2-3 refreshes measured), and a FIFO present
-        // can block for a refresh while we hold a queue the game may share.
-        // Mailbox never blocks nor tears, and our pacing keeps the cadence.
-        BDEX_INFO("presenting with mailbox instead of %s (present_mode=app keeps the game's mode)",
-                  presentModeName(ci.presentMode));
-        ci.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+               (ci.presentMode == VK_PRESENT_MODE_FIFO_KHR || ci.presentMode == VK_PRESENT_MODE_FIFO_RELAXED_KHR)) {
+        // Never present the real swapchain in FIFO: our worker presents
+        // asynchronously, and a FIFO present hard-hangs Direct3D translation
+        // layers (DXVK/VKD3D) after one frame. FIFO also queues our extra
+        // frames in the presentation engine (2-3 refreshes of latency). Prefer
+        // mailbox (no tearing), fall back to immediate; keep our own pacing.
+        VkPresentModeKHR want = VK_PRESENT_MODE_MAX_ENUM_KHR;
+        if (presentModeSupported(dev_, appInfo.surface, VK_PRESENT_MODE_MAILBOX_KHR)) want = VK_PRESENT_MODE_MAILBOX_KHR;
+        else if (presentModeSupported(dev_, appInfo.surface, VK_PRESENT_MODE_IMMEDIATE_KHR)) want = VK_PRESENT_MODE_IMMEDIATE_KHR;
+        if (want != VK_PRESENT_MODE_MAX_ENUM_KHR) {
+            BDEX_INFO("presenting with %s instead of %s (present_mode=app keeps the game's mode)",
+                      presentModeName(want), presentModeName(ci.presentMode));
+            ci.presentMode = want;
+        } else {
+            BDEX_WARN("neither mailbox nor immediate present modes are available; keeping %s (may hang some games)",
+                      presentModeName(ci.presentMode));
+        }
     }
     presentMode_ = ci.presentMode;
 
@@ -522,6 +530,16 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     }
     workerCv_.notify_one();
 
+    // Synchronous presentation: block the game's present call until the worker
+    // has actually presented this frame. Some Direct3D-12 translation layers
+    // (VKD3D-Proton) tie their frame pacing to a synchronous present and hang
+    // otherwise. This serialises the worker with the game, so it is a
+    // compatibility fallback, not the default.
+    if (dev_.config.syncPresent) {
+        std::unique_lock<std::mutex> wlock(workerMutex_);
+        waitWorkerIdle(wlock);
+    }
+
     prevIndex_ = static_cast<int>(imageIndex);
     parity_ ^= 1;
 
@@ -595,10 +613,12 @@ void VirtualSwapchain::runJob(const Job& job) {
             pendingResult_ = r;
             return;
         }
-        if (r == VK_SUBOPTIMAL_KHR) {
-            std::lock_guard<std::mutex> wlock(workerMutex_);
-            if (pendingResult_ == VK_SUCCESS) pendingResult_ = r;
-        }
+        // VK_SUBOPTIMAL is deliberately swallowed: it reports that *our* real
+        // swapchain is no longer optimal, but the application's virtual
+        // swapchain is unaffected, so we must not push it into recreating (some
+        // D3D translation layers hang while recreating). A genuine change fails
+        // the acquire/present with OUT_OF_DATE (r < 0 above), which we do
+        // propagate so the application recreates and we rebuild the real one.
         statsOutFrames_.fetch_add(1, std::memory_order_relaxed);
     }
     markSubmitted();

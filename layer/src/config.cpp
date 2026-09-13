@@ -118,6 +118,8 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
         return true;
     }
     if (key == "low_latency" || key == "lowlatency") return parseBool(value, lowLatency);
+    if (key == "sync_present" || key == "sync")      return parseBool(value, syncPresent);
+    if (key == "hide_present_ext")            return parseBool(value, hidePresentExt);
     if (key == "mode") {
         const std::string v = lower(value);
         if (v == "interpolate" || v == "interp") extrapolate = false;
