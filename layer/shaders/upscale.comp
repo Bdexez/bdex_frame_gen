@@ -1,0 +1,94 @@
+#version 450
+// Spatial upscaler: resamples one image rendered below the display resolution
+// up to the display resolution with a selectable reconstruction filter, then
+// packs the result into the swapchain's storage format (same manual packing as
+// the interpolation shader, so any mandatory storage format works). Used for
+// the real frame; generated frames are synthesised directly at display size.
+#include "common.glsl"
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0) uniform sampler2D srcTex;
+#ifdef OUT_64
+layout(binding = 1, rg32ui) uniform writeonly uimage2D outImg;
+#else
+layout(binding = 1, r32ui) uniform writeonly uimage2D outImg;
+#endif
+
+#define ENC_RGBA8       0u
+#define ENC_BGRA8       1u
+#define ENC_A2B10G10R10 2u
+#define ENC_A2R10G10B10 3u
+#define ENC_RGBA16F     4u
+#define ENC_SRGB_FLAG   0x100u
+
+layout(push_constant) uniform PC {
+    ivec2 outSize;
+    ivec2 srcSize;
+    uint encoding;
+    int filterMode;   // 0 bilinear, 1 Catmull-Rom (bicubic), 2 Lanczos-2
+} pc;
+
+void store(ivec2 p, vec4 c) {
+    uint enc = pc.encoding & 0xffu;
+    if ((pc.encoding & ENC_SRGB_FLAG) != 0u) c.rgb = linearToSrgb(c.rgb);
+    c = clamp(c, 0.0, enc == ENC_RGBA16F ? 65504.0 : 1.0);
+#ifdef OUT_64
+    imageStore(outImg, p, uvec4(packHalf2x16(c.rg), packHalf2x16(c.ba), 0u, 0u));
+#else
+    uint packed;
+    if (enc == ENC_BGRA8) {
+        packed = packUnorm4x8(c.bgra);
+    } else if (enc == ENC_A2B10G10R10) {
+        uvec4 q = uvec4(round(c * vec4(1023.0, 1023.0, 1023.0, 3.0)));
+        packed = q.r | (q.g << 10) | (q.b << 20) | (q.a << 30);
+    } else if (enc == ENC_A2R10G10B10) {
+        uvec4 q = uvec4(round(c * vec4(1023.0, 1023.0, 1023.0, 3.0)));
+        packed = q.b | (q.g << 10) | (q.r << 20) | (q.a << 30);
+    } else {
+        packed = packUnorm4x8(c);
+    }
+    imageStore(outImg, p, uvec4(packed, 0u, 0u, 0u));
+#endif
+}
+
+// Catmull-Rom cubic (B=0, C=0.5): sharp, no ringing at 1x, mild overshoot.
+float cubic(float x) {
+    x = abs(x);
+    if (x < 1.0) return ((1.5 * x - 2.5) * x) * x + 1.0;
+    if (x < 2.0) return ((-0.5 * x + 2.5) * x - 4.0) * x + 2.0;
+    return 0.0;
+}
+
+const float PI = 3.14159265358979;
+float sinc(float x) { return x == 0.0 ? 1.0 : sin(PI * x) / (PI * x); }
+float lanczos2(float x) { x = abs(x); return x < 2.0 ? sinc(x) * sinc(0.5 * x) : 0.0; }
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, pc.outSize))) return;
+
+    vec2 uv = (vec2(p) + 0.5) / vec2(pc.outSize);
+    if (pc.filterMode == 0) { store(p, texture(srcTex, uv)); return; }  // hardware bilinear
+
+    // Reconstruct at the source position with a separable 4x4 kernel. The
+    // sampler is clamp-to-edge; every fetch lands on a texel centre, so linear
+    // filtering returns that texel exactly and the kernel does the weighting.
+    vec2 sp = uv * vec2(pc.srcSize) - 0.5;       // source coordinate (texel-centre convention)
+    vec2 base = floor(sp);
+    vec2 f = sp - base;
+    vec2 invSrc = 1.0 / vec2(pc.srcSize);
+    vec4 acc = vec4(0.0);
+    float wsum = 0.0;
+    for (int dy = -1; dy <= 2; ++dy) {
+        float wy = (pc.filterMode == 2) ? lanczos2(float(dy) - f.y) : cubic(float(dy) - f.y);
+        for (int dx = -1; dx <= 2; ++dx) {
+            float wx = (pc.filterMode == 2) ? lanczos2(float(dx) - f.x) : cubic(float(dx) - f.x);
+            float w = wx * wy;
+            vec2 tuv = (base + vec2(float(dx), float(dy)) + 0.5) * invSrc;
+            acc += texture(srcTex, tuv) * w;
+            wsum += w;
+        }
+    }
+    store(p, acc / wsum);
+}

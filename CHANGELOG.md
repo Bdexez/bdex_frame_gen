@@ -8,6 +8,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Spatial upscaling (`RENDER_SCALE=0.5..1.0`, or `UPSCALE=<ratio>`): the layer
+  advertises a reduced surface size so the game renders fewer pixels, then
+  resamples every presented frame — real and generated — to the display
+  resolution. `UPSCALE_FILTER=bilinear|bicubic|lanczos` (default Lanczos-2)
+  selects the reconstruction filter; generated frames are synthesised directly
+  at display resolution. Works with or without frame generation. Requires a
+  fixed-size surface (X11 / Xwayland, i.e. most games via Proton); Wayland
+  surfaces that let the client choose the size are presented unscaled.
+
 - `MODE=extrapolate`: the real frame is presented immediately and the
   generated frames are predicted from the motion of the last two, removing
   the half-frame delay of interpolation. Predicted frames still pending when

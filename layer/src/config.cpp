@@ -104,6 +104,21 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     }
     if (key == "search" || key == "search_radius") return parseInt(value, searchRadius, 1, 4);
     if (key == "search_fine")                 return parseInt(value, searchFine, 1, 4);
+    if (key == "render_scale")                return parseFloat(value, renderScale, 0.5f, 1.0f);
+    if (key == "upscale") {  // display / render ratio, e.g. 1.5 -> renderScale 0.667
+        float ratio;
+        if (!parseFloat(value, ratio, 1.0f, 2.0f)) return false;
+        renderScale = 1.0f / ratio;
+        return true;
+    }
+    if (key == "upscale_filter") {
+        const std::string v = lower(value);
+        if (v == "bilinear" || v == "0") upscaleFilter = 0;
+        else if (v == "bicubic" || v == "catmull" || v == "catmull-rom" || v == "1") upscaleFilter = 1;
+        else if (v == "lanczos" || v == "lanczos2" || v == "2") upscaleFilter = 2;
+        else return false;
+        return true;
+    }
     if (key == "pacing")                      return parseBool(value, pacing);
     if (key == "log" || key == "log_level")   return parseInt(value, logLevel, 0, 3);
     if (key == "log_file")                    { logFile = value; return true; }

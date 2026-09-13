@@ -102,7 +102,9 @@ private:
     std::mutex mutex_;   // application-side state (acquire / present)
     VkSwapchainKHR real_ = VK_NULL_HANDLE;
     VkFormat format_ = VK_FORMAT_UNDEFINED;
-    VkExtent2D extent_{};
+    VkExtent2D extent_{};         // render resolution (what the application renders into)
+    VkExtent2D displayExtent_{};  // real swapchain resolution (== extent_ unless upscaling)
+    bool upscaling_ = false;
     VkPresentModeKHR presentMode_ = VK_PRESENT_MODE_FIFO_KHR;
 
     std::vector<VirtualImage> virtualImages_;

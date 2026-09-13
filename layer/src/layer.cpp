@@ -85,6 +85,7 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateInstance(const VkInstanceCreateInfo* pCreat
     auto data = std::make_unique<InstanceData>();
     data->instance = *pInstance;
     data->vt.load(*pInstance, gpa);
+    data->config = Config::load();
     if (pCreateInfo->pApplicationInfo && pCreateInfo->pApplicationInfo->apiVersion)
         data->apiVersion = pCreateInfo->pApplicationInfo->apiVersion;
     {
@@ -135,6 +136,38 @@ VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceExtensionProperties(VkPhysicalDevi
     InstanceData* inst = getInstance(dispatchKey(physDev));
     if (!inst) return VK_ERROR_INITIALIZATION_FAILED;
     return inst->vt.EnumerateDeviceExtensionProperties(physDev, pLayerName, pCount, pProps);
+}
+
+// ---------------------------------------------------------------------------
+// Surface capabilities: when upscaling is on, advertise a reduced current
+// extent so the game renders fewer pixels. The layer's real swapchain still
+// uses the true display size (createReal queries the driver directly).
+// ---------------------------------------------------------------------------
+
+VkExtent2D scaledRenderExtent(VkExtent2D display, float renderScale) {
+    // Even dimensions, floored to a small minimum. Not clamped to the surface's
+    // minImageExtent: fixed-size (X11) surfaces report min == current == max, so
+    // clamping there would undo the reduction. The application's swapchain is
+    // virtual (never reaches the driver), so it needs no driver-valid extent.
+    uint32_t w = std::max(16u, static_cast<uint32_t>(display.width * renderScale + 0.5f) & ~1u);
+    uint32_t h = std::max(16u, static_cast<uint32_t>(display.height * renderScale + 0.5f) & ~1u);
+    return {std::min(w, display.width), std::min(h, display.height)};
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL GetPhysicalDeviceSurfaceCapabilitiesKHR(VkPhysicalDevice physDev, VkSurfaceKHR surface,
+                                                                       VkSurfaceCapabilitiesKHR* pCaps) {
+    InstanceData* inst = getInstance(dispatchKey(physDev));
+    if (!inst) return VK_ERROR_INITIALIZATION_FAILED;
+    VkResult r = inst->vt.GetPhysicalDeviceSurfaceCapabilitiesKHR(physDev, surface, pCaps);
+    const Config& cfg = inst->config;
+    if (r >= 0 && cfg.enabled && cfg.renderScale < 0.999f &&
+        pCaps->currentExtent.width != UINT32_MAX && pCaps->currentExtent.width > 0) {
+        VkExtent2D reduced = scaledRenderExtent(pCaps->currentExtent, cfg.renderScale);
+        pCaps->currentExtent = reduced;
+        pCaps->minImageExtent = {std::min(pCaps->minImageExtent.width, reduced.width),
+                                 std::min(pCaps->minImageExtent.height, reduced.height)};
+    }
+    return r;
 }
 
 // ---------------------------------------------------------------------------
@@ -490,6 +523,7 @@ const Hook g_instanceHooks[] = {
     HOOK(EnumerateDeviceLayerProperties),
     HOOK(EnumerateDeviceExtensionProperties),
     HOOK(CreateDevice),
+    HOOK(GetPhysicalDeviceSurfaceCapabilitiesKHR),
 };
 
 const Hook g_deviceHooks[] = {
@@ -527,6 +561,18 @@ namespace {
 // interposed by libvulkan's own symbols when the layer is dlopen'ed into a
 // process that links the loader, so all internal references use these.
 PFN_vkVoidFunction layerGetDeviceProcAddr(VkDevice device, const char* pName);
+
+// The loader dispatches physical-device functions (vkGetPhysicalDevice*)
+// through this entry point, so a layer that only intercepts them via
+// GetInstanceProcAddr is skipped for them. Surface capabilities are hooked
+// here for the render-scale override.
+PFN_vkVoidFunction layerGetPhysicalDeviceProcAddr(VkInstance instance, const char* pName) {
+    if (pName && strcmp(pName, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(GetPhysicalDeviceSurfaceCapabilitiesKHR);
+    InstanceData* inst = instance ? getInstance(dispatchKey(instance)) : nullptr;
+    if (!inst) return nullptr;
+    return inst->vt.GetInstanceProcAddr(instance, pName);
+}
 
 PFN_vkVoidFunction layerGetInstanceProcAddr(VkInstance instance, const char* pName) {
     if (!pName) return nullptr;
@@ -574,6 +620,6 @@ BDEX_EXPORT VkResult VKAPI_CALL vkNegotiateLoaderLayerInterfaceVersion(VkNegotia
     pVersionStruct->loaderLayerInterfaceVersion = 2;
     pVersionStruct->pfnGetInstanceProcAddr = bdex::layerGetInstanceProcAddr;
     pVersionStruct->pfnGetDeviceProcAddr = bdex::layerGetDeviceProcAddr;
-    pVersionStruct->pfnGetPhysicalDeviceProcAddr = nullptr;
+    pVersionStruct->pfnGetPhysicalDeviceProcAddr = bdex::layerGetPhysicalDeviceProcAddr;
     return VK_SUCCESS;
 }
