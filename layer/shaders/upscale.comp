@@ -79,8 +79,11 @@ void main() {
     if (any(greaterThanEqual(p, pc.outSize))) return;
 
     vec2 uv = (vec2(p) + 0.5) / vec2(pc.outSize);
-    if (pc.filterMode == 0) {  // hardware bilinear
-        vec4 c = texture(srcTex, uv);
+    // 1:1 (no actual upscaling, e.g. the HUD-only path): copy the exact texel.
+    // A reconstruction filter is pointless here and its edge taps could darken
+    // the border row/column.
+    if (all(equal(pc.outSize, pc.srcSize)) || pc.filterMode == 0) {
+        vec4 c = all(equal(pc.outSize, pc.srcSize)) ? texelFetch(srcTex, p, 0) : texture(srcTex, uv);
         if (pc.overlay != 0) { vec3 hc; if (hudPixel(p, pc.hudGame, pc.hudOut, hc)) c = vec4(hc, 1.0); }
         store(p, c);
         return;
