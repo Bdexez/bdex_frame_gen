@@ -65,6 +65,13 @@ bool Config::applyPreset(const std::string& name) {
         flowScale = 1; refineAll = true; flowIterations = 2; levels = 5; searchRadius = 4; searchFine = 2;
     } else if (v == "performance" || v == "perf" || v == "fast") {
         flowScale = 4; refineAll = false; flowIterations = 0; levels = 4; searchRadius = 4; searchFine = 2;
+    } else if (v == "latency" || v == "lowlatency" || v == "low_latency") {
+        // Minimal input lag: extrapolation presents the real frame immediately
+        // (no half-frame hold), x2 keeps the least work on the critical path,
+        // balanced flow otherwise. Mailbox (the default present mode) completes
+        // the picture; measured added hold ~0.1 ms vs ~8.4 ms for interpolation.
+        extrapolate = true; multiplier = 2;
+        flowScale = 0; refineAll = true; flowIterations = 1; levels = 4; searchRadius = 4; searchFine = 2;
     } else {
         return false;
     }

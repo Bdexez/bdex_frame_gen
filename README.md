@@ -207,7 +207,7 @@ takes precedence).
 | `BDEX_FG` | – | `1` enables the layer, `0` disables it |
 | `MULTIPLIER` | `2` | frames displayed per rendered frame: 2, 3 or 4 |
 | `MODE` | `interpolate` | `extrapolate` predicts the next frame from the last two: no added latency, more artefacts on abrupt motion |
-| `PRESET` | `balanced` | `quality` (full-resolution flow, ~3× the cost), `balanced`, `performance` (quarter-resolution flow, ~2× cheaper) |
+| `PRESET` | `balanced` | `quality` (full-resolution flow, ~3× the cost), `balanced`, `performance` (quarter-resolution flow, ~2× cheaper), `latency` (extrapolation + x2 for minimal input lag) |
 | `FLOW_SCALE` | `auto` | resolution divisor of the flow: `1`, `2`, `4`; `auto` keeps the flow around 0.5 Mpixel |
 | `LEVELS` | `4` | flow pyramid levels (1–6) |
 | `SEARCH` / `SEARCH_FINE` | `4` / `2` | search radius at the coarsest level / at the finer levels (1–4) |
@@ -287,6 +287,14 @@ statistics), demo at 30 fps on a 60 Hz display:
 | Game's FIFO kept (`PRESENT_MODE=app`) | ≈ 60 ms (frames queue up in the presentation engine) |
 | Default (`auto` → mailbox, interpolation) | ≈ 17 ms (half a game frame, by construction) |
 | `MODE=extrapolate` | **≈ 0.5 ms** |
+
+**For the lowest input lag, use `--preset latency` (or `-x`)**: it selects
+extrapolation with x2 and the default mailbox present mode. Measured on a
+discrete GPU (game 60 fps → 120 fps) the real frame is held ≈ 0.1 ms, versus
+≈ 8 ms for interpolation at the same rate. Keep x2 and mailbox — x3, `fifo`
+and `immediate` all give up that gain. `LOW_LATENCY` does **not** help on top
+of extrapolation (it only throttles the game so it cannot run ahead, which
+matters with FIFO); leave it off here.
 
 Interpolation must hold the real frame back by half a frame interval to show
 the in-between frame first; extrapolation shows the real frame immediately

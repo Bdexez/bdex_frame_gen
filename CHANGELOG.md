@@ -12,9 +12,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   generated frames are predicted from the motion of the last two, removing
   the half-frame delay of interpolation. Predicted frames still pending when
   the next real frame arrives are skipped.
-- `PRESET=quality|balanced|performance`, `FLOW_SCALE=auto|1|2|4` (replaces
-  `FULLRES`, kept as an alias), `REFINE_ALL`, `FLOW_ITERATIONS`,
-  `LOW_LATENCY`.
+- `PRESET=quality|balanced|performance|latency`, `FLOW_SCALE=auto|1|2|4`
+  (replaces `FULLRES`, kept as an alias), `REFINE_ALL`, `FLOW_ITERATIONS`,
+  `LOW_LATENCY`. `PRESET=latency` (also `-P latency`) selects extrapolation at
+  x2 with the default mailbox present mode: the real frame is held ≈ 0.1 ms
+  instead of the ≈ 8 ms (half a frame) that interpolation adds.
 - `real frame delayed` latency measurement in the statistics; GPU profiling
   now covers the worker's copies.
 - Launcher options `-x/--extrapolate`, `-P/--preset` and `--gl` (OpenGL
