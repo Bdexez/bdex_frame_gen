@@ -52,5 +52,6 @@ if(BDEX_BUILD_TESTS)
 endif()
 
 if(NOT BDEX_32BIT)
-  install(PROGRAMS tools/bdex-framegen DESTINATION bin)
+  install(PROGRAMS tools/bdex-framegen tools/bdex-framegen-gui DESTINATION bin)
+  install(FILES tools/bdex-framegen.desktop DESTINATION share/applications)
 endif()

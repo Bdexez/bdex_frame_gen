@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+"""Graphical launcher for the bdex-framegen Vulkan layer.
+
+Pick a game, choose the frame-generation and upscaling options with a few
+switches and dropdowns, and launch it — or copy the equivalent Steam launch
+options, or save the settings as a per-game profile in the config file.
+
+Depends only on Python 3 and PyGObject with GTK 4 and libadwaita (packages
+python-gobject, gtk4, libadwaita on most distributions).
+"""
+import os
+import shlex
+import subprocess
+import sys
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gio, Gtk, Gdk, GLib  # noqa: E402
+
+CONFIG_PATH = os.path.join(
+    os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "bdex-framegen.conf"
+)
+
+MODES = [("Interpolation (défaut)", "interpolate"),
+         ("Extrapolation — latence minimale", "extrapolate")]
+FILTERS = [("Lanczos (le plus net)", "lanczos"), ("Bicubique", "bicubic"), ("Bilinéaire", "bilinear")]
+PRESENT = [("Auto (recommandé)", "auto"), ("Mode du jeu", "app"), ("FIFO (vsync)", "fifo"),
+           ("Mailbox", "mailbox"), ("Immediate (sans vsync)", "immediate")]
+
+
+class Options:
+    """Current UI state -> BDEX_FG_* environment variables."""
+
+    def __init__(self):
+        self.generate = True
+        self.multiplier = 2          # 2, 3, 4
+        self.mode = "interpolate"
+        self.present = "auto"
+        self.low_latency = False
+        self.upscale = False
+        self.render_scale = 67        # percent, 50..100
+        self.filter = "lanczos"
+        self.sharpness = 0            # percent, 0..100
+        self.layer_path = ""          # VK_ADD_IMPLICIT_LAYER_PATH for an uninstalled build
+
+    def env(self):
+        e = {"BDEX_FG": "1"}
+        e["BDEX_FG_MULTIPLIER"] = str(self.multiplier if self.generate else 1)
+        if self.generate:
+            e["BDEX_FG_MODE"] = self.mode
+        e["BDEX_FG_PRESENT_MODE"] = self.present
+        if self.low_latency:
+            e["BDEX_FG_LOW_LATENCY"] = "1"
+        if self.upscale and self.render_scale < 100:
+            e["BDEX_FG_RENDER_SCALE"] = f"{self.render_scale / 100:.3f}".rstrip("0").rstrip(".")
+            e["BDEX_FG_UPSCALE_FILTER"] = self.filter
+            if self.sharpness > 0:
+                e["BDEX_FG_SHARPNESS"] = f"{self.sharpness / 100:.2f}".rstrip("0").rstrip(".")
+        return e
+
+    def env_string(self):
+        return " ".join(f"{k}={v}" for k, v in self.env().items())
+
+
+def find_layer():
+    """(installed, path) — whether the loader can see the layer manifest."""
+    dirs = [
+        os.path.join(os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share")),
+                     "vulkan/implicit_layer.d"),
+        "/usr/share/vulkan/implicit_layer.d",
+        "/usr/local/share/vulkan/implicit_layer.d",
+    ]
+    for d in dirs:
+        try:
+            for f in os.listdir(d):
+                if "bdex" in f.lower():
+                    return True, os.path.join(d, f)
+        except OSError:
+            pass
+    return False, None
+
+
+class Window(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="bdex-framegen")
+        self.set_default_size(560, 820)
+        self.opt = Options()
+
+        self.toasts = Adw.ToastOverlay()
+        self.set_content(self.toasts)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.toasts.set_child(box)
+
+        header = Adw.HeaderBar()
+        launch = Gtk.Button(label="Lancer")
+        launch.add_css_class("suggested-action")
+        launch.connect("clicked", self.on_launch)
+        header.pack_start(launch)
+        copy = Gtk.Button(icon_name="edit-copy-symbolic", tooltip_text="Copier les options de lancement Steam")
+        copy.connect("clicked", self.on_copy)
+        header.pack_end(copy)
+        save = Gtk.Button(icon_name="document-save-symbolic", tooltip_text="Enregistrer comme profil")
+        save.connect("clicked", self.on_save)
+        header.pack_end(save)
+        box.append(header)
+
+        page = Adw.PreferencesPage()
+        box.append(page)
+
+        # --- Game ---
+        g = Adw.PreferencesGroup(title="Jeu")
+        page.add(g)
+        self.cmd_row = Adw.EntryRow(title="Commande ou exécutable")
+        browse = Gtk.Button(icon_name="folder-open-symbolic", valign=Gtk.Align.CENTER,
+                            tooltip_text="Choisir l'exécutable")
+        browse.connect("clicked", self.on_browse)
+        self.cmd_row.add_suffix(browse)
+        g.add(self.cmd_row)
+
+        installed, path = find_layer()
+        self.layer_row = Adw.ActionRow(
+            title="Couche Vulkan",
+            subtitle=("Détectée — prête" if installed else "Non installée : choisir le dossier de build ci-dessous"))
+        icon = Gtk.Image(icon_name="emblem-ok-symbolic" if installed else "dialog-warning-symbolic",
+                         valign=Gtk.Align.CENTER)
+        self.layer_row.add_prefix(icon)
+        g.add(self.layer_row)
+
+        # --- Frame generation ---
+        g = Adw.PreferencesGroup(title="Génération d'images",
+                                 description="Insère des images de synthèse entre celles du jeu.")
+        page.add(g)
+        self.gen_row = Adw.SwitchRow(title="Activer", active=True)
+        self.gen_row.connect("notify::active", self.changed)
+        g.add(self.gen_row)
+        self.mult_row = Adw.ComboRow(title="Images affichées par image rendue",
+                                     model=Gtk.StringList.new(["×2", "×3", "×4"]))
+        self.mult_row.connect("notify::selected", self.changed)
+        g.add(self.mult_row)
+        self.mode_row = Adw.ComboRow(title="Mode",
+                                     subtitle="L'extrapolation supprime la latence ajoutée",
+                                     model=Gtk.StringList.new([m[0] for m in MODES]))
+        self.mode_row.connect("notify::selected", self.changed)
+        g.add(self.mode_row)
+
+        # --- Upscaling ---
+        g = Adw.PreferencesGroup(title="Upscaling",
+                                 description="Le jeu rend en résolution réduite, agrandie à l'affichage (X11/Xwayland).")
+        page.add(g)
+        self.up_row = Adw.SwitchRow(title="Activer", active=False)
+        self.up_row.connect("notify::active", self.changed)
+        g.add(self.up_row)
+        adj = Gtk.Adjustment(lower=50, upper=100, step_increment=1, page_increment=5, value=67)
+        self.scale_row = Adw.SpinRow(title="Résolution de rendu", subtitle="pourcentage de la résolution d'affichage",
+                                     adjustment=adj)
+        self.scale_row.connect("notify::value", self.changed)
+        g.add(self.scale_row)
+        self.filter_row = Adw.ComboRow(title="Filtre d'agrandissement",
+                                       model=Gtk.StringList.new([f[0] for f in FILTERS]))
+        self.filter_row.connect("notify::selected", self.changed)
+        g.add(self.filter_row)
+        adj2 = Gtk.Adjustment(lower=0, upper=100, step_increment=1, page_increment=10, value=0)
+        self.sharp_row = Adw.SpinRow(title="Netteté (CAS)", subtitle="0 = désactivé", adjustment=adj2)
+        self.sharp_row.connect("notify::value", self.changed)
+        g.add(self.sharp_row)
+
+        # --- Presentation ---
+        g = Adw.PreferencesGroup(title="Présentation")
+        page.add(g)
+        self.present_row = Adw.ComboRow(title="Mode de présentation",
+                                        model=Gtk.StringList.new([p[0] for p in PRESENT]))
+        self.present_row.connect("notify::selected", self.changed)
+        g.add(self.present_row)
+        self.ll_row = Adw.SwitchRow(title="Faible latence",
+                                    subtitle="Empêche le jeu de prendre de l'avance (utile en FIFO)")
+        self.ll_row.connect("notify::active", self.changed)
+        g.add(self.ll_row)
+
+        # --- Advanced / command ---
+        g = Adw.PreferencesGroup(title="Commande")
+        page.add(g)
+        if not installed:
+            self.build_row = Adw.EntryRow(title="Dossier de build de la couche")
+            self.build_row.set_text(self._guess_build())
+            self.build_row.connect("changed", self.changed)
+            g.add(self.build_row)
+        else:
+            self.build_row = None
+        self.preview = Adw.ActionRow(title="Options de lancement")
+        self.preview.add_css_class("monospace")
+        self.preview.set_subtitle_selectable(True)
+        g.add(self.preview)
+
+        self.changed()
+
+    def _guess_build(self):
+        here = os.path.dirname(os.path.abspath(__file__))
+        cand = os.path.join(os.path.dirname(here), "build", "layer")
+        return cand if os.path.isdir(cand) else ""
+
+    def sync(self):
+        o = self.opt
+        o.generate = self.gen_row.get_active()
+        o.multiplier = self.mult_row.get_selected() + 2
+        o.mode = MODES[self.mode_row.get_selected()][1]
+        o.upscale = self.up_row.get_active()
+        o.render_scale = int(self.scale_row.get_value())
+        o.filter = FILTERS[self.filter_row.get_selected()][1]
+        o.sharpness = int(self.sharp_row.get_value())
+        o.present = PRESENT[self.present_row.get_selected()][1]
+        o.low_latency = self.ll_row.get_active()
+        o.layer_path = self.build_row.get_text().strip() if self.build_row else ""
+        # enable/disable dependent rows
+        for r in (self.mult_row, self.mode_row):
+            r.set_sensitive(o.generate)
+        for r in (self.scale_row, self.filter_row, self.sharp_row):
+            r.set_sensitive(o.upscale)
+
+    def changed(self, *_):
+        self.sync()
+        self.preview.set_subtitle(self.opt.env_string() + " %command%")
+
+    def build_env(self):
+        env = dict(os.environ)
+        env.update(self.opt.env())
+        if self.opt.layer_path:
+            env["VK_ADD_IMPLICIT_LAYER_PATH"] = self.opt.layer_path
+        return env
+
+    def toast(self, text):
+        self.toasts.add_toast(Adw.Toast.new(text))
+
+    def on_browse(self, _btn):
+        dialog = Gtk.FileDialog(title="Choisir l'exécutable du jeu")
+        dialog.open(self, None, self._browsed)
+
+    def _browsed(self, dialog, result):
+        try:
+            f = dialog.open_finish(result)
+        except GLib.Error:
+            return
+        if f:
+            self.cmd_row.set_text(shlex.quote(f.get_path()))
+
+    def on_launch(self, _btn):
+        cmd = self.cmd_row.get_text().strip()
+        if not cmd:
+            self.toast("Choisis d'abord un jeu.")
+            return
+        try:
+            subprocess.Popen(shlex.split(cmd), env=self.build_env())
+            self.toast("Jeu lancé.")
+        except (OSError, ValueError) as e:
+            self.toast(f"Échec du lancement : {e}")
+
+    def on_copy(self, _btn):
+        text = self.opt.env_string() + " %command%"
+        Gdk.Display.get_default().get_clipboard().set(text)
+        self.toast("Options Steam copiées dans le presse-papiers.")
+
+    def on_save(self, _btn):
+        cmd = self.cmd_row.get_text().strip()
+        section = None
+        if cmd:
+            base = os.path.basename(shlex.split(cmd)[0])
+            if base.lower().endswith(".exe"):
+                base = base[:-4]
+            section = base
+        lines = [f"{k[len('BDEX_FG_'):].lower() if k != 'BDEX_FG' else 'enabled'} = {v}"
+                 for k, v in self.opt.env().items()]
+        block = ("\n[%s]\n" % section if section else "\n") + "\n".join(lines) + "\n"
+        try:
+            os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+            with open(CONFIG_PATH, "a") as f:
+                f.write(block)
+            self.toast(f"Profil enregistré dans {CONFIG_PATH}"
+                       + (f" [{section}]" if section else ""))
+        except OSError as e:
+            self.toast(f"Échec de l'enregistrement : {e}")
+
+
+class App(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="dev.bdex.framegen.Gui",
+                         flags=Gio.ApplicationFlags.NON_UNIQUE)
+
+    def do_activate(self):
+        Window(self).present()
+
+
+if __name__ == "__main__":
+    sys.exit(App().run(sys.argv))
