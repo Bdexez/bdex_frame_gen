@@ -2,17 +2,26 @@
 #include "device.h"
 #include "framegen.h"
 
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 namespace bdex {
 
 // A swapchain as seen by the application. The application renders into
-// private images we hand out from vkAcquireNextImageKHR; on present we copy
-// the frame into our history, synthesise intermediate frames and present them
-// all through the real swapchain that we own.
+// private images we hand out from vkAcquireNextImageKHR. On present, the
+// application thread submits the GPU work that copies the frame into the
+// history and synthesises the intermediate frames into internal images, then
+// returns; a worker thread copies those images into the real swapchain (which
+// we own), paces them and presents them. The application is therefore never
+// blocked by our presentation, except by the natural back-pressure of the
+// presentation engine (FIFO) or of the GPU.
 class VirtualSwapchain {
 public:
     VirtualSwapchain(DeviceData& dev, const VkSwapchainCreateInfoKHR& appInfo);
@@ -31,8 +40,14 @@ public:
 
     // Waits for all of the layer's pending work on this swapchain.
     void waitIdle();
+    // Called when the application passes this swapchain as oldSwapchain: the
+    // surface is about to change hands, so finish presenting now (later
+    // presents could block forever) and refuse further work.
+    void retire();
 
 private:
+    using clock = std::chrono::steady_clock;
+
     struct VirtualImage {
         AllocatedImage img;
         bool acquired = false;
@@ -47,27 +62,40 @@ private:
     struct FrameSlot {
         VkCommandBuffer cmd = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
-        VkSemaphore acquireSem = VK_NULL_HANDLE;
+        VkSemaphore acquireSem = VK_NULL_HANDLE;  // used by the worker's slots only
         uint64_t generation = 0;
         bool submitted = false;
+    };
+    // One application present, handed to the worker thread.
+    struct Job {
+        uint32_t parity = 0;
+        int frames = 1;              // presents to perform (multiplier, or 1)
+        bool generated = false;      // frames-1 generated images in out_[]
+        clock::time_point start{};   // when the application presented
+        double intervalMs = 16.6;    // frame interval estimate for pacing
+        uint64_t presentId = 0;      // VkPresentIdKHR (0 = none), forwarded on the real frame
+        VkFence presentFence = VK_NULL_HANDLE;  // VkSwapchainPresentFenceInfoEXT, idem
     };
 
     void createReal(const VkSwapchainCreateInfoKHR& appInfo);
     void createVirtualImages(const VkSwapchainCreateInfoKHR& appInfo);
-    void createSlots();
+    void createSlots(std::vector<FrameSlot>& slots, uint32_t count, bool withSemaphore);
+    void destroySlots(std::vector<FrameSlot>& slots);
     void destroyAll();
-    FrameSlot& nextSlot();
+    FrameSlot& nextSlot(std::vector<FrameSlot>& slots, uint32_t& cursor);
     void waitVirtualRelease(VirtualImage& vi);
-    VkResult acquireReal(FrameSlot& slot, uint32_t* realIndex);
-    VkResult submitAndPresent(FrameSlot& slot, uint32_t realIndex, const VkSemaphore* appWaits, uint32_t appWaitCount,
-                              const void* presentNext);
     VkResult consumeSemaphores(const VkSemaphore* sems, uint32_t count);
-    void paceBeforeNextPresent(std::chrono::steady_clock::time_point frameStart, int generatedIndex, int total);
-    void updateStats(int presented, double cpuMs);
     void dumpFrame(FrameSlot& slot, bool generated, float t);
 
+    // Worker thread.
+    void workerLoop();
+    void runJob(const Job& job);
+    VkResult presentOne(const Job& job, int index, const std::function<void()>* onSubmitted);
+    void waitWorkerSubmitted(std::unique_lock<std::mutex>& lock);
+    void waitWorkerIdle(std::unique_lock<std::mutex>& lock);
+
     DeviceData& dev_;
-    std::mutex mutex_;
+    std::mutex mutex_;   // application-side state (acquire / present)
     VkSwapchainKHR real_ = VK_NULL_HANDLE;
     VkFormat format_ = VK_FORMAT_UNDEFINED;
     VkExtent2D extent_{};
@@ -75,26 +103,40 @@ private:
 
     std::vector<VirtualImage> virtualImages_;
     std::vector<RealImage> realImages_;
-    std::vector<FrameSlot> slots_;
+    std::vector<FrameSlot> slots_;        // application thread: synthesis submissions
+    std::vector<FrameSlot> workerSlots_;  // worker thread: copy + present submissions
     uint32_t slotCursor_ = 0;
+    uint32_t workerCursor_ = 0;
     uint32_t acquireCursor_ = 0;
 
     std::unique_ptr<FrameGen> fg_;
+    bool retired_ = false;
     bool generating_ = false;   // frame generation active for this swapchain
     bool havePrevious_ = false;  // history[1-parity] holds a valid frame
     uint32_t parity_ = 0;
-    VkResult pendingResult_ = VK_SUCCESS;
 
-    using clock = std::chrono::steady_clock;
+    // Worker state (guarded by workerMutex_).
+    std::thread worker_;
+    std::mutex workerMutex_;
+    std::condition_variable workerCv_;   // job available / stop
+    std::condition_variable idleCv_;     // job submitted / finished
+    std::deque<Job> jobs_;               // queued, not yet started
+    uint32_t unsubmitted_ = 0;           // queued or running jobs whose GPU work is not fully submitted
+    bool running_ = false;
+    bool stop_ = false;
+    VkResult pendingResult_ = VK_SUCCESS;  // surfaced to the application on its next call
+
     clock::time_point lastAppPresent_{};
     double frameIntervalMs_ = 16.6;
+
     // statistics
     clock::time_point statsStart_{};
-    uint64_t statsAppFrames_ = 0, statsOutFrames_ = 0;
+    uint64_t statsAppFrames_ = 0;
+    std::atomic<uint64_t> statsOutFrames_{0};
+    double statsCpuMs_ = 0;
     int dumpCount_ = 0;
     uint32_t dumpId_ = 0;
     bool dumping_ = false;
-    double statsCpuMs_ = 0;
 };
 
 } // namespace bdex
