@@ -111,6 +111,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
         renderScale = 1.0f / ratio;
         return true;
     }
+    if (key == "sharpness" || key == "sharpen") return parseFloat(value, sharpness, 0.f, 1.f);
     if (key == "upscale_filter") {
         const std::string v = lower(value);
         if (v == "bilinear" || v == "0") upscaleFilter = 0;

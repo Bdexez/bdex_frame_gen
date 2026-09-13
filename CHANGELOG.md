@@ -16,6 +16,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   at display resolution. Works with or without frame generation. Requires a
   fixed-size surface (X11 / Xwayland, i.e. most games via Proton); Wayland
   surfaces that let the client choose the size are presented unscaled.
+- `SHARPNESS=0..1`: a Contrast-Adaptive Sharpening (CAS) pass applied after
+  upscaling, to both the real and the generated frames. The sharpening amount
+  adapts to local contrast so flat and already-sharp areas are left untouched
+  (no ringing). Runs on a linear rgba16f intermediate; off by default.
 
 - `MODE=extrapolate`: the real frame is presented immediately and the
   generated frames are predicted from the motion of the last two, removing

@@ -9,7 +9,9 @@
 layout(local_size_x = 16, local_size_y = 16) in;
 
 layout(binding = 0) uniform sampler2D srcTex;
-#ifdef OUT_64
+#ifdef SHARP
+layout(binding = 1, rgba16f) uniform writeonly image2D outImg;  // linear, sharpened by a later CAS pass
+#elif defined(OUT_64)
 layout(binding = 1, rg32ui) uniform writeonly uimage2D outImg;
 #else
 layout(binding = 1, r32ui) uniform writeonly uimage2D outImg;
@@ -30,6 +32,10 @@ layout(push_constant) uniform PC {
 } pc;
 
 void store(ivec2 p, vec4 c) {
+#ifdef SHARP
+    imageStore(outImg, p, clamp(c, 0.0, 65504.0));  // linear; CAS sharpens and encodes
+}
+#else
     uint enc = pc.encoding & 0xffu;
     if ((pc.encoding & ENC_SRGB_FLAG) != 0u) c.rgb = linearToSrgb(c.rgb);
     c = clamp(c, 0.0, enc == ENC_RGBA16F ? 65504.0 : 1.0);
@@ -51,6 +57,7 @@ void store(ivec2 p, vec4 c) {
     imageStore(outImg, p, uvec4(packed, 0u, 0u, 0u));
 #endif
 }
+#endif
 
 // Catmull-Rom cubic (B=0, C=0.5): sharp, no ringing at 1x, mild overshoot.
 float cubic(float x) {
