@@ -158,12 +158,8 @@ void VirtualSwapchain::createVirtualImages(const VkSwapchainCreateInfoKHR& appIn
 
 void VirtualSwapchain::createSlots(std::vector<FrameSlot>& slots, uint32_t count, bool withSemaphore) {
     slots.resize(count);
-    VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-    ai.commandPool = dev_.cmdPool;
-    ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    ai.commandBufferCount = 1;
     for (auto& s : slots) {
-        VK_CHECK(dev_.vt.AllocateCommandBuffers(dev_.device, &ai, &s.cmd));
+        VK_CHECK(dev_.allocateCommandBuffer(&s.cmd));
         VkFenceCreateInfo fi{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
         VK_CHECK(dev_.vt.CreateFence(dev_.device, &fi, nullptr, &s.fence));
         if (withSemaphore) {

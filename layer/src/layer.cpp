@@ -240,6 +240,7 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
 
     if (chosen >= 0 && hasSwapchainExt && data->vt.CreateSwapchainKHR) {
         data->vt.GetDeviceQueue(*pDevice, data->queueFamily, data->queueIndex, &data->queue);
+        if (data->queue) adoptDispatch(data->queue, *pDevice);
         VkCommandPoolCreateInfo pi{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
         pi.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
         pi.queueFamilyIndex = data->queueFamily;

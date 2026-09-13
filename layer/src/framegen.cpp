@@ -497,7 +497,9 @@ void FrameGen::copyToPresent(VkCommandBuffer cmd, VkImage src, VkImageLayout src
         imageBarrier(src, srcAccess, VK_ACCESS_TRANSFER_READ_BIT, srcLayout, srcLayout),
         imageBarrier(dst, 0, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL),
     };
-    vt.CmdPipelineBarrier(cmd, srcStage | VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+    // The swapchain image's acquire semaphore is waited at the transfer stage,
+    // so the layout transition must be ordered after that stage as well.
+    vt.CmdPipelineBarrier(cmd, srcStage | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
                           nullptr, 2, pre);
     VkImageCopy region{};
     region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};

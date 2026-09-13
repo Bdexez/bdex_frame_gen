@@ -121,4 +121,10 @@ struct DeviceDispatch {
 // table; it is unique per instance / device and shared by their children.
 inline void* dispatchKey(const void* handle) { return *static_cast<void* const*>(handle); }
 
+// Dispatchable objects the layer creates itself (queues, command buffers)
+// bypass the loader's trampolines, so the loader never fills in their
+// dispatch pointer; layers below us (validation...) key on it. Copy the
+// parent device's.
+inline void adoptDispatch(void* handle, const void* device) { *static_cast<void**>(handle) = dispatchKey(device); }
+
 } // namespace bdex

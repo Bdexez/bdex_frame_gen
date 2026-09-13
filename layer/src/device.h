@@ -74,6 +74,8 @@ struct DeviceData {
     void destroyBuffer(AllocatedBuffer& buf);
     bool formatSupports(VkFormat format, VkFormatFeatureFlags features) const;
 
+    // Allocates a primary command buffer from cmdPool with a valid dispatch pointer.
+    VkResult allocateCommandBuffer(VkCommandBuffer* cmd);
     // Submit a command buffer on the layer queue (takes the queue mutex).
     VkResult submit(const VkSubmitInfo& info, VkFence fence);
     // Run a one-shot command buffer synchronously.
@@ -89,13 +91,9 @@ namespace bdex {
 
 template <typename F>
 void DeviceData::immediate(F&& record) {
-    VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-    ai.commandPool = cmdPool;
-    ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    ai.commandBufferCount = 1;
     VkCommandBuffer cmd = VK_NULL_HANDLE;
     VkFence fence = VK_NULL_HANDLE;
-    VkResult r = vt.AllocateCommandBuffers(device, &ai, &cmd);
+    VkResult r = allocateCommandBuffer(&cmd);
     if (r < 0) throw VkError(r, "vkAllocateCommandBuffers");
     try {
         VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};

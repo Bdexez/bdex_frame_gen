@@ -122,6 +122,16 @@ void DeviceData::destroyBuffer(AllocatedBuffer& buf) {
     buf = AllocatedBuffer{};
 }
 
+VkResult DeviceData::allocateCommandBuffer(VkCommandBuffer* cmd) {
+    VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    ai.commandPool = cmdPool;
+    ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ai.commandBufferCount = 1;
+    VkResult r = vt.AllocateCommandBuffers(device, &ai, cmd);
+    if (r >= 0) adoptDispatch(*cmd, device);
+    return r;
+}
+
 VkResult DeviceData::submit(const VkSubmitInfo& info, VkFence fence) {
     std::lock_guard<std::mutex> lock(queueMutex(queue));
     return vt.QueueSubmit(queue, 1, &info, fence);
