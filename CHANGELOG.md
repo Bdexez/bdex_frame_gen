@@ -8,6 +8,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Hardware auto-tuning (`PRESET=auto`, now the default): the flow quality is
+  chosen from the detected GPU at device creation — integrated, software and
+  small/old GPUs get the cheaper `performance` flow, discrete GPUs the
+  `balanced` flow (both still resolution-adaptive). Setting any preset or flow
+  option turns it off. The graphical launcher shows the detected GPU and a
+  quality-profile selector.
+
 - Spatial upscaling (`RENDER_SCALE=0.5..1.0`, or `UPSCALE=<ratio>`): the layer
   advertises a reduced surface size so the game renders fewer pixels, then
   resamples every presented frame — real and generated — to the display

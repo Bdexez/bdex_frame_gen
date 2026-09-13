@@ -218,7 +218,7 @@ takes precedence).
 | `BDEX_FG` | – | `1` enables the layer, `0` disables it |
 | `MULTIPLIER` | `2` | frames displayed per rendered frame: 2, 3 or 4 |
 | `MODE` | `interpolate` | `extrapolate` predicts the next frame from the last two: no added latency, more artefacts on abrupt motion |
-| `PRESET` | `balanced` | `quality` (full-resolution flow, ~3× the cost), `balanced`, `performance` (quarter-resolution flow, ~2× cheaper), `latency` (extrapolation + x2 for minimal input lag) |
+| `PRESET` | `auto` | `auto` picks the flow quality from the GPU (integrated / small → `performance`, discrete → `balanced`); or force `quality` (full-resolution flow, ~3× the cost), `balanced`, `performance` (quarter-resolution flow, ~2× cheaper), `latency` (extrapolation + x2 for minimal input lag) |
 | `FLOW_SCALE` | `auto` | resolution divisor of the flow: `1`, `2`, `4`; `auto` keeps the flow around 0.5 Mpixel |
 | `LEVELS` | `4` | flow pyramid levels (1–6) |
 | `SEARCH` / `SEARCH_FINE` | `4` / `2` | search radius at the coarsest level / at the finer levels (1–4) |
