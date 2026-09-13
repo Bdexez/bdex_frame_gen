@@ -100,7 +100,23 @@ Le layer affiche périodiquement dans le terminal : `game 30.0 fps -> output 60.
 
 Toutes les options se donnent par variables d'environnement `BDEX_FG_<CLÉ>`
 ou dans `~/.config/bdex-framegen.conf` (`clé = valeur`, une par ligne ;
-l'environnement est prioritaire).
+l'environnement est prioritaire). Le fichier accepte des sections `[nom]`
+qui ne s'appliquent qu'au processus dont la ligne de commande contient un
+exécutable de ce nom (`.exe` facultatif, insensible à la casse) :
+
+```ini
+multiplier = 2
+log = 1
+
+[Cyberpunk2077.exe]
+multiplier = 3
+present_mode = mailbox
+
+[vkcube]
+debug = flow
+```
+
+`bdex-framegen --check` vérifie que le loader Vulkan trouve bien le layer.
 
 | Clé | Défaut | Description |
 |---|---|---|

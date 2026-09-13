@@ -102,15 +102,48 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     return false;
 }
 
-void Config::loadFile(const std::string& path) {
+static std::string baseName(std::string s) {
+    size_t p = s.find_last_of("/\\");
+    if (p != std::string::npos) s = s.substr(p + 1);
+    s = lower(s);
+    if (s.size() > 4 && s.compare(s.size() - 4, 4, ".exe") == 0) s.resize(s.size() - 4);
+    return s;
+}
+
+std::vector<std::string> Config::processNames() {
+    std::vector<std::string> names;
+    std::ifstream in("/proc/self/cmdline", std::ios::binary);
+    std::string arg;
+    while (std::getline(in, arg, '\0')) {
+        std::string b = baseName(trim(arg));
+        if (!b.empty() && std::find(names.begin(), names.end(), b) == names.end()) names.push_back(b);
+    }
+    return names;
+}
+
+bool Config::sectionMatches(const std::string& section, const std::vector<std::string>& names) {
+    const std::string s = baseName(trim(section));
+    if (s.empty() || s == "*") return true;
+    return std::find(names.begin(), names.end(), s) != names.end();
+}
+
+void Config::loadFile(const std::string& path, const std::string& processName) {
     std::ifstream in(path);
     if (!in) return;
+    std::vector<std::string> names = processNames();
+    if (!processName.empty()) names.push_back(baseName(processName));
     std::string line;
     int lineNo = 0;
+    bool active = true;
     while (std::getline(in, line)) {
         ++lineNo;
         std::string t = trim(line);
         if (t.empty() || t[0] == '#' || t[0] == ';') continue;
+        if (t.front() == '[' && t.back() == ']') {
+            active = sectionMatches(t.substr(1, t.size() - 2), names);
+            continue;
+        }
+        if (!active) continue;
         size_t eq = t.find('=');
         if (eq == std::string::npos) continue;
         if (!apply(t.substr(0, eq), t.substr(eq + 1)))
@@ -127,6 +160,7 @@ void Config::loadEnv() {
         if (eq == std::string::npos) continue;
         std::string key = entry.substr(sizeof(prefix) - 1, eq - (sizeof(prefix) - 1));
         std::string value = entry.substr(eq + 1);
+        if (lower(key) == "config") continue;  // consumed by load()
         if (!apply(key, value))
             BDEX_WARN("ignored environment option %s", entry.c_str());
     }
@@ -143,7 +177,7 @@ Config Config::load() {
     if (const char* p = getenv("BDEX_FG_CONFIG")) path = p;
     else if (const char* x = getenv("XDG_CONFIG_HOME")) path = std::string(x) + "/bdex-framegen.conf";
     else if (const char* h = getenv("HOME")) path = std::string(h) + "/.config/bdex-framegen.conf";
-    if (!path.empty()) c.loadFile(path);
+    if (!path.empty()) c.loadFile(path, "");
     c.loadEnv();
     if (c.sceneCutHigh < c.sceneCutLow) c.sceneCutHigh = c.sceneCutLow;
     return c;

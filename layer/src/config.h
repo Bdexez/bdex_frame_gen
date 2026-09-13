@@ -2,6 +2,7 @@
 #include <vulkan/vulkan.h>
 
 #include <string>
+#include <vector>
 
 namespace bdex {
 
@@ -39,10 +40,20 @@ struct Config {
     // BDEX_FG_ prefix). Returns false for unknown keys or unparsable values.
     bool apply(const std::string& key, const std::string& value);
 
-    void loadFile(const std::string& path);
+    // Reads `clé = valeur` lines. A `[name]` section restricts the options
+    // that follow to processes whose command line contains an executable
+    // called `name` (case-insensitive, `.exe` optional); `[*]` or no section
+    // applies to every process. Sections are applied in file order, so a
+    // game section placed after the global options overrides them.
+    void loadFile(const std::string& path, const std::string& processName);
     void loadEnv();
 
     static Config load();  // defaults + file + env
+
+    // Executable names of the current process (from /proc/self/cmdline),
+    // lower-case, without directory or .exe suffix; used for section matching.
+    static std::vector<std::string> processNames();
+    static bool sectionMatches(const std::string& section, const std::vector<std::string>& names);
     std::string describe() const;
 };
 
