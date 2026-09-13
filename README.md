@@ -13,13 +13,22 @@ DXVK / VKD3D-Proton (Steam Play), sans modification du jeu.
 ```
 Jeu ──► vkQueuePresentKHR ──► [layer bdex-framegen] ──► écran
                                 │
+                                │  thread du jeu (≈0,1 ms) :
                                 ├─ copie de l'image dans un historique
                                 ├─ pyramide de luminance + block matching hiérarchique
                                 │  (flux optique avant et arrière, affinage 4x4)
-                                ├─ synthèse de l'image intermédiaire (warping bidirectionnel
+                                ├─ synthèse des images intermédiaires (warping bidirectionnel
                                 │  pondéré par la cohérence photométrique, détection de cut)
-                                └─ présentation : image générée puis image réelle
+                                │
+                                │  thread de présentation du layer :
+                                └─ copie dans la vraie swapchain, cadencement, présentation :
+                                   image(s) générée(s) puis image réelle
 ```
+
+Le jeu rend dans des images privées fournies par le layer ; la swapchain réelle
+appartient au layer et est présentée depuis un thread dédié, sur une file
+(queue) Vulkan séparée de celle du jeu quand le GPU en a une. Le jeu n'est
+jamais bloqué par la présentation des images générées.
 
 ## Prérequis
 
@@ -47,9 +56,9 @@ L'installation dépose :
 
 Désinstallation : `tools/uninstall.sh`.
 
-Pour les jeux 32 bits (certains jeux Proton), compilez une seconde fois avec
-`-DCMAKE_CXX_FLAGS=-m32 -DCMAKE_C_FLAGS=-m32` (multilib requis) et installez
-le manifeste sous un autre nom de fichier.
+`install.sh` compile aussi la variante 32 bits (`VK_LAYER_BDEX_framegen_32`,
+dans `~/.local/lib32`) quand un compilateur multilib et `/usr/lib32/libvulkan.so.1`
+sont présents, pour les jeux 32 bits. À la main : `cmake -DBDEX_32BIT=ON`.
 
 ## Utilisation
 
@@ -108,6 +117,7 @@ l'environnement est prioritaire).
 | `DEBUG` | `none` | `flow` (visualise le flux), `split` (gauche générée / droite réelle), `passthrough` (layer actif sans génération) |
 | `STATS` / `STATS_INTERVAL` | `1` / `5` | statistiques dans le terminal |
 | `PROFILE` | `0` | temps GPU par étape dans les statistiques |
+| `SHARED_QUEUE` | `0` | force l'utilisation de la file du jeu (test) ; dans ce cas FIFO est remplacé par mailbox + cadencement |
 | `LOG` | `1` | verbosité 0–3 ; `LOG_FILE` pour écrire dans un fichier |
 | `DUMP` / `DUMP_FRAMES` | – / `24` | écrit les images présentées (PPM) dans un dossier, pour le débogage |
 
@@ -119,8 +129,10 @@ l'environnement est prioritaire).
   x3 de 20 fps, etc. – la file de présentation FIFO absorbe les images
   supplémentaires. Utilisez `PRESENT_MODE=mailbox` ou `immediate` (ou un écran
   VRR) pour ne pas brider le jeu.
-* **Coût** : sur une Vega 8 intégrée, ~4 ms de GPU par image rendue en
-  1000×1000 (par défaut, demi-résolution) ; négligeable sur un GPU dédié.
+* **Coût** : sur une Vega 8 intégrée (≈1,1 TFLOPS), ~3,5 ms de GPU par image
+  rendue en 1000×1000 avec les réglages par défaut (flux en demi-résolution),
+  ~8 ms en pleine résolution. Le thread du jeu passe ≈0,1 ms dans
+  `vkQueuePresentKHR`. Sur un GPU dédié le coût est négligeable.
 * **Qualité** : le flux optique par block matching gère bien les translations et
   les HUD statiques ; les rotations rapides, les occlusions importantes et les
   motifs répétitifs produisent des artefacts locaux. Un changement de plan
@@ -129,6 +141,11 @@ l'environnement est prioritaire).
 * Formats de swapchain pris en charge : RGBA/BGRA 8 bits (UNORM et sRGB),
   A2B10G10R10 / A2R10G10B10, RGBA16F. Les autres passent sans génération.
 * Non pris en charge (transparent) : swapchains multi-couches (VR), protégées.
+* Extensions de présentation gérées : `VK_KHR_present_id` / `present_wait`
+  (l'identifiant est attaché à l'image réelle), `VK_EXT_swapchain_maintenance1`
+  (fence de présentation, changement de mode, `vkReleaseSwapchainImagesEXT`).
+* Testé avec : la démo, `vkcube` (Wayland et XWayland), `vkgears`, le
+  conteneur Steam Linux Runtime (le layer y est visible et chargé).
 
 ## Développement
 

@@ -454,6 +454,11 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             if (pid->pPresentIds) job.presentId = pid->pPresentIds[0];
         if (auto* pf = findChain<VkSwapchainPresentFenceInfoEXT>(info.pNext, VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_EXT))
             if (pf->pFences) job.presentFence = pf->pFences[0];
+        if (auto* pm = findChain<VkSwapchainPresentModeInfoEXT>(info.pNext, VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODE_INFO_EXT))
+            if (pm->pPresentModes) {
+                job.presentMode = pm->pPresentModes[0];
+                presentMode_ = pm->pPresentModes[0];  // the pacing logic follows the switch
+            }
     }
     {
         std::lock_guard<std::mutex> wlock(workerMutex_);
@@ -575,6 +580,8 @@ VkResult VirtualSwapchain::presentOne(const Job& job, int index, const std::func
 
     VkPresentIdKHR presentId{VK_STRUCTURE_TYPE_PRESENT_ID_KHR};
     VkSwapchainPresentFenceInfoEXT presentFence{VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_EXT};
+    VkSwapchainPresentModeInfoEXT presentMode{VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODE_INFO_EXT};
+    const VkPresentModeKHR presentModeValue = static_cast<VkPresentModeKHR>(job.presentMode);
     VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
     pi.waitSemaphoreCount = 1;
     pi.pWaitSemaphores = &realImages_[ri].readySem;
@@ -593,6 +600,12 @@ VkResult VirtualSwapchain::presentOne(const Job& job, int index, const std::func
         presentFence.pFences = &job.presentFence;
         *tail = &presentFence;
         tail = &presentFence.pNext;
+    }
+    if (job.presentMode >= 0) {
+        presentMode.swapchainCount = 1;
+        presentMode.pPresentModes = &presentModeValue;
+        *tail = &presentMode;
+        tail = &presentMode.pNext;
     }
 
     std::lock_guard<std::mutex> qlock(dev_.queueMutex(dev_.queue));

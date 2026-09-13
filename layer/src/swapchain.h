@@ -73,6 +73,7 @@ private:
         bool generated = false;      // frames-1 generated images in out_[]
         clock::time_point start{};   // when the application presented
         double intervalMs = 16.6;    // frame interval estimate for pacing
+        int presentMode = -1;        // VkSwapchainPresentModeInfoEXT (-1 = none), applied to every present
         uint64_t presentId = 0;      // VkPresentIdKHR (0 = none), forwarded on the real frame
         VkFence presentFence = VK_NULL_HANDLE;  // VkSwapchainPresentFenceInfoEXT, idem
     };
