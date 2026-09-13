@@ -93,7 +93,7 @@ covers more than native Vulkan games:
 | Game | How | Status |
 |---|---|---|
 | Native Linux Vulkan | `BDEX_FG=1 game` | Works (demo, `vkcube`, `vkgears`) |
-| Windows Direct3D 8–12 through Steam Play / Proton | `BDEX_FG=1 %command%` — DXVK and VKD3D-Proton translate to Vulkan | Loads inside the Steam Linux Runtime container; not yet reported on a real game |
+| Windows Direct3D 8–12 through Steam Play / Proton | `BDEX_FG=1 %command%` — DXVK and VKD3D-Proton translate to Vulkan | **Works** — verified on DXVK (Direct3D 11) and VKD3D-Proton (Direct3D 12) titles |
 | Windows games outside Steam (Wine, Lutris, Heroic, Bottles) | Enable DXVK in the runner and set `BDEX_FG=1` in the environment | Same as above |
 | Native Linux **OpenGL** | `bdex-framegen --gl -- game`, i.e. `MESA_LOADER_DRIVER_OVERRIDE=zink`: Mesa's Zink runs OpenGL on Vulkan | Works (`glxgears`, an SDL3 game); Zink itself can be slower than the native GL driver on some games and iGPUs |
 | Emulators, 2D engines, anything else | Run it inside [gamescope](https://github.com/ValveSoftware/gamescope) with `BDEX_FG=1 gamescope -- game`: the compositor presents the whole game through its own Vulkan swapchain | Untested |
