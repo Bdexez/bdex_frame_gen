@@ -1,59 +1,58 @@
 # Changelog
 
-Toutes les évolutions notables de ce projet sont consignées ici.
-Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le
-projet respecte le [versionnage sémantique](https://semver.org/lang/fr/).
+All notable changes to this project are documented in this file.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
+and the project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Non publié]
+## [Unreleased]
 
 ## [0.1.0] - 2026-09-12
 
-Première version.
+First release.
 
-### Ajouté
+### Added
 
-- Layer Vulkan implicite `VK_LAYER_BDEX_framegen`, activé par `BDEX_FG=1`,
-  qui virtualise la swapchain du jeu et présente des images intermédiaires
-  (multiplicateur x2, x3 ou x4).
-- Estimation du mouvement sur GPU : pyramide de luminance (R16F quand le
-  pilote le permet), block matching hiérarchique 8×8 avant et arrière avec
-  biais vers le mouvement nul, filtre médian 3×3, affinage en blocs 4×4.
-- Synthèse des images intermédiaires par warping bidirectionnel avec recherche
-  à point fixe de la position source, pondération par la cohérence
-  photométrique, fondu dans les zones non expliquées et détection de
-  changement de plan (seuils mesurés sur la démo).
-- Présentation depuis un thread dédié sur une file de calcul séparée de celle
-  du jeu ; cadencement des images générées en modes mailbox / immediate ;
-  repli mailbox + cadencement quand la file doit être partagée.
-- Prise en charge des formats de swapchain RGBA/BGRA 8 bits (UNORM et sRGB),
-  A2B10G10R10, A2R10G10B10 et RGBA16F ; passage transparent des autres formats
-  et des swapchains multi-couches ou protégées.
-- Transfert de `VK_KHR_present_id`, des fences et changements de mode de
-  `VK_EXT_swapchain_maintenance1`, et de `vkReleaseSwapchainImagesEXT` ;
-  gestion de `oldSwapchain` (retrait de l'ancienne swapchain avant
-  remplacement).
-- Configuration par variables `BDEX_FG_*` et fichier
-  `~/.config/bdex-framegen.conf` avec sections par jeu (`[Jeu.exe]`).
-- Modes de débogage `flow`, `split` et `passthrough`, statistiques
-  périodiques, profil GPU par étape (`PROFILE`), export des images présentées
+- Implicit Vulkan layer `VK_LAYER_BDEX_framegen`, enabled with `BDEX_FG=1`,
+  which virtualises the game's swapchain and presents intermediate frames
+  (x2, x3 or x4 multiplier).
+- GPU motion estimation: luma pyramid (R16F when the driver supports it),
+  hierarchical 8×8 forward and backward block matching with a bias toward
+  zero motion, 3×3 median filter, 4×4 block refinement.
+- Intermediate frame synthesis by bidirectional warping with a fixed-point
+  search of the source position, weighting by photometric consistency,
+  cross-fade in unexplained regions and scene cut detection (thresholds
+  measured on the demo).
+- Presentation from a dedicated thread on a compute queue separate from the
+  game's; pacing of generated frames in mailbox / immediate modes; mailbox +
+  pacing fallback when the queue has to be shared.
+- Support for the RGBA/BGRA 8-bit (UNORM and sRGB), A2B10G10R10,
+  A2R10G10B10 and RGBA16F swapchain formats; transparent pass-through of
+  other formats and of multi-layer or protected swapchains.
+- Forwarding of `VK_KHR_present_id`, of `VK_EXT_swapchain_maintenance1`
+  present fences and present mode switches, and of
+  `vkReleaseSwapchainImagesEXT`; handling of `oldSwapchain` (the old
+  swapchain is retired before being replaced).
+- Configuration through `BDEX_FG_*` variables and the
+  `~/.config/bdex-framegen.conf` file with per-game sections (`[Game.exe]`).
+- `flow`, `split` and `passthrough` debug modes, periodic statistics,
+  per-stage GPU profiling (`PROFILE`), export of the presented frames
   (`DUMP`).
-- Application de démonstration GLFW (`bdex_demo`) avec scène procédurale,
-  compteur de frames, mode déterministe, changement de plan et vitesse
-  réglables.
-- Tests unitaires (configuration, formats), test bout-en-bout (débit de sortie
-  doublé) et outil d'évaluation de qualité (`tools/run_eval.sh`, PSNR contre
-  une référence à 60 fps).
-- Scripts `tools/install.sh` / `tools/uninstall.sh` (64 bits et 32 bits),
-  lanceur `bdex-framegen` avec option `--check`.
+- GLFW demo application (`bdex_demo`) with a procedural scene, frame counter,
+  deterministic mode, adjustable scene cuts and speed.
+- Unit tests (configuration, formats), end-to-end test (doubled output frame
+  rate) and quality evaluation tool (`tools/run_eval.sh`, PSNR against a
+  60 fps reference).
+- `tools/install.sh` / `tools/uninstall.sh` scripts (64-bit and 32-bit),
+  `bdex-framegen` launcher with a `--check` option.
 
-### Corrigé
+### Fixed
 
-- Pointeur de dispatch des objets créés par le layer (queue, command buffers),
-  sans lequel les layers situés en dessous (validation Khronos) abandonnaient.
-- Shaders compilés pour SPIR-V 1.0 afin d'accepter les applications
-  Vulkan 1.0 (`vkcube`).
-- Transition de layout de l'image de swapchain ordonnée après l'étape
-  d'attente du sémaphore d'acquisition (validation de synchronisation).
+- Dispatch pointer of objects created by the layer (queue, command buffers),
+  without which layers below it (Khronos validation) aborted.
+- Shaders compiled for SPIR-V 1.0 so that Vulkan 1.0 applications (`vkcube`)
+  are accepted.
+- Swapchain image layout transition ordered after the acquire semaphore's
+  wait stage (synchronization validation).
 
-[Non publié]: https://github.com/Bdexez/bdex_frame_gen/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Bdexez/bdex_frame_gen/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/Bdexez/bdex_frame_gen/releases/tag/v0.1.0
