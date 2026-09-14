@@ -1,5 +1,12 @@
 # Windows compatibility — scope
 
+> **Superseded as the Windows direction by [`windows-capture.md`](windows-capture.md).**
+> This document scopes porting the *Vulkan layer* to Windows, which only reaches
+> native-Vulkan games. The chosen direction is instead a **capture-based**
+> product (Lossless-Scaling style) that is render-API agnostic. This file is kept
+> for reference and for the reusable portability audit in §1–§2 (the config /
+> process-name / `%APPDATA%` shims apply to the capture product too).
+
 Scoping document for making **bdex-framegen** run on Windows, based on an audit
 of the current tree (0.3.0 + unreleased). It states what already ports, the
 concrete blockers with file references and a fix for each, a phased plan, and
