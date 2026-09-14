@@ -13,12 +13,13 @@
 #   -l, --log N            log level 0..3
 #       --profile          print GPU timings with the statistics
 #       --no-stats         do not print frame rate statistics
+#       --gl               OpenGL game: run it on Vulkan through Mesa's Zink driver
 #       --off              run the program with the layer disabled
 #       --check            report whether the layer is found by the Vulkan loader
 #   -h, --help
 set -euo pipefail
 
-usage() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; }
 
 check() {
   if ! command -v vulkaninfo >/dev/null; then
@@ -47,6 +48,7 @@ while [ $# -gt 0 ]; do
     -l|--log)          env_vars+=("BDEX_FG_LOG=$2"); shift 2 ;;
     --profile)         env_vars+=("BDEX_FG_PROFILE=1"); shift ;;
     --no-stats)        env_vars+=("BDEX_FG_STATS=0"); shift ;;
+    --gl)              env_vars+=("MESA_LOADER_DRIVER_OVERRIDE=zink"); shift ;;
     --off)             env_vars+=("BDEX_FG=0"); shift ;;
     --check)           check ;;
     -h|--help)         usage; exit 0 ;;

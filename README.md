@@ -24,6 +24,7 @@
 ## Contents
 
 - [How it works](#how-it-works)
+- [Which games](#which-games)
 - [Installation](#installation)
 - [Usage](#usage)
 - [Configuration](#configuration)
@@ -81,6 +82,26 @@ Design notes:
 
 *Hue = motion direction, saturation = magnitude. The static HUD stays grey.*
 </details>
+
+---
+
+## Which games
+
+The layer works on anything that presents through a Vulkan swapchain. That
+covers more than native Vulkan games:
+
+| Game | How | Status |
+|---|---|---|
+| Native Linux Vulkan | `BDEX_FG=1 game` | Works (demo, `vkcube`, `vkgears`) |
+| Windows Direct3D 8–12 through Steam Play / Proton | `BDEX_FG=1 %command%` — DXVK and VKD3D-Proton translate to Vulkan | Loads inside the Steam Linux Runtime container; not yet reported on a real game |
+| Windows games outside Steam (Wine, Lutris, Heroic, Bottles) | Enable DXVK in the runner and set `BDEX_FG=1` in the environment | Same as above |
+| Native Linux **OpenGL** | `bdex-framegen --gl -- game`, i.e. `MESA_LOADER_DRIVER_OVERRIDE=zink`: Mesa's Zink runs OpenGL on Vulkan | Works (`glxgears`, an SDL3 game); Zink itself can be slower than the native GL driver on some games and iGPUs |
+| Emulators, 2D engines, anything else | Run it inside [gamescope](https://github.com/ValveSoftware/gamescope) with `BDEX_FG=1 gamescope -- game`: the compositor presents the whole game through its own Vulkan swapchain | Untested |
+| Software rendering / no GPU presentation | — | Not possible |
+
+The layer never sees game logic or input: it only interpolates what reaches
+the display, so gameplay, anti-cheat interaction and mods are unaffected.
+Steam's overlay and MangoHud sit in the same layer chain and keep working.
 
 ---
 
