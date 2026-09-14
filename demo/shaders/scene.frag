@@ -1,7 +1,8 @@
 #version 450
 // Procedural test scene: scrolling backdrop, several objects moving at
-// different speeds, a static "HUD" and a frame counter so that generated
-// frames are easy to tell apart from real ones.
+// different speeds, a rotating textured square (pure rotation), a static
+// "HUD" and a frame counter so that generated frames are easy to tell apart
+// from real ones.
 layout(location = 0) in vec2 vUV;
 layout(location = 0) out vec4 outColor;
 
@@ -78,6 +79,22 @@ void main() {
         vec2 lp = (uv - bc) * 40.0;
         float stripes = step(0.5, fract(lp.x + lp.y));
         col = mix(vec3(0.9, 0.3, 0.3), vec3(0.3, 0.3, 0.9), stripes);
+    }
+
+    // Rotating textured square at a fixed position: pure rotation, which
+    // block-matching optical flow (translation only) can approximate at best
+    // piecewise. The internal checkerboard makes the angular motion visible.
+    {
+        vec2 rc = vec2(0.24 * aspect, 0.32);
+        float a = t * 1.4;
+        float ca = cos(a), sa = sin(a);
+        vec2 p = uv - rc;
+        vec2 pr = vec2(ca * p.x + sa * p.y, -sa * p.x + ca * p.y);
+        if (sdBox(pr, vec2(0.1, 0.1)) < 0.0) {
+            vec2 cell = floor(pr * 22.0);
+            float chk2 = mod(cell.x + cell.y, 2.0);
+            col = mix(vec3(0.15, 0.65, 0.72), vec3(0.95, 0.9, 0.35), chk2);
+        }
     }
 
     // Static HUD: bar at the bottom with a slowly moving marker.
