@@ -6,7 +6,7 @@
 # Options map to BDEX_FG_* environment variables (see README.md):
 #   -m, --multiplier N     frames per real frame: 2 (default), 3 or 4
 #   -x, --extrapolate      predict frames instead of interpolating: no added latency
-#   -P, --preset NAME      quality | balanced (default) | performance
+#   -P, --preset NAME      quality | balanced (default) | performance | latency (min input lag)
 #   -f, --fullres          compute the flow at full resolution (= --preset quality's flow)
 #   -p, --present-mode M   auto (default: fifo -> mailbox) | app | fifo | mailbox | immediate | relaxed
 #   -d, --debug M          none | flow | split | passthrough

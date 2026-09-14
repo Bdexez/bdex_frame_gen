@@ -58,7 +58,8 @@ struct Config {
     void loadEnv();
 
     // Named presets applied before the other options: "quality",
-    // "balanced" (the defaults) and "performance".
+    // "balanced" (the defaults), "performance" and "latency" (extrapolation
+    // for minimal input lag).
     bool applyPreset(const std::string& name);
 
     static Config load();  // defaults + file + env
