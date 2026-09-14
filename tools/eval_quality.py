@@ -92,7 +92,9 @@ def main():
         if prev is None or nxt is None or nxt["counter"] != prev["counter"] + 1:
             continue
         # generated frame sits between real frames prev (time c) and nxt (time c+1), at fraction t
-        target = 2 * prev["counter"] + 1 if abs(g["t"] - 0.5) < 1e-3 else None
+        # t = 0.5: interpolated between prev and next; t = 1.5: extrapolated
+        # after prev. Both estimate the frame halfway between prev and next.
+        target = 2 * prev["counter"] + 1 if (abs(g["t"] - 0.5) < 1e-3 or abs(g["t"] - 1.5) < 1e-3) else None
         if target is None or target not in gtByCounter:
             continue
         ref = gtByCounter[target]
