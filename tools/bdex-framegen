@@ -12,6 +12,7 @@
 #       --upscale-filter F bilinear | bicubic | lanczos (default)
 #   -s, --sharpness N      contrast-adaptive sharpening after upscaling, 0..1 (0 = off)
 #   -p, --present-mode M   auto (default: fifo -> mailbox) | app | fifo | mailbox | immediate | relaxed
+#   -o, --hud LEVEL        on-screen fps counter: off | fps | framegen | low | full (0..4)
 #   -d, --debug M          none | flow | split | passthrough
 #   -l, --log N            log level 0..3
 #       --profile          print GPU timings with the statistics
@@ -23,7 +24,7 @@
 #   -h, --help
 set -euo pipefail
 
-usage() { sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; }
 
 check() {
   if ! command -v vulkaninfo >/dev/null; then
@@ -51,6 +52,7 @@ while [ $# -gt 0 ]; do
     --upscale-filter)  env_vars+=("BDEX_FG_UPSCALE_FILTER=$2"); shift 2 ;;
     -s|--sharpness)    env_vars+=("BDEX_FG_SHARPNESS=$2"); shift 2 ;;
     -p|--present-mode) env_vars+=("BDEX_FG_PRESENT_MODE=$2"); shift 2 ;;
+    -o|--hud)          env_vars+=("BDEX_FG_OVERLAY=$2"); shift 2 ;;
     -d|--debug)        env_vars+=("BDEX_FG_DEBUG=$2"); shift 2 ;;
     -l|--log)          env_vars+=("BDEX_FG_LOG=$2"); shift 2 ;;
     --profile)         env_vars+=("BDEX_FG_PROFILE=1"); shift ;;

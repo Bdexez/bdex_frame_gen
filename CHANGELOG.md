@@ -6,6 +6,32 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Demo: `--ignore-resize` keeps the swapchain through window resizes and
+  `VK_SUBOPTIMAL_KHR`, like some games do, to exercise the case above.
+- The on-screen fps counter (`OVERLAY`/`HUD`) now has selectable detail levels:
+  `1` output fps, `2` `game > output`, `3` adds a `1%` low line, `4` adds a
+  `.1%` low line (also `off`/`fps`/`framegen`/`low`/`full`). The 1% / 0.1% lows
+  are the game fps at the 99th / 99.9th percentile of the game's frame time,
+  computed over a rolling window; low lines are drawn in amber. Selectable from
+  the control panel ("Compteur de FPS") and the launcher (`-o/--hud`).
+
+### Changed
+
+- The layer is now always loaded into Vulkan games (the `BDEX_FG=1`
+  `enable_environment` gate was removed from the manifest) and stays a pure
+  pass-through until it is turned on — so frame generation can be enabled from
+  the config file alone, with **no Steam launch options**. The default state is
+  now off (`enabled = false`); `BDEX_FG=1` in the environment still forces it on
+  for a single process and overrides the config, keeping the old per-game and
+  command-line workflows working.
+- The GTK graphical launcher is now a **control panel** (Lossless-Scaling
+  style): a master "enable for all Vulkan games" switch plus a per-game list you
+  add to, backed directly by `~/.config/bdex-framegen.conf` (read on start,
+  written on every change, hand-written keys preserved). Open it once, turn
+  frame generation on, and launch games normally through Steam.
+
 ### Fixed
 
 - Upscaling (`UPSCALE` / `RENDER_SCALE`) presented only the top-left
@@ -18,11 +44,6 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   mode): on `VK_SUBOPTIMAL_KHR` the layer re-creates its real swapchain and
   output stage at the surface's current extent instead of presenting cropped
   or padded frames; the game's virtual swapchain is untouched.
-
-### Added
-
-- Demo: `--ignore-resize` keeps the swapchain through window resizes and
-  `VK_SUBOPTIMAL_KHR`, like some games do, to exercise the case above.
 
 ## [0.3.0] - 2026-09-14
 

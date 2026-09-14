@@ -27,5 +27,7 @@ else
   echo "  (no 32-bit toolchain: 32-bit games will run without the layer)"
 fi
 echo
-echo "Enable it per game with BDEX_FG=1 (Steam launch options: BDEX_FG=1 %command%)"
-echo "or run:  bdex-framegen -- <game>"
+echo "The layer now loads into every Vulkan game automatically, inert until you"
+echo "turn it on. Open the control panel to enable it (globally or per game):"
+echo "    bdex-framegen-gui"
+echo "No Steam launch options needed. (Per-game env still works: BDEX_FG=1 %command%.)"

@@ -153,19 +153,45 @@ cmake --build build32 -j && cmake --install build32 --prefix ~/.local
 
 ## Usage
 
-The layer is installed as **implicit but inert**: it does nothing until the
-`BDEX_FG=1` environment variable is set.
+Once installed the layer loads into **every** Vulkan game automatically, but
+stays a pure pass-through — it does nothing until you turn it on. There is
+nothing to add to your Steam launch options.
 
-### Graphical launcher
+### Control panel (recommended)
 
-For a point-and-click setup, run **`bdex-framegen-gui`** (or `bdex-framegen
---gui`, or the *bdex-framegen* entry in the applications menu). Pick the game,
-toggle frame generation and upscaling, set the sharpness and present mode, then
-**Launch** — or copy the equivalent Steam launch options, or save the settings
-as a per-game profile. It needs PyGObject with GTK 4 and libadwaita (packages
-`python-gobject`, `gtk4`, `libadwaita`).
+Run **`bdex-framegen-gui`** (or `bdex-framegen --gui`, or the *bdex-framegen*
+entry in the applications menu) once, the way you would open Lossless Scaling:
 
-### Command line
+* flip **frame generation on**, either globally (*Activer pour tous les jeux
+  Vulkan*) or for a chosen list of games you add with **+**;
+* set the quality preset, multiplier, mode, upscaling and present mode.
+
+Everything is written to `~/.config/bdex-framegen.conf`, which the layer reads
+on its own. Then just **launch your games normally through Steam** — no launch
+options. Changes take effect the next time a game starts. The panel needs
+PyGObject with GTK 4 and libadwaita (packages `python-gobject`, `gtk4`,
+`libadwaita`).
+
+### Turning it on by hand
+
+`~/.config/bdex-framegen.conf` is a plain INI file. `[*]` applies to every game;
+a `[name]` section applies to the game whose executable is `name`:
+
+```ini
+[*]
+enabled = 0            # off for everything by default
+preset  = balanced
+
+[kenshi]
+enabled = 1            # ...but on for Kenshi, no launch options needed
+multiplier = 3
+```
+
+### Environment variables (per-game, still supported)
+
+Setting `BDEX_FG=1` turns the layer on for a single process, overriding the
+config file — handy for a one-off, from the command line, or as a per-game
+Steam launch option:
 
 ```sh
 BDEX_FG=1 ./my_game                      # x2 (default)
@@ -225,7 +251,7 @@ takes precedence).
 | `RENDER_SCALE` | `1.0` | render resolution / display resolution (`0.5`–`1.0`); below 1 the game renders smaller and every frame is upscaled to the display size. `UPSCALE=<ratio>` sets it as a ratio (e.g. `1.5`). X11 / Xwayland only |
 | `UPSCALE_FILTER` | `lanczos` | upscaling reconstruction filter: `bilinear`, `bicubic` (Catmull-Rom) or `lanczos` (Lanczos-2) |
 | `SHARPNESS` | `0` | contrast-adaptive sharpening (CAS) after upscaling, `0` (off) to `1` (strong); applies to real and generated frames |
-| `OVERLAY` | `0` | draw an on-screen fps HUD (`game fps > output fps`) in the top-left of every frame (alias `HUD`) |
+| `OVERLAY` | `0` | on-screen fps counter in the top-left of every frame (alias `HUD`). Level `0` off, `1` output fps, `2` `game > output`, `3` adds the `1%` low, `4` adds the `.1%` low. Also accepts `off`/`fps`/`framegen`/`low`/`full`. The lows are the game fps at the 99th / 99.9th percentile frame time |
 | `REFINE` / `REFINE_ALL` | `1` / `1` | 4×4 flow refinement pass, on every level or only the finest |
 | `FLOW_ITERATIONS` | `1` | fixed-point iterations of the flow lookup in the interpolation (0–3) |
 | `PRESENT_MODE` | `auto` | `auto` presents with mailbox when the game asks for FIFO; `app` keeps the game's mode; or force `fifo`, `mailbox`, `immediate`, `relaxed` |
