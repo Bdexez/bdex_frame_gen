@@ -33,6 +33,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 - Flow refinement compares 4×4 blocks instead of 6×6 windows (faster and
   slightly better), the interpolation uses one fixed-point iteration by
   default (two were measured to bring nothing).
+- Each warp trajectory in the interpolation now blends its samples from both
+  the previous and the current frame (temporal blend, gated by the
+  trajectory's own photometric consistency so an occluded sample cannot
+  contaminate it) instead of using a single frame. Consistently better across
+  motion speeds at no extra texture fetch.
 
 ## [0.1.0] - 2026-09-12
 

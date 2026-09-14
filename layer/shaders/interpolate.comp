@@ -118,12 +118,25 @@ void main() {
     vec4 cb2 = texture(prevTex, (pb + B) / fsize);
     float eb = luma(abs(cb.rgb - cb2.rgb));
 
+    // Each trajectory carries a sample from both frames: the forward one from
+    // prev at pf and from cur at pf+F, the backward one from cur at pb and from
+    // prev at pb+B. Where the trajectory is photometrically consistent the two
+    // samples agree and blending them (weighted by temporal position) is a
+    // sharper, less noisy estimate than a single frame; where it is not, the
+    // per-candidate weight below discards that trajectory anyway. The blend
+    // amount is gated by the trajectory's own consistency so an occluded sample
+    // never contaminates the candidate it belongs to.
+    float mf = (1.0 - smoothstep(0.04, 0.12, ef));
+    float mb = (1.0 - smoothstep(0.04, 0.12, eb));
+    vec4 cfc = mix(cf, cf2, t * mf);
+    vec4 cbc = mix(cb, cb2, (1.0 - t) * mb);
+
     // Blend the two candidates, favouring the one whose motion is
     // photometrically consistent (and the temporally closer frame).
     const float eps = 0.01;
     float wf = (1.0 - t) / ((ef + eps) * (ef + eps));
     float wb = t / ((eb + eps) * (eb + eps));
-    c = (wf * cf + wb * cb) / (wf + wb);
+    c = (wf * cfc + wb * cbc) / (wf + wb);
 
     // Neither candidate explains the pixel (occlusion the flow could not
     // resolve): a plain cross-fade is less objectionable than a smeared edge.
