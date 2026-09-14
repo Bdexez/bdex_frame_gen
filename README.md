@@ -32,6 +32,7 @@
 - [Validation](#validation)
 - [Développement](#développement)
 - [Arborescence](#arborescence)
+- [Contribuer](#contribuer)
 
 ---
 
@@ -302,6 +303,19 @@ demo/                   application de test GLFW (scène procédurale)
 tests/                  tests unitaires et test d'intégration
 tools/                  lanceur, install/uninstall, évaluation de qualité
 ```
+
+---
+
+## Contribuer
+
+Les retours de tests sur de vrais jeux (DXVK, VKD3D-Proton, NVIDIA, Intel…)
+sont ce qui manque le plus au projet : ouvrez une issue avec le log du layer
+(`BDEX_FG_LOG=2`), votre GPU et la façon dont le jeu est lancé.
+
+Pour proposer du code, lisez [CONTRIBUTING.md](CONTRIBUTING.md) : mise en
+place, ce qu'il faut vérifier avant une pull request (tests, validation
+Khronos, mesures de qualité et de performance) et conventions du code.
+L'historique des versions est dans [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
