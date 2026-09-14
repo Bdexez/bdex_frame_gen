@@ -6,6 +6,24 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Upscaling (`UPSCALE` / `RENDER_SCALE`) presented only the top-left
+  render-sized region of the display-sized frame: the copy into the real
+  swapchain used the render extent, so a 720p game upscaled to 1080p showed a
+  cropped 1280x720 image with the rest of the screen black. The copy now
+  covers the display extent.
+- The real swapchain follows the surface when the window is resized behind
+  the game's back (X11 / Xwayland, e.g. Wine applying an emulated display
+  mode): on `VK_SUBOPTIMAL_KHR` the layer re-creates its real swapchain and
+  output stage at the surface's current extent instead of presenting cropped
+  or padded frames; the game's virtual swapchain is untouched.
+
+### Added
+
+- Demo: `--ignore-resize` keeps the swapchain through window resizes and
+  `VK_SUBOPTIMAL_KHR`, like some games do, to exercise the case above.
+
 ## [0.3.0] - 2026-09-14
 
 ### Added

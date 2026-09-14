@@ -31,18 +31,8 @@ VirtualSwapchain::VirtualSwapchain(DeviceData& dev, const VkSwapchainCreateInfoK
         createVirtualImages(appInfo, wantGeneration);
         createSlots(slots_, kAppSlots, false);
         createSlots(workerSlots_, kWorkerSlots, true);
-        std::vector<VkImage> sources;
-        for (auto& vi : virtualImages_) sources.push_back(vi.img.image);
-        if (wantGeneration) {
-            try {
-                fg_ = std::make_unique<FrameGen>(dev_, format_, extent_, displayExtent_,
-                                                 static_cast<uint32_t>(dev_.config.multiplier - 1), sources);
-                generating_ = true;
-            } catch (const VkError& e) {
-                BDEX_WARN("frame generation unavailable for this swapchain (%s); passing frames through", e.what());
-            }
-        }
-        if (!generating_) fg_ = std::make_unique<FrameGen>(dev_, format_, extent_, displayExtent_, 0, sources);
+        generating_ = wantGeneration;
+        fg_ = makeFrameGen(generating_);
         worker_ = std::thread([this] { workerLoop(); });
     } catch (...) {
         destroyAll();
@@ -58,6 +48,24 @@ VirtualSwapchain::VirtualSwapchain(DeviceData& dev, const VkSwapchainCreateInfoK
 }
 
 VirtualSwapchain::~VirtualSwapchain() { destroyAll(); }
+
+// Builds the output stage for the current render / display extents. On entry
+// `generating` says whether frame generation is wanted; on return, whether it
+// is available (a pass-through instance is built otherwise).
+std::unique_ptr<FrameGen> VirtualSwapchain::makeFrameGen(bool& generating) {
+    std::vector<VkImage> sources;
+    for (auto& vi : virtualImages_) sources.push_back(vi.img.image);
+    if (generating) {
+        try {
+            return std::make_unique<FrameGen>(dev_, format_, extent_, displayExtent_,
+                                              static_cast<uint32_t>(dev_.config.multiplier - 1), sources);
+        } catch (const VkError& e) {
+            BDEX_WARN("frame generation unavailable for this swapchain (%s); passing frames through", e.what());
+            generating = false;
+        }
+    }
+    return std::make_unique<FrameGen>(dev_, format_, extent_, displayExtent_, 0, sources);
+}
 
 void VirtualSwapchain::createReal(const VkSwapchainCreateInfoKHR& appInfo) {
     VkSwapchainCreateInfoKHR ci = appInfo;
@@ -125,7 +133,13 @@ void VirtualSwapchain::createReal(const VkSwapchainCreateInfoKHR& appInfo) {
 
     VkResult r = dev_.vt.CreateSwapchainKHR(dev_.device, &ci, nullptr, &real_);
     if (r < 0) throw VkError(r, "vkCreateSwapchainKHR (real)");
+    realInfo_ = ci;
+    realInfo_.pNext = nullptr;
+    realInfo_.oldSwapchain = VK_NULL_HANDLE;
+    createRealImages();
+}
 
+void VirtualSwapchain::createRealImages() {
     uint32_t n = 0;
     VK_CHECK(dev_.vt.GetSwapchainImagesKHR(dev_.device, real_, &n, nullptr));
     std::vector<VkImage> imgs(n);
@@ -136,6 +150,88 @@ void VirtualSwapchain::createReal(const VkSwapchainCreateInfoKHR& appInfo) {
         VkSemaphoreCreateInfo si{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
         VK_CHECK(dev_.vt.CreateSemaphore(dev_.device, &si, nullptr, &realImages_[i].readySem));
     }
+}
+
+void VirtualSwapchain::destroyRealImages(std::vector<RealImage>& images) {
+    for (auto& ri : images)
+        if (ri.readySem) dev_.vt.DestroySemaphore(dev_.device, ri.readySem, nullptr);
+    images.clear();
+}
+
+// The surface can change size underneath the real swapchain without the
+// application's swapchain being involved: on X11 / Xwayland, Wine applies an
+// emulated display mode by resizing the window after the game created its
+// swapchain. The driver then reports VK_SUBOPTIMAL_KHR and presents our
+// images cropped (or padded). The application is not told (see runJob), so
+// we re-create the real swapchain at the new extent ourselves, together with
+// the output stage that produces frames at display size. The application's
+// virtual images are untouched; only the previous frame's analysis is lost.
+void VirtualSwapchain::followSurface() {
+    VkSurfaceCapabilitiesKHR caps{};
+    if (dev_.inst->vt.GetPhysicalDeviceSurfaceCapabilitiesKHR(dev_.physDev, realInfo_.surface, &caps) != VK_SUCCESS) return;
+    const VkExtent2D cur = caps.currentExtent;
+    if (cur.width == UINT32_MAX || cur.width == 0 || cur.height == 0) return;
+    if (cur.width == displayExtent_.width && cur.height == displayExtent_.height) return;
+
+    {
+        std::unique_lock<std::mutex> wlock(workerMutex_);
+        waitWorkerIdle(wlock);
+    }
+    {
+        std::lock_guard<std::mutex> qlock(dev_.queueMutex(dev_.queue));
+        dev_.vt.QueueWaitIdle(dev_.queue);
+    }
+
+    const VkExtent2D old = displayExtent_;
+    displayExtent_ = cur;
+    upscaling_ = (cur.width != extent_.width || cur.height != extent_.height);
+    bool generating = generating_;
+    std::unique_ptr<FrameGen> fg;
+    try {
+        fg = makeFrameGen(generating);
+    } catch (const VkError& e) {
+        BDEX_WARN("surface resized to %ux%u but the output stage could not be rebuilt (%s)", cur.width, cur.height, e.what());
+        displayExtent_ = old;
+        upscaling_ = (old.width != extent_.width || old.height != extent_.height);
+        std::lock_guard<std::mutex> wlock(workerMutex_);
+        pendingResult_ = VK_ERROR_OUT_OF_DATE_KHR;  // let the application rebuild everything
+        return;
+    }
+
+    VkSwapchainCreateInfoKHR ci = realInfo_;
+    ci.imageExtent = cur;
+    ci.oldSwapchain = real_;
+    if (caps.maxImageCount) ci.minImageCount = std::min(ci.minImageCount, caps.maxImageCount);
+    ci.minImageCount = std::max(ci.minImageCount, caps.minImageCount);
+    VkSwapchainKHR fresh = VK_NULL_HANDLE;
+    VkResult r = dev_.vt.CreateSwapchainKHR(dev_.device, &ci, nullptr, &fresh);
+    if (r < 0) {
+        // The old swapchain may have been retired by the failed call: the
+        // application has to rebuild from scratch.
+        BDEX_WARN("surface resized to %ux%u but the real swapchain could not be re-created: %s", cur.width, cur.height, vkResultName(r));
+        displayExtent_ = old;
+        upscaling_ = (old.width != extent_.width || old.height != extent_.height);
+        std::lock_guard<std::mutex> wlock(workerMutex_);
+        pendingResult_ = VK_ERROR_OUT_OF_DATE_KHR;
+        return;
+    }
+    std::vector<RealImage> oldImages = std::move(realImages_);
+    VkSwapchainKHR oldReal = real_;
+    real_ = fresh;
+    fg_ = std::move(fg);
+    generating_ = generating;
+    historyLost_ = true;
+    try {
+        createRealImages();
+    } catch (const VkError& e) {
+        BDEX_WARN("real swapchain images unavailable after resize (%s)", e.what());
+        std::lock_guard<std::mutex> wlock(workerMutex_);
+        pendingResult_ = VK_ERROR_OUT_OF_DATE_KHR;
+    }
+    destroyRealImages(oldImages);
+    dev_.vt.DestroySwapchainKHR(dev_.device, oldReal, nullptr);
+    BDEX_INFO("surface resized %ux%u -> %ux%u: real swapchain re-created (render %ux%u, %s)", old.width, old.height,
+              cur.width, cur.height, extent_.width, extent_.height, upscaling_ ? "resampled" : "1:1");
 }
 
 void VirtualSwapchain::createVirtualImages(const VkSwapchainCreateInfoKHR& appInfo, bool forGeneration) {
@@ -264,10 +360,7 @@ void VirtualSwapchain::destroyAll() {
     fg_.reset();
     for (auto& vi : virtualImages_) dev_.destroyImage(vi.img);
     virtualImages_.clear();
-    for (auto& ri : realImages_) {
-        if (ri.readySem) vt.DestroySemaphore(d, ri.readySem, nullptr);
-    }
-    realImages_.clear();
+    destroyRealImages(realImages_);
     if (real_) vt.DestroySwapchainKHR(d, real_, nullptr);
     real_ = VK_NULL_HANDLE;
 }
@@ -394,6 +487,8 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     VirtualImage& vi = virtualImages_[imageIndex];
     vi.acquired = false;
 
+    if (surfaceChanged_.exchange(false)) followSurface();
+
     // The previous job must have been fully submitted by the worker before
     // we overwrite the images it copies from; this is also where FIFO
     // back-pressure reaches the application.
@@ -420,7 +515,9 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     lastAppPresent_ = t0;
 
     const int mult = generating_ ? std::max(1, dev_.config.multiplier) : 1;
-    const bool interpolate = generating_ && prevIndex_ >= 0 && mult > 1;
+    // A rebuilt output stage has no analysis of the previous frame yet.
+    const bool interpolate = generating_ && prevIndex_ >= 0 && mult > 1 && !historyLost_;
+    historyLost_ = false;
     const int prev = prevIndex_;
     if (dev_.config.overlay) {
         const int gfps = frameIntervalMs_ > 0.05 ? static_cast<int>(1000.0 / frameIntervalMs_ + 0.5) : 0;
@@ -613,12 +710,15 @@ void VirtualSwapchain::runJob(const Job& job) {
             pendingResult_ = r;
             return;
         }
-        // VK_SUBOPTIMAL is deliberately swallowed: it reports that *our* real
-        // swapchain is no longer optimal, but the application's virtual
+        // VK_SUBOPTIMAL is deliberately not forwarded: it reports that *our*
+        // real swapchain is no longer optimal, but the application's virtual
         // swapchain is unaffected, so we must not push it into recreating (some
-        // D3D translation layers hang while recreating). A genuine change fails
-        // the acquire/present with OUT_OF_DATE (r < 0 above), which we do
+        // D3D translation layers hang while recreating). Instead the
+        // application thread re-creates the real swapchain if the surface
+        // changed size (followSurface). A genuine change fails the
+        // acquire/present with OUT_OF_DATE (r < 0 above), which we do
         // propagate so the application recreates and we rebuild the real one.
+        if (r == VK_SUBOPTIMAL_KHR) surfaceChanged_.store(true, std::memory_order_relaxed);
         statsOutFrames_.fetch_add(1, std::memory_order_relaxed);
     }
     markSubmitted();
