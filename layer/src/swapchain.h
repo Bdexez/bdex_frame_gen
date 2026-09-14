@@ -114,6 +114,10 @@ private:
     VkExtent2D extent_{};         // render resolution (what the application renders into)
     VkExtent2D displayExtent_{};  // real swapchain resolution (== extent_ unless upscaling)
     bool upscaling_ = false;
+    VkSurfaceKHR surface_ = VK_NULL_HANDLE;  // for the per-surface Wayland upscaling state
+    bool throwaway_ = false;      // native-Wayland: this swapchain exists only to learn the
+                                  // window size; its first acquire returns OUT_OF_DATE so the
+                                  // app recreates at the reduced size the caps hook now reports
     VkPresentModeKHR presentMode_ = VK_PRESENT_MODE_FIFO_KHR;
 
     std::vector<VirtualImage> virtualImages_;

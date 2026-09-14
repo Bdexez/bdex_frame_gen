@@ -17,6 +17,7 @@ namespace bdex {
     X(GetPhysicalDeviceFeatures)                     \
     X(GetPhysicalDeviceSurfaceSupportKHR)            \
     X(GetPhysicalDeviceSurfaceCapabilitiesKHR)       \
+    X(GetPhysicalDeviceSurfaceCapabilities2KHR)      \
     X(GetPhysicalDeviceSurfacePresentModesKHR)
 
 #define BDEX_DEVICE_FUNCS(X)          \

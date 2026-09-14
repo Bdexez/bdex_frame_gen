@@ -8,6 +8,17 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Spatial upscaling now works on **native Wayland**, not just X11/Xwayland. A
+  Wayland surface never reports its size (`currentExtent` is always
+  `UINT32_MAX`), so the layer learns the true window size at the first
+  swapchain creation, bounces the app through one swapchain recreation
+  (`VK_ERROR_OUT_OF_DATE_KHR`, the normal resize path), and then reports a
+  reduced `currentExtent` so the app renders smaller and every frame is
+  upscaled back to the window size. Window resizes re-learn the new size.
+- Hook `vkGetPhysicalDeviceSurfaceCapabilities2KHR` as well as the base
+  variant, so the render-scale reduction also reaches apps that query surface
+  capabilities through `VK_KHR_get_surface_capabilities2` (DXVK/VKD3D-Proton),
+  on both X11 and Wayland.
 - Demo: `--ignore-resize` keeps the swapchain through window resizes and
   `VK_SUBOPTIMAL_KHR`, like some games do, to exercise the case above.
 - The on-screen fps counter (`OVERLAY`/`HUD`) now has selectable detail levels:

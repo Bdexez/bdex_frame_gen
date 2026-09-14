@@ -28,7 +28,8 @@ VirtualSwapchain::VirtualSwapchain(DeviceData& dev, const VkSwapchainCreateInfoK
     extent_ = appInfo.imageExtent;
     try {
         createReal(appInfo);
-        const bool wantGeneration = dev_.config.enabled && dev_.config.debug != Config::Debug::Passthrough && dev_.config.multiplier > 1;
+        const bool wantGeneration = dev_.config.enabled && dev_.config.debug != Config::Debug::Passthrough &&
+                                    dev_.config.multiplier > 1 && !throwaway_;
         createVirtualImages(appInfo, wantGeneration);
         createSlots(slots_, kAppSlots, false);
         createSlots(workerSlots_, kWorkerSlots, true);
@@ -109,13 +110,33 @@ void VirtualSwapchain::createReal(const VkSwapchainCreateInfoKHR& appInfo) {
     // surface-capabilities hook when upscaling); the real swapchain must use
     // the true display extent, which this direct query returns unmodified.
     displayExtent_ = extent_;
+    surface_ = appInfo.surface;
     VkSurfaceCapabilitiesKHR caps{};
     if (dev_.inst->vt.GetPhysicalDeviceSurfaceCapabilitiesKHR(dev_.physDev, appInfo.surface, &caps) == VK_SUCCESS) {
-        if (dev_.config.renderScale < 0.999f && caps.currentExtent.width != UINT32_MAX &&
+        const bool upscale = dev_.config.enabled && dev_.config.renderScale < 0.999f;
+        if (upscale && caps.currentExtent.width != UINT32_MAX &&
             (caps.currentExtent.width != extent_.width || caps.currentExtent.height != extent_.height)) {
+            // X11 / XWayland: the caps hook already handed the app a reduced
+            // size; the real swapchain presents at the true (unmodified) one.
             displayExtent_ = caps.currentExtent;
             upscaling_ = true;
             ci.imageExtent = displayExtent_;
+        } else if (upscale && caps.currentExtent.width == UINT32_MAX) {
+            // Native Wayland: the surface never reports its size, so we learn it
+            // here (the app just asked for the true window size) and bounce the
+            // app through one recreation; the caps hook then reports a reduced
+            // currentExtent and the recreated swapchain renders smaller.
+            std::lock_guard<std::mutex> lk(dev_.inst->surfMutex);
+            WaylandSurfaceState& st = dev_.inst->waylandSurfaces[appInfo.surface];
+            if (!st.reduce) {
+                st.displayExtent = extent_;   // the true window size
+                st.reduce = true;
+                throwaway_ = true;            // this swapchain's first acquire returns OUT_OF_DATE
+            } else {
+                displayExtent_ = st.displayExtent;   // present at the full window size
+                upscaling_ = true;
+                ci.imageExtent = displayExtent_;
+            }
         }
         // We present `multiplier` frames per game frame: with too few images
         // the acquire of the real frame blocks behind the generated ones
@@ -397,7 +418,7 @@ VkResult VirtualSwapchain::acquire(uint64_t timeout, VkSemaphore semaphore, VkFe
         pending = pendingResult_;
         if (pending != VK_ERROR_OUT_OF_DATE_KHR) pendingResult_ = VK_SUCCESS;
     }
-    if (pending == VK_ERROR_OUT_OF_DATE_KHR || retired_) return VK_ERROR_OUT_OF_DATE_KHR;
+    if (pending == VK_ERROR_OUT_OF_DATE_KHR || retired_ || throwaway_) return VK_ERROR_OUT_OF_DATE_KHR;
 
     const uint32_t n = static_cast<uint32_t>(virtualImages_.size());
     int chosen = -1;
@@ -737,6 +758,15 @@ void VirtualSwapchain::runJob(const Job& job) {
         }
         if (r < 0) {
             markSubmitted();
+            // A genuine out-of-date on the real swapchain means the window
+            // changed (e.g. a resize). On Wayland, drop the reduced-extent flag
+            // so the app's recreation re-learns the new true window size before
+            // we reduce again (see WaylandSurfaceState).
+            if (r == VK_ERROR_OUT_OF_DATE_KHR && surface_ != VK_NULL_HANDLE) {
+                std::lock_guard<std::mutex> lk(dev_.inst->surfMutex);
+                auto it = dev_.inst->waylandSurfaces.find(surface_);
+                if (it != dev_.inst->waylandSurfaces.end()) it->second.reduce = false;
+            }
             std::lock_guard<std::mutex> wlock(workerMutex_);
             pendingResult_ = r;
             return;

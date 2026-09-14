@@ -181,19 +181,53 @@ VkExtent2D scaledRenderExtent(VkExtent2D display, float renderScale) {
     return {std::min(w, display.width), std::min(h, display.height)};
 }
 
+// Reduce the surface size reported to the application so it renders below the
+// display resolution; the layer upscales every presented frame back up.
+void applyRenderScale(InstanceData* inst, VkSurfaceKHR surface, VkSurfaceCapabilitiesKHR* caps) {
+    const Config& cfg = inst->config;
+    if (!cfg.enabled || cfg.renderScale >= 0.999f) return;
+    if (caps->currentExtent.width != UINT32_MAX && caps->currentExtent.width > 0) {
+        // X11 / XWayland: the surface size is fixed, so we can hand back a
+        // reduced one directly and the app adopts it.
+        VkExtent2D reduced = scaledRenderExtent(caps->currentExtent, cfg.renderScale);
+        caps->currentExtent = reduced;
+        caps->minImageExtent = {std::min(caps->minImageExtent.width, reduced.width),
+                                std::min(caps->minImageExtent.height, reduced.height)};
+    } else if (caps->currentExtent.width == UINT32_MAX) {
+        // Native Wayland: the app picks its own size, so we cannot reduce it
+        // until swapchain.cpp has learned the true window size and flagged the
+        // surface. Then we report a concrete reduced extent (pinned via
+        // min/max) so even apps that don't follow currentExtent render smaller.
+        std::lock_guard<std::mutex> lk(inst->surfMutex);
+        auto it = inst->waylandSurfaces.find(surface);
+        if (it != inst->waylandSurfaces.end() && it->second.reduce && it->second.displayExtent.width > 0) {
+            VkExtent2D reduced = scaledRenderExtent(it->second.displayExtent, cfg.renderScale);
+            caps->currentExtent = reduced;
+            caps->minImageExtent = reduced;
+            caps->maxImageExtent = reduced;
+        }
+    }
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL GetPhysicalDeviceSurfaceCapabilitiesKHR(VkPhysicalDevice physDev, VkSurfaceKHR surface,
                                                                        VkSurfaceCapabilitiesKHR* pCaps) {
     InstanceData* inst = getInstance(dispatchKey(physDev));
     if (!inst) return VK_ERROR_INITIALIZATION_FAILED;
     VkResult r = inst->vt.GetPhysicalDeviceSurfaceCapabilitiesKHR(physDev, surface, pCaps);
-    const Config& cfg = inst->config;
-    if (r >= 0 && cfg.enabled && cfg.renderScale < 0.999f &&
-        pCaps->currentExtent.width != UINT32_MAX && pCaps->currentExtent.width > 0) {
-        VkExtent2D reduced = scaledRenderExtent(pCaps->currentExtent, cfg.renderScale);
-        pCaps->currentExtent = reduced;
-        pCaps->minImageExtent = {std::min(pCaps->minImageExtent.width, reduced.width),
-                                 std::min(pCaps->minImageExtent.height, reduced.height)};
-    }
+    if (r >= 0) applyRenderScale(inst, surface, pCaps);
+    return r;
+}
+
+// The VK_KHR_get_surface_capabilities2 variant (used by DXVK/VKD3D-Proton and
+// others): same reduction, applied to the wrapped VkSurfaceCapabilitiesKHR.
+VKAPI_ATTR VkResult VKAPI_CALL GetPhysicalDeviceSurfaceCapabilities2KHR(VkPhysicalDevice physDev,
+                                                                        const VkPhysicalDeviceSurfaceInfo2KHR* pInfo,
+                                                                        VkSurfaceCapabilities2KHR* pCaps) {
+    InstanceData* inst = getInstance(dispatchKey(physDev));
+    if (!inst) return VK_ERROR_INITIALIZATION_FAILED;
+    if (!inst->vt.GetPhysicalDeviceSurfaceCapabilities2KHR) return VK_ERROR_EXTENSION_NOT_PRESENT;
+    VkResult r = inst->vt.GetPhysicalDeviceSurfaceCapabilities2KHR(physDev, pInfo, pCaps);
+    if (r >= 0 && pInfo) applyRenderScale(inst, pInfo->surface, &pCaps->surfaceCapabilities);
     return r;
 }
 
@@ -602,6 +636,7 @@ const Hook g_instanceHooks[] = {
     HOOK(EnumerateDeviceExtensionProperties),
     HOOK(CreateDevice),
     HOOK(GetPhysicalDeviceSurfaceCapabilitiesKHR),
+    HOOK(GetPhysicalDeviceSurfaceCapabilities2KHR),
 };
 
 const Hook g_deviceHooks[] = {
@@ -649,6 +684,8 @@ PFN_vkVoidFunction layerGetDeviceProcAddr(VkDevice device, const char* pName);
 PFN_vkVoidFunction layerGetPhysicalDeviceProcAddr(VkInstance instance, const char* pName) {
     if (pName && strcmp(pName, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(GetPhysicalDeviceSurfaceCapabilitiesKHR);
+    if (pName && strcmp(pName, "vkGetPhysicalDeviceSurfaceCapabilities2KHR") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(GetPhysicalDeviceSurfaceCapabilities2KHR);
     InstanceData* inst = instance ? getInstance(dispatchKey(instance)) : nullptr;
     if (!inst) return nullptr;
     return inst->vt.GetInstanceProcAddr(instance, pName);
