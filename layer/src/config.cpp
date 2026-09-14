@@ -52,17 +52,49 @@ const char* presentModeName(int mode) {
     case VK_PRESENT_MODE_MAILBOX_KHR:      return "mailbox";
     case VK_PRESENT_MODE_FIFO_KHR:         return "fifo";
     case VK_PRESENT_MODE_FIFO_RELAXED_KHR: return "relaxed";
-    default:                               return "app";
+    case -1:                               return "app";
+    default:                               return "auto";
     }
+}
+
+bool Config::applyPreset(const std::string& name) {
+    const std::string v = lower(trim(name));
+    if (v == "balanced" || v == "default") {
+        flowScale = 0; refineAll = true; flowIterations = 1; levels = 4; searchRadius = 4; searchFine = 2;
+    } else if (v == "quality") {
+        flowScale = 1; refineAll = true; flowIterations = 2; levels = 5; searchRadius = 4; searchFine = 2;
+    } else if (v == "performance" || v == "perf" || v == "fast") {
+        flowScale = 4; refineAll = false; flowIterations = 0; levels = 4; searchRadius = 4; searchFine = 2;
+    } else {
+        return false;
+    }
+    return true;
 }
 
 bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     const std::string key = lower(trim(rawKey));
     const std::string value = trim(rawValue);
+    if (key == "preset")                      return applyPreset(value);
     if (key == "enabled" || key == "enable")  return parseBool(value, enabled);
     if (key == "multiplier" || key == "mult") return parseInt(value, multiplier, 1, 4);
     if (key == "levels")                      return parseInt(value, levels, 1, 6);
-    if (key == "fullres")                     return parseBool(value, fullres);
+    if (key == "fullres")                     { bool b; if (!parseBool(value, b)) return false; flowScale = b ? 1 : 0; return true; }
+    if (key == "flow_scale") {
+        const std::string v = lower(value);
+        if (v == "auto" || v == "0") { flowScale = 0; return true; }
+        int x;
+        if (!parseInt(v, x, 1, 4) || (x != 1 && x != 2 && x != 4)) return false;
+        flowScale = x;
+        return true;
+    }
+    if (key == "low_latency" || key == "lowlatency") return parseBool(value, lowLatency);
+    if (key == "mode") {
+        const std::string v = lower(value);
+        if (v == "interpolate" || v == "interp") extrapolate = false;
+        else if (v == "extrapolate" || v == "extrap" || v == "lowlatency") extrapolate = true;
+        else return false;
+        return true;
+    }
     if (key == "search" || key == "search_radius") return parseInt(value, searchRadius, 1, 4);
     if (key == "search_fine")                 return parseInt(value, searchFine, 1, 4);
     if (key == "pacing")                      return parseBool(value, pacing);
@@ -73,6 +105,8 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "smoothness")                  return parseFloat(value, smoothness, 0.f, 1.f);
     if (key == "zero_bias")                   return parseFloat(value, zeroBias, 0.f, 1.f);
     if (key == "refine")                      return parseBool(value, refine);
+    if (key == "refine_all")                  return parseBool(value, refineAll);
+    if (key == "flow_iterations")             return parseInt(value, flowIterations, 0, 3);
     if (key == "refine_bias")                 return parseFloat(value, refineBias, 0.f, 64.f);
     if (key == "stats")                       return parseBool(value, stats);
     if (key == "profile")                     return parseBool(value, profile);
@@ -82,7 +116,8 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "dump_frames")                 return parseInt(value, dumpFrames, 1, 100000);
     if (key == "present_mode") {
         const std::string v = lower(value);
-        if (v == "app" || v == "auto" || v.empty()) presentMode = -1;
+        if (v == "auto" || v.empty())               presentMode = -2;
+        else if (v == "app" || v == "game")          presentMode = -1;
         else if (v == "fifo" || v == "vsync")       presentMode = VK_PRESENT_MODE_FIFO_KHR;
         else if (v == "relaxed" || v == "fifo_relaxed") presentMode = VK_PRESENT_MODE_FIFO_RELAXED_KHR;
         else if (v == "mailbox")                    presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
@@ -153,6 +188,11 @@ void Config::loadFile(const std::string& path, const std::string& processName) {
 
 void Config::loadEnv() {
     static const char prefix[] = "BDEX_FG_";
+    // The preset goes first so that individual variables override it
+    // whatever the order of the environment.
+    if (const char* p = getenv("BDEX_FG_PRESET")) {
+        if (!applyPreset(p)) BDEX_WARN("unknown preset '%s'", p);
+    }
     for (char** e = environ; e && *e; ++e) {
         std::string entry(*e);
         if (entry.compare(0, sizeof(prefix) - 1, prefix) != 0) continue;
@@ -160,7 +200,7 @@ void Config::loadEnv() {
         if (eq == std::string::npos) continue;
         std::string key = entry.substr(sizeof(prefix) - 1, eq - (sizeof(prefix) - 1));
         std::string value = entry.substr(eq + 1);
-        if (lower(key) == "config") continue;  // consumed by load()
+        if (lower(key) == "config" || lower(key) == "preset") continue;  // handled above / by load()
         if (!apply(key, value))
             BDEX_WARN("ignored environment option %s", entry.c_str());
     }
@@ -183,11 +223,19 @@ Config Config::load() {
     return c;
 }
 
+int Config::flowScaleFor(uint32_t width, uint32_t height) const {
+    if (flowScale) return flowScale;
+    const uint64_t pixels = uint64_t(width) * height;
+    if (pixels <= 640ull * 1000) return 1;   // up to ~1024x600: full resolution is cheap
+    if (pixels <= 2600ull * 1000) return 2;  // up to ~1080p/1440p-ish
+    return 4;                                // 4K and beyond
+}
+
 std::string Config::describe() const {
     static const char* dbg[] = {"none", "flow", "split", "passthrough"};
     std::ostringstream o;
     o << "enabled=" << enabled << " multiplier=" << multiplier << " levels=" << levels
-      << " fullres=" << fullres << " search=" << searchRadius << "/" << searchFine << " refine=" << refine
+      << " mode=" << (extrapolate ? "extrapolate" : "interpolate") << " flow_scale=" << (flowScale ? std::to_string(flowScale) : "auto") << " search=" << searchRadius << "/" << searchFine << " refine=" << refine
       << " present_mode=" << presentModeName(presentMode) << " pacing=" << pacing
       << " debug=" << dbg[static_cast<int>(debug)] << " log=" << logLevel;
     return o.str();
