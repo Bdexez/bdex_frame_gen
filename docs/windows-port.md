@@ -1,11 +1,16 @@
 # Windows compatibility — scope
 
-> **Superseded as the Windows direction by [`windows-capture.md`](windows-capture.md).**
-> This document scopes porting the *Vulkan layer* to Windows, which only reaches
-> native-Vulkan games. The chosen direction is instead a **capture-based**
-> product (Lossless-Scaling style) that is render-API agnostic. This file is kept
-> for reference and for the reusable portability audit in §1–§2 (the config /
-> process-name / `%APPDATA%` shims apply to the capture product too).
+> **This is "mode 1" (injection) of the two-mode Windows plan** decided on
+> 2026-09-14: the Vulkan layer — minimal latency, but injected into the game,
+> so it can be flagged by multiplayer anti-cheats — targets **single-player
+> games and emulators**. **Mode 2** is the [capture-based product](windows-capture.md)
+> (Lossless-Scaling style, render-API agnostic) for **multiplayer games**, where
+> no injection means no cheat flag. Both modes share the same algorithm core
+> (shaders + `framegen.cpp`).
+>
+> Status: **Phase 1 implemented** (build, shims, registry install, anti-cheat
+> retraction) — validated on Linux builds, pending on-hardware Windows
+> validation. See §3 for the checklist.
 
 Scoping document for making **bdex-framegen** run on Windows, based on an audit
 of the current tree (0.3.0 + unreleased). It states what already ports, the
@@ -109,7 +114,15 @@ The audit is encouraging — the engine is mostly platform-agnostic:
   `BDEX_FG_CONFIG` as the override on both.
 
 None of these touch the hot path; they are startup/config code. Estimate: a
-single `platform.{h,cpp}` with three or four functions.
+single `platform.{h,cpp}` with three or four functions. — **Implemented** in
+`layer/src/platform.{h,cpp}` (plus the `__declspec(dllexport)` export macro in
+`layer.cpp` and the `__GNUC__` guard on the printf attribute in `log.h`). The
+anti-cheat auto-retract lives behind `platformAntiCheatPresent()`, called from
+`Config::load()`: when a known multiplayer anti-cheat process is detected
+(EAC / BattlEye / GameGuard / XIGNCODE3 / miHoYo — Vanguard excepted, see the
+comment in `platform.cpp`), the layer forces itself off for that process and
+logs it. The same scan runs on Linux, where it also catches the Wine/Proton
+case via `/proc`.
 
 ### 2.3 Installation — registry instead of a directory
 
@@ -130,7 +143,10 @@ JSON in `…/vulkan/implicit_layer.d`. **Windows discovers them via the registry
   pair (per-user, no admin) that copies `VkLayer_bdex_framegen.dll` +
   `VkLayer_bdex_framegen.json` into e.g. `%LOCALAPPDATA%\bdex-framegen\` and
   writes/removes the registry value. This is the Windows equivalent of
-  `tools/install.sh` / `uninstall.sh`.
+  `tools/install.sh` / `uninstall.sh`. — **Implemented** in
+  `tools/register-layer.ps1` / `tools/unregister-layer.ps1` (the script writes
+  the manifest itself, with a relative `library_path`, so the DLL + JSON stay
+  relocatable as a pair).
 - Later: wrap it in a proper installer (Inno Setup or NSIS) that also handles
   both bitnesses and offers per-user vs all-users.
 
@@ -173,14 +189,29 @@ acceptable, and that the target is native-Vulkan games + emulators. If the real
 goal is "any Windows game like Lossless Scaling", stop here — that needs a
 D3D/DXGI-capture product instead.
 
-**Phase 1 — the layer builds and loads on Windows.**
+**Phase 1 — the layer builds and loads on Windows. — Implemented (pending
+on-hardware validation).**
 - `platform.{h,cpp}` shims: export macro, printf attribute, `processNames()`,
-  environment enumeration, config path (§2.2).
-- CMake: MSVC branch, `.def` export, drop `-Bsymbolic`/version-script on Windows,
-  `.dll` output, Windows `library_path` (§2.1).
-- `register-layer.ps1` / `unregister-layer.ps1` (§2.3), x64 first.
-- **Acceptance:** `vulkaninfo` shows the layer loaded; a native-Vulkan title
-  (or vkcube / the demo built on Windows) shows frame generation working.
+  environment enumeration, config path (§2.2). ✅
+- CMake: MSVC branch, `__declspec(dllexport)`, drop `-Bsymbolic`/version-script
+  on Windows, `.dll` output (§2.1); 32-bit follows the generator platform
+  (`-A Win32`) and the `VK_LAYER_BDEX_framegen_32` manifest. ✅
+- `register-layer.ps1` / `unregister-layer.ps1` (§2.3). ✅
+
+**Windows validation checklist** (first run on a real machine):
+1. Prereqs: Visual Studio 2022 (C++ workload) + Vulkan SDK (headers + glslc).
+2. `cmake -S . -B build-win -G "Visual Studio 17 2022" -A x64` then
+   `cmake --build build-win --config Release`.
+   For 32-bit games repeat with `-A Win32` and register with `-Wow6432`.
+3. `powershell -File tools\register-layer.ps1 -Dll build-win\layer\Release\VkLayer_bdex_framegen.dll`
+4. `vulkaninfo --summary` → `VK_LAYER_BDEX_framegen` listed.
+5. Create `%APPDATA%\bdex-framegen\bdex-framegen.conf` with `enabled=1` (and
+   `log_file=%TEMP%\bdex-fg.log` — game stderr usually goes nowhere on Windows).
+6. Run a native-Vulkan title / emulator; check the HUD and the log for the
+   `loaded` line with the config summary.
+7. Debug knobs: `BDEX_FG_DISABLE=1` (loader skips the layer entirely),
+   loader debug via `$env:VK_LOADER_DEBUG='all'`, config reload happens per
+   Vulkan instance/device creation.
 
 **Phase 2 — parity and packaging.**
 - Verify **upscaling** on Windows (should work via the win32 fixed-extent path —

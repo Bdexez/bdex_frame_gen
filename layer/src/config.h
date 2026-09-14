@@ -20,6 +20,8 @@ struct Config {
     bool  enabled       = false;  // the layer is now always loaded (no enable_environment);
                                   // it stays a pure pass-through until turned on by the
                                   // config file ([*] or a [game] section) or BDEX_FG=1.
+    bool  antiCheatDisabled = false;  // forced off by platformAntiCheatPresent() (multiplayer
+                                      // anti-cheat running); wins over enabled, file and env.
     bool  autoTune      = true;   // pick the quality preset from the detected GPU (until the user sets a preset or a flow option)
     std::string autoTunedTo;      // preset autoConfigure() selected, for the log/stats
     int   multiplier    = 2;      // generated frames per real frame: 2 = x2, 3 = x3, 4 = x4
@@ -82,7 +84,7 @@ struct Config {
 
     static Config load();  // defaults + file + env
 
-    // Executable names of the current process (from /proc/self/cmdline),
+    // Executable names of the current process (platform-specific source),
     // lower-case, without directory or .exe suffix; used for section matching.
     static std::vector<std::string> processNames();
     static bool sectionMatches(const std::string& section, const std::vector<std::string>& names);

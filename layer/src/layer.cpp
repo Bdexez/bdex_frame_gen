@@ -721,7 +721,11 @@ PFN_vkVoidFunction layerGetDeviceProcAddr(VkDevice device, const char* pName) {
 } // namespace
 } // namespace bdex
 
+#ifdef _WIN32
+#define BDEX_EXPORT extern "C" __declspec(dllexport)
+#else
 #define BDEX_EXPORT extern "C" __attribute__((visibility("default")))
+#endif
 
 BDEX_EXPORT PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance instance, const char* pName) {
     return bdex::layerGetInstanceProcAddr(instance, pName);

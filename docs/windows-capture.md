@@ -1,12 +1,13 @@
 # Windows capture-based product — scope
 
-Scoping document for a **Windows application** that delivers the same rendering
+**Mode 2 of the two-mode Windows plan** (decided 2026-09-14): this is the
+**multiplayer-safe** path. Mode 1 is the [Vulkan-layer injection](windows-port.md)
+(lowest latency, solo games / emulators, small anti-cheat risk). This document
+scopes a **Windows application** that delivers the same rendering
 as bdex-framegen (optical-flow frame generation + spatial upscaling) but via
 **screen/window capture** instead of a Vulkan layer — the Lossless Scaling
-model. This supersedes the Vulkan-layer port (`windows-port.md`) as the Windows
-direction, because a Vulkan layer on Windows only sees native-Vulkan games,
-whereas capture is **render-API agnostic** (D3D9/10/11/12, OpenGL, Vulkan all
-present a final image we can grab).
+model — so it works with **every render API** (D3D9/10/11/12, OpenGL, Vulkan)
+without injecting into the game, which is what multiplayer anti-cheats flag.
 
 It reuses bdex-framegen's **algorithm and shaders**, not its layer machinery.
 

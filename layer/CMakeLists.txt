@@ -24,16 +24,29 @@ bdex_add_shaders(bdex_layer_shaders
   DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/common.glsl"
 )
 
+if(MSVC)
+  # MSVC hides symbols by default and warns at /W4; the layer entry points are
+  # exported with __declspec(dllexport) in layer.cpp.
+  set(BDEX_WARNINGS /W4)
+else()
+  set(BDEX_WARNINGS -Wall -Wextra -Wno-missing-field-initializers -fvisibility=hidden)
+endif()
+
 # Device-independent parts, shared with the unit tests.
 add_library(bdex_core STATIC
   src/config.cpp
   src/log.cpp
   src/format.cpp
+  src/platform.cpp
   src/vk_util.cpp
 )
 target_include_directories(bdex_core PUBLIC src)
 target_link_libraries(bdex_core PUBLIC Vulkan::Headers)
-target_compile_options(bdex_core PRIVATE -Wall -Wextra -Wno-missing-field-initializers -fvisibility=hidden)
+if(WIN32)
+  # CommandLineToArgvW() in platform.cpp (process names for [game] sections).
+  target_link_libraries(bdex_core PUBLIC shell32)
+endif()
+target_compile_options(bdex_core PRIVATE ${BDEX_WARNINGS})
 
 add_library(bdex_framegen SHARED
   src/layer.cpp
@@ -44,25 +57,40 @@ add_library(bdex_framegen SHARED
 add_dependencies(bdex_framegen bdex_layer_shaders)
 target_include_directories(bdex_framegen PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated" src)
 target_link_libraries(bdex_framegen PRIVATE bdex_core)
-target_compile_options(bdex_framegen PRIVATE -Wall -Wextra -Wno-missing-field-initializers -fvisibility=hidden)
-set_target_properties(bdex_framegen PROPERTIES
-  OUTPUT_NAME "bdex_framegen"
-  PREFIX "libVkLayer_"
-  LINK_FLAGS "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/layer.map -Wl,-Bsymbolic")
+target_compile_options(bdex_framegen PRIVATE ${BDEX_WARNINGS})
+if(WIN32)
+  # VkLayer_bdex_framegen.dll (no lib prefix). No version-script/-Bsymbolic:
+  # those are ELF linker concepts; exports come from __declspec(dllexport).
+  set_target_properties(bdex_framegen PROPERTIES
+    OUTPUT_NAME "VkLayer_bdex_framegen"
+    PREFIX "")
+else()
+  set_target_properties(bdex_framegen PROPERTIES
+    OUTPUT_NAME "bdex_framegen"
+    PREFIX "libVkLayer_"
+    LINK_FLAGS "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/layer.map -Wl,-Bsymbolic")
+endif()
 target_compile_definitions(bdex_framegen PRIVATE
   BDEX_LAYER_NAME="${BDEX_LAYER_NAME}"
   BDEX_LAYER_VERSION_STR="${PROJECT_VERSION}")
 
-# Manifest pointing at the build tree (VK_LAYER_PATH=<build>/layer) ...
+# Manifest pointing at the build tree (VK_LAYER_PATH=<build>/layer, dev use) ...
 set(BDEX_LAYER_LIBRARY_PATH "$<TARGET_FILE:bdex_framegen>")
 configure_file(bdex_framegen.json.in "${CMAKE_CURRENT_BINARY_DIR}/bdex_framegen.json.gen" @ONLY)
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${BDEX_LAYER_NAME}.json"
      INPUT "${CMAKE_CURRENT_BINARY_DIR}/bdex_framegen.json.gen")
 
-# ... and one for the install tree.
-set(BDEX_LAYER_LIBRARY_PATH "${CMAKE_INSTALL_PREFIX}/${BDEX_LIBDIR}/libVkLayer_bdex_framegen.so")
-configure_file(bdex_framegen.json.in "${CMAKE_CURRENT_BINARY_DIR}/install/${BDEX_LAYER_NAME}.json" @ONLY)
+if(NOT WIN32)
+  # ... and one for the install tree. On Windows the loader discovers layers
+  # through the registry instead: tools/register-layer.ps1 copies the DLL plus
+  # a manifest with a relative library_path into %LOCALAPPDATA% and writes the
+  # ImplicitLayers registry value.
+  set(BDEX_LAYER_LIBRARY_PATH "${CMAKE_INSTALL_PREFIX}/${BDEX_LIBDIR}/libVkLayer_bdex_framegen.so")
+  configure_file(bdex_framegen.json.in "${CMAKE_CURRENT_BINARY_DIR}/install/${BDEX_LAYER_NAME}.json" @ONLY)
 
-install(TARGETS bdex_framegen LIBRARY DESTINATION ${BDEX_LIBDIR})
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/install/${BDEX_LAYER_NAME}.json"
-        DESTINATION share/vulkan/implicit_layer.d)
+  install(TARGETS bdex_framegen LIBRARY DESTINATION ${BDEX_LIBDIR})
+  install(FILES "${CMAKE_CURRENT_BINARY_DIR}/install/${BDEX_LAYER_NAME}.json"
+          DESTINATION share/vulkan/implicit_layer.d)
+else()
+  install(TARGETS bdex_framegen RUNTIME DESTINATION ${BDEX_LIBDIR})
+endif()
