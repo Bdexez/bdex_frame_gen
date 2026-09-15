@@ -40,8 +40,8 @@ class VkCtx {
 public:
     using clock = std::chrono::steady_clock;
 
-    VkCtx() = default;
-    ~VkCtx();
+    VkCtx();   // both defined in vkctx.cpp: FrameGen is incomplete here and
+    ~VkCtx();  // std::unique_ptr's deleter needs it complete
     VkCtx(const VkCtx&) = delete;
     VkCtx& operator=(const VkCtx&) = delete;
 

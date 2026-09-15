@@ -37,6 +37,7 @@ static const char* kDevExts[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME,
                                  VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME,
                                  VK_KHR_WIN32_KEYED_MUTEX_EXTENSION_NAME};
 
+VkCtx::VkCtx() = default;
 VkCtx::~VkCtx() { shutdown(); }
 
 // ---------------------------------------------------------------- init ----
