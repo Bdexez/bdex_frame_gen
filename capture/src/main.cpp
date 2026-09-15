@@ -290,6 +290,12 @@ LRESULT CALLBACK overlayProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;  // never take focus from the game
+    case WM_SETCURSOR:
+        // No class cursor and no SetCursor here: the visible cursor keeps
+        // whatever shape the game chose. With a class cursor the overlay
+        // painted its own arrow over games that hide the hardware cursor
+        // (PRAGMATA, Dark Souls III), i.e. a lingering/double cursor.
+        return TRUE;
     case WM_ERASEBKGND:
         return 1;              // Vulkan paints; no GDI flicker
     default:
@@ -301,7 +307,7 @@ HWND createOverlay(const RECT& r) {
     WNDCLASSEXW wc{sizeof wc};
     wc.lpfnWndProc = overlayProc;
     wc.hInstance = GetModuleHandleW(nullptr);
-    wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));  // IDC_ARROW
+    wc.hCursor = nullptr;  // see WM_SETCURSOR: mirror the game's cursor, if any
     wc.lpszClassName = L"bdex_capture_overlay";
     RegisterClassExW(&wc);
     // TOPMOST over the game, NOACTIVATE + TOOLWINDOW so it never takes focus
