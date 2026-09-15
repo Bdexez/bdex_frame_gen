@@ -1,0 +1,147 @@
+MSBuild version 17.14.51+25f168cee for .NET Framework
+
+  1>Checking Build System
+  glslc shaders/block_match.comp -DLUMA_FMT=r16f
+  glslc shaders/block_match.comp 
+  Building Custom Rule D:/a/bdex_frame_gen/bdex_frame_gen/layer/CMakeLists.txt
+  glslc shaders/cas.comp 
+  glslc shaders/cas.comp -DOUT_64
+  glslc shaders/downsample.comp -DLUMA_FMT=r16f
+  glslc shaders/downsample.comp 
+  glslc shaders/flow_refine.comp -DLUMA_FMT=r16f
+  glslc shaders/flow_refine.comp 
+  glslc shaders/flow_smooth.comp 
+  glslc shaders/interpolate.comp -DSHARP
+  glslc shaders/interpolate.comp 
+  glslc shaders/interpolate.comp -DOUT_64
+  glslc shaders/reduce_cost.comp 
+  glslc shaders/upscale.comp -DSHARP
+  glslc shaders/upscale.comp 
+  glslc shaders/upscale.comp -DOUT_64
+  Building Custom Rule D:/a/bdex_frame_gen/bdex_frame_gen/layer/CMakeLists.txt
+  Embedding SPIR-V into D:/a/bdex_frame_gen/bdex_frame_gen/build/layer/generated/shaders.h
+  config.cpp
+  log.cpp
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\config.cpp(242,25): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\bdex_frame_gen\bdex_frame_gen\build\layer\bdex_core.vcxproj]
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\config.cpp(257,25): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\bdex_frame_gen\bdex_frame_gen\build\layer\bdex_core.vcxproj]
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\config.cpp(266,25): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\bdex_frame_gen\bdex_frame_gen\build\layer\bdex_core.vcxproj]
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\log.cpp(20,33): warning C4996: 'fopen': This function or variable may be unsafe. Consider using fopen_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\bdex_frame_gen\bdex_frame_gen\build\layer\bdex_core.vcxproj]
+  format.cpp
+  platform.cpp
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\platform.cpp(13,15): warning C4273: '__p__environ': inconsistent dll linkage [D:\a\bdex_frame_gen\bdex_frame_gen\build\layer\bdex_core.vcxproj]
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt\stdlib.h(1158,29):
+      see previous definition of '__p__environ'
+  
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\platform.cpp(107,32): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\bdex_frame_gen\bdex_frame_gen\build\layer\bdex_core.vcxproj]
+  vk_util.cpp
+  Generating Code...
+  bdex_core.vcxproj -> D:\a\bdex_frame_gen\bdex_frame_gen\build\layer\Release\bdex_core.lib
+  Building Custom Rule D:/a/bdex_frame_gen/bdex_frame_gen/capture/CMakeLists.txt
+  Building Custom Rule D:/a/bdex_frame_gen/bdex_frame_gen/tests/CMakeLists.txt
+  Building Custom Rule D:/a/bdex_frame_gen/bdex_frame_gen/layer/CMakeLists.txt
+  main.cpp
+  layer.cpp
+  test_main.cpp
+D:\a\bdex_frame_gen\bdex_frame_gen\tests\test.h(18,26): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\bdex_frame_gen\bdex_frame_gen\build\tests\bdex_tests.vcxproj]
+  (compiling source file '../../tests/test_main.cpp')
+  
+  test_config.cpp
+D:\a\bdex_frame_gen\bdex_frame_gen\tests\test.h(18,26): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\bdex_frame_gen\bdex_frame_gen\build\tests\bdex_tests.vcxproj]
+  (compiling source file '../../tests/test_config.cpp')
+  
+  test_format.cpp
+  capture.cpp
+D:\a\bdex_frame_gen\bdex_frame_gen\tests\test.h(18,26): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\bdex_frame_gen\bdex_frame_gen\build\tests\bdex_tests.vcxproj]
+  (compiling source file '../../tests/test_format.cpp')
+  
+  Generating Code...
+  device.cpp
+  bdex_tests.vcxproj -> D:\a\bdex_frame_gen\bdex_frame_gen\build\tests\Release\bdex_tests.exe
+  framegen.cpp
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\framegen.cpp(476,63): warning C4244: '=': conversion from 'uint32_t' to 'uint8_t', possible loss of data [D:\a\bdex_frame_gen\bdex_frame_gen\build\layer\bdex_framegen.vcxproj]
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\framegen.cpp(476,92): warning C4244: '=': conversion from 'uint32_t' to 'uint8_t', possible loss of data [D:\a\bdex_frame_gen\bdex_frame_gen\build\layer\bdex_framegen.vcxproj]
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\framegen.cpp(476,121): warning C4244: '=': conversion from 'uint32_t' to 'uint8_t', possible loss of data [D:\a\bdex_frame_gen\bdex_frame_gen\build\layer\bdex_framegen.vcxproj]
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\framegen.cpp(477,35): warning C4244: '=': conversion from 'uint32_t' to 'uint8_t', possible loss of data [D:\a\bdex_frame_gen\bdex_frame_gen\build\layer\bdex_framegen.vcxproj]
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\framegen.cpp(477,64): warning C4244: '=': conversion from 'uint32_t' to 'uint8_t', possible loss of data [D:\a\bdex_frame_gen\bdex_frame_gen\build\layer\bdex_framegen.vcxproj]
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\framegen.cpp(477,93): warning C4244: '=': conversion from 'uint32_t' to 'uint8_t', possible loss of data [D:\a\bdex_frame_gen\bdex_frame_gen\build\layer\bdex_framegen.vcxproj]
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\framegen.cpp(465,15): warning C4996: 'fopen': This function or variable may be unsafe. Consider using fopen_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\bdex_frame_gen\bdex_frame_gen\build\layer\bdex_framegen.vcxproj]
+  swapchain.cpp
+  Generating Code...
+     Creating library D:/a/bdex_frame_gen/bdex_frame_gen/build/layer/Release/VkLayer_bdex_framegen.lib and object D:/a/bdex_frame_gen/bdex_frame_gen/build/layer/Release/VkLayer_bdex_framegen.exp
+  bdex_framegen.vcxproj -> D:\a\bdex_frame_gen\bdex_frame_gen\build\layer\Release\VkLayer_bdex_framegen.dll
+  vkctx.cpp
+D:\a\bdex_frame_gen\bdex_frame_gen\capture\src\vkctx.cpp(67,14): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\bdex_frame_gen\bdex_frame_gen\build\capture\bdex_capture.vcxproj]
+  Generating Code...
+  launcher.cpp
+D:\a\bdex_frame_gen\bdex_frame_gen\capture\src\launcher.cpp(92,25): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\bdex_frame_gen\bdex_frame_gen\build\capture\bdex_capture.vcxproj]
+D:\a\bdex_frame_gen\bdex_frame_gen\capture\src\launcher.cpp(187,67): error C2059: syntax error: ')' [D:\a\bdex_frame_gen\bdex_frame_gen\build\capture\bdex_capture.vcxproj]
+  framegen.cpp
+D:\a\bdex_frame_gen\bdex_frame_gen\capture\src\launcher.cpp(523,34): error C2672: 'std::max': no matching overloaded function found [D:\a\bdex_frame_gen\bdex_frame_gen\build\capture\bdex_capture.vcxproj]
+      C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\include\utility(85,26):
+      could be '_Ty std::max(std::initializer_list<_Elem>)'
+          D:\a\bdex_frame_gen\bdex_frame_gen\capture\src\launcher.cpp(523,34):
+          '_Ty std::max(std::initializer_list<_Elem>)': expects 1 arguments - 2 provided
+      C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\include\utility(82,26):
+      or       '_Ty std::max(std::initializer_list<_Elem>,_Pr)'
+          D:\a\bdex_frame_gen\bdex_frame_gen\capture\src\launcher.cpp(523,34):
+          '_Ty std::max(std::initializer_list<_Elem>,_Pr)': could not deduce template argument for 'std::initializer_list<_Elem>' from 'int'
+      C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\include\utility(74,6):
+      or       'const _Ty &std::max(const _Ty &,const _Ty &) noexcept(<expr>)'
+          D:\a\bdex_frame_gen\bdex_frame_gen\capture\src\launcher.cpp(523,34):
+          'const _Ty &std::max(const _Ty &,const _Ty &) noexcept(<expr>)': template parameter '_Ty' is ambiguous
+              D:\a\bdex_frame_gen\bdex_frame_gen\capture\src\launcher.cpp(523,34):
+              could be 'LONG'
+              D:\a\bdex_frame_gen\bdex_frame_gen\capture\src\launcher.cpp(523,34):
+              or       'int'
+          D:\a\bdex_frame_gen\bdex_frame_gen\capture\src\launcher.cpp(523,34):
+          'const _Ty &std::max(const _Ty &,const _Ty &) noexcept(<expr>)': could not deduce template argument for 'const _Ty &' from 'LONG'
+      C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\include\utility(64,33):
+      or       'const _Ty &std::max(const _Ty &,const _Ty &,_Pr) noexcept(<expr>)'
+          D:\a\bdex_frame_gen\bdex_frame_gen\capture\src\launcher.cpp(523,34):
+          'const _Ty &std::max(const _Ty &,const _Ty &,_Pr) noexcept(<expr>)': expects 3 arguments - 2 provided
+  
+D:\a\bdex_frame_gen\bdex_frame_gen\capture\src\launcher.cpp(523,15): error C2737: 'x': const object must be initialized [D:\a\bdex_frame_gen\bdex_frame_gen\build\capture\bdex_capture.vcxproj]
+D:\a\bdex_frame_gen\bdex_frame_gen\capture\src\launcher.cpp(524,33): error C2672: 'std::max': no matching overloaded function found [D:\a\bdex_frame_gen\bdex_frame_gen\build\capture\bdex_capture.vcxproj]
+      C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\include\utility(85,26):
+      could be '_Ty std::max(std::initializer_list<_Elem>)'
+          D:\a\bdex_frame_gen\bdex_frame_gen\capture\src\launcher.cpp(524,33):
+          '_Ty std::max(std::initializer_list<_Elem>)': expects 1 arguments - 2 provided
+      C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\include\utility(82,26):
+      or       '_Ty std::max(std::initializer_list<_Elem>,_Pr)'
+          D:\a\bdex_frame_gen\bdex_frame_gen\capture\src\launcher.cpp(524,33):
+          '_Ty std::max(std::initializer_list<_Elem>,_Pr)': could not deduce template argument for 'std::initializer_list<_Elem>' from 'int'
+      C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\include\utility(74,6):
+      or       'const _Ty &std::max(const _Ty &,const _Ty &) noexcept(<expr>)'
+          D:\a\bdex_frame_gen\bdex_frame_gen\capture\src\launcher.cpp(524,33):
+          'const _Ty &std::max(const _Ty &,const _Ty &) noexcept(<expr>)': template parameter '_Ty' is ambiguous
+              D:\a\bdex_frame_gen\bdex_frame_gen\capture\src\launcher.cpp(524,33):
+              could be 'LONG'
+              D:\a\bdex_frame_gen\bdex_frame_gen\capture\src\launcher.cpp(524,33):
+              or       'int'
+          D:\a\bdex_frame_gen\bdex_frame_gen\capture\src\launcher.cpp(524,33):
+          'const _Ty &std::max(const _Ty &,const _Ty &) noexcept(<expr>)': could not deduce template argument for 'const _Ty &' from 'LONG'
+      C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.44.35207\include\utility(64,33):
+      or       'const _Ty &std::max(const _Ty &,const _Ty &,_Pr) noexcept(<expr>)'
+          D:\a\bdex_frame_gen\bdex_frame_gen\capture\src\launcher.cpp(524,33):
+          'const _Ty &std::max(const _Ty &,const _Ty &,_Pr) noexcept(<expr>)': expects 3 arguments - 2 provided
+  
+D:\a\bdex_frame_gen\bdex_frame_gen\capture\src\launcher.cpp(524,15): error C2737: 'y': const object must be initialized [D:\a\bdex_frame_gen\bdex_frame_gen\build\capture\bdex_capture.vcxproj]
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\framegen.cpp(476,63): warning C4244: '=': conversion from 'uint32_t' to 'uint8_t', possible loss of data [D:\a\bdex_frame_gen\bdex_frame_gen\build\capture\bdex_capture.vcxproj]
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\framegen.cpp(476,92): warning C4244: '=': conversion from 'uint32_t' to 'uint8_t', possible loss of data [D:\a\bdex_frame_gen\bdex_frame_gen\build\capture\bdex_capture.vcxproj]
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\framegen.cpp(476,121): warning C4244: '=': conversion from 'uint32_t' to 'uint8_t', possible loss of data [D:\a\bdex_frame_gen\bdex_frame_gen\build\capture\bdex_capture.vcxproj]
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\framegen.cpp(477,35): warning C4244: '=': conversion from 'uint32_t' to 'uint8_t', possible loss of data [D:\a\bdex_frame_gen\bdex_frame_gen\build\capture\bdex_capture.vcxproj]
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\framegen.cpp(477,64): warning C4244: '=': conversion from 'uint32_t' to 'uint8_t', possible loss of data [D:\a\bdex_frame_gen\bdex_frame_gen\build\capture\bdex_capture.vcxproj]
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\framegen.cpp(477,93): warning C4244: '=': conversion from 'uint32_t' to 'uint8_t', possible loss of data [D:\a\bdex_frame_gen\bdex_frame_gen\build\capture\bdex_capture.vcxproj]
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\framegen.cpp(465,15): warning C4996: 'fopen': This function or variable may be unsafe. Consider using fopen_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\bdex_frame_gen\bdex_frame_gen\build\capture\bdex_capture.vcxproj]
+  device.cpp
+  platform.cpp
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\platform.cpp(9,9): warning C4005: 'WIN32_LEAN_AND_MEAN': macro redefinition [D:\a\bdex_frame_gen\bdex_frame_gen\build\capture\bdex_capture.vcxproj]
+      D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\platform.cpp(9,9):
+      'WIN32_LEAN_AND_MEAN' previously declared on the command line
+  
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\platform.cpp(13,15): warning C4273: '__p__environ': inconsistent dll linkage [D:\a\bdex_frame_gen\bdex_frame_gen\build\capture\bdex_capture.vcxproj]
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt\stdlib.h(1158,29):
+      see previous definition of '__p__environ'
+  
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\platform.cpp(107,32): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\bdex_frame_gen\bdex_frame_gen\build\capture\bdex_capture.vcxproj]
+  Generating Code...
