@@ -82,6 +82,12 @@ private:
     };
 
     void createReal(const VkSwapchainCreateInfoKHR& appInfo);
+    void createRealImages();
+    void destroyRealImages(std::vector<RealImage>& images);
+    // Re-creates the real swapchain (and the output stage) at the surface's
+    // current extent when it no longer matches; application thread, mutex_ held.
+    void followSurface();
+    std::unique_ptr<FrameGen> makeFrameGen(bool& generating);
     void createVirtualImages(const VkSwapchainCreateInfoKHR& appInfo, bool forGeneration);
     void createSlots(std::vector<FrameSlot>& slots, uint32_t count, bool withSemaphore);
     void destroySlots(std::vector<FrameSlot>& slots);
@@ -101,6 +107,9 @@ private:
     DeviceData& dev_;
     std::mutex mutex_;   // application-side state (acquire / present)
     VkSwapchainKHR real_ = VK_NULL_HANDLE;
+    VkSwapchainCreateInfoKHR realInfo_{};  // how the real swapchain was created (pNext not kept)
+    std::atomic<bool> surfaceChanged_{false};  // the worker saw VK_SUBOPTIMAL_KHR on the real swapchain
+    bool historyLost_ = false;   // output stage rebuilt: the previous frame's analysis is gone
     VkFormat format_ = VK_FORMAT_UNDEFINED;
     VkExtent2D extent_{};         // render resolution (what the application renders into)
     VkExtent2D displayExtent_{};  // real swapchain resolution (== extent_ unless upscaling)

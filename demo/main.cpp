@@ -36,6 +36,7 @@ struct Options {
     int width = 1280, height = 720;
     VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
     bool deterministic = false;  // animation time advances by 1/fps per frame instead of wall clock
+    bool ignoreResize = false;   // keep the swapchain through window resizes and VK_SUBOPTIMAL_KHR (like some games)
     bool srgb = false;           // request an sRGB swapchain format
     float speed = 1.0f;          // animation speed multiplier
     long cutEvery = 0;           // switch scene every N frames (0 = never), to test scene cut handling
@@ -414,7 +415,7 @@ void Demo::drawFrame() {
     pi.pSwapchains = &swapchain_;
     pi.pImageIndices = &imageIndex;
     r = vkQueuePresentKHR(queue_, &pi);
-    if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR || resized_) {
+    if (r == VK_ERROR_OUT_OF_DATE_KHR || (!opt_.ignoreResize && (r == VK_SUBOPTIMAL_KHR || resized_))) {
         resized_ = false;
         vkDeviceWaitIdle(device_);
         destroySwapchain();
@@ -493,6 +494,7 @@ Options parseArgs(int argc, char** argv) {
         if (a == "--fps") o.fps = std::max(1.0, atof(value().c_str()));
         else if (a == "--frames") o.frames = atol(value().c_str());
         else if (a == "--deterministic") o.deterministic = true;
+        else if (a == "--ignore-resize") o.ignoreResize = true;
         else if (a == "--srgb") o.srgb = true;
         else if (a == "--cut") o.cutEvery = atol(value().c_str());
         else if (a == "--speed") o.speed = atof(value().c_str());
@@ -507,7 +509,7 @@ Options parseArgs(int argc, char** argv) {
             else throw std::runtime_error("bad --mode");
         } else if (a == "-h" || a == "--help") {
             printf("usage: bdex_demo [--fps N] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]\n"
-                   "                 [--deterministic] [--speed X] [--srgb] [--cut N]\n");
+                   "                 [--deterministic] [--ignore-resize] [--speed X] [--srgb] [--cut N]\n");
             exit(0);
         } else {
             throw std::runtime_error("unknown option " + a);
