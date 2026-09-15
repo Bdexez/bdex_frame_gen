@@ -18,6 +18,8 @@ struct Config {
     int flowScaleFor(uint32_t width, uint32_t height) const;
 
     bool  enabled       = true;   // false: layer stays loaded but does nothing
+    bool  autoTune      = true;   // pick the quality preset from the detected GPU (until the user sets a preset or a flow option)
+    std::string autoTunedTo;      // preset autoConfigure() selected, for the log/stats
     int   multiplier    = 2;      // generated frames per real frame: 2 = x2, 3 = x3, 4 = x4
     int   levels        = 4;      // optical flow pyramid levels
     bool  lowLatency    = false;  // block the game until the previous frames are handed to the display
@@ -64,9 +66,14 @@ struct Config {
     void loadEnv();
 
     // Named presets applied before the other options: "quality",
-    // "balanced" (the defaults), "performance" and "latency" (extrapolation
-    // for minimal input lag).
+    // "balanced" (the defaults), "performance", "latency" (extrapolation for
+    // minimal input lag) and "auto" (choose from the GPU, see autoConfigure).
     bool applyPreset(const std::string& name);
+
+    // When autoTune is still set (no preset or flow option chosen explicitly),
+    // pick the quality preset from the GPU: integrated / software renderers get
+    // "performance", discrete GPUs "balanced", large discrete GPUs "quality".
+    void autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhysicalDeviceMemoryProperties& mem);
 
     static Config load();  // defaults + file + env
 

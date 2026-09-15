@@ -59,6 +59,9 @@ const char* presentModeName(int mode) {
 
 bool Config::applyPreset(const std::string& name) {
     const std::string v = lower(trim(name));
+    if (v == "auto") { autoTune = true; return true; }  // resolved later by autoConfigure()
+    // An explicit preset pins the quality settings; stop auto-tuning from the GPU.
+    autoTune = false;
     if (v == "balanced" || v == "default") {
         flowScale = 0; refineAll = true; flowIterations = 1; levels = 4; searchRadius = 4; searchFine = 2;
     } else if (v == "quality") {
@@ -78,9 +81,29 @@ bool Config::applyPreset(const std::string& name) {
     return true;
 }
 
+void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhysicalDeviceMemoryProperties& mem) {
+    if (!autoTune) return;  // the user pinned a preset or a flow option
+    uint64_t vram = 0;
+    for (uint32_t i = 0; i < mem.memoryHeapCount; ++i)
+        if (mem.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+            vram = std::max<uint64_t>(vram, mem.memoryHeaps[i].size);
+    // Discrete GPUs with a healthy amount of VRAM run the balanced flow (itself
+    // resolution-adaptive); integrated, software and small/old GPUs get the
+    // cheaper performance flow. Everything stays overridable.
+    const bool strong = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && vram >= (2ull << 30);
+    const std::string preset = strong ? "balanced" : "performance";
+    applyPreset(preset);   // clears autoTune
+    autoTune = true;       // keep the marker: this was auto-tuned, not user-pinned
+    autoTunedTo = preset;
+}
+
 bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     const std::string key = lower(trim(rawKey));
     const std::string value = trim(rawValue);
+    // Any explicit flow-quality option pins the settings and disables GPU auto-tuning.
+    for (const char* k : {"levels", "fullres", "flow_scale", "search", "search_radius", "search_fine",
+                          "refine", "refine_all", "flow_iterations"})
+        if (key == k) { autoTune = false; break; }
     if (key == "preset")                      return applyPreset(value);
     if (key == "enabled" || key == "enable")  return parseBool(value, enabled);
     if (key == "multiplier" || key == "mult") return parseInt(value, multiplier, 1, 4);

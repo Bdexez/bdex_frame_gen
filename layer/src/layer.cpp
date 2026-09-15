@@ -270,6 +270,12 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
     data->vt.load(*pDevice, gdpa);
     inst->vt.GetPhysicalDeviceProperties(physDev, &data->props);
     inst->vt.GetPhysicalDeviceMemoryProperties(physDev, &data->memProps);
+    data->config.autoConfigure(data->props, data->memProps);
+    if (!data->config.autoTunedTo.empty()) {
+        static const char* kind[] = {"other", "integrated GPU", "discrete GPU", "virtual GPU", "software"};
+        BDEX_INFO("auto-tuned for '%s' (%s): preset %s", data->props.deviceName,
+                  kind[data->props.deviceType <= 4 ? data->props.deviceType : 0], data->config.autoTunedTo.c_str());
+    }
 
     if (chosen >= 0 && hasSwapchainExt && data->vt.CreateSwapchainKHR) {
         data->vt.GetDeviceQueue(*pDevice, data->queueFamily, data->queueIndex, &data->queue);

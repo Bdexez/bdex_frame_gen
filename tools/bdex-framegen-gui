@@ -24,6 +24,8 @@ CONFIG_PATH = os.path.join(
 
 MODES = [("Interpolation (défaut)", "interpolate"),
          ("Extrapolation — latence minimale", "extrapolate")]
+PRESETS = [("Auto — adapté au GPU", "auto"), ("Qualité", "quality"),
+           ("Équilibré", "balanced"), ("Performance", "performance")]
 FILTERS = [("Lanczos (le plus net)", "lanczos"), ("Bicubique", "bicubic"), ("Bilinéaire", "bilinear")]
 PRESENT = [("Auto (recommandé)", "auto"), ("Mode du jeu", "app"), ("FIFO (vsync)", "fifo"),
            ("Mailbox", "mailbox"), ("Immediate (sans vsync)", "immediate")]
@@ -34,6 +36,7 @@ class Options:
 
     def __init__(self):
         self.generate = True
+        self.preset = "auto"         # flow-quality tier; auto adapts to the GPU
         self.multiplier = 2          # 2, 3, 4
         self.mode = "interpolate"
         self.present = "auto"
@@ -46,6 +49,8 @@ class Options:
 
     def env(self):
         e = {"BDEX_FG": "1"}
+        if self.preset != "auto":
+            e["BDEX_FG_PRESET"] = self.preset
         e["BDEX_FG_MULTIPLIER"] = str(self.multiplier if self.generate else 1)
         if self.generate:
             e["BDEX_FG_MODE"] = self.mode
@@ -79,6 +84,22 @@ def find_layer():
         except OSError:
             pass
     return False, None
+
+
+def detect_gpus():
+    """GPU names the Vulkan loader sees (best effort, via vulkaninfo)."""
+    try:
+        out = subprocess.run(["vulkaninfo", "--summary"], capture_output=True, text=True, timeout=8).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    names = []
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("deviceName") and "=" in s:
+            name = s.split("=", 1)[1].strip()
+            if name and name not in names:
+                names.append(name)
+    return names
 
 
 class Window(Adw.ApplicationWindow):
@@ -127,6 +148,14 @@ class Window(Adw.ApplicationWindow):
         self.layer_row.add_prefix(icon)
         g.add(self.layer_row)
 
+        gpus = detect_gpus()
+        gpu_row = Adw.ActionRow(
+            title="Carte graphique",
+            subtitle=(" · ".join(gpus) + "\nProfil « Auto » : réglé selon ce GPU" if gpus
+                      else "non détectée"))
+        gpu_row.add_prefix(Gtk.Image(icon_name="video-display-symbolic", valign=Gtk.Align.CENTER))
+        g.add(gpu_row)
+
         # --- Frame generation ---
         g = Adw.PreferencesGroup(title="Génération d'images",
                                  description="Insère des images de synthèse entre celles du jeu.")
@@ -134,6 +163,11 @@ class Window(Adw.ApplicationWindow):
         self.gen_row = Adw.SwitchRow(title="Activer", active=True)
         self.gen_row.connect("notify::active", self.changed)
         g.add(self.gen_row)
+        self.preset_row = Adw.ComboRow(title="Profil de qualité",
+                                       subtitle="Auto s'adapte à la puissance du GPU",
+                                       model=Gtk.StringList.new([p[0] for p in PRESETS]))
+        self.preset_row.connect("notify::selected", self.changed)
+        g.add(self.preset_row)
         self.mult_row = Adw.ComboRow(title="Images affichées par image rendue",
                                      model=Gtk.StringList.new(["×2", "×3", "×4"]))
         self.mult_row.connect("notify::selected", self.changed)
@@ -202,6 +236,7 @@ class Window(Adw.ApplicationWindow):
     def sync(self):
         o = self.opt
         o.generate = self.gen_row.get_active()
+        o.preset = PRESETS[self.preset_row.get_selected()][1]
         o.multiplier = self.mult_row.get_selected() + 2
         o.mode = MODES[self.mode_row.get_selected()][1]
         o.upscale = self.up_row.get_active()
@@ -212,7 +247,7 @@ class Window(Adw.ApplicationWindow):
         o.low_latency = self.ll_row.get_active()
         o.layer_path = self.build_row.get_text().strip() if self.build_row else ""
         # enable/disable dependent rows
-        for r in (self.mult_row, self.mode_row):
+        for r in (self.preset_row, self.mult_row, self.mode_row):
             r.set_sensitive(o.generate)
         for r in (self.scale_row, self.filter_row, self.sharp_row):
             r.set_sensitive(o.upscale)
