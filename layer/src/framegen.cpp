@@ -16,8 +16,8 @@ struct DownsamplePC { int32_t size[2]; int32_t fromColor; int32_t srgbSource; };
 struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; };
 struct SizePC { int32_t size[2]; };
 struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; };
-struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; };
-struct UpscalePC { int32_t outSize[2]; int32_t srcSize[2]; uint32_t encoding; int32_t filter; };
+struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; int32_t overlay; int32_t hudGame; int32_t hudOut; };
+struct UpscalePC { int32_t outSize[2]; int32_t srcSize[2]; uint32_t encoding; int32_t filter; int32_t overlay; int32_t hudGame; int32_t hudOut; };
 struct CasPC { int32_t size[2]; uint32_t encoding; float sharpness; };
 
 constexpr uint32_t kBlockSize = 8;
@@ -32,6 +32,10 @@ FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, Vk
                    const std::vector<VkImage>& sources)
     : dev_(dev), format_(format), extent_(renderExtent), displayExtent_(displayExtent), outputs_(outputs) {
     upscaling_ = displayExtent_.width != extent_.width || displayExtent_.height != extent_.height;
+    overlay_ = dev.config.overlay;
+    // The real frame is resampled into an internal packed image when upscaling
+    // or when the HUD must be drawn on it (otherwise it is copied straight).
+    packReal_ = upscaling_ || overlay_;
     // The CAS pass needs a linear rgba16f intermediate it can both write and
     // sample with filtering; skip sharpening if the driver cannot provide it.
     sharpen_ = upscaling_ && dev.config.sharpness > 0.f &&
@@ -41,7 +45,7 @@ FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, Vk
     enc_ = encodingForFormat(format);
     if (!enc_.supported) throw VkError(VK_ERROR_FORMAT_NOT_SUPPORTED, "swapchain format not supported by frame generation");
     for (VkImage img : sources) sources_.push_back({img, VK_NULL_HANDLE});
-    if (outputs_ == 0 && !upscaling_) return;  // pass-through: only recordCopySource is used
+    if (outputs_ == 0 && !packReal_) return;  // pass-through: only recordCopySource is used
     try {
         for (auto& src : sources_) {
             VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
@@ -136,7 +140,7 @@ void FrameGen::createPipelines() {
         else if (enc_.is64) interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB});
         else                interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB});
     }
-    if (upscaling_) {
+    if (packReal_) {
         if (sharpen_)       upscale_ = makePass(upscale_comp_sharp, upscale_comp_sharp_size, {CIS, SI});
         else if (enc_.is64) upscale_ = makePass(upscale_comp_u64, upscale_comp_u64_size, {CIS, SI});
         else                upscale_ = makePass(upscale_comp_u32, upscale_comp_u32_size, {CIS, SI});
@@ -188,7 +192,7 @@ void FrameGen::createResources() {
     const VkImageUsageFlags outUsage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     for (uint32_t i = 0; i < outputs_; ++i)
         out_.push_back(dev_.createImage(enc_.storageFormat, displayExtent_, outUsage, true));
-    if (upscaling_) outReal_ = dev_.createImage(enc_.storageFormat, displayExtent_, outUsage, true);
+    if (packReal_) outReal_ = dev_.createImage(enc_.storageFormat, displayExtent_, outUsage, true);
     if (sharpen_) {
         const VkImageUsageFlags sharpUsage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         for (uint32_t i = 0; i < outputs_; ++i)
@@ -228,7 +232,7 @@ void FrameGen::createResources() {
             for (auto& i : lv.cost) add(i);
         }
         for (auto& o : out_) add(o);
-        if (upscaling_) add(outReal_);
+        if (packReal_) add(outReal_);
         for (auto& s : sharp_) add(s);
         if (sharpen_) add(sharpReal_);
         dev_.vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
@@ -276,7 +280,7 @@ void FrameGen::createDescriptors() {
     const uint32_t N = static_cast<uint32_t>(sources_.size());
     const uint32_t nInterp = N * N * O;
     const uint32_t gen = O > 0 ? 1 : 0;           // generation descriptor sets exist only with outputs
-    const uint32_t up = upscaling_ ? N : 0;       // one upscale set per source
+    const uint32_t up = packReal_ ? N : 0;        // one upscale/copy set per source
     const uint32_t cas = sharpen_ ? O + 1 : 0;    // one CAS set per generated output, plus the real frame
     const uint32_t nSets = gen * (2 * N + 2 * L + 4 * L + 2 * L + 4 * L + 1 + nInterp) + up + cas;
     const uint32_t nCIS = gen * (2 * N + 2 * L + 4 * L + 4 * nInterp) + up + cas;
@@ -295,7 +299,7 @@ void FrameGen::createDescriptors() {
     const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     const VkDescriptorType SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
 
-    if (upscaling_) {
+    if (packReal_) {
         for (uint32_t n = 0; n < N; ++n) {
             VkDescriptorSet s = allocSet(upscale_.setLayout);
             writeImage(s, 0, CIS, sources_[n].view);
@@ -446,7 +450,7 @@ void FrameGen::recordDump(VkCommandBuffer cmd, uint32_t which, uint32_t cur) {
     region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     region.imageExtent = {displayExtent_.width, displayExtent_.height, 1};
     // Output, upscaled-real and history images all live in GENERAL layout.
-    VkImage dumpSrc = which == 0 ? out_[0].image : (upscaling_ ? outReal_.image : sources_[cur].image);
+    VkImage dumpSrc = which == 0 ? out_[0].image : (packReal_ ? outReal_.image : sources_[cur].image);
     vt.CmdCopyImageToBuffer(cmd, dumpSrc, VK_IMAGE_LAYOUT_GENERAL, dumpBuf_[which].buffer, 1, &region);
     VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -613,7 +617,7 @@ void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cu
                 cfg.sceneCutLow, cfg.sceneCutHigh,
                 {1.f / (fine.fine.width * blk * flowScale_ * sx),
                  1.f / (fine.fine.height * blk * flowScale_ * sy)},
-                cfg.flowIterations};
+                cfg.flowIterations, overlay_ ? 1 : 0, hudGame_, hudOut_};
     vt.CmdPushConstants(cmd, interp_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
     const uint32_t N = static_cast<uint32_t>(sources_.size());
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, interp_.layout, 0, 1,
@@ -633,7 +637,8 @@ void FrameGen::recordUpscaleReal(VkCommandBuffer cmd, uint32_t cur) {
     vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, upscale_.pipeline);
     UpscalePC pc{{(int32_t)displayExtent_.width, (int32_t)displayExtent_.height},
                  {(int32_t)extent_.width, (int32_t)extent_.height},
-                 enc_.encoding, std::clamp(dev_.config.upscaleFilter, 0, 2)};
+                 enc_.encoding, std::clamp(dev_.config.upscaleFilter, 0, 2),
+                 overlay_ ? 1 : 0, hudGame_, hudOut_};
     vt.CmdPushConstants(cmd, upscale_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, upscale_.layout, 0, 1, &dsUpscale_[cur], 0, nullptr);
     vt.CmdDispatch(cmd, divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), 1);
@@ -654,7 +659,7 @@ void FrameGen::recordCas(VkCommandBuffer cmd, VkDescriptorSet set) {
 
 void FrameGen::recordCopySource(VkCommandBuffer cmd, uint32_t src, VkImage dst) {
     auto& vt = dev_.vt;
-    if (upscaling_) {  // the real frame was upscaled into outReal_ by recordUpscaleReal
+    if (packReal_) {  // the real frame was produced into outReal_ by recordUpscaleReal
         copyToPresent(cmd, outReal_.image, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_WRITE_BIT,
                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, dst);
         return;

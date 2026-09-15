@@ -52,6 +52,11 @@ public:
     void recordUpscaleReal(VkCommandBuffer cmd, uint32_t cur);
 
     bool upscaling() const { return upscaling_; }
+    // The real frame is produced into an internal packed image (for upscaling
+    // or the HUD) rather than copied straight through.
+    bool packReal() const { return packReal_; }
+    // Current frame-rate figures for the on-screen HUD.
+    void setHud(int gameFps, int outFps) { hudGame_ = gameFps; hudOut_ = outFps; }
 
     // Debug frame dumping: records a copy of the image that was just written
     // to `dst` (the generated output or the current history) into a staging
@@ -109,6 +114,9 @@ private:
     VkExtent2D displayExtent_;  // presented resolution (== extent_ unless upscaling)
     bool upscaling_ = false;
     bool sharpen_ = false;      // contrast-adaptive sharpening pass after upscaling
+    bool overlay_ = false;      // draw the on-screen fps HUD
+    bool packReal_ = false;     // real frame goes through the internal packed image (upscaling or HUD)
+    int hudGame_ = 0, hudOut_ = 0;
     OutputEncoding enc_;
     int levels_ = 0;
     float flowScale_ = 1.f;

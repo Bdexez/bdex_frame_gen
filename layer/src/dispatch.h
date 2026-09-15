@@ -36,6 +36,8 @@ namespace bdex {
     X(AcquireNextImageKHR)            \
     X(AcquireNextImage2KHR)           \
     X(QueuePresentKHR)                \
+    X(WaitForPresentKHR)              \
+    X(GetSwapchainStatusKHR)          \
     X(ReleaseSwapchainImagesEXT)      \
     X(CreateImage)                    \
     X(DestroyImage)                   \

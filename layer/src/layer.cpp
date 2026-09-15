@@ -443,6 +443,24 @@ VKAPI_ATTR VkResult VKAPI_CALL ReleaseSwapchainImagesEXT(VkDevice device, const 
     return dev->vt.ReleaseSwapchainImagesEXT(device, pInfo);
 }
 
+// The application holds our real swapchain handle, so it may call these on it.
+// We present asynchronously from the worker, so the application must not block
+// on the driver's present feedback for a swapchain we drive ourselves.
+VKAPI_ATTR VkResult VKAPI_CALL WaitForPresentKHR(VkDevice device, VkSwapchainKHR swapchain, uint64_t presentId,
+                                                 uint64_t timeout) {
+    DeviceData* dev = getDevice(dispatchKey(device));
+    if (dev->findSwapchain(swapchain)) return VK_SUCCESS;  // our async presentation; do not let the game stall on it
+    if (!dev->vt.WaitForPresentKHR) return VK_SUCCESS;
+    return dev->vt.WaitForPresentKHR(device, swapchain, presentId, timeout);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL GetSwapchainStatusKHR(VkDevice device, VkSwapchainKHR swapchain) {
+    DeviceData* dev = getDevice(dispatchKey(device));
+    if (dev->findSwapchain(swapchain)) return VK_SUCCESS;
+    if (!dev->vt.GetSwapchainStatusKHR) return VK_ERROR_EXTENSION_NOT_PRESENT;
+    return dev->vt.GetSwapchainStatusKHR(device, swapchain);
+}
+
 VkResult worstResult(VkResult a, VkResult b) {
     if (a < 0) return a;
     if (b < 0) return b;
@@ -546,6 +564,8 @@ const Hook g_deviceHooks[] = {
     HOOK(AcquireNextImageKHR),
     HOOK(AcquireNextImage2KHR),
     HOOK(QueuePresentKHR),
+    HOOK(WaitForPresentKHR),
+    HOOK(GetSwapchainStatusKHR),
     HOOK(ReleaseSwapchainImagesEXT),
     {"vkReleaseSwapchainImagesKHR", reinterpret_cast<PFN_vkVoidFunction>(ReleaseSwapchainImagesEXT)},
 };

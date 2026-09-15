@@ -6,6 +6,25 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- On-screen frame-rate HUD (`OVERLAY=1`, alias `HUD=1`): a small
+  "game fps > output fps" readout drawn in the top-left of every presented
+  frame — real and generated — so the effect of frame generation is visible in
+  the game.
+
+### Fixed
+
+- Presentation-path compatibility with games that translate Direct3D
+  (DXVK/VKD3D-Proton): the application's present fence
+  (`VK_EXT_swapchain_maintenance1`) is now signalled by the layer once its
+  frame has been copied — its image is the virtual one, free at that point —
+  instead of being tied to the real frame's display, which could hang the game.
+  `vkWaitForPresentKHR` and `vkGetSwapchainStatusKHR` are handled for the
+  virtual swapchain so the game never blocks on presentation the worker owns.
+  (Verified working on a DXVK D3D11 title; some VKD3D-Proton D3D12 titles are
+  still under investigation.)
+
 ## [0.2.0] - 2026-09-13
 
 ### Added
