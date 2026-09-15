@@ -208,8 +208,10 @@ Vegas (D3D9) — steady x2 extrapolation at ≈2× output fps, and the pacing
 degrades/recovers cleanly around game stutters. One overlay bug found and
 fixed: the overlay window had its own arrow class cursor, which stayed
 visible on top of games that hide the hardware cursor (double/lingering
-cursor on PRAGMATA and DS3) — now no class cursor and `WM_SETCURSOR` is
-swallowed, so the overlay mirrors the game's own cursor choice.
+cursor on PRAGMATA and DS3) — fixed: the overlay has no class cursor and
+never sets a shape in `WM_SETCURSOR`; when the game has hidden the hardware
+cursor, `GetCursorInfo` gates a force-hide over the overlay, while menus keep
+the game's own cursor.
 
 **Phase 3 — product.**
 - Config window, global hotkey, per-game profiles, tray, DupliAPI fallback,

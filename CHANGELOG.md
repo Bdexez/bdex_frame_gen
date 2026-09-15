@@ -17,9 +17,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 - `bdex_capture`'s overlay no longer paints its own arrow cursor over the
   game: on titles that hide the hardware cursor (PRAGMATA, Dark Souls III)
   the overlay's class cursor stayed visible on top of the game (double /
-  lingering cursor). The overlay now has no class cursor and swallows
-  `WM_SETCURSOR`, mirroring the game's own cursor choice. Found during the
-  phase-2 first run on hardware (2026-09-15).
+  lingering cursor). The overlay now has no class cursor and never sets a
+  shape in `WM_SETCURSOR`; when the game has hidden the hardware cursor
+  (`GetCursorInfo`), the cursor is force-hidden over the overlay too. Found
+  during the phase-2 first run on hardware (2026-09-15).
 
 ### Added
 
