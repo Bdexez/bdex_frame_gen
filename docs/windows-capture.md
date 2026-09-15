@@ -137,13 +137,47 @@ Vulkan-compute + D3D-interop, honest about latency. If minimal latency is the
 hard requirement, capture is the wrong tool and only present-hook injection (per
 API, anti-cheat risk) gets there — decide now.
 
-**Phase 1 — a proof of concept end to end (the risky 20% first).**
-- WGC capture of one windowed D3D11 game → D3D11 texture.
+**Phase 1 — a proof of concept end to end (the risky 20% first). —
+Implemented in `capture/` (pending on-hardware validation).**
+- WGC capture of one windowed D3D11 game → D3D11 texture. ✅ `capture.cpp`:
+  `GraphicsCaptureItem` from the HWND, free-threaded frame pool, a capture
+  thread copying each frame into a 3-slot ring of `B8G8R8A8` textures created
+  with `SHARED_NTHANDLE | SHARED_KEYEDMUTEX`; the pool is recreated when the
+  window grows.
 - Interop that texture into a minimal Vulkan compute context; run just
-  `upscale.comp` (cheapest) and present the result in a borderless overlay.
+  `upscale.comp` (cheapest) and present the result in a borderless overlay. ✅
+  `vkctx.cpp`: import via `VK_KHR_external_memory_win32`
+  (`D3D11_TEXTURE_BIT`, dedicated allocation), keyed-mutex acquire/release
+  chained on the `VkSubmitInfo` (`VK_KHR_win32_keyed_mutex`), ownership
+  transfer barriers from/to `VK_QUEUE_FAMILY_EXTERNAL`, the layer's
+  `upscale.comp` (embedded through the same `bdex_add_shaders` pipeline) into
+  an `R32_UINT` stage image, copy into a Win32 swapchain (mailbox, or FIFO
+  with `--fifo`). `main.cpp`: window picker (`--list`, `--title`, `--pid`,
+  or the foreground window after 5 s), topmost no-activate overlay following
+  the game window (`--scale`, `--fit`), fps HUD, Ctrl+Alt+Q.
 - **Acceptance:** the overlay shows the captured game, upscaled, in real time,
   with acceptable latency. This validates capture + interop + present — the
   three genuinely new risks — before wiring the full flow pipeline.
+
+**Phase-1 validation checklist** (first run on a real machine; the MSVC build
+itself is done by the `windows` GitHub Actions workflow, artifact
+`bdex-framegen-windows-x64`):
+1. `bdex_capture.exe --list` prints the open windows.
+2. Start a windowed D3D game; `bdex_capture.exe --title <game> --hud 2`.
+   Expected log lines: `GPU: …`, `vulkan ready`, `capturing window WxH`,
+   `capture ring WxH (generation 1)`, `swapchain WxH, N images, mailbox`,
+   `imported ring slot 0…2`, then `capture X fps -> output Y fps` every 2 s.
+3. The overlay shows the game live; `--fit` fills the monitor; `--scale 2`
+   on a small window shows the bicubic upscale.
+4. Resize / move / minimise the game window: overlay follows, ring
+   regenerates (`generation 2`), no validation errors with
+   `BDEX_CAP_VALIDATION=1` (the external-queue-family barrier layouts and
+   the keyed-mutex submit are the two places a driver could disagree).
+5. Note the latency subjectively (mailbox vs `--fifo`) and whether mouse
+   clicks reach the game through the overlay (`WS_EX_TRANSPARENT`); both
+   feed phase 3.
+6. Test on both vendors available (the RTX 3060 Ti box first; AMD/Intel
+   if any) — D3D11 import + keyed mutex is the cross-vendor unknown.
 
 **Phase 2 — frame generation.**
 - Wire the full `framegen.cpp` flow + interpolate/extrapolate pipeline onto the

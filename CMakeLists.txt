@@ -14,6 +14,7 @@ find_program(GLSLC glslc REQUIRED)
 
 option(BDEX_BUILD_DEMO  "Build the GLFW demo application" ON)
 option(BDEX_BUILD_TESTS "Build unit tests" ON)
+option(BDEX_BUILD_CAPTURE "Build the Windows capture PoC (bdex_capture.exe, MSVC only)" ON)
 option(BDEX_32BIT       "Build the 32-bit layer (for 32-bit games); needs a multilib toolchain (ignored on Windows, where the arch comes from the generator platform)" OFF)
 
 # The 32-bit build gets its own library dir / manifest suffix. On Linux it is
@@ -40,6 +41,10 @@ endif()
 include(cmake/EmbedShader.cmake)
 
 add_subdirectory(layer)
+
+if(WIN32 AND MSVC AND BDEX_BUILD_CAPTURE AND NOT BDEX_32BIT AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+  add_subdirectory(capture)
+endif()
 
 if(BDEX_BUILD_DEMO)
   find_package(PkgConfig QUIET)

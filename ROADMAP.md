@@ -52,6 +52,25 @@ See [`docs/windows-port.md`](docs/windows-port.md).
   miHoYo and forces the layer off for that process (also runs on Linux, catching
   the Wine/Proton case via `/proc`).
 
+### Windows mode 2 (capture-based product) — Phase 1 PoC implemented in code
+
+`capture/` builds `bdex_capture.exe` (MSVC, x64): Windows.Graphics.Capture of
+one game window → D3D11 ring textures (NT handles + keyed mutex) → imported
+into Vulkan (`VK_KHR_external_memory_win32` / `VK_KHR_win32_keyed_mutex`) →
+the layer's `upscale.comp` → Win32 swapchain in a topmost overlay that follows
+the game window. Window picker, `--scale` / `--fit`, filter choice, fps HUD.
+Same caveat as mode 1: **compiled by CI only, never run on Windows**. See
+[`docs/windows-capture.md`](docs/windows-capture.md) §3 for the validation
+checklist and [`docs/windows-README.md`](docs/windows-README.md) for usage.
+
+### Windows CI
+
+`.github/workflows/windows.yml` builds both Windows products with MSVC on
+every push (x64 + Win32 matrix: layer DLL, and `bdex_capture.exe` on x64),
+runs the unit tests, uploads one zip per architecture, and attaches them to a
+GitHub release on `v*` tags. This is how a Windows `.exe` is produced without
+a Windows machine.
+
 ---
 
 ## 🔲 Remaining
@@ -67,16 +86,20 @@ See [`docs/windows-port.md`](docs/windows-port.md).
 - **Phase 3**: a Windows config tool (there is currently **no** Windows GUI —
   the GTK panel is Linux-only), Authenticode signing, a Windows section in the
   README.
-- **No CI at all** yet (no `.github/workflows/`, neither Linux nor Windows). A
-  Windows MSVC build job would de-risk Phase 1 without needing a physical box.
+- No **Linux** CI yet (unit + integration tests still run by hand).
 
 ### Windows mode 2 (capture-based product, multiplayer-safe)
 
-- [`docs/windows-capture.md`](docs/windows-capture.md) is **scoping only — no
-  code.** It is a separate product (WGC/Desktop-Duplication capture, Lossless-
-  Scaling style, render-API-agnostic across D3D9–12 / OpenGL / Vulkan) aimed at
-  multiplayer, where not injecting avoids anti-cheat flags. Entire product still
-  to build; the estimated effort is large.
+- **Phase 1 (PoC) is coded** in `capture/` — see the Done section — but, like
+  mode 1, **never run on Windows**. The phase-1 checklist in
+  [`docs/windows-capture.md`](docs/windows-capture.md) §3 is the next step.
+- **Phase 2** (the actual frame generation on captured frames: port the
+  `framegen.cpp` flow + interpolate/extrapolate orchestration onto the
+  imported textures, multiplier, pacing, present-rate detection) and
+  **phase 3** (config window, hotkey, tray, per-game profiles, Desktop
+  Duplication fallback, HDR/VRR, installer) are untouched. The product
+  remains a multi-week effort; only the three risky unknowns (capture,
+  interop, present) have code.
 
 ### Optical-flow quality
 
@@ -88,6 +111,6 @@ See [`docs/windows-port.md`](docs/windows-port.md).
 ---
 
 **In one line:** the **Linux product is complete and shipping**; the **Windows
-mode-1 port is coded but never built or run on Windows** (the concrete next step,
-which needs a Windows machine); the **mode-2 capture product is entirely
-unstarted**.
+mode-1 layer and the mode-2 capture PoC are both coded and built by CI, but
+never run on Windows** (the concrete next step, which needs a Windows machine);
+mode-2 frame generation and its product shell remain to be built.

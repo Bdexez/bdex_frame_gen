@@ -8,6 +8,19 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Windows capture proof of concept** (`capture/`, mode 2 of the Windows
+  plan, phase 1 of `docs/windows-capture.md`): `bdex_capture.exe` captures
+  any windowed game with Windows.Graphics.Capture, shares the D3D11 frames
+  into Vulkan (`VK_KHR_external_memory_win32` + `VK_KHR_win32_keyed_mutex`),
+  runs the layer's `upscale.comp` and presents in a topmost overlay that
+  follows the game window (`--list`, `--title`/`--pid`, `--scale`/`--fit`,
+  `--filter`, `--hud`, `--fifo`, Ctrl+Alt+Q). Validates capture + interop +
+  present before frame generation is wired in. MSVC/x64 only.
+- **Windows CI** (`.github/workflows/windows.yml`): MSVC build of the layer
+  (x64 + Win32) and the capture PoC, unit tests, one zip artifact per
+  architecture, GitHub release assets on `v*` tags. `docs/windows-README.md`
+  ships in the zip.
+
 - **Windows port of the Vulkan layer** (mode 1 "injection" of the two-mode
   Windows plan; see `docs/windows-port.md`). The layer builds with MSVC
   (`VkLayer_bdex_framegen.dll`, `__declspec(dllexport)` entry points, no ELF
