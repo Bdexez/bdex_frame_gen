@@ -1,15 +1,21 @@
-// bdex_capture — phase-1 proof of concept of the Windows capture product
-// (docs/windows-capture.md §3): capture one game window with
-// Windows.Graphics.Capture, share the frames into Vulkan, run the layer's
-// upscale shader and present the result in a borderless always-on-top overlay
-// placed over (or instead of) the game window. Console app: logs go to stderr.
+// bdex_capture — the Windows capture product (docs/windows-capture.md):
+// capture one game window with Windows.Graphics.Capture, share the frames
+// into Vulkan, run the layer's frame-generation engine on them (optical flow,
+// interpolation / extrapolation, upscaling, HUD) and present real + generated
+// frames in a borderless always-on-top overlay placed over (or instead of)
+// the game window. Console app: logs go to stderr.
 //
 //   bdex_capture [--title <substr> | --pid <n>] [--scale <f> | --fit]
-//                [--filter 0|1|2] [--hud 0..2] [--fifo] [--list]
+//                [--multiplier 1..4] [--mode extrapolate|interpolate]
+//                [--preset <name>] [--filter 0|1|2] [--sharpness <f>]
+//                [--hud 0..4] [--gpu <n>] [--fifo] [--list]
 //
 // Without --title/--pid the foreground window 5 s after launch is captured
 // (alt-tab into the game). Ctrl+Alt+Q or closing the game window quits.
+// Everything else comes from %APPDATA%\bdex-framegen\bdex-framegen.conf and
+// the BDEX_FG_* environment, like the layer.
 #include "capture.h"
+#include "config.h"
 #include "log.h"
 #include "vkctx.h"
 
@@ -18,6 +24,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -33,26 +40,39 @@ struct Options {
     DWORD pid = 0;
     float scale = 1.0f;
     bool fit = false;
-    int filter = 1;
-    int hud = 0;
+    int gpu = -1;
     bool fifo = false;
     bool list = false;
+    // Frame-generation overrides (-1 / empty = keep the config file's value).
+    int multiplier = -1;
+    int mode = -1;          // 0 interpolate, 1 extrapolate
+    std::string preset;
+    int filter = -1;
+    float sharpness = -1.f;
+    int hud = -1;
 };
 
 void usage() {
     std::puts(
-        "bdex_capture — capture a game window, upscale it in Vulkan, show it in an overlay\n"
+        "bdex_capture — capture a game window, generate frames in Vulkan, show it in an overlay\n"
         "\n"
         "  --title <substr>   target window whose title contains <substr> (case-insensitive)\n"
         "  --pid <n>          target the main window of process <n>\n"
         "  (neither)          the foreground window 5 seconds after launch\n"
         "  --scale <f>        overlay size = capture size x f (default 1.0)\n"
         "  --fit              overlay fills the game's monitor, aspect preserved\n"
-        "  --filter <0|1|2>   bilinear | bicubic (default) | Lanczos-2\n"
-        "  --hud <0|1|2>      fps HUD: off | output fps | capture > output\n"
-        "  --fifo             vsync (FIFO) presentation instead of mailbox\n"
+        "  --multiplier <n>   frames shown per captured frame: 1 (off), 2, 3, 4 (default 2)\n"
+        "  --mode <m>         extrapolate (default, no added latency) | interpolate (smoother)\n"
+        "  --preset <p>       performance | balanced | quality (default: auto from the GPU)\n"
+        "  --filter <0|1|2>   upscale filter: bilinear | bicubic | Lanczos-2 (default)\n"
+        "  --sharpness <f>    sharpening after upscaling, 0..1 (default 0)\n"
+        "  --hud <0..4>       fps HUD: off | output fps | capture > output | +1%% low | +0.1%% low\n"
+        "  --gpu <n>          use the n-th usable GPU (default: the discrete one)\n"
+        "  --fifo             vsync (FIFO) presentation instead of mailbox / immediate\n"
         "  --list             list capturable windows and exit\n"
         "\n"
+        "Other options (levels, scene cut, pacing...) come from\n"
+        "%%APPDATA%%\\bdex-framegen\\bdex-framegen.conf and BDEX_FG_* variables.\n"
         "Ctrl+Alt+Q quits; so does closing the game window.\n"
         "Set BDEX_CAP_VALIDATION=1 to load the Khronos validation layer.\n");
 }
@@ -94,7 +114,33 @@ bool parse(int argc, char** argv, Options& o) {
         } else if (a == "--hud") {
             const char* v = next("--hud");
             if (!v) return false;
-            o.hud = std::clamp(std::atoi(v), 0, 2);
+            o.hud = std::clamp(std::atoi(v), 0, 4);
+        } else if (a == "--multiplier" || a == "--mult") {
+            const char* v = next("--multiplier");
+            if (!v) return false;
+            o.multiplier = std::clamp(std::atoi(v), 1, 4);
+        } else if (a == "--mode") {
+            const char* v = next("--mode");
+            if (!v) return false;
+            std::string m = v;
+            if (m == "extrapolate" || m == "extrapolation") o.mode = 1;
+            else if (m == "interpolate" || m == "interpolation") o.mode = 0;
+            else {
+                std::fprintf(stderr, "--mode: extrapolate or interpolate\n");
+                return false;
+            }
+        } else if (a == "--preset") {
+            const char* v = next("--preset");
+            if (!v) return false;
+            o.preset = v;
+        } else if (a == "--sharpness") {
+            const char* v = next("--sharpness");
+            if (!v) return false;
+            o.sharpness = std::clamp(std::strtof(v, nullptr), 0.f, 1.f);
+        } else if (a == "--gpu") {
+            const char* v = next("--gpu");
+            if (!v) return false;
+            o.gpu = std::max(0, std::atoi(v));
         } else if (a == "--fifo") {
             o.fifo = true;
         } else if (a == "--list") {
@@ -318,10 +364,27 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Frame-generation settings: the layer's config file / environment, then
+    // the command line. Extrapolation is the default here: capture already
+    // costs a frame of latency, interpolation would add half of one more.
+    bdex::Config cfg = bdex::Config::load();
+    cfg.enabled = true;
+    if (o.mode < 0 && !cfg.extrapolate) cfg.extrapolate = true;
+    if (o.mode >= 0) cfg.extrapolate = o.mode == 1;
+    if (o.multiplier > 0) cfg.multiplier = o.multiplier;
+    if (!o.preset.empty() && !cfg.apply("preset", o.preset)) {
+        LOGE("unknown preset '%s' (performance, balanced, quality)", o.preset.c_str());
+        return 2;
+    }
+    if (o.filter >= 0) cfg.upscaleFilter = o.filter;
+    if (o.sharpness >= 0.f) cfg.sharpness = o.sharpness;
+    if (o.hud >= 0) cfg.overlayMode = o.hud;
+
     bdex::VkCtx vk;
     bdex::Capture cap;
-    if (!vk.init(overlay, o.fifo)) return 1;
-    if (!cap.start(target)) return 1;
+    if (!vk.init(overlay, o.gpu, o.fifo, cfg)) return 1;
+    LUID luid{};
+    if (!cap.start(target, vk.luid(luid) ? &luid : nullptr)) return 1;
     vk.setCapture(&cap);
 
     ShowWindow(overlay, SW_SHOWNOACTIVATE);
@@ -332,16 +395,16 @@ int main(int argc, char** argv) {
     SetConsoleCtrlHandler(ctrlHandler, TRUE);
     if (!RegisterHotKey(nullptr, 1, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'Q'))
         LOGW("Ctrl+Alt+Q hotkey unavailable; close the game window or Ctrl+C to quit");
-    LOGI("overlay %ldx%ld at %ld,%ld (%s, filter %d) — Ctrl+Alt+Q to quit",
-         ov.right - ov.left, ov.bottom - ov.top, ov.left, ov.top,
-         o.fit ? "fit" : "scaled", o.filter);
+    LOGI("overlay %ldx%ld at %ld,%ld (%s) — Ctrl+Alt+Q to quit", ov.right - ov.left,
+         ov.bottom - ov.top, ov.left, ov.top, o.fit ? "fit" : "scaled");
 
-    bdex::DrawParams params;
-    params.filterMode = o.filter;
-    params.hudMode = o.hud;
+    auto resizeToOverlay = [&] {
+        vk.setSize(static_cast<uint32_t>(ov.right - ov.left),
+                   static_cast<uint32_t>(ov.bottom - ov.top));
+    };
 
     ULONGLONG lastRectCheck = 0, statsT0 = GetTickCount64();
-    uint32_t presented = 0;
+    uint32_t presented = 0, presentedReal = 0;
     bool hidden = false;
     while (g_running) {
         MSG msg;
@@ -372,8 +435,7 @@ int main(int argc, char** argv) {
                     ov = r;
                     SetWindowPos(overlay, HWND_TOPMOST, r.left, r.top, r.right - r.left,
                                  r.bottom - r.top, SWP_NOACTIVATE);
-                    vk.setSize(static_cast<uint32_t>(r.right - r.left),
-                               static_cast<uint32_t>(r.bottom - r.top));
+                    resizeToOverlay();
                 } else {
                     SetWindowPos(overlay, HWND_TOPMOST, 0, 0, 0, 0,
                                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -388,28 +450,66 @@ int main(int argc, char** argv) {
             continue;
         }
 
+        // Synthesis: analyse the new frame, generate the in-between /
+        // predicted ones. Out-of-date swapchain: rebuild and retry once.
         bool consumed = false;
-        int r = vk.draw(frame, params, consumed);
+        int r = vk.synthesize(frame, consumed);
         if (r == 1) {
-            // Swapchain out of date (overlay resized): rebuild at the current
-            // overlay size and retry once if this frame was not consumed.
-            vk.setSize(static_cast<uint32_t>(ov.right - ov.left),
-                       static_cast<uint32_t>(ov.bottom - ov.top));
-            if (!consumed && vk.hasSwapchain()) r = vk.draw(frame, params, consumed);
+            resizeToOverlay();
+            if (!consumed && vk.hasSwapchain()) r = vk.synthesize(frame, consumed);
         }
         cap.recycle(frame, consumed);
         if (r == -1) {
-            LOGE("fatal draw error, exiting");
+            LOGE("fatal error, exiting");
             break;
         }
-        if (consumed) ++presented;
+        if (r != 0) continue;
+
+        // Presentation of the job, paced like VirtualSwapchain::presentOne:
+        // with FIFO the display paces; otherwise spread the frames over the
+        // capture interval. A predicted frame is obsolete as soon as the next
+        // real frame has arrived: skip it rather than delay the real one.
+        const bdex::VkCtx::Job job = vk.job();
+        for (int i = 0; i < job.frames && g_running; ++i) {
+            if (i > 0) {
+                if (cfg.pacing && !vk.fifo()) {
+                    const auto target_t =
+                        job.start + std::chrono::duration_cast<bdex::VkCtx::clock::duration>(
+                                        std::chrono::duration<double, std::milli>(
+                                            job.intervalMs * i / job.frames));
+                    const auto remain = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        target_t - bdex::VkCtx::clock::now());
+                    if (job.realFirst) {
+                        if (remain.count() > 0 && cap.waitPending(static_cast<uint32_t>(remain.count())))
+                            break;
+                    } else if (remain.count() > 0) {
+                        Sleep(static_cast<DWORD>(remain.count()));
+                    }
+                } else if (job.realFirst && cap.waitPending(0)) {
+                    break;
+                }
+            }
+            r = vk.present(i);
+            if (r == 1) {
+                resizeToOverlay();
+                break;
+            }
+            if (r == -1) {
+                LOGE("fatal error, exiting");
+                g_running = false;
+                break;
+            }
+            ++presented;
+            if (job.realFirst ? i == 0 : i == job.frames - 1) ++presentedReal;
+        }
 
         if (now - statsT0 >= 2000) {
-            float outFps = presented * 1000.0f / static_cast<float>(now - statsT0);
-            LOGI("capture %.1f fps -> output %.1f fps", cap.captureFps(), outFps);
-            params.hudGame = static_cast<int>(cap.captureFps() + 0.5f);
-            params.hudOut = static_cast<int>(outFps + 0.5f);
-            presented = 0;
+            const float secs = static_cast<float>(now - statsT0) / 1000.0f;
+            const float outFps = presented / secs, realFps = presentedReal / secs;
+            LOGI("capture %.1f fps -> shown %.1f fps -> output %.1f fps", cap.captureFps(),
+                 realFps, outFps);
+            vk.setHud(static_cast<int>(cap.captureFps() + 0.5f), static_cast<int>(outFps + 0.5f));
+            presented = presentedReal = 0;
             statsT0 = now;
         }
     }

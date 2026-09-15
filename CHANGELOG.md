@@ -6,16 +6,27 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- `DeviceData::swapchains` holds `VirtualSwapchain`s through a
+  function-pointer deleter, so `device.cpp` and `FrameGen` compile without
+  the layer's swapchain virtualisation (the capture product reuses them).
+
 ### Added
 
-- **Windows capture proof of concept** (`capture/`, mode 2 of the Windows
-  plan, phase 1 of `docs/windows-capture.md`): `bdex_capture.exe` captures
-  any windowed game with Windows.Graphics.Capture, shares the D3D11 frames
-  into Vulkan (`VK_KHR_external_memory_win32` + `VK_KHR_win32_keyed_mutex`),
-  runs the layer's `upscale.comp` and presents in a topmost overlay that
-  follows the game window (`--list`, `--title`/`--pid`, `--scale`/`--fit`,
-  `--filter`, `--hud`, `--fifo`, Ctrl+Alt+Q). Validates capture + interop +
-  present before frame generation is wired in. MSVC/x64 only.
+- **Windows capture product** (`capture/`, mode 2 of the Windows plan,
+  phases 1–2 of `docs/windows-capture.md`): `bdex_capture.exe` captures any
+  windowed game with Windows.Graphics.Capture, shares the D3D11 frames into
+  Vulkan (`VK_KHR_external_memory_win32` + `VK_KHR_win32_keyed_mutex`), runs
+  the layer's frame-generation engine on them (`FrameGen` and the shaders,
+  unchanged: optical flow, x2/x3/x4 interpolation or extrapolation,
+  upscaling, HUD) and presents real + generated frames, paced like the
+  layer, in a topmost overlay that follows the game window (`--list`,
+  `--title`/`--pid`, `--scale`/`--fit`, `--multiplier`, `--mode`,
+  `--preset`, `--filter`, `--sharpness`, `--hud`, `--gpu`, `--fifo`,
+  Ctrl+Alt+Q; the config file and `BDEX_FG_*` apply). The discrete GPU is
+  preferred and the D3D11 device is created on the same adapter. MSVC/x64
+  only. Phase 1 (capture/interop/present) validated on hardware.
 - **Windows CI** (`.github/workflows/windows.yml`): MSVC build of the layer
   (x64 + Win32) and the capture PoC, unit tests, one zip artifact per
   architecture, GitHub release assets on `v*` tags. `docs/windows-README.md`

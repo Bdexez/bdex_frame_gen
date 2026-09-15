@@ -11,6 +11,10 @@
 namespace bdex {
 
 class VirtualSwapchain;
+// Owning pointer with a runtime deleter, so DeviceData (and device.cpp) can
+// be compiled without the VirtualSwapchain definition: the capture product
+// reuses DeviceData/FrameGen without the layer's swapchain virtualisation.
+using VirtualSwapchainPtr = std::unique_ptr<VirtualSwapchain, void (*)(VirtualSwapchain*)>;
 
 // Per-surface state for native-Wayland upscaling. On Wayland the surface never
 // reports its size (currentExtent is always UINT32_MAX), so the render-scale
@@ -74,7 +78,7 @@ struct DeviceData {
     std::mutex& queueMutex(VkQueue q);
 
     std::mutex swapchainsMutex;
-    std::unordered_map<VkSwapchainKHR, std::unique_ptr<VirtualSwapchain>> swapchains;
+    std::unordered_map<VkSwapchainKHR, VirtualSwapchainPtr> swapchains;
     VirtualSwapchain* findSwapchain(VkSwapchainKHR sc);
 
     // Resource helpers (throw VkError on failure).

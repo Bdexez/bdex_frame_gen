@@ -179,11 +179,28 @@ itself is done by the `windows` GitHub Actions workflow, artifact
 6. Test on both vendors available (the RTX 3060 Ti box first; AMD/Intel
    if any) — D3D11 import + keyed mutex is the cross-vendor unknown.
 
-**Phase 2 — frame generation.**
+**Phase 2 — frame generation. — Implemented (pending on-hardware
+validation).**
 - Wire the full `framegen.cpp` flow + interpolate/extrapolate pipeline onto the
-  captured frames; add multiplier, HUD, pacing, present-rate detection.
+  captured frames; add multiplier, HUD, pacing, present-rate detection. ✅
+  `vkctx.cpp` builds the layer's `DeviceData` over the capture app's plain
+  Vulkan device and drives `FrameGen` unchanged: each captured frame is copied
+  into a 3-image history ring (the role of the game's swapchain images in the
+  layer), then the same sequence as `VirtualSwapchain::present` runs
+  (acquire sources → analysis → flow → interpolate/extrapolate → upscale/HUD →
+  release), and `present()` copies the real / generated frames into the
+  overlay swapchain paced like `presentOne` (extrapolation drops a predicted
+  frame when the next real one arrives early; FIFO leaves pacing to the
+  display). Options: `--multiplier`, `--mode`, `--preset`, `--filter`,
+  `--sharpness`, `--hud`, plus the config file / `BDEX_FG_*` environment.
 - **Acceptance:** a D3D game at 30/60 fps shows 60/120 with the flow quality of
   the Linux build.
+
+Phase-1 feedback from the first real run (2026-09-15, laptop Intel iGPU +
+RTX 3050, PRAGMATA at 32 fps): capture + interop + present worked first try;
+the app had picked the Intel GPU (fixed: discrete first, `--gpu`, D3D11 on the
+same LUID) and the image flickered (fixed: per-submission command slots, no
+descriptor/stage image shared between frames in flight).
 
 **Phase 3 — product.**
 - Config window, global hotkey, per-game profiles, tray, DupliAPI fallback,
