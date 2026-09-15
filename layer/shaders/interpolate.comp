@@ -16,7 +16,9 @@ layout(binding = 0) uniform sampler2D prevTex;
 layout(binding = 1) uniform sampler2D curTex;
 layout(binding = 2) uniform sampler2D flowFwd;  // prev -> cur
 layout(binding = 3) uniform sampler2D flowBwd;  // cur -> prev
-#ifdef OUT_64
+#ifdef SHARP
+layout(binding = 4, rgba16f) uniform writeonly image2D outImg;  // linear, sharpened by a later CAS pass
+#elif defined(OUT_64)
 layout(binding = 4, rg32ui) uniform writeonly uimage2D outImg;
 #else
 layout(binding = 4, r32ui) uniform writeonly uimage2D outImg;
@@ -51,6 +53,11 @@ vec2 fwdAt(vec2 p) { return texture(flowFwd, p * pc.flowInvSize).xy * pc.flowSca
 vec2 bwdAt(vec2 p) { return texture(flowBwd, p * pc.flowInvSize).xy * pc.flowScale; }
 
 void store(ivec2 p, vec4 c) {
+#ifdef SHARP
+    // Keep linear colour; the CAS pass sharpens it and does the encoding.
+    imageStore(outImg, p, clamp(c, 0.0, 65504.0));
+}
+#else
     uint enc = pc.encoding & 0xffu;
     if ((pc.encoding & ENC_SRGB_FLAG) != 0u) c.rgb = linearToSrgb(c.rgb);
     c = clamp(c, 0.0, enc == ENC_RGBA16F ? 65504.0 : 1.0);
@@ -72,6 +79,7 @@ void store(ivec2 p, vec4 c) {
     imageStore(outImg, p, uvec4(packed, 0u, 0u, 0u));
 #endif
 }
+#endif
 
 void main() {
     ivec2 p = ivec2(gl_GlobalInvocationID.xy);

@@ -90,6 +90,7 @@ private:
         VkPipeline pipeline = VK_NULL_HANDLE;
     };
 
+    void recordCas(VkCommandBuffer cmd, VkDescriptorSet set);
     void createPipelines();
     void createResources();
     void createDescriptors();
@@ -107,6 +108,7 @@ private:
     VkExtent2D extent_;         // render resolution (source images, flow pyramid)
     VkExtent2D displayExtent_;  // presented resolution (== extent_ unless upscaling)
     bool upscaling_ = false;
+    bool sharpen_ = false;      // contrast-adaptive sharpening pass after upscaling
     OutputEncoding enc_;
     int levels_ = 0;
     float flowScale_ = 1.f;
@@ -120,6 +122,8 @@ private:
     std::vector<Level> levels_v_;
     std::vector<AllocatedImage> out_;
     AllocatedImage outReal_;  // upscaled real frame (display size, packed); only when upscaling_
+    std::vector<AllocatedImage> sharp_;  // linear rgba16f pre-sharpen, per output; only when sharpen_
+    AllocatedImage sharpReal_;           // linear rgba16f pre-sharpen real frame; only when sharpen_
     uint32_t outputs_ = 0;
     AllocatedBuffer costBuf_;
     AllocatedBuffer dumpBuf_[2];
@@ -135,7 +139,7 @@ private:
     VkSampler sampler_ = VK_NULL_HANDLE;
     VkDescriptorPool pool_ = VK_NULL_HANDLE;
 
-    Pass downsample_, blockMatch_, smooth_, refine_, reduce_, interp_, upscale_;
+    Pass downsample_, blockMatch_, smooth_, refine_, reduce_, interp_, upscale_, cas_;
 
     // Descriptor sets, indexed [parity][level] etc.
     std::vector<VkDescriptorSet> dsDownSrc_[2];       // [parity] per source (level 0)
@@ -146,6 +150,8 @@ private:
     VkDescriptorSet dsReduce_ = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> dsInterp_;           // [(prev * N + cur) * outputs + output]
     std::vector<VkDescriptorSet> dsUpscale_;          // [source]; only when upscaling_
+    std::vector<VkDescriptorSet> dsCas_;              // [output] generated frames; only when sharpen_
+    VkDescriptorSet dsCasReal_ = VK_NULL_HANDLE;      // real frame; only when sharpen_
 };
 
 } // namespace bdex

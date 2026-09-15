@@ -18,6 +18,7 @@ struct SizePC { int32_t size[2]; };
 struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; };
 struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; };
 struct UpscalePC { int32_t outSize[2]; int32_t srcSize[2]; uint32_t encoding; int32_t filter; };
+struct CasPC { int32_t size[2]; uint32_t encoding; float sharpness; };
 
 constexpr uint32_t kBlockSize = 8;
 constexpr uint32_t kFineBlock = 4;
@@ -31,6 +32,12 @@ FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, Vk
                    const std::vector<VkImage>& sources)
     : dev_(dev), format_(format), extent_(renderExtent), displayExtent_(displayExtent), outputs_(outputs) {
     upscaling_ = displayExtent_.width != extent_.width || displayExtent_.height != extent_.height;
+    // The CAS pass needs a linear rgba16f intermediate it can both write and
+    // sample with filtering; skip sharpening if the driver cannot provide it.
+    sharpen_ = upscaling_ && dev.config.sharpness > 0.f &&
+               dev.formatSupports(VK_FORMAT_R16G16B16A16_SFLOAT,
+                                  VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+                                      VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT);
     enc_ = encodingForFormat(format);
     if (!enc_.supported) throw VkError(VK_ERROR_FORMAT_NOT_SUPPORTED, "swapchain format not supported by frame generation");
     for (VkImage img : sources) sources_.push_back({img, VK_NULL_HANDLE});
@@ -58,9 +65,10 @@ FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, Vk
                   upscaling_ ? " (upscaled)" : "");
     if (upscaling_) {
         static const char* filt[] = {"bilinear", "Catmull-Rom", "Lanczos-2"};
-        BDEX_INFO("upscaling %ux%u -> %ux%u (%.0f%%, %s)", extent_.width, extent_.height, displayExtent_.width,
+        BDEX_INFO("upscaling %ux%u -> %ux%u (%.0f%%, %s%s)", extent_.width, extent_.height, displayExtent_.width,
                   displayExtent_.height, 100.0 * extent_.width / displayExtent_.width,
-                  filt[std::clamp(dev_.config.upscaleFilter, 0, 2)]);
+                  filt[std::clamp(dev_.config.upscaleFilter, 0, 2)],
+                  sharpen_ ? ", CAS sharpening" : "");
     }
 }
 
@@ -122,14 +130,20 @@ void FrameGen::createPipelines() {
         }
         smooth_ = makePass(flow_smooth_comp, flow_smooth_comp_size, {SI, SI});
         reduce_ = makePass(reduce_cost_comp, reduce_cost_comp_size, {SI, SB});
-        if (enc_.is64)
-            interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB});
-        else
-            interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB});
+        // With sharpening, the interpolation writes a linear rgba16f image that
+        // the CAS pass then sharpens and packs; otherwise it packs directly.
+        if (sharpen_)       interp_ = makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB});
+        else if (enc_.is64) interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB});
+        else                interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB});
     }
     if (upscaling_) {
-        if (enc_.is64) upscale_ = makePass(upscale_comp_u64, upscale_comp_u64_size, {CIS, SI});
-        else           upscale_ = makePass(upscale_comp_u32, upscale_comp_u32_size, {CIS, SI});
+        if (sharpen_)       upscale_ = makePass(upscale_comp_sharp, upscale_comp_sharp_size, {CIS, SI});
+        else if (enc_.is64) upscale_ = makePass(upscale_comp_u64, upscale_comp_u64_size, {CIS, SI});
+        else                upscale_ = makePass(upscale_comp_u32, upscale_comp_u32_size, {CIS, SI});
+    }
+    if (sharpen_) {
+        if (enc_.is64) cas_ = makePass(cas_comp_u64, cas_comp_u64_size, {CIS, SI});
+        else           cas_ = makePass(cas_comp_u32, cas_comp_u32_size, {CIS, SI});
     }
 }
 
@@ -175,6 +189,12 @@ void FrameGen::createResources() {
     for (uint32_t i = 0; i < outputs_; ++i)
         out_.push_back(dev_.createImage(enc_.storageFormat, displayExtent_, outUsage, true));
     if (upscaling_) outReal_ = dev_.createImage(enc_.storageFormat, displayExtent_, outUsage, true);
+    if (sharpen_) {
+        const VkImageUsageFlags sharpUsage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        for (uint32_t i = 0; i < outputs_; ++i)
+            sharp_.push_back(dev_.createImage(VK_FORMAT_R16G16B16A16_SFLOAT, displayExtent_, sharpUsage, true));
+        sharpReal_ = dev_.createImage(VK_FORMAT_R16G16B16A16_SFLOAT, displayExtent_, sharpUsage, true);
+    }
     if (outputs_ > 0)
         costBuf_ = dev_.createBuffer(16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
@@ -209,6 +229,8 @@ void FrameGen::createResources() {
         }
         for (auto& o : out_) add(o);
         if (upscaling_) add(outReal_);
+        for (auto& s : sharp_) add(s);
+        if (sharpen_) add(sharpReal_);
         dev_.vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
                                    nullptr, static_cast<uint32_t>(barriers.size()), barriers.data());
@@ -255,9 +277,10 @@ void FrameGen::createDescriptors() {
     const uint32_t nInterp = N * N * O;
     const uint32_t gen = O > 0 ? 1 : 0;           // generation descriptor sets exist only with outputs
     const uint32_t up = upscaling_ ? N : 0;       // one upscale set per source
-    const uint32_t nSets = gen * (2 * N + 2 * L + 4 * L + 2 * L + 4 * L + 1 + nInterp) + up;
-    const uint32_t nCIS = gen * (2 * N + 2 * L + 4 * L + 4 * nInterp) + up;
-    const uint32_t nSI = gen * (2 * N + 2 * L + 4 * L * 4 + 2 * L * 2 + 4 * L * 5 + 1 + nInterp) + up;
+    const uint32_t cas = sharpen_ ? O + 1 : 0;    // one CAS set per generated output, plus the real frame
+    const uint32_t nSets = gen * (2 * N + 2 * L + 4 * L + 2 * L + 4 * L + 1 + nInterp) + up + cas;
+    const uint32_t nCIS = gen * (2 * N + 2 * L + 4 * L + 4 * nInterp) + up + cas;
+    const uint32_t nSI = gen * (2 * N + 2 * L + 4 * L * 4 + 2 * L * 2 + 4 * L * 5 + 1 + nInterp) + up + cas;
     const uint32_t nSB = gen * (1 + nInterp);
     std::vector<VkDescriptorPoolSize> sizes;
     if (nCIS) sizes.push_back({VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nCIS});
@@ -276,9 +299,20 @@ void FrameGen::createDescriptors() {
         for (uint32_t n = 0; n < N; ++n) {
             VkDescriptorSet s = allocSet(upscale_.setLayout);
             writeImage(s, 0, CIS, sources_[n].view);
-            writeImage(s, 1, SI, outReal_.view);
+            writeImage(s, 1, SI, (sharpen_ ? sharpReal_ : outReal_).view);
             dsUpscale_.push_back(s);
         }
+    }
+    if (sharpen_) {
+        for (uint32_t o = 0; o < O; ++o) {
+            VkDescriptorSet s = allocSet(cas_.setLayout);
+            writeImage(s, 0, CIS, sharp_[o].view);
+            writeImage(s, 1, SI, out_[o].view);
+            dsCas_.push_back(s);
+        }
+        dsCasReal_ = allocSet(cas_.setLayout);
+        writeImage(dsCasReal_, 0, CIS, sharpReal_.view);
+        writeImage(dsCasReal_, 1, SI, outReal_.view);
     }
     if (O == 0) return;  // pure upscaling: no flow / interpolation descriptors
 
@@ -338,7 +372,7 @@ void FrameGen::createDescriptors() {
                 writeImage(s, 1, CIS, sources_[cur].view);
                 writeImage(s, 2, CIS, levels_v_[0].flowFine[0].view);
                 writeImage(s, 3, CIS, levels_v_[0].flowFine[1].view);
-                writeImage(s, 4, SI, out_[o].view);
+                writeImage(s, 4, SI, (sharpen_ ? sharp_[o] : out_[o]).view);
                 writeBuffer(s, 5, costBuf_.buffer);
                 dsInterp_.push_back(s);
             }
@@ -351,7 +385,7 @@ void FrameGen::destroyAll() {
     VkDevice d = dev_.device;
     if (pool_) vt.DestroyDescriptorPool(d, pool_, nullptr);
     pool_ = VK_NULL_HANDLE;
-    for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_}) {
+    for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_}) {
         if (p->pipeline) vt.DestroyPipeline(d, p->pipeline, nullptr);
         if (p->layout) vt.DestroyPipelineLayout(d, p->layout, nullptr);
         if (p->setLayout) vt.DestroyDescriptorSetLayout(d, p->setLayout, nullptr);
@@ -374,6 +408,9 @@ void FrameGen::destroyAll() {
     for (auto& o : out_) dev_.destroyImage(o);
     out_.clear();
     if (outReal_.image) dev_.destroyImage(outReal_);
+    for (auto& s : sharp_) dev_.destroyImage(s);
+    sharp_.clear();
+    if (sharpReal_.image) dev_.destroyImage(sharpReal_);
     dev_.destroyBuffer(costBuf_);
     if (queryPool_) vt.DestroyQueryPool(d, queryPool_, nullptr);
     queryPool_ = VK_NULL_HANDLE;
@@ -584,6 +621,7 @@ void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cu
     vt.CmdDispatch(cmd, divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), 1);
     // Make the previous output copy (worker submission) precede this overwrite.
     memoryBarrier(cmd);
+    if (sharpen_) recordCas(cmd, dsCas_[output]);  // sharp_[output] -> out_[output]
 }
 
 void FrameGen::recordCopyOutput(VkCommandBuffer cmd, uint32_t output, VkImage dst) {
@@ -599,7 +637,18 @@ void FrameGen::recordUpscaleReal(VkCommandBuffer cmd, uint32_t cur) {
     vt.CmdPushConstants(cmd, upscale_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, upscale_.layout, 0, 1, &dsUpscale_[cur], 0, nullptr);
     vt.CmdDispatch(cmd, divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), 1);
-    // Order the worker's copy of outReal_ after this write.
+    // Order the CAS pass / the worker's copy after this write.
+    memoryBarrier(cmd);
+    if (sharpen_) recordCas(cmd, dsCasReal_);  // sharpReal_ -> outReal_
+}
+
+void FrameGen::recordCas(VkCommandBuffer cmd, VkDescriptorSet set) {
+    auto& vt = dev_.vt;
+    vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cas_.pipeline);
+    CasPC pc{{(int32_t)displayExtent_.width, (int32_t)displayExtent_.height}, enc_.encoding, dev_.config.sharpness};
+    vt.CmdPushConstants(cmd, cas_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+    vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cas_.layout, 0, 1, &set, 0, nullptr);
+    vt.CmdDispatch(cmd, divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), 1);
     memoryBarrier(cmd);
 }
 

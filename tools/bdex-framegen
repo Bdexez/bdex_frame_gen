@@ -10,6 +10,7 @@
 #   -f, --fullres          compute the flow at full resolution (= --preset quality's flow)
 #   -u, --upscale RATIO    render below display size and upscale (e.g. 1.5); X11/Xwayland only
 #       --upscale-filter F bilinear | bicubic | lanczos (default)
+#   -s, --sharpness N      contrast-adaptive sharpening after upscaling, 0..1 (0 = off)
 #   -p, --present-mode M   auto (default: fifo -> mailbox) | app | fifo | mailbox | immediate | relaxed
 #   -d, --debug M          none | flow | split | passthrough
 #   -l, --log N            log level 0..3
@@ -21,7 +22,7 @@
 #   -h, --help
 set -euo pipefail
 
-usage() { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; }
 
 check() {
   if ! command -v vulkaninfo >/dev/null; then
@@ -47,6 +48,7 @@ while [ $# -gt 0 ]; do
     -f|--fullres)      env_vars+=("BDEX_FG_FULLRES=1"); shift ;;
     -u|--upscale)      env_vars+=("BDEX_FG_UPSCALE=$2"); shift 2 ;;
     --upscale-filter)  env_vars+=("BDEX_FG_UPSCALE_FILTER=$2"); shift 2 ;;
+    -s|--sharpness)    env_vars+=("BDEX_FG_SHARPNESS=$2"); shift 2 ;;
     -p|--present-mode) env_vars+=("BDEX_FG_PRESENT_MODE=$2"); shift 2 ;;
     -d|--debug)        env_vars+=("BDEX_FG_DEBUG=$2"); shift 2 ;;
     -l|--log)          env_vars+=("BDEX_FG_LOG=$2"); shift 2 ;;
