@@ -130,12 +130,39 @@ VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceLayerProperties(VkPhysicalDevice, 
     return EnumerateInstanceLayerProperties(pCount, pProps);
 }
 
+// Present-timing / swapchain-maintenance extensions whose semantics refer to
+// the real swapchain we virtualise. We present asynchronously from a private
+// queue, so a game driving these (notably VKD3D-Proton for Direct3D 12) hangs;
+// hiding them makes it fall back to the basic present path we handle.
+bool isHiddenPresentExtension(const char* name) {
+    return strcmp(name, "VK_EXT_swapchain_maintenance1") == 0 || strcmp(name, "VK_KHR_swapchain_maintenance1") == 0 ||
+           strcmp(name, "VK_KHR_present_id") == 0 || strcmp(name, "VK_KHR_present_wait") == 0 ||
+           strcmp(name, "VK_KHR_present_id2") == 0 || strcmp(name, "VK_KHR_present_wait2") == 0;
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceExtensionProperties(VkPhysicalDevice physDev, const char* pLayerName,
                                                                   uint32_t* pCount, VkExtensionProperties* pProps) {
     if (pLayerName && strcmp(pLayerName, BDEX_LAYER_NAME) == 0) { *pCount = 0; return VK_SUCCESS; }
     InstanceData* inst = getInstance(dispatchKey(physDev));
     if (!inst) return VK_ERROR_INITIALIZATION_FAILED;
-    return inst->vt.EnumerateDeviceExtensionProperties(physDev, pLayerName, pCount, pProps);
+    if (pLayerName || !inst->config.enabled || !inst->config.hidePresentExt)
+        return inst->vt.EnumerateDeviceExtensionProperties(physDev, pLayerName, pCount, pProps);
+
+    uint32_t n = 0;
+    VkResult r = inst->vt.EnumerateDeviceExtensionProperties(physDev, nullptr, &n, nullptr);
+    if (r < 0) return r;
+    std::vector<VkExtensionProperties> all(n);
+    r = inst->vt.EnumerateDeviceExtensionProperties(physDev, nullptr, &n, all.data());
+    if (r < 0) return r;
+    std::vector<VkExtensionProperties> keep;
+    keep.reserve(all.size());
+    for (const auto& e : all)
+        if (!isHiddenPresentExtension(e.extensionName)) keep.push_back(e);
+    if (!pProps) { *pCount = static_cast<uint32_t>(keep.size()); return VK_SUCCESS; }
+    uint32_t m = std::min(*pCount, static_cast<uint32_t>(keep.size()));
+    for (uint32_t i = 0; i < m; ++i) pProps[i] = keep[i];
+    *pCount = m;
+    return m < keep.size() ? VK_INCOMPLETE : VK_SUCCESS;
 }
 
 // ---------------------------------------------------------------------------
@@ -262,6 +289,33 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
     VkDeviceCreateInfo ci = *pCreateInfo;
     ci.queueCreateInfoCount = static_cast<uint32_t>(qcis.size());
     ci.pQueueCreateInfos = qcis.data();
+
+    // Force-disable the present-timing extensions (swapchain_maintenance1,
+    // present_id/wait): filtering them from EnumerateDeviceExtensionProperties
+    // is not always honoured by the loader, so also strip them from the enabled
+    // list and clear their feature bits. VKD3D-Proton (Direct3D 12) then uses
+    // the basic present path, which our virtualised swapchain supports.
+    std::vector<const char*> devExts;
+    if (data->config.enabled && data->config.hidePresentExt) {
+        for (uint32_t i = 0; i < ci.enabledExtensionCount; ++i) {
+            if (isHiddenPresentExtension(ci.ppEnabledExtensionNames[i])) {
+                BDEX_INFO("disabling %s (incompatible with the virtualised swapchain)", ci.ppEnabledExtensionNames[i]);
+                data->hasSwapchainMaintenance1 = false;
+                continue;
+            }
+            devExts.push_back(ci.ppEnabledExtensionNames[i]);
+        }
+        ci.enabledExtensionCount = static_cast<uint32_t>(devExts.size());
+        ci.ppEnabledExtensionNames = devExts.data();
+        for (auto* s = static_cast<VkBaseOutStructure*>(const_cast<void*>(ci.pNext)); s; s = s->pNext) {
+            if (s->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR)
+                reinterpret_cast<VkPhysicalDevicePresentIdFeaturesKHR*>(s)->presentId = VK_FALSE;
+            else if (s->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR)
+                reinterpret_cast<VkPhysicalDevicePresentWaitFeaturesKHR*>(s)->presentWait = VK_FALSE;
+            else if (s->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT)
+                reinterpret_cast<VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT*>(s)->swapchainMaintenance1 = VK_FALSE;
+        }
+    }
 
     VkResult r = createDevice(physDev, &ci, pAllocator, pDevice);
     if (r != VK_SUCCESS) return r;

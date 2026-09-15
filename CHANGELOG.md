@@ -15,15 +15,25 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- Presentation-path compatibility with games that translate Direct3D
-  (DXVK/VKD3D-Proton): the application's present fence
-  (`VK_EXT_swapchain_maintenance1`) is now signalled by the layer once its
-  frame has been copied — its image is the virtual one, free at that point —
-  instead of being tied to the real frame's display, which could hang the game.
-  `vkWaitForPresentKHR` and `vkGetSwapchainStatusKHR` are handled for the
-  virtual swapchain so the game never blocks on presentation the worker owns.
-  (Verified working on a DXVK D3D11 title; some VKD3D-Proton D3D12 titles are
-  still under investigation.)
+- Frame generation now works with games running under Proton (Direct3D through
+  DXVK / VKD3D-Proton), verified generating x2 in real titles. The virtualised
+  swapchain broke several assumptions those layers make:
+  - `VK_SUBOPTIMAL_KHR` from the layer's own real swapchain is no longer
+    forwarded to the game. It says the layer's real swapchain is not optimal,
+    not the game's virtual one; forwarding it made DXVK recreate its swapchain
+    and hang. A genuine change still surfaces as `OUT_OF_DATE`.
+  - The present-timing extensions (`VK_EXT/KHR_swapchain_maintenance1`,
+    `VK_KHR_present_id`/`present_wait` and their `*2` variants) are hidden from
+    the game: their semantics refer to the real swapchain the layer virtualises
+    and the game hangs driving them through the asynchronous presentation.
+  - FIFO is never used for the real swapchain (it hard-hangs the async present
+    with these layers and adds latency); the layer presents with mailbox, or
+    immediate when mailbox is unavailable, keeping its own pacing.
+  - The application's `VK_EXT_swapchain_maintenance1` present fence, when the
+    game still uses it, is signalled after the layer's copy (the virtual image
+    is free then) rather than tied to the real frame's display.
+  - `vkWaitForPresentKHR` / `vkGetSwapchainStatusKHR` are handled for the
+    virtual swapchain so the game never blocks on presentation the worker owns.
 
 ## [0.2.0] - 2026-09-13
 
