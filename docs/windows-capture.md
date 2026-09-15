@@ -214,8 +214,11 @@ cursor, `GetCursorInfo` gates a force-hide over the overlay, while menus keep
 the game's own cursor.
 
 **Phase 3 — product.**
-- Config window, global hotkey, per-game profiles, tray, DupliAPI fallback,
-  fullscreen/borderless handling, HDR, VRR, multi-GPU.
+- Config window ✅ (v1: running `bdex_capture.exe` with no arguments opens a
+  native launcher — window picker, generation/upscale/presentation/HUD
+  options, persisted to the shared config file; `capture/src/launcher.{h,cpp}`,
+  Win32, no toolkit). Remaining: global hotkey, per-game profiles, tray,
+  DupliAPI fallback, fullscreen/borderless handling, HDR, VRR, multi-GPU.
 - Installer + signing + docs.
 
 **Phase 4 (optional) — low-latency mode.**

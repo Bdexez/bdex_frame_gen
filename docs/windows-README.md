@@ -8,29 +8,39 @@ GitHub Actions workflow) contains **two products**:
 | `VkLayer_bdex_framegen.dll` + `register-layer.ps1` | **Mode 1** — the Vulkan layer (frame generation + upscaling) | **native-Vulkan** games and emulators only (Doom, Baldur's Gate 3 in Vulkan mode, RPCS3, Dolphin, yuzu…) |
 | `bdex_capture.exe` (x64 zip only) | **Mode 2** — the capture overlay with frame generation | **any** windowed/borderless game (D3D9–12, OpenGL, Vulkan); no injection |
 
-Both need a Vulkan-capable GPU driver (any NVIDIA / AMD / Intel driver from the
-last few years). Neither has been validated on real hardware yet — see the
-checklists in `windows-port.md` §3 (layer) and `windows-capture.md` §3
-(capture). Please report what happens.
+Both need a Vulkan-capable GPU driver (any NVIDIA / AMD / Intel driver from
+the last few years). Mode 2 has been validated on real hardware (D3D9/11/12
+games); mode 1 is CI-built but not yet validated on a real machine — see the
+checklist in `windows-port.md` §3. Please report what happens.
 
 ## Mode 2 — `bdex_capture.exe` (any game)
 
 1. Put the game in **windowed or borderless** mode (exclusive fullscreen cannot
    be overlaid — same limitation as Lossless Scaling).
-2. Open a terminal in this folder and run one of:
+2. Double-click `bdex_capture.exe` (or run it with no arguments): a
+   **launcher window** opens — pick the game's window in the list, set the
+   options (generation on/off, ×2/×3/×4, extrapolation/interpolation, quality
+   preset, overlay size, upscale filter and sharpness, vsync, fps counter)
+   and press **Démarrer**. The choices are saved to
+   `%APPDATA%\bdex-framegen\bdex-framegen.conf` (the same keys as the Linux
+   control panel); when the capture stops (Ctrl+Alt+Q, game closed) the
+   launcher reopens.
+3. An always-on-top overlay appears over (or, with "Ajustée à l'écran",
+   centred on the monitor of) the game window, showing the game with
+   generated frames in between: x2 by default, **extrapolation** by default
+   (interpolation is smoother but adds half a frame of latency). The fps HUD
+   prints `capture > output`; the console logs `capture → shown → output`
+   every 2 s.
+
+   Command line (same options, scriptable — giving any argument keeps the
+   old behaviour of capturing without the window):
    ```
    bdex_capture.exe --list                            # which windows can be captured
    bdex_capture.exe --title "Kenshi" --fit --hud 2    # by title, fill the monitor, fps HUD
    bdex_capture.exe --pid 1234 --multiplier 3         # by process id, x3
    bdex_capture.exe --title "Kenshi" --mode interpolate
-   bdex_capture.exe                                   # alt-tab into the game within 5 s
+   bdex_capture.exe --hud 2                           # no --title/--pid: foreground, 5 s
    ```
-3. An always-on-top overlay appears over (or, with `--fit`, centred on the
-   monitor of) the game window, showing the game with generated frames in
-   between: x2 by default (`--multiplier 1..4`), **extrapolation** by default
-   (`--mode interpolate` is smoother but adds half a frame of latency).
-   `--hud 2` prints `capture > output` fps in the corner; the console logs
-   `capture → shown → output` every 2 s.
 4. **Ctrl+Alt+Q** quits, and so does closing the game.
 
 The frame-generation engine is the Linux layer's (`framegen.cpp` and its

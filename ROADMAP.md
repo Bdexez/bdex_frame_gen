@@ -100,8 +100,11 @@ a Windows machine.
   titles, x2 extrapolation, pacing survives stutters); still to judge: flow
   quality vs the Linux build, the low-fps regime (x2 at 30/32 fps), the x3/x4
   multipliers, interpolation vs extrapolation.
-- **Phase 3** (config window, hotkey, tray, per-game profiles, Desktop
-  Duplication fallback, HDR/VRR, installer, input pass-through) is untouched.
+- **Phase 3** is started: the **config window** exists (v1 launcher GUI —
+  `bdex_capture.exe` with no arguments: window picker + the panel options,
+  persisted to the shared config). Remaining: global hotkey, per-game
+  profiles, tray, Desktop Duplication fallback, HDR/VRR, installer, input
+  pass-through.
 
 ### Optical-flow quality
 
