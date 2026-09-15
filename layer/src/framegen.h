@@ -17,7 +17,12 @@ public:
     // copied before the analysis. `outputs` is the number of generated frames
     // per real frame (multiplier minus one); 0 creates a pass-through
     // instance with only the copy helper.
-    FrameGen(DeviceData& dev, VkFormat format, VkExtent2D extent, uint32_t outputs, const std::vector<VkImage>& sources);
+    // `renderExtent` is the resolution the application renders at (the source
+    // images); `displayExtent` is the swapchain resolution presented. They
+    // differ when spatial upscaling is on, in which case every presented frame
+    // is resampled from render to display size.
+    FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, VkExtent2D displayExtent, uint32_t outputs,
+             const std::vector<VkImage>& sources);
     ~FrameGen();
     FrameGen(const FrameGen&) = delete;
     FrameGen& operator=(const FrameGen&) = delete;
@@ -38,7 +43,15 @@ public:
     // Copies output image `output` into `dst` (UNDEFINED -> PRESENT_SRC).
     void recordCopyOutput(VkCommandBuffer cmd, uint32_t output, VkImage dst);
     // Copies source `src` (PRESENT_SRC) into `dst` (UNDEFINED -> PRESENT_SRC).
+    // When upscaling, `dst` receives the upscaled real frame instead (prepared
+    // by recordUpscaleReal in the synthesis command buffer).
     void recordCopySource(VkCommandBuffer cmd, uint32_t src, VkImage dst);
+    // Upscales source `cur` (in GENERAL, i.e. between acquire/release) to the
+    // display resolution, into the internal real-frame image. Only used when
+    // upscaling; recorded in the synthesis command buffer.
+    void recordUpscaleReal(VkCommandBuffer cmd, uint32_t cur);
+
+    bool upscaling() const { return upscaling_; }
 
     // Debug frame dumping: records a copy of the image that was just written
     // to `dst` (the generated output or the current history) into a staging
@@ -91,7 +104,9 @@ private:
 
     DeviceData& dev_;
     VkFormat format_;
-    VkExtent2D extent_;
+    VkExtent2D extent_;         // render resolution (source images, flow pyramid)
+    VkExtent2D displayExtent_;  // presented resolution (== extent_ unless upscaling)
+    bool upscaling_ = false;
     OutputEncoding enc_;
     int levels_ = 0;
     float flowScale_ = 1.f;
@@ -104,6 +119,7 @@ private:
     std::vector<Source> sources_;
     std::vector<Level> levels_v_;
     std::vector<AllocatedImage> out_;
+    AllocatedImage outReal_;  // upscaled real frame (display size, packed); only when upscaling_
     uint32_t outputs_ = 0;
     AllocatedBuffer costBuf_;
     AllocatedBuffer dumpBuf_[2];
@@ -119,7 +135,7 @@ private:
     VkSampler sampler_ = VK_NULL_HANDLE;
     VkDescriptorPool pool_ = VK_NULL_HANDLE;
 
-    Pass downsample_, blockMatch_, smooth_, refine_, reduce_, interp_;
+    Pass downsample_, blockMatch_, smooth_, refine_, reduce_, interp_, upscale_;
 
     // Descriptor sets, indexed [parity][level] etc.
     std::vector<VkDescriptorSet> dsDownSrc_[2];       // [parity] per source (level 0)
@@ -129,6 +145,7 @@ private:
     std::vector<VkDescriptorSet> dsRefine_[2][2];     // [parity][dir] per level
     VkDescriptorSet dsReduce_ = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> dsInterp_;           // [(prev * N + cur) * outputs + output]
+    std::vector<VkDescriptorSet> dsUpscale_;          // [source]; only when upscaling_
 };
 
 } // namespace bdex

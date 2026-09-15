@@ -15,6 +15,8 @@ bdex_add_shaders(bdex_layer_shaders
     shaders/reduce_cost.comp
     shaders/interpolate.comp:u32
     shaders/interpolate.comp:u64:OUT_64
+    shaders/upscale.comp:u32
+    shaders/upscale.comp:u64:OUT_64
   DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/common.glsl"
 )
 

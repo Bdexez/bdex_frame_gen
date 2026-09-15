@@ -16,6 +16,7 @@ struct InstanceData {
     InstanceDispatch vt;
     VkInstance instance = VK_NULL_HANDLE;
     uint32_t apiVersion = VK_API_VERSION_1_0;
+    Config config;  // loaded at instance creation; the render-scale hook needs it before the device exists
 };
 
 struct AllocatedImage {

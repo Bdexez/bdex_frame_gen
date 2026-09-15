@@ -35,20 +35,21 @@ VirtualSwapchain::VirtualSwapchain(DeviceData& dev, const VkSwapchainCreateInfoK
         for (auto& vi : virtualImages_) sources.push_back(vi.img.image);
         if (wantGeneration) {
             try {
-                fg_ = std::make_unique<FrameGen>(dev_, format_, extent_, static_cast<uint32_t>(dev_.config.multiplier - 1), sources);
+                fg_ = std::make_unique<FrameGen>(dev_, format_, extent_, displayExtent_,
+                                                 static_cast<uint32_t>(dev_.config.multiplier - 1), sources);
                 generating_ = true;
             } catch (const VkError& e) {
                 BDEX_WARN("frame generation unavailable for this swapchain (%s); passing frames through", e.what());
             }
         }
-        if (!generating_) fg_ = std::make_unique<FrameGen>(dev_, format_, extent_, 0, sources);
+        if (!generating_) fg_ = std::make_unique<FrameGen>(dev_, format_, extent_, displayExtent_, 0, sources);
         worker_ = std::thread([this] { workerLoop(); });
     } catch (...) {
         destroyAll();
         throw;
     }
     statsStart_ = clock::now();
-    dumping_ = generating_ && !dev_.config.dumpDir.empty();
+    dumping_ = (generating_ || upscaling_) && !dev_.config.dumpDir.empty();
     static uint32_t nextDumpId = 0;
     dumpId_ = nextDumpId++;
     BDEX_INFO("swapchain %ux%u format %d: %zu virtual images, %zu real images, present mode %s, generation %s",
@@ -87,8 +88,18 @@ void VirtualSwapchain::createReal(const VkSwapchainCreateInfoKHR& appInfo) {
     }
     presentMode_ = ci.presentMode;
 
+    // The application's create info carries the render extent (reduced by our
+    // surface-capabilities hook when upscaling); the real swapchain must use
+    // the true display extent, which this direct query returns unmodified.
+    displayExtent_ = extent_;
     VkSurfaceCapabilitiesKHR caps{};
     if (dev_.inst->vt.GetPhysicalDeviceSurfaceCapabilitiesKHR(dev_.physDev, appInfo.surface, &caps) == VK_SUCCESS) {
+        if (dev_.config.renderScale < 0.999f && caps.currentExtent.width != UINT32_MAX &&
+            (caps.currentExtent.width != extent_.width || caps.currentExtent.height != extent_.height)) {
+            displayExtent_ = caps.currentExtent;
+            upscaling_ = true;
+            ci.imageExtent = displayExtent_;
+        }
         // We present `multiplier` frames per game frame: with too few images
         // the acquire of the real frame blocks behind the generated ones
         // still queued in the presentation engine, which delays it.
@@ -147,7 +158,7 @@ void VirtualSwapchain::createVirtualImages(const VkSwapchainCreateInfoKHR& appIn
     dev_.inst->vt.GetPhysicalDeviceFormatProperties(dev_.physDev, format_, &fp);
     const VkFormatFeatureFlags feats = fp.optimalTilingFeatures;
     VkImageUsageFlags usage = appInfo.imageUsage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-    if (forGeneration) usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+    if (forGeneration || upscaling_) usage |= VK_IMAGE_USAGE_SAMPLED_BIT;  // upscaler samples the source
     auto dropUnless = [&](VkImageUsageFlags bit, VkFormatFeatureFlags feature) {
         if ((usage & bit) && !(feats & feature)) usage &= ~bit;
     };
@@ -425,11 +436,19 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
                 fg_->recordInterpolate(slot.cmd, static_cast<uint32_t>(prev), imageIndex, base + float(i) / mult, static_cast<uint32_t>(i - 1));
             fg_->profileMark(slot.cmd, slotIdx, FrameGen::StageInterp);
         }
+        // Upscale the real frame into the internal image the worker presents.
+        if (upscaling_) fg_->recordUpscaleReal(slot.cmd, imageIndex);
         if (dumping_) {
             if (interpolate) fg_->recordDump(slot.cmd, 0, imageIndex);
             fg_->recordDump(slot.cmd, 1, imageIndex);
         }
         fg_->recordReleaseSources(slot.cmd, prev, static_cast<int>(imageIndex));
+    } else if (upscaling_) {
+        // Pure upscaling (no frame generation): resample the one real frame.
+        fg_->recordAcquireSources(slot.cmd, -1, static_cast<int>(imageIndex));
+        fg_->recordUpscaleReal(slot.cmd, imageIndex);
+        if (dumping_) fg_->recordDump(slot.cmd, 1, imageIndex);
+        fg_->recordReleaseSources(slot.cmd, -1, static_cast<int>(imageIndex));
     }
     // Pass-through: an empty submission still consumes the application's
     // semaphores and orders the worker's copy after its rendering.

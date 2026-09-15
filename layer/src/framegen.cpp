@@ -17,6 +17,7 @@ struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t has
 struct SizePC { int32_t size[2]; };
 struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; };
 struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; };
+struct UpscalePC { int32_t outSize[2]; int32_t srcSize[2]; uint32_t encoding; int32_t filter; };
 
 constexpr uint32_t kBlockSize = 8;
 constexpr uint32_t kFineBlock = 4;
@@ -26,12 +27,14 @@ uint32_t divUp(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
 
 } // namespace
 
-FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D extent, uint32_t outputs, const std::vector<VkImage>& sources)
-    : dev_(dev), format_(format), extent_(extent), outputs_(outputs) {
+FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, VkExtent2D displayExtent, uint32_t outputs,
+                   const std::vector<VkImage>& sources)
+    : dev_(dev), format_(format), extent_(renderExtent), displayExtent_(displayExtent), outputs_(outputs) {
+    upscaling_ = displayExtent_.width != extent_.width || displayExtent_.height != extent_.height;
     enc_ = encodingForFormat(format);
     if (!enc_.supported) throw VkError(VK_ERROR_FORMAT_NOT_SUPPORTED, "swapchain format not supported by frame generation");
     for (VkImage img : sources) sources_.push_back({img, VK_NULL_HANDLE});
-    if (outputs_ == 0) return;  // pass-through: only recordCopySource is used
+    if (outputs_ == 0 && !upscaling_) return;  // pass-through: only recordCopySource is used
     try {
         for (auto& src : sources_) {
             VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
@@ -48,9 +51,17 @@ FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D extent, uint32_t
         destroyAll();
         throw;
     }
-    BDEX_INFO("frame generation ready: %ux%u, %d flow levels (finest %ux%u blocks, scale %.0f), output %s",
-              extent.width, extent.height, levels_, levels_v_[0].blocks.width, levels_v_[0].blocks.height,
-              flowScale_, enc_.is64 ? "rg32ui" : "r32ui");
+    if (outputs_ > 0)
+        BDEX_INFO("frame generation ready: render %ux%u, %d flow levels (finest %ux%u blocks, scale %.0f), output %s%s",
+                  extent_.width, extent_.height, levels_, levels_v_[0].blocks.width, levels_v_[0].blocks.height,
+                  flowScale_, enc_.is64 ? "rg32ui" : "r32ui",
+                  upscaling_ ? " (upscaled)" : "");
+    if (upscaling_) {
+        static const char* filt[] = {"bilinear", "Catmull-Rom", "Lanczos-2"};
+        BDEX_INFO("upscaling %ux%u -> %ux%u (%.0f%%, %s)", extent_.width, extent_.height, displayExtent_.width,
+                  displayExtent_.height, 100.0 * extent_.width / displayExtent_.width,
+                  filt[std::clamp(dev_.config.upscaleFilter, 0, 2)]);
+    }
 }
 
 FrameGen::~FrameGen() { destroyAll(); }
@@ -99,21 +110,27 @@ void FrameGen::createPipelines() {
     const VkFormatFeatureFlags lumaFeatures = VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
                                               VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
     lumaFormat_ = dev_.formatSupports(VK_FORMAT_R16_SFLOAT, lumaFeatures) ? VK_FORMAT_R16_SFLOAT : VK_FORMAT_R32_SFLOAT;
-    if (lumaFormat_ == VK_FORMAT_R16_SFLOAT) {
-        downsample_ = makePass(downsample_comp_f16, downsample_comp_f16_size, {CIS, SI});
-        blockMatch_ = makePass(block_match_comp_f16, block_match_comp_f16_size, {SI, SI, CIS, SI, SI});
-        refine_ = makePass(flow_refine_comp_f16, flow_refine_comp_f16_size, {SI, SI, SI, SI, SI});
-    } else {
-        downsample_ = makePass(downsample_comp_f32, downsample_comp_f32_size, {CIS, SI});
-        blockMatch_ = makePass(block_match_comp_f32, block_match_comp_f32_size, {SI, SI, CIS, SI, SI});
-        refine_ = makePass(flow_refine_comp_f32, flow_refine_comp_f32_size, {SI, SI, SI, SI, SI});
+    if (outputs_ > 0) {
+        if (lumaFormat_ == VK_FORMAT_R16_SFLOAT) {
+            downsample_ = makePass(downsample_comp_f16, downsample_comp_f16_size, {CIS, SI});
+            blockMatch_ = makePass(block_match_comp_f16, block_match_comp_f16_size, {SI, SI, CIS, SI, SI});
+            refine_ = makePass(flow_refine_comp_f16, flow_refine_comp_f16_size, {SI, SI, SI, SI, SI});
+        } else {
+            downsample_ = makePass(downsample_comp_f32, downsample_comp_f32_size, {CIS, SI});
+            blockMatch_ = makePass(block_match_comp_f32, block_match_comp_f32_size, {SI, SI, CIS, SI, SI});
+            refine_ = makePass(flow_refine_comp_f32, flow_refine_comp_f32_size, {SI, SI, SI, SI, SI});
+        }
+        smooth_ = makePass(flow_smooth_comp, flow_smooth_comp_size, {SI, SI});
+        reduce_ = makePass(reduce_cost_comp, reduce_cost_comp_size, {SI, SB});
+        if (enc_.is64)
+            interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB});
+        else
+            interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB});
     }
-    smooth_ = makePass(flow_smooth_comp, flow_smooth_comp_size, {SI, SI});
-    reduce_ = makePass(reduce_cost_comp, reduce_cost_comp_size, {SI, SB});
-    if (enc_.is64)
-        interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB});
-    else
-        interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB});
+    if (upscaling_) {
+        if (enc_.is64) upscale_ = makePass(upscale_comp_u64, upscale_comp_u64_size, {CIS, SI});
+        else           upscale_ = makePass(upscale_comp_u32, upscale_comp_u32_size, {CIS, SI});
+    }
 }
 
 void FrameGen::createResources() {
@@ -130,7 +147,7 @@ void FrameGen::createResources() {
     const int fs = cfg.flowScaleFor(extent_.width, extent_.height);
     VkExtent2D size = {divUp(extent_.width, fs), divUp(extent_.height, fs)};
     flowScale_ = float(fs);
-    for (int l = 0; l < cfg.levels; ++l) {
+    for (int l = 0; outputs_ > 0 && l < cfg.levels; ++l) {
         Level lv;
         lv.size = size;
         lv.blocks = {divUp(size.width, kBlockSize), divUp(size.height, kBlockSize)};
@@ -154,9 +171,12 @@ void FrameGen::createResources() {
     }
     levels_ = static_cast<int>(levels_v_.size());
 
+    const VkImageUsageFlags outUsage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     for (uint32_t i = 0; i < outputs_; ++i)
-        out_.push_back(dev_.createImage(enc_.storageFormat, extent_, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, true));
-    costBuf_ = dev_.createBuffer(16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        out_.push_back(dev_.createImage(enc_.storageFormat, displayExtent_, outUsage, true));
+    if (upscaling_) outReal_ = dev_.createImage(enc_.storageFormat, displayExtent_, outUsage, true);
+    if (outputs_ > 0)
+        costBuf_ = dev_.createBuffer(16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
     if (cfg.profile) {
         VkQueryPoolCreateInfo qi{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
@@ -188,10 +208,11 @@ void FrameGen::createResources() {
             for (auto& i : lv.cost) add(i);
         }
         for (auto& o : out_) add(o);
+        if (upscaling_) add(outReal_);
         dev_.vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
                                    nullptr, static_cast<uint32_t>(barriers.size()), barriers.data());
-        dev_.vt.CmdFillBuffer(cmd, costBuf_.buffer, 0, VK_WHOLE_SIZE, 0);
+        if (costBuf_.buffer) dev_.vt.CmdFillBuffer(cmd, costBuf_.buffer, 0, VK_WHOLE_SIZE, 0);
     });
 }
 
@@ -232,20 +253,34 @@ void FrameGen::createDescriptors() {
     const uint32_t O = outputs_;
     const uint32_t N = static_cast<uint32_t>(sources_.size());
     const uint32_t nInterp = N * N * O;
-    const uint32_t nSets = 2 * N + 2 * L + 4 * L + 2 * L + 4 * L + 1 + nInterp;
-    VkDescriptorPoolSize sizes[] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * N + 2 * L + 4 * L + 4 * nInterp},
-        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * N + 2 * L + 4 * L * 4 + 2 * L * 2 + 4 * L * 5 + 1 + nInterp},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1 + nInterp},
-    };
+    const uint32_t gen = O > 0 ? 1 : 0;           // generation descriptor sets exist only with outputs
+    const uint32_t up = upscaling_ ? N : 0;       // one upscale set per source
+    const uint32_t nSets = gen * (2 * N + 2 * L + 4 * L + 2 * L + 4 * L + 1 + nInterp) + up;
+    const uint32_t nCIS = gen * (2 * N + 2 * L + 4 * L + 4 * nInterp) + up;
+    const uint32_t nSI = gen * (2 * N + 2 * L + 4 * L * 4 + 2 * L * 2 + 4 * L * 5 + 1 + nInterp) + up;
+    const uint32_t nSB = gen * (1 + nInterp);
+    std::vector<VkDescriptorPoolSize> sizes;
+    if (nCIS) sizes.push_back({VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nCIS});
+    if (nSI) sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nSI});
+    if (nSB) sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nSB});
     VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pi.maxSets = nSets;
-    pi.poolSizeCount = 3;
-    pi.pPoolSizes = sizes;
+    pi.poolSizeCount = static_cast<uint32_t>(sizes.size());
+    pi.pPoolSizes = sizes.data();
     VK_CHECK(dev_.vt.CreateDescriptorPool(dev_.device, &pi, nullptr, &pool_));
 
     const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     const VkDescriptorType SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+
+    if (upscaling_) {
+        for (uint32_t n = 0; n < N; ++n) {
+            VkDescriptorSet s = allocSet(upscale_.setLayout);
+            writeImage(s, 0, CIS, sources_[n].view);
+            writeImage(s, 1, SI, outReal_.view);
+            dsUpscale_.push_back(s);
+        }
+    }
+    if (O == 0) return;  // pure upscaling: no flow / interpolation descriptors
 
     for (uint32_t parity = 0; parity < 2; ++parity) {
         for (uint32_t n = 0; n < N; ++n) {
@@ -316,7 +351,7 @@ void FrameGen::destroyAll() {
     VkDevice d = dev_.device;
     if (pool_) vt.DestroyDescriptorPool(d, pool_, nullptr);
     pool_ = VK_NULL_HANDLE;
-    for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_}) {
+    for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_}) {
         if (p->pipeline) vt.DestroyPipeline(d, p->pipeline, nullptr);
         if (p->layout) vt.DestroyPipelineLayout(d, p->layout, nullptr);
         if (p->setLayout) vt.DestroyDescriptorSetLayout(d, p->setLayout, nullptr);
@@ -338,6 +373,7 @@ void FrameGen::destroyAll() {
     levels_v_.clear();
     for (auto& o : out_) dev_.destroyImage(o);
     out_.clear();
+    if (outReal_.image) dev_.destroyImage(outReal_);
     dev_.destroyBuffer(costBuf_);
     if (queryPool_) vt.DestroyQueryPool(d, queryPool_, nullptr);
     queryPool_ = VK_NULL_HANDLE;
@@ -353,7 +389,9 @@ void FrameGen::destroyAll() {
 
 void FrameGen::recordDump(VkCommandBuffer cmd, uint32_t which, uint32_t cur) {
     auto& vt = dev_.vt;
-    const VkDeviceSize bytes = VkDeviceSize(extent_.width) * extent_.height * (enc_.is64 ? 8 : 4);
+    // Everything dumped is at display size: out_[0] and the upscaled real frame
+    // (outReal_); the source is only dumped directly when not upscaling.
+    const VkDeviceSize bytes = VkDeviceSize(displayExtent_.width) * displayExtent_.height * (enc_.is64 ? 8 : 4);
     if (!dumpBuf_[which].buffer) {
         dumpBuf_[which] = dev_.createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
         VK_CHECK(vt.MapMemory(dev_.device, dumpBuf_[which].memory, 0, VK_WHOLE_SIZE, 0, &dumpMapped_[which]));
@@ -369,10 +407,10 @@ void FrameGen::recordDump(VkCommandBuffer cmd, uint32_t which, uint32_t cur) {
     }
     VkBufferImageCopy region{};
     region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    region.imageExtent = {extent_.width, extent_.height, 1};
-    // Both the output and the history images live in GENERAL layout.
-    vt.CmdCopyImageToBuffer(cmd, which == 0 ? out_[0].image : sources_[cur].image, VK_IMAGE_LAYOUT_GENERAL,
-                            dumpBuf_[which].buffer, 1, &region);
+    region.imageExtent = {displayExtent_.width, displayExtent_.height, 1};
+    // Output, upscaled-real and history images all live in GENERAL layout.
+    VkImage dumpSrc = which == 0 ? out_[0].image : (upscaling_ ? outReal_.image : sources_[cur].image);
+    vt.CmdCopyImageToBuffer(cmd, dumpSrc, VK_IMAGE_LAYOUT_GENERAL, dumpBuf_[which].buffer, 1, &region);
     VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
@@ -385,12 +423,12 @@ bool FrameGen::writeDump(const std::string& path, uint32_t which) {
     const uint32_t enc = enc_.encoding & 0xffu;
     FILE* f = fopen(path.c_str(), "wb");
     if (!f) return false;
-    fprintf(f, "P6\n%u %u\n255\n", extent_.width, extent_.height);
-    std::vector<uint8_t> row(extent_.width * 3);
+    fprintf(f, "P6\n%u %u\n255\n", displayExtent_.width, displayExtent_.height);
+    std::vector<uint8_t> row(displayExtent_.width * 3);
     const uint32_t* px = static_cast<const uint32_t*>(dumpMapped_[which]);
-    for (uint32_t y = 0; y < extent_.height; ++y) {
-        for (uint32_t x = 0; x < extent_.width; ++x) {
-            uint32_t v = px[y * extent_.width + x];
+    for (uint32_t y = 0; y < displayExtent_.height; ++y) {
+        for (uint32_t x = 0; x < displayExtent_.width; ++x) {
+            uint32_t v = px[y * displayExtent_.width + x];
             uint8_t r, g, b;
             if (enc == ENC_BGRA8) { b = v & 0xff; g = (v >> 8) & 0xff; r = (v >> 16) & 0xff; }
             else if (enc == ENC_RGBA8) { r = v & 0xff; g = (v >> 8) & 0xff; b = (v >> 16) & 0xff; }
@@ -527,17 +565,23 @@ void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cu
     const Config& cfg = dev_.config;
     vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, interp_.pipeline);
     const Level& fine = levels_v_[0];
-    InterpPC pc{{(int32_t)extent_.width, (int32_t)extent_.height}, t, flowScale_, enc_.encoding,
+    // Interpolation output is at display resolution; the flow (in render pixels)
+    // and its coverage are scaled to display space, so the same shader also
+    // upscales the generated frame when render != display.
+    const uint32_t blk = fine.refined ? kFineBlock : kBlockSize;
+    const float sx = float(displayExtent_.width) / extent_.width;
+    const float sy = float(displayExtent_.height) / extent_.height;
+    InterpPC pc{{(int32_t)displayExtent_.width, (int32_t)displayExtent_.height}, t, flowScale_ * sx, enc_.encoding,
                 cfg.debug == Config::Debug::Flow ? 1 : cfg.debug == Config::Debug::Split ? 2 : 0,
                 cfg.sceneCutLow, cfg.sceneCutHigh,
-                {1.f / (fine.fine.width * (fine.refined ? kFineBlock : kBlockSize) * flowScale_),
-                 1.f / (fine.fine.height * (fine.refined ? kFineBlock : kBlockSize) * flowScale_)},
+                {1.f / (fine.fine.width * blk * flowScale_ * sx),
+                 1.f / (fine.fine.height * blk * flowScale_ * sy)},
                 cfg.flowIterations};
     vt.CmdPushConstants(cmd, interp_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
     const uint32_t N = static_cast<uint32_t>(sources_.size());
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, interp_.layout, 0, 1,
                              &dsInterp_[(prev * N + cur) * outputs_ + output], 0, nullptr);
-    vt.CmdDispatch(cmd, divUp(extent_.width, 16), divUp(extent_.height, 16), 1);
+    vt.CmdDispatch(cmd, divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), 1);
     // Make the previous output copy (worker submission) precede this overwrite.
     memoryBarrier(cmd);
 }
@@ -546,8 +590,26 @@ void FrameGen::recordCopyOutput(VkCommandBuffer cmd, uint32_t output, VkImage ds
     copyToPresent(cmd, out_[output].image, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, dst);
 }
 
+void FrameGen::recordUpscaleReal(VkCommandBuffer cmd, uint32_t cur) {
+    auto& vt = dev_.vt;
+    vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, upscale_.pipeline);
+    UpscalePC pc{{(int32_t)displayExtent_.width, (int32_t)displayExtent_.height},
+                 {(int32_t)extent_.width, (int32_t)extent_.height},
+                 enc_.encoding, std::clamp(dev_.config.upscaleFilter, 0, 2)};
+    vt.CmdPushConstants(cmd, upscale_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+    vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, upscale_.layout, 0, 1, &dsUpscale_[cur], 0, nullptr);
+    vt.CmdDispatch(cmd, divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), 1);
+    // Order the worker's copy of outReal_ after this write.
+    memoryBarrier(cmd);
+}
+
 void FrameGen::recordCopySource(VkCommandBuffer cmd, uint32_t src, VkImage dst) {
     auto& vt = dev_.vt;
+    if (upscaling_) {  // the real frame was upscaled into outReal_ by recordUpscaleReal
+        copyToPresent(cmd, outReal_.image, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_WRITE_BIT,
+                      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, dst);
+        return;
+    }
     VkImage image = sources_[src].image;
     VkImageMemoryBarrier pre[2] = {
         imageBarrier(image, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,

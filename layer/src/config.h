@@ -25,6 +25,11 @@ struct Config {
     int   flowScale     = 0;      // finest flow level at 1/flowScale resolution: 1, 2, 4; 0 = auto from the resolution
     int   searchRadius  = 4;      // block matching search radius at the coarsest level, 1..4
     int   searchFine    = 2;      // search radius at the finer levels (around the coarse prediction), 1..4
+    // Spatial upscaling: the game is told a swapchain of renderScale x the
+    // display size, so it renders fewer pixels; every frame (real and
+    // generated) is upscaled to the display resolution. 1.0 disables it.
+    float renderScale   = 1.0f;   // render resolution / display resolution, 0.5..1.0 (1.0 = no upscaling)
+    int   upscaleFilter = 2;      // 0 bilinear, 1 Catmull-Rom (bicubic), 2 Lanczos-2
     int   presentMode   = -2;     // VkPresentModeKHR override; -1 = keep the game's; -2 = auto (fifo -> mailbox)
     bool  pacing        = true;   // sleep-based pacing when the present mode is not FIFO
     Debug debug         = Debug::None;
