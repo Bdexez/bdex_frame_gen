@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=bdex-framegen
+GenericName=Frame Generation Launcher
+Comment=Choose frame-generation and upscaling options, then launch a game
+Exec=bdex-framegen-gui
+Icon=applications-games
+Terminal=false
+Categories=Game;Utility;Settings;
+Keywords=framegen;frame generation;upscaling;vulkan;fps;

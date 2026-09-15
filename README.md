@@ -156,6 +156,17 @@ cmake --build build32 -j && cmake --install build32 --prefix ~/.local
 The layer is installed as **implicit but inert**: it does nothing until the
 `BDEX_FG=1` environment variable is set.
 
+### Graphical launcher
+
+For a point-and-click setup, run **`bdex-framegen-gui`** (or `bdex-framegen
+--gui`, or the *bdex-framegen* entry in the applications menu). Pick the game,
+toggle frame generation and upscaling, set the sharpness and present mode, then
+**Launch** — or copy the equivalent Steam launch options, or save the settings
+as a per-game profile. It needs PyGObject with GTK 4 and libadwaita (packages
+`python-gobject`, `gtk4`, `libadwaita`).
+
+### Command line
+
 ```sh
 BDEX_FG=1 ./my_game                      # x2 (default)
 bdex-framegen -m 3 -- ./my_game          # x3 through the launcher

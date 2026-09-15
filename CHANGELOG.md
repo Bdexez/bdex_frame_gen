@@ -34,6 +34,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   now covers the worker's copies.
 - Launcher options `-x/--extrapolate`, `-P/--preset` and `--gl` (OpenGL
   games through Zink).
+- Graphical launcher `bdex-framegen-gui` (GTK 4 / libadwaita): pick a game and
+  set every option with switches and dropdowns, then launch it, copy the Steam
+  launch options, or save a per-game profile. Installed with a desktop entry;
+  also reachable as `bdex-framegen --gui`.
 
 ### Changed
 
