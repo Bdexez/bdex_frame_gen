@@ -12,7 +12,7 @@ BUILD="$(cd "$BUILD" && pwd)"
 OUT="${BDEX_EVAL_DIR:-/tmp/bdex-eval}"
 rm -rf "$OUT/gt" "$OUT/test"
 mkdir -p "$OUT/gt" "$OUT/test"
-export VK_ADD_IMPLICIT_LAYER_PATH="$BUILD/layer" BDEX_FG=1 BDEX_FG_LOG=0
+export VK_ADD_IMPLICIT_LAYER_PATH="$BUILD/layer" BDEX_FG=1 BDEX_FG_LOG=0 BDEX_FG_HUD=0 BDEX_FG_RENDER_SCALE=1
 BDEX_FG_DUMP="$OUT/gt" BDEX_FG_DUMP_FRAMES=$((FRAMES * 4)) "$BUILD/demo/bdex_demo" --fps 60 --frames $((FRAMES * 2)) --deterministic ${BDEX_EVAL_ARGS:-} >/dev/null
 BDEX_FG_DUMP="$OUT/test" BDEX_FG_DUMP_FRAMES=$((FRAMES * 2)) "$BUILD/demo/bdex_demo" --fps 30 --frames "$FRAMES" --deterministic ${BDEX_EVAL_ARGS:-} >/dev/null
 python3 "$(dirname "$0")/eval_quality.py" "$OUT/gt" "$OUT/test"
