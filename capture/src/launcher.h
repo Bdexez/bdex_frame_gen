@@ -43,6 +43,15 @@ struct LaunchChoice {
     bool fifo = false;      // vsync (FIFO) presentation instead of mailbox
     float scale = 1.f;      // overlay size factor (unused when fit)
     bool fit = false;       // overlay fills the game's monitor
+    // Advanced optical-flow tuning (defaults mirror Config; a value left at its
+    // default is not written to the file). Same keys the Linux panel exposes.
+    float gradWeight = 0.f;      // grad_weight
+    float smoothness = 0.004f;   // smoothness
+    float zeroBias = 0.002f;     // zero_bias
+    int   searchFine = 2;        // search_fine
+    int   flowIterations = 1;    // flow_iterations
+    float sceneCutLow = 0.05f;   // scene_cut_low
+    float sceneCutHigh = 0.09f;  // scene_cut_high
 };
 
 // Runs the launcher modally (its own message loop). `choice` carries both

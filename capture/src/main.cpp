@@ -516,6 +516,13 @@ int main(int argc, char** argv) {
         choice.hud = d.overlayMode;
         choice.preset = bdex::globalConfigValue("preset");
         choice.fifo = bdex::globalConfigValue("present_mode") == "fifo";
+        choice.gradWeight = d.gradWeight;
+        choice.smoothness = d.smoothness;
+        choice.zeroBias = d.zeroBias;
+        choice.searchFine = d.searchFine;
+        choice.flowIterations = d.flowIterations;
+        choice.sceneCutLow = d.sceneCutLow;
+        choice.sceneCutHigh = d.sceneCutHigh;
         if (!bdex::runLauncher(choice)) return 0;
         target = choice.target;
         if (!target) return 1;
