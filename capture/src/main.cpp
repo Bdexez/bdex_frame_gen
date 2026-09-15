@@ -255,7 +255,7 @@ HWND createOverlay(const RECT& r) {
     WNDCLASSEXW wc{sizeof wc};
     wc.lpfnWndProc = overlayProc;
     wc.hInstance = GetModuleHandleW(nullptr);
-    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));  // IDC_ARROW
     wc.lpszClassName = L"bdex_capture_overlay";
     RegisterClassExW(&wc);
     // TOPMOST over the game, NOACTIVATE + TOOLWINDOW so it never takes focus

@@ -675,13 +675,13 @@ namespace {
 // Internal versions of the two entry points: the exported names below can be
 // interposed by libvulkan's own symbols when the layer is dlopen'ed into a
 // process that links the loader, so all internal references use these.
-PFN_vkVoidFunction layerGetDeviceProcAddr(VkDevice device, const char* pName);
+PFN_vkVoidFunction VKAPI_CALL layerGetDeviceProcAddr(VkDevice device, const char* pName);
 
 // The loader dispatches physical-device functions (vkGetPhysicalDevice*)
 // through this entry point, so a layer that only intercepts them via
 // GetInstanceProcAddr is skipped for them. Surface capabilities are hooked
 // here for the render-scale override.
-PFN_vkVoidFunction layerGetPhysicalDeviceProcAddr(VkInstance instance, const char* pName) {
+PFN_vkVoidFunction VKAPI_CALL layerGetPhysicalDeviceProcAddr(VkInstance instance, const char* pName) {
     if (pName && strcmp(pName, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(GetPhysicalDeviceSurfaceCapabilitiesKHR);
     if (pName && strcmp(pName, "vkGetPhysicalDeviceSurfaceCapabilities2KHR") == 0)
@@ -691,7 +691,7 @@ PFN_vkVoidFunction layerGetPhysicalDeviceProcAddr(VkInstance instance, const cha
     return inst->vt.GetInstanceProcAddr(instance, pName);
 }
 
-PFN_vkVoidFunction layerGetInstanceProcAddr(VkInstance instance, const char* pName) {
+PFN_vkVoidFunction VKAPI_CALL layerGetInstanceProcAddr(VkInstance instance, const char* pName) {
     if (!pName) return nullptr;
     if (strcmp(pName, "vkGetInstanceProcAddr") == 0) return reinterpret_cast<PFN_vkVoidFunction>(layerGetInstanceProcAddr);
     if (strcmp(pName, "vkGetDeviceProcAddr") == 0) return reinterpret_cast<PFN_vkVoidFunction>(layerGetDeviceProcAddr);
@@ -706,7 +706,7 @@ PFN_vkVoidFunction layerGetInstanceProcAddr(VkInstance instance, const char* pNa
     return next;
 }
 
-PFN_vkVoidFunction layerGetDeviceProcAddr(VkDevice device, const char* pName) {
+PFN_vkVoidFunction VKAPI_CALL layerGetDeviceProcAddr(VkDevice device, const char* pName) {
     if (!pName) return nullptr;
     if (strcmp(pName, "vkGetDeviceProcAddr") == 0) return reinterpret_cast<PFN_vkVoidFunction>(layerGetDeviceProcAddr);
     if (!device) return nullptr;
@@ -721,8 +721,12 @@ PFN_vkVoidFunction layerGetDeviceProcAddr(VkDevice device, const char* pName) {
 } // namespace
 } // namespace bdex
 
+// vulkan_core.h already declares vkGetInstanceProcAddr/vkGetDeviceProcAddr
+// (plain extern "C"), so MSVC rejects a redeclaration with dllexport
+// ("different linkage"): the Windows exports come from bdex_framegen.def
+// instead, which also maps the __stdcall-decorated 32-bit names.
 #ifdef _WIN32
-#define BDEX_EXPORT extern "C" __declspec(dllexport)
+#define BDEX_EXPORT extern "C"
 #else
 #define BDEX_EXPORT extern "C" __attribute__((visibility("default")))
 #endif
