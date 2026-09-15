@@ -89,6 +89,9 @@ a Windows machine.
   title — is still to be exercised.
 - **Phase 2**: verify upscaling / HUD on Windows; 32-bit build +
   `WOW6432Node` registration; release zip + optional Inno/NSIS installer.
+  **Forward `VK_EXT_full_screen_exclusive`** through the virtual swapchain so
+  native-Vulkan games get true exclusive fullscreen (currently falls back to a
+  composited present; documented in `docs/windows-README.md`).
 - **Phase 3**: a Windows config tool (there is currently **no** Windows GUI —
   the GTK panel is Linux-only), Authenticode signing, a Windows section in the
   README.

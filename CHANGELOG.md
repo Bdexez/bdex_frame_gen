@@ -14,6 +14,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Windows layer** `log_file` now expands environment references before
+  opening the file: `%VAR%` on Windows (via `ExpandEnvironmentStringsA`),
+  `$VAR` / `${VAR}` / a leading `~` on Linux. The Windows docs recommend
+  `log_file=%TEMP%\bdex-fg.log`, which was being opened verbatim — so the
+  layer logged nowhere (and a game's stderr goes nowhere on Windows), leaving
+  a first run with no diagnostics. Covered by a new `config_expand_log_file`
+  unit test on both platforms (`bdex::platformExpandPath`).
 - `bdex_capture`'s overlay no longer paints its own arrow cursor over the
   game: on titles that hide the hardware cursor (PRAGMATA, Dark Souls III)
   the overlay's class cursor stayed visible on top of the game (double /

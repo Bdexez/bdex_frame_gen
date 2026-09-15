@@ -1,4 +1,5 @@
 #include "config.h"
+#include "platform.h"
 #include "test.h"
 
 #include <cstdio>
@@ -158,4 +159,31 @@ TEST(config_presets) {
     CHECK(d.flowScale == 2 && !d.refineAll);
     unsetenv("BDEX_FG_FLOW_SCALE");
     unsetenv("BDEX_FG_PRESET");
+}
+
+// log_file may contain an environment reference in the platform's own syntax
+// (the Windows docs recommend `log_file=%TEMP%\bdex-fg.log`). Without
+// expansion the layer opens a file named literally "%TEMP%\..." and silently
+// logs nowhere, which would break the very first Windows run.
+TEST(config_expand_log_file) {
+    using bdex::platformExpandPath;
+    CHECK(platformExpandPath("") == "");
+    CHECK(platformExpandPath("plain/relative.log") == "plain/relative.log");
+#ifdef _WIN32
+    setenv("BDEX_FG_TESTDIR", "C:\\tmp", 1);
+    CHECK(platformExpandPath("%BDEX_FG_TESTDIR%\\bdex-fg.log") == "C:\\tmp\\bdex-fg.log");
+    unsetenv("BDEX_FG_TESTDIR");
+    // An undefined variable is left verbatim rather than emptied.
+    CHECK(platformExpandPath("%BDEX_FG_NOPE%\\x") == "%BDEX_FG_NOPE%\\x");
+#else
+    setenv("BDEX_FG_TESTDIR", "/var/tmp", 1);
+    CHECK(platformExpandPath("$BDEX_FG_TESTDIR/bdex-fg.log") == "/var/tmp/bdex-fg.log");
+    CHECK(platformExpandPath("${BDEX_FG_TESTDIR}/bdex-fg.log") == "/var/tmp/bdex-fg.log");
+    unsetenv("BDEX_FG_TESTDIR");
+    // An unknown variable is left as-is.
+    CHECK(platformExpandPath("$BDEX_FG_NOPE/x") == "$BDEX_FG_NOPE/x");
+    // A leading ~ expands to $HOME.
+    if (const char* h = std::getenv("HOME"))
+        CHECK(platformExpandPath("~/bdex-fg.log") == std::string(h) + "/bdex-fg.log");
+#endif
 }

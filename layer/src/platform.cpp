@@ -114,6 +114,47 @@ std::string platformConfigPath() {
 #endif
 }
 
+std::string platformExpandPath(const std::string& in) {
+    if (in.empty()) return in;
+#ifdef _WIN32
+    // The OS resolves %VAR%; an undefined %VAR% is left verbatim. Two calls:
+    // size probe (includes the terminator), then fill.
+    DWORD n = ExpandEnvironmentStringsA(in.c_str(), nullptr, 0);
+    if (n == 0) return in;
+    std::string out(n, '\0');
+    DWORD w = ExpandEnvironmentStringsA(in.c_str(), out.data(), n);
+    if (w == 0 || w > n) return in;
+    out.resize(w - 1);  // drop the terminator
+    return out;
+#else
+    std::string out;
+    out.reserve(in.size());
+    for (size_t i = 0; i < in.size();) {
+        char c = in[i];
+        if (c == '~' && i == 0 && (in.size() == 1 || in[1] == '/')) {
+            if (const char* h = std::getenv("HOME")) out += h;
+            else out += '~';
+            ++i;
+        } else if (c == '$' && i + 1 < in.size()) {
+            size_t j = i + 1;
+            bool brace = in[j] == '{';
+            if (brace) ++j;
+            size_t start = j;
+            while (j < in.size() && (std::isalnum(static_cast<unsigned char>(in[j])) || in[j] == '_')) ++j;
+            std::string name = in.substr(start, j - start);
+            if (brace) { if (j < in.size() && in[j] == '}') ++j; else name.clear(); }
+            const char* v = name.empty() ? nullptr : std::getenv(name.c_str());
+            if (v) { out += v; i = j; }
+            else { out += c; ++i; }  // leave an unknown/malformed reference as-is
+        } else {
+            out += c;
+            ++i;
+        }
+    }
+    return out;
+#endif
+}
+
 bool platformAntiCheatPresent(std::string* foundName) {
 #ifdef _WIN32
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
