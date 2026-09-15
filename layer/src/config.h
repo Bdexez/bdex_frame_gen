@@ -49,6 +49,7 @@ struct Config {
     float sceneCutHigh  = 0.09f;  // ... and above which the generated frame is a plain duplicate
     float smoothness    = 0.004f; // penalty per pixel of deviation from the coarse prediction
     float zeroBias      = 0.002f; // bias toward zero motion (helps static HUDs)
+    float gradWeight    = 0.0f;   // weight of the gradient-constancy matching term (0 = plain luma SAD; ~1 sharpens fast motion at some cost to static fidelity)
     bool  refine        = true;   // flow refinement pass (better motion boundaries, costs GPU time)
     bool  refineAll     = true;   // refine every pyramid level (off: only the finest, cheaper, ~2 dB worse)
     int   flowIterations = 1;     // fixed-point iterations of the flow lookup in the interpolation (0-3)

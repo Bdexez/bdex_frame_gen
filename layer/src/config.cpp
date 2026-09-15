@@ -160,6 +160,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "scene_cut_high")              return parseFloat(value, sceneCutHigh, 0.f, 1.f);
     if (key == "smoothness")                  return parseFloat(value, smoothness, 0.f, 1.f);
     if (key == "zero_bias")                   return parseFloat(value, zeroBias, 0.f, 1.f);
+    if (key == "grad_weight")                 return parseFloat(value, gradWeight, 0.f, 8.f);
     if (key == "refine")                      return parseBool(value, refine);
     if (key == "refine_all")                  return parseBool(value, refineAll);
     if (key == "flow_iterations")             return parseInt(value, flowIterations, 0, 3);
@@ -295,6 +296,7 @@ std::string Config::describe() const {
       << " mode=" << (extrapolate ? "extrapolate" : "interpolate") << " flow_scale=" << (flowScale ? std::to_string(flowScale) : "auto") << " search=" << searchRadius << "/" << searchFine << " refine=" << refine
       << " present_mode=" << presentModeName(presentMode) << " pacing=" << pacing
       << " debug=" << dbg[static_cast<int>(debug)] << " log=" << logLevel;
+    if (gradWeight > 0.f) o << " grad_weight=" << gradWeight;
     if (antiCheatDisabled) o << " [disabled: anti-cheat detected]";
     return o.str();
 }

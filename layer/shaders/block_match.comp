@@ -5,10 +5,18 @@
 // Hierarchical block matching: one workgroup per 8x8 block of the reference
 // image, searching the target image in a (2R+1)^2 window centred on the
 // displacement predicted by the coarser pyramid level. The block and the
-// search region are staged in shared memory. The 64 threads are split into
+// search region are staged in shared memory (with a 1-pixel border so that
+// central-difference gradients are available). The 64 threads are split into
 // four groups of 16, one per 4x4 quadrant of the block: each group evaluates
-// every candidate on its quadrant, the partial SADs are summed, and a tree
+// every candidate on its quadrant, the partial costs are summed, and a tree
 // reduction picks the best candidate.
+//
+// The matching cost is luma constancy (SAD on luma) plus, when gradWeight > 0,
+// gradient constancy (SAD on the spatial gradient). Raw luma alone is ambiguous
+// in textured or fast-moving regions, where several candidates score a similar
+// SAD and a wrong one wins, tearing the warp; the gradient term matches on
+// structure (edges) and disambiguates those cases. gradWeight = 0 is the plain
+// luma-SAD behaviour, bit-for-bit.
 //
 // Output flow is the displacement (in pixels of this level) that maps a
 // position in the reference image to the matching position in the target.
@@ -16,7 +24,8 @@
 
 #define BS   8
 #define MAXR 4
-#define REG  (BS + 2 * MAXR)
+#define REG  (BS + 2 * MAXR + 2)   // staged target region, +2 for the gradient border
+#define RB   (BS + 2)              // staged reference block, +2 for the gradient border
 #define NT   (BS * BS)
 #define MAXCAND ((2 * MAXR + 1) * (2 * MAXR + 1) + 1)  // + the zero-motion candidate
 
@@ -35,13 +44,13 @@ layout(push_constant) uniform PC {
     int hasCoarse;     // 1: use coarseFlow as the search centre
     float smoothness;  // penalty per pixel of deviation from the prediction
     float zeroBias;    // penalty per pixel of absolute displacement
+    float gradWeight;  // weight of the gradient-constancy term (0 = plain luma SAD)
 } pc;
 
-shared float refBlk[NT];
+shared float refBlk[RB * RB];
 shared float tgt[REG * REG];
 shared float qsad[4][MAXCAND];
 shared float sCost[NT];
-shared float sSad[NT];
 shared int   sIdx[NT];
 shared ivec2 sBase;
 
@@ -55,8 +64,9 @@ void main() {
     ivec2 origin = blk * BS;
     int R = clamp(pc.radius, 1, MAXR);
     int W = 2 * R + 1;
-    int reg = BS + 2 * R;
+    int regG = BS + 2 * R + 2;      // dynamic staged region side (incl. gradient border)
     int ncand = W * W;
+    float gw = pc.gradWeight;
 
     if (tid == 0) {
         vec2 pred = vec2(0.0);
@@ -66,18 +76,23 @@ void main() {
         }
         sBase = ivec2(round(pred));
     }
-    refBlk[tid] = loadRef(origin + lp);
+    // Reference block with a 1-pixel border, top-left at origin - 1.
+    for (int i = tid; i < RB * RB; i += NT) {
+        ivec2 o = ivec2(i % RB, i / RB);
+        refBlk[i] = loadRef(origin - 1 + o);
+    }
     barrier();
 
     ivec2 base = sBase;
-    ivec2 regOrigin = origin + base - R;
-    for (int i = tid; i < reg * reg; i += NT) {
-        ivec2 o = ivec2(i % reg, i / reg);
+    // Target region with a 1-pixel gradient border, top-left at origin+base-R-1.
+    ivec2 regOrigin = origin + base - R - 1;
+    for (int i = tid; i < regG * regG; i += NT) {
+        ivec2 o = ivec2(i % regG, i / regG);
         tgt[i] = loadTgt(regOrigin + o);
     }
     barrier();
 
-    // Partial SADs: quadrant q = tid / 16, candidates c = tid % 16 + 16k.
+    // Partial costs: quadrant q = tid / 16, candidates c = tid % 16 + 16k.
     // Candidate `ncand` is "no motion" (always considered so that static HUD
     // elements stay perfectly stable); it may fall outside the staged region
     // and is read from the image directly.
@@ -91,22 +106,39 @@ void main() {
         if (c < ncand) {
             ivec2 d = ivec2(c % W, c / W);
             for (int y = 0; y < 4; ++y) {
-                int ry = qo.y + y;
-                int row = (ry + d.y) * reg + d.x + qo.x;
-                for (int x = 0; x < 4; ++x) sad += abs(refBlk[ry * BS + qo.x + x] - tgt[row + x]);
+                int by = qo.y + y;
+                for (int x = 0; x < 4; ++x) {
+                    int bx = qo.x + x;
+                    int ri = (by + 1) * RB + (bx + 1);
+                    int ti = (d.y + by + 1) * regG + (d.x + bx + 1);
+                    sad += abs(refBlk[ri] - tgt[ti]);
+                    if (gw > 0.0) {
+                        vec2 rg = vec2(refBlk[ri + 1] - refBlk[ri - 1], refBlk[ri + RB] - refBlk[ri - RB]);
+                        vec2 tg = vec2(tgt[ti + 1] - tgt[ti - 1], tgt[ti + regG] - tgt[ti - regG]);
+                        sad += gw * (abs(rg.x - tg.x) + abs(rg.y - tg.y));
+                    }
+                }
             }
         } else {
             for (int y = 0; y < 4; ++y)
                 for (int x = 0; x < 4; ++x) {
                     ivec2 o = qo + ivec2(x, y);
-                    sad += abs(refBlk[o.y * BS + o.x] - loadTgt(origin + o));
+                    int ri = (o.y + 1) * RB + (o.x + 1);
+                    ivec2 ip = origin + o;
+                    sad += abs(refBlk[ri] - loadTgt(ip));
+                    if (gw > 0.0) {
+                        vec2 rg = vec2(refBlk[ri + 1] - refBlk[ri - 1], refBlk[ri + RB] - refBlk[ri - RB]);
+                        vec2 tg = vec2(loadTgt(ip + ivec2(1, 0)) - loadTgt(ip - ivec2(1, 0)),
+                                       loadTgt(ip + ivec2(0, 1)) - loadTgt(ip - ivec2(0, 1)));
+                        sad += gw * (abs(rg.x - tg.x) + abs(rg.y - tg.y));
+                    }
                 }
         }
         qsad[quad][c] = sad;
     }
     barrier();
 
-    float best = 1e30, bestSad = 1e30;
+    float best = 1e30;
     int bestIdx = 0;
     for (int c = tid; c < total; c += NT) {
         float sad = (qsad[0][c] + qsad[1][c] + qsad[2][c] + qsad[3][c]) * (1.0 / float(NT));
@@ -118,17 +150,15 @@ void main() {
         } else {
             cost = sad;
         }
-        if (cost < best) { best = cost; bestSad = sad; bestIdx = c; }
+        if (cost < best) { best = cost; bestIdx = c; }
     }
     sCost[tid] = best;
-    sSad[tid] = bestSad;
     sIdx[tid] = bestIdx;
     barrier();
 
     for (int s = NT / 2; s > 0; s >>= 1) {
         if (tid < s && sCost[tid + s] < sCost[tid]) {
             sCost[tid] = sCost[tid + s];
-            sSad[tid] = sSad[tid + s];
             sIdx[tid] = sIdx[tid + s];
         }
         barrier();
@@ -136,8 +166,16 @@ void main() {
 
     if (tid == 0) {
         int bi = sIdx[0];
-        vec2 flow = (bi >= ncand) ? vec2(0.0) : vec2(base + ivec2(bi % W, bi / W) - R);
+        ivec2 d = (bi >= ncand) ? -base : ivec2(bi % W, bi / W) - R;  // block displacement in this level's pixels
+        vec2 flow = (bi >= ncand) ? vec2(0.0) : vec2(base + d);
+        // The cost output feeds scene-cut detection, whose thresholds are tuned
+        // against plain luma SAD; recompute the winner's luma-only SAD rather
+        // than exporting the (gradient-inflated) combined cost.
+        float lumaSad = 0.0;
+        for (int y = 0; y < BS; ++y)
+            for (int x = 0; x < BS; ++x)
+                lumaSad += abs(refBlk[(y + 1) * RB + (x + 1)] - loadTgt(origin + ivec2(x, y) + base + d));
         imageStore(flowOut, blk, vec4(flow, 0.0, 0.0));
-        imageStore(costOut, blk, vec4(sSad[0]));
+        imageStore(costOut, blk, vec4(lumaSad * (1.0 / float(NT))));
     }
 }
