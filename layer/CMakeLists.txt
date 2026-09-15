@@ -75,9 +75,17 @@ target_compile_definitions(bdex_framegen PRIVATE
   BDEX_LAYER_VERSION_STR="${PROJECT_VERSION}")
 
 # Manifest pointing at the build tree (VK_LAYER_PATH=<build>/layer, dev use) ...
+# Multi-config generators (Visual Studio) need one manifest per configuration
+# since $<TARGET_FILE> differs: it lands next to the DLL, in <build>/layer/<config>/.
 set(BDEX_LAYER_LIBRARY_PATH "$<TARGET_FILE:bdex_framegen>")
 configure_file(bdex_framegen.json.in "${CMAKE_CURRENT_BINARY_DIR}/bdex_framegen.json.gen" @ONLY)
-file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${BDEX_LAYER_NAME}.json"
+get_property(BDEX_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(BDEX_MULTI_CONFIG)
+  set(BDEX_BUILD_MANIFEST "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/${BDEX_LAYER_NAME}.json")
+else()
+  set(BDEX_BUILD_MANIFEST "${CMAKE_CURRENT_BINARY_DIR}/${BDEX_LAYER_NAME}.json")
+endif()
+file(GENERATE OUTPUT "${BDEX_BUILD_MANIFEST}"
      INPUT "${CMAKE_CURRENT_BINARY_DIR}/bdex_framegen.json.gen")
 
 if(NOT WIN32)
