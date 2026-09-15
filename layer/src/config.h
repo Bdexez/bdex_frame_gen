@@ -17,7 +17,9 @@ struct Config {
     // quarter at 4K).
     int flowScaleFor(uint32_t width, uint32_t height) const;
 
-    bool  enabled       = true;   // false: layer stays loaded but does nothing
+    bool  enabled       = false;  // the layer is now always loaded (no enable_environment);
+                                  // it stays a pure pass-through until turned on by the
+                                  // config file ([*] or a [game] section) or BDEX_FG=1.
     bool  autoTune      = true;   // pick the quality preset from the detected GPU (until the user sets a preset or a flow option)
     std::string autoTunedTo;      // preset autoConfigure() selected, for the log/stats
     int   multiplier    = 2;      // generated frames per real frame: 2 = x2, 3 = x3, 4 = x4
@@ -35,7 +37,7 @@ struct Config {
     float renderScale   = 1.0f;   // render resolution / display resolution, 0.5..1.0 (1.0 = no upscaling)
     int   upscaleFilter = 2;      // 0 bilinear, 1 Catmull-Rom (bicubic), 2 Lanczos-2
     float sharpness     = 0.0f;   // contrast-adaptive sharpening after upscaling, 0 = off .. 1 = strong
-    bool  overlay       = false;  // draw an on-screen fps HUD (game fps -> output fps) on every frame
+    int   overlayMode   = 0;      // on-screen fps HUD: 0 off, 1 fps, 2 fps+framegen, 3 +1% low, 4 +0.1% low
     int   presentMode   = -2;     // VkPresentModeKHR override; -1 = keep the game's; -2 = auto (fifo -> mailbox)
     bool  pacing        = true;   // sleep-based pacing when the present mode is not FIFO
     Debug debug         = Debug::None;

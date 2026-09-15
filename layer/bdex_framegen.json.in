@@ -12,7 +12,6 @@
       "vkGetDeviceProcAddr": "vkGetDeviceProcAddr",
       "vkNegotiateLoaderLayerInterfaceVersion": "vkNegotiateLoaderLayerInterfaceVersion"
     },
-    "enable_environment": { "BDEX_FG": "1" },
     "disable_environment": { "BDEX_FG_DISABLE": "1" }
   }
 }

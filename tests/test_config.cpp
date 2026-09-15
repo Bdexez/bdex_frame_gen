@@ -10,7 +10,7 @@ using bdex::Config;
 
 TEST(config_defaults) {
     Config c;
-    CHECK(c.enabled);
+    CHECK(!c.enabled);   // loaded-but-inert until a config/env turns it on
     CHECK(c.multiplier == 2);
     CHECK(c.presentMode == -2);  // auto
     CHECK(c.debug == Config::Debug::None);
@@ -39,6 +39,14 @@ TEST(config_apply_values) {
     CHECK(c.apply("search", "3") && c.searchRadius == 3);
     CHECK(c.apply("scene_cut_low", "0.5") && c.sceneCutLow == 0.5f);
     CHECK(c.apply("log_file", "/tmp/x.log") && c.logFile == "/tmp/x.log");
+    // HUD detail level: numeric, named, or boolean words.
+    CHECK(c.apply("hud", "3") && c.overlayMode == 3);
+    CHECK(c.apply("overlay", "off") && c.overlayMode == 0);
+    CHECK(c.apply("hud", "fps") && c.overlayMode == 1);
+    CHECK(c.apply("hud", "full") && c.overlayMode == 4);
+    CHECK(c.apply("hud", "on") && c.overlayMode == 2);
+    CHECK(c.apply("hud", "9") && c.overlayMode == 4);    // clamped to the top level
+    CHECK(!c.apply("hud", "loud"));                      // unknown word rejected
 }
 
 TEST(config_rejects_garbage) {
@@ -47,7 +55,7 @@ TEST(config_rejects_garbage) {
     CHECK(!c.apply("enabled", "maybe"));
     CHECK(!c.apply("present_mode", "turbo"));
     CHECK(!c.apply("no_such_key", "1"));
-    CHECK(c.multiplier == 2 && c.enabled);
+    CHECK(c.multiplier == 2 && !c.enabled);
 }
 
 TEST(config_file_and_env_priority) {
@@ -101,6 +109,30 @@ TEST(config_sections) {
     d.loadFile(path, "C:\\Games\\Other.EXE");
     CHECK(d.multiplier == 2);
     CHECK(d.levels == 1);
+    remove(path.c_str());
+}
+
+TEST(config_enable_from_file) {
+    // The layer is always loaded now; a config file alone (no BDEX_FG env) must
+    // be able to turn it on, globally via [*] or for one game via its section.
+    const std::string path = "/tmp/bdex_test_enable.conf";
+    {
+        std::ofstream f(path);
+        f << "[*]\nenabled = 0\n[kenshi]\nenabled = 1\nmultiplier = 3\n";
+    }
+    Config on;
+    on.loadFile(path, "/games/Kenshi/kenshi.exe");
+    CHECK(on.enabled && on.multiplier == 3);   // game section opts in
+    Config off;
+    off.loadFile(path, "/usr/bin/firefox");
+    CHECK(!off.enabled);                        // other apps stay pass-through
+    {
+        std::ofstream f(path);
+        f << "[*]\nenabled = 1\n";              // global master switch on
+    }
+    Config all;
+    all.loadFile(path, "/usr/bin/anything");
+    CHECK(all.enabled);
     remove(path.c_str());
 }
 
