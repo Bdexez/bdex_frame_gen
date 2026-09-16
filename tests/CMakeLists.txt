@@ -1,6 +1,10 @@
 add_executable(bdex_tests test_main.cpp test_config.cpp test_format.cpp)
 target_link_libraries(bdex_tests PRIVATE bdex_core)
-target_compile_options(bdex_tests PRIVATE -Wall -Wextra)
+if(MSVC)
+  target_compile_options(bdex_tests PRIVATE /W4)
+else()
+  target_compile_options(bdex_tests PRIVATE -Wall -Wextra)
+endif()
 add_test(NAME unit COMMAND bdex_tests)
 
 # End-to-end: runs the demo through the layer and checks the output frame
