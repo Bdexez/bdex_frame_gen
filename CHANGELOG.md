@@ -8,6 +8,21 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Windows port of the Vulkan layer** (mode 1 "injection" of the two-mode
+  Windows plan; see `docs/windows-port.md`). The layer builds with MSVC
+  (`VkLayer_bdex_framegen.dll`, `__declspec(dllexport)` entry points, no ELF
+  linker flags), reads its config from `%APPDATA%\bdex-framegen\bdex-framegen.conf`,
+  matches `[game]` sections against Windows process names, and installs per-user
+  via the registry with `tools/register-layer.ps1` /
+  `tools/unregister-layer.ps1` (no admin; 32-bit layer under `WOW6432Node`).
+  Platform differences live in the new `layer/src/platform.{h,cpp}`.
+- **Anti-cheat auto-retract**: when a known multiplayer anti-cheat process is
+  detected (EasyAntiCheat, BattlEye, GameGuard, XIGNCODE3, miHoYo — Vanguard
+  excluded, see the comment in `platform.cpp`), the layer forces itself off for
+  that process regardless of config/env, and logs it. The check runs on Linux
+  too (catches the Wine/Proton case via `/proc`), where it also protects
+  Proton multiplayer titles.
+
 - Spatial upscaling now works on **native Wayland**, not just X11/Xwayland. A
   Wayland surface never reports its size (`currentExtent` is always
   `UINT32_MAX`), so the layer learns the true window size at the first
