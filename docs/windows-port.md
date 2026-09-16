@@ -207,6 +207,10 @@ on-hardware validation).**
 4. `vulkaninfo --summary` → `VK_LAYER_BDEX_framegen` listed.
 5. Create `%APPDATA%\bdex-framegen\bdex-framegen.conf` with `enabled=1` (and
    `log_file=%TEMP%\bdex-fg.log` — game stderr usually goes nowhere on Windows).
+   Per-game instead of the config file: Steam launch options
+   `cmd /c "set BDEX_FG=1 && %command%"` (Steam runs launch options through
+   cmd on Windows; `set` defines the environment the layer reads — the
+   `VAR=1 %command%` shell syntax is Linux-only).
 6. Run a native-Vulkan title / emulator; check the HUD and the log for the
    `loaded` line with the config summary.
 7. Debug knobs: `BDEX_FG_DISABLE=1` (loader skips the layer entirely),

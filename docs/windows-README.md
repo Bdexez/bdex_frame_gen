@@ -87,3 +87,22 @@ through the layer. For the first tests prefer **borderless / windowed**
 fullscreen, which is the well-trodden path. Forwarding FSE is a planned
 phase-2 item. If a game shows nothing or stutters in exclusive fullscreen,
 switch it to borderless.
+
+### Per game, from Steam launch options
+
+To turn the layer on for a single game there is nothing to write in the
+config file: put this in the game's Steam launch options. Steam executes
+them through cmd on Windows, so the `BDEX_FG=1 %command%` syntax used on
+Linux is not valid there — `set` defines the environment the game process
+inherits, which is what the layer reads:
+
+```
+cmd /c "set BDEX_FG=1 && %command%"
+cmd /c "set BDEX_FG=1 && set BDEX_FG_MULTIPLIER=3 && set BDEX_FG_MODE=extrapolate && %command%"
+```
+
+Any `BDEX_FG_*` option works this way and overrides the config file; add
+`log_file=%TEMP%\bdex-fg.log` to the config file once, since game stderr
+goes nowhere on Windows. `cmd /c "set BDEX_FG=0 && %command%"` forces the
+layer off for one game. Per-game `[name]` sections in the config file are
+the third way and need no launch options at all.
