@@ -9,7 +9,11 @@ enum class LogLevel { Error = 0, Warn = 1, Info = 2, Debug = 3 };
 void log_set_level(int level);
 int  log_get_level();
 void log_set_file(const char* path);
+#if defined(__GNUC__)
 void log_write(LogLevel lvl, const char* fmt, ...) __attribute__((format(printf, 2, 3)));
+#else
+void log_write(LogLevel lvl, const char* fmt, ...);
+#endif
 
 } // namespace bdex
 

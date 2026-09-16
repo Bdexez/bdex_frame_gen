@@ -1,13 +1,12 @@
 #include "config.h"
 #include "log.h"
+#include "platform.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
-
-extern char** environ;
 
 namespace bdex {
 
@@ -203,14 +202,7 @@ static std::string baseName(std::string s) {
 }
 
 std::vector<std::string> Config::processNames() {
-    std::vector<std::string> names;
-    std::ifstream in("/proc/self/cmdline", std::ios::binary);
-    std::string arg;
-    while (std::getline(in, arg, '\0')) {
-        std::string b = baseName(trim(arg));
-        if (!b.empty() && std::find(names.begin(), names.end(), b) == names.end()) names.push_back(b);
-    }
-    return names;
+    return platformProcessNames();
 }
 
 bool Config::sectionMatches(const std::string& section, const std::vector<std::string>& names) {
@@ -250,7 +242,7 @@ void Config::loadEnv() {
     if (const char* p = getenv("BDEX_FG_PRESET")) {
         if (!applyPreset(p)) BDEX_WARN("unknown preset '%s'", p);
     }
-    for (char** e = environ; e && *e; ++e) {
+    for (char** e = platformEnviron(); e && *e; ++e) {
         std::string entry(*e);
         if (entry.compare(0, sizeof(prefix) - 1, prefix) != 0) continue;
         size_t eq = entry.find('=');
@@ -272,10 +264,18 @@ Config Config::load() {
     Config c;
     std::string path;
     if (const char* p = getenv("BDEX_FG_CONFIG")) path = p;
-    else if (const char* x = getenv("XDG_CONFIG_HOME")) path = std::string(x) + "/bdex-framegen.conf";
-    else if (const char* h = getenv("HOME")) path = std::string(h) + "/.config/bdex-framegen.conf";
+    else path = platformConfigPath();
     if (!path.empty()) c.loadFile(path, "");
     c.loadEnv();
+    // Multiplayer anti-cheat present: stay a pass-through for this process,
+    // whatever the config/env says. Injection into a protected process is
+    // what anti-cheats flag, so the safe side wins (see platform.cpp).
+    std::string antiCheat;
+    if (platformAntiCheatPresent(&antiCheat)) {
+        c.enabled = false;
+        c.antiCheatDisabled = true;
+        BDEX_WARN("anti-cheat '%s' detected: layer disabled for this process", antiCheat.c_str());
+    }
     if (c.sceneCutHigh < c.sceneCutLow) c.sceneCutHigh = c.sceneCutLow;
     return c;
 }
@@ -295,6 +295,7 @@ std::string Config::describe() const {
       << " mode=" << (extrapolate ? "extrapolate" : "interpolate") << " flow_scale=" << (flowScale ? std::to_string(flowScale) : "auto") << " search=" << searchRadius << "/" << searchFine << " refine=" << refine
       << " present_mode=" << presentModeName(presentMode) << " pacing=" << pacing
       << " debug=" << dbg[static_cast<int>(debug)] << " log=" << logLevel;
+    if (antiCheatDisabled) o << " [disabled: anti-cheat detected]";
     return o.str();
 }
 
