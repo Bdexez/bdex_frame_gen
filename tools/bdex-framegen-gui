@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""Graphical launcher for the bdex-framegen Vulkan layer.
+"""Control panel for the bdex-framegen Vulkan layer.
 
-Pick a game, choose the frame-generation and upscaling options with a few
-switches and dropdowns, and launch it — or copy the equivalent Steam launch
-options, or save the settings as a per-game profile in the config file.
+The layer is an *implicit* Vulkan layer: once installed it loads into every
+Vulkan game automatically and stays a pure pass-through until it is turned on.
+This window is where you turn it on — like Lossless Scaling, you open it once,
+flip frame generation on (globally or for a chosen list of games), set the
+quality options, and then launch your games normally through Steam. No Steam
+launch options to edit.
+
+Everything here is stored in the layer's config file
+(~/.config/bdex-framegen.conf); the layer reads it on its own, so changes take
+effect the next time a game starts.
 
 Depends only on Python 3 and PyGObject with GTK 4 and libadwaita (packages
 python-gobject, gtk4, libadwaita on most distributions).
@@ -12,6 +19,7 @@ import os
 import shlex
 import subprocess
 import sys
+import threading
 
 import gi
 gi.require_version("Gtk", "4.0")
@@ -29,43 +37,219 @@ PRESETS = [("Auto — adapté au GPU", "auto"), ("Qualité", "quality"),
 FILTERS = [("Lanczos (le plus net)", "lanczos"), ("Bicubique", "bicubic"), ("Bilinéaire", "bilinear")]
 PRESENT = [("Auto (recommandé)", "auto"), ("Mode du jeu", "app"), ("FIFO (vsync)", "fifo"),
            ("Mailbox", "mailbox"), ("Immediate (sans vsync)", "immediate")]
+# On-screen fps counter detail levels (index == the layer's HUD level).
+HUD_MODES = [("Désactivé", 0),
+             ("FPS", 1),
+             ("FPS + génération", 2),
+             ("+ 1% low", 3),
+             ("+ 1% et 0.1% low", 4)]
+HUD_NAMED = {"off": 0, "false": 0, "no": 0, "none": 0, "fps": 1,
+             "framegen": 2, "fg": 2, "on": 2, "true": 2, "yes": 2,
+             "low": 3, "1low": 3, "lows": 3, "full": 4, "detailed": 4, "all": 4}
 
+
+def _combo_index(table, value, default=0):
+    for i, (_, v) in enumerate(table):
+        if v == value:
+            return i
+    return default
+
+
+def game_name(text):
+    """Section name for a game, from a path/command or a bare name."""
+    if not text:
+        return ""
+    try:
+        first = shlex.split(text)[0]
+    except ValueError:
+        first = text.split()[0] if text.split() else text
+    base = os.path.basename(first).strip()
+    if base.lower().endswith(".exe"):
+        base = base[:-4]
+    return base
+
+
+# ---------------------------------------------------------------------------
+# Config file: a tiny INI reader/writer that preserves keys the UI does not
+# manage, so hand-written tuning in the file survives a save.
+# ---------------------------------------------------------------------------
+
+# Keys the UI owns in the global section; anything else found there is kept.
+GLOBAL_KEYS = ("enabled", "preset", "multiplier", "mode", "present_mode",
+               "low_latency", "render_scale", "upscale_filter", "sharpness",
+               "overlay", "hud")
+
+
+class ConfigFile:
+    def __init__(self):
+        self.glob = {}                 # global ([*] / pre-section) key -> value
+        self.games = []                # list of [name, dict(key->value)]
+
+    @staticmethod
+    def load(path=CONFIG_PATH):
+        c = ConfigFile()
+        try:
+            with open(path) as f:
+                lines = f.readlines()
+        except OSError:
+            return c
+        section = None  # None = global preamble
+        for raw in lines:
+            t = raw.strip()
+            if not t or t[0] in "#;":
+                continue
+            if t[0] == "[" and t[-1] == "]":
+                name = t[1:-1].strip()
+                section = None if name == "*" else name
+                if section is not None and not c._game(section):
+                    c.games.append([section, {}])
+                continue
+            if "=" not in t:
+                continue
+            k, v = t.split("=", 1)
+            k, v = k.strip().lower(), v.strip()
+            if section is None:
+                c.glob[k] = v
+            else:
+                c._game(section)[1][k] = v
+        return c
+
+    def _game(self, name):
+        for g in self.games:
+            if g[0].lower() == name.lower():
+                return g
+        return None
+
+    def game_dict(self, name):
+        g = self._game(name)
+        return g[1] if g else None
+
+    def enabled_games(self):
+        return [g[0] for g in self.games if g[1].get("enabled", "0") in ("1", "true", "on", "yes")]
+
+    def set_game(self, name, on):
+        g = self._game(name)
+        if g is None:
+            g = [name, {}]
+            self.games.append(g)
+        g[1]["enabled"] = "1" if on else "0"
+
+    def remove_game(self, name):
+        self.games = [g for g in self.games if g[0].lower() != name.lower()]
+
+    def write(self, path=CONFIG_PATH):
+        out = ["# bdex-framegen — written by the control panel (bdex-framegen-gui).\n",
+               "# [*] applies to every game; a [name] section applies to that game only.\n",
+               "\n[*]\n"]
+        for k, v in self.glob.items():
+            out.append(f"{k} = {v}\n")
+        for name, d in self.games:
+            out.append(f"\n[{name}]\n")
+            for k, v in d.items():
+                out.append(f"{k} = {v}\n")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            f.write("".join(out))
+        os.replace(tmp, path)
+
+
+# ---------------------------------------------------------------------------
+# UI state for the shared (global) options, mapped to config keys.
+# ---------------------------------------------------------------------------
 
 class Options:
-    """Current UI state -> BDEX_FG_* environment variables."""
-
     def __init__(self):
+        self.master = False          # [*] enabled: apply to every Vulkan game
         self.generate = True
-        self.preset = "auto"         # flow-quality tier; auto adapts to the GPU
-        self.multiplier = 2          # 2, 3, 4
+        self.preset = "auto"
+        self.multiplier = 2
         self.mode = "interpolate"
         self.present = "auto"
         self.low_latency = False
         self.upscale = False
-        self.render_scale = 67        # percent, 50..100
+        self.render_scale = 67       # percent, 50..100
         self.filter = "lanczos"
-        self.sharpness = 0            # percent, 0..100
-        self.layer_path = ""          # VK_ADD_IMPLICIT_LAYER_PATH for an uninstalled build
+        self.sharpness = 0           # percent, 0..100
+        self.hud = 0                 # on-screen fps counter level, 0..4
 
-    def env(self):
-        e = {"BDEX_FG": "1"}
-        if self.preset != "auto":
-            e["BDEX_FG_PRESET"] = self.preset
-        e["BDEX_FG_MULTIPLIER"] = str(self.multiplier if self.generate else 1)
+    def load_from(self, glob):
+        g = {k.lower(): v for k, v in glob.items()}
+
+        def flag(key, default=False):
+            return g.get(key, "1" if default else "0").lower() in ("1", "true", "on", "yes")
+
+        self.master = flag("enabled")
+        self.preset = g.get("preset", "auto").lower()
+        try:
+            self.multiplier = int(float(g.get("multiplier", "2")))
+        except ValueError:
+            self.multiplier = 2
+        self.generate = self.multiplier > 1
+        if self.multiplier < 2:
+            self.multiplier = 2
+        self.mode = "extrapolate" if g.get("mode", "").lower().startswith("extrap") else "interpolate"
+        self.present = g.get("present_mode", "auto").lower()
+        self.low_latency = flag("low_latency")
+        rs = g.get("render_scale")
+        self.upscale = rs is not None and rs not in ("1", "1.0")
+        try:
+            self.render_scale = int(round(float(rs) * 100)) if rs else 67
+        except ValueError:
+            self.render_scale = 67
+        self.filter = g.get("upscale_filter", "lanczos").lower()
+        try:
+            self.sharpness = int(round(float(g.get("sharpness", "0")) * 100))
+        except ValueError:
+            self.sharpness = 0
+        hud = g.get("hud", g.get("overlay", "0")).lower()
+        if hud in HUD_NAMED:
+            self.hud = HUD_NAMED[hud]
+        else:
+            try:
+                self.hud = max(0, min(4, int(float(hud))))
+            except ValueError:
+                self.hud = 0
+
+    def write_into(self, glob):
+        """Update the managed keys in `glob` in place, keeping unknown ones."""
+        for k in GLOBAL_KEYS:
+            glob.pop(k, None)
+        glob["enabled"] = "1" if self.master else "0"
+        glob["preset"] = self.preset
+        glob["multiplier"] = str(self.multiplier if self.generate else 1)
         if self.generate:
-            e["BDEX_FG_MODE"] = self.mode
-        e["BDEX_FG_PRESENT_MODE"] = self.present
+            glob["mode"] = self.mode
+        glob["present_mode"] = self.present
         if self.low_latency:
-            e["BDEX_FG_LOW_LATENCY"] = "1"
+            glob["low_latency"] = "1"
         if self.upscale and self.render_scale < 100:
-            e["BDEX_FG_RENDER_SCALE"] = f"{self.render_scale / 100:.3f}".rstrip("0").rstrip(".")
-            e["BDEX_FG_UPSCALE_FILTER"] = self.filter
+            glob["render_scale"] = f"{self.render_scale / 100:.3f}".rstrip("0").rstrip(".")
+            glob["upscale_filter"] = self.filter
             if self.sharpness > 0:
-                e["BDEX_FG_SHARPNESS"] = f"{self.sharpness / 100:.2f}".rstrip("0").rstrip(".")
-        return e
+                glob["sharpness"] = f"{self.sharpness / 100:.2f}".rstrip("0").rstrip(".")
+        if self.hud > 0:
+            glob["overlay"] = str(self.hud)
 
-    def env_string(self):
-        return " ".join(f"{k}={v}" for k, v in self.env().items())
+    def steam_string(self):
+        """Equivalent per-game Steam launch options (BDEX_FG_* ... %command%)."""
+        e = ["BDEX_FG=1"]
+        if self.preset != "auto":
+            e.append(f"BDEX_FG_PRESET={self.preset}")
+        e.append(f"BDEX_FG_MULTIPLIER={self.multiplier if self.generate else 1}")
+        if self.generate:
+            e.append(f"BDEX_FG_MODE={self.mode}")
+        e.append(f"BDEX_FG_PRESENT_MODE={self.present}")
+        if self.low_latency:
+            e.append("BDEX_FG_LOW_LATENCY=1")
+        if self.upscale and self.render_scale < 100:
+            e.append("BDEX_FG_RENDER_SCALE=" + f"{self.render_scale / 100:.3f}".rstrip("0").rstrip("."))
+            e.append(f"BDEX_FG_UPSCALE_FILTER={self.filter}")
+            if self.sharpness > 0:
+                e.append("BDEX_FG_SHARPNESS=" + f"{self.sharpness / 100:.2f}".rstrip("0").rstrip("."))
+        if self.hud > 0:
+            e.append(f"BDEX_FG_OVERLAY={self.hud}")
+        return " ".join(e) + " %command%"
 
 
 def find_layer():
@@ -105,8 +289,11 @@ def detect_gpus():
 class Window(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="bdex-framegen")
-        self.set_default_size(560, 820)
+        self.set_default_size(600, 860)
+        self.cfg = ConfigFile.load()
         self.opt = Options()
+        self.opt.load_from(self.cfg.glob)
+        self._loading = True   # suppress auto-save while building/populating
 
         self.toasts = Adw.ToastOverlay()
         self.set_content(self.toasts)
@@ -114,127 +301,192 @@ class Window(Adw.ApplicationWindow):
         self.toasts.set_child(box)
 
         header = Adw.HeaderBar()
-        launch = Gtk.Button(label="Lancer")
-        launch.add_css_class("suggested-action")
-        launch.connect("clicked", self.on_launch)
-        header.pack_start(launch)
-        copy = Gtk.Button(icon_name="edit-copy-symbolic", tooltip_text="Copier les options de lancement Steam")
-        copy.connect("clicked", self.on_copy)
-        header.pack_end(copy)
-        save = Gtk.Button(icon_name="document-save-symbolic", tooltip_text="Enregistrer comme profil")
-        save.connect("clicked", self.on_save)
-        header.pack_end(save)
+        title = Adw.WindowTitle(title="bdex-framegen", subtitle="Génération d'images")
+        header.set_title_widget(title)
+        menu = Gtk.Button(icon_name="edit-copy-symbolic",
+                          tooltip_text="Copier les options de lancement Steam équivalentes (par jeu)")
+        menu.connect("clicked", self.on_copy)
+        header.pack_end(menu)
         box.append(header)
 
+        scroller = Gtk.ScrolledWindow(vexpand=True)
+        box.append(scroller)
         page = Adw.PreferencesPage()
-        box.append(page)
+        scroller.set_child(page)
 
-        # --- Game ---
-        g = Adw.PreferencesGroup(title="Jeu")
+        self._build_status(page)
+        self._build_activation(page)
+        self._build_games(page)
+        self._build_framegen(page)
+        self._build_hud(page)
+        self._build_upscale(page)
+        self._build_present(page)
+
+        self._loading = False
+        self.refresh_sensitivity()
+
+    # -- sections ----------------------------------------------------------
+
+    def _build_status(self, page):
+        g = Adw.PreferencesGroup(title="État")
         page.add(g)
-        self.cmd_row = Adw.EntryRow(title="Commande ou exécutable")
-        browse = Gtk.Button(icon_name="folder-open-symbolic", valign=Gtk.Align.CENTER,
-                            tooltip_text="Choisir l'exécutable")
-        browse.connect("clicked", self.on_browse)
-        self.cmd_row.add_suffix(browse)
-        g.add(self.cmd_row)
-
         installed, path = find_layer()
-        self.layer_row = Adw.ActionRow(
+        self.installed = installed
+        self.status_row = Adw.ActionRow(
             title="Couche Vulkan",
-            subtitle=("Détectée — prête" if installed else "Non installée : choisir le dossier de build ci-dessous"))
-        icon = Gtk.Image(icon_name="emblem-ok-symbolic" if installed else "dialog-warning-symbolic",
-                         valign=Gtk.Align.CENTER)
-        self.layer_row.add_prefix(icon)
-        g.add(self.layer_row)
+            subtitle=("Installée — chargée automatiquement dans tous les jeux Vulkan"
+                      if installed else
+                      "Non installée : lance tools/install.sh pour qu'elle s'active sans options Steam"))
+        self.status_row.add_prefix(Gtk.Image(
+            icon_name="emblem-ok-symbolic" if installed else "dialog-warning-symbolic",
+            valign=Gtk.Align.CENTER))
+        if not installed:
+            btn = Gtk.Button(label="Installer", valign=Gtk.Align.CENTER)
+            btn.add_css_class("suggested-action")
+            btn.connect("clicked", self.on_install)
+            self.status_row.add_suffix(btn)
+        g.add(self.status_row)
 
         gpus = detect_gpus()
         gpu_row = Adw.ActionRow(
             title="Carte graphique",
-            subtitle=(" · ".join(gpus) + "\nProfil « Auto » : réglé selon ce GPU" if gpus
-                      else "non détectée"))
+            subtitle=(" · ".join(gpus) + "\nProfil « Auto » : réglé selon ce GPU" if gpus else "non détectée"))
         gpu_row.add_prefix(Gtk.Image(icon_name="video-display-symbolic", valign=Gtk.Align.CENTER))
         g.add(gpu_row)
 
-        # --- Frame generation ---
+    def _build_activation(self, page):
+        g = Adw.PreferencesGroup(
+            title="Activation",
+            description="Aucune option de lancement Steam nécessaire : lance tes jeux normalement.")
+        page.add(g)
+        self.master_row = Adw.SwitchRow(
+            title="Activer pour tous les jeux Vulkan",
+            subtitle="Sinon, la génération ne s'applique qu'aux jeux de la liste ci-dessous")
+        self.master_row.set_active(self.opt.master)
+        self.master_row.connect("notify::active", self.on_change)
+        g.add(self.master_row)
+
+    def _build_games(self, page):
+        self.games_group = Adw.PreferencesGroup(
+            title="Jeux",
+            description="Jeux pour lesquels activer la génération quand l'interrupteur global est éteint.")
+        page.add(self.games_group)
+        add_btn = Gtk.Button(icon_name="list-add-symbolic", valign=Gtk.Align.CENTER,
+                             tooltip_text="Ajouter un jeu")
+        add_btn.add_css_class("flat")
+        add_btn.connect("clicked", self.on_add_game)
+        self.games_group.set_header_suffix(add_btn)
+        self.game_rows = {}
+        for name in [g[0] for g in self.cfg.games]:
+            self._add_game_row(name)
+        self._refresh_games_placeholder()
+
+    def _add_game_row(self, name):
+        if name in self.game_rows:
+            return
+        row = Adw.ActionRow(title=name)
+        sw = Gtk.Switch(valign=Gtk.Align.CENTER,
+                        active=name in self.cfg.enabled_games())
+        sw.connect("notify::active", self.on_game_toggle, name)
+        row.add_suffix(sw)
+        remove = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER,
+                            tooltip_text="Retirer")
+        remove.add_css_class("flat")
+        remove.connect("clicked", self.on_remove_game, name)
+        row.add_suffix(remove)
+        row.set_activatable_widget(sw)
+        self.games_group.add(row)
+        self.game_rows[name] = row
+
+    def _refresh_games_placeholder(self):
+        if not self.game_rows and not hasattr(self, "_placeholder"):
+            self._placeholder = Adw.ActionRow(
+                title="Aucun jeu",
+                subtitle="Ajoute un jeu avec « + », ou active l'interrupteur global au-dessus.")
+            self.games_group.add(self._placeholder)
+        elif self.game_rows and hasattr(self, "_placeholder"):
+            self.games_group.remove(self._placeholder)
+            del self._placeholder
+
+    def _build_framegen(self, page):
         g = Adw.PreferencesGroup(title="Génération d'images",
                                  description="Insère des images de synthèse entre celles du jeu.")
         page.add(g)
-        self.gen_row = Adw.SwitchRow(title="Activer", active=True)
-        self.gen_row.connect("notify::active", self.changed)
+        self.gen_row = Adw.SwitchRow(title="Activer", active=self.opt.generate)
+        self.gen_row.connect("notify::active", self.on_change)
         g.add(self.gen_row)
         self.preset_row = Adw.ComboRow(title="Profil de qualité",
                                        subtitle="Auto s'adapte à la puissance du GPU",
                                        model=Gtk.StringList.new([p[0] for p in PRESETS]))
-        self.preset_row.connect("notify::selected", self.changed)
+        self.preset_row.set_selected(_combo_index(PRESETS, self.opt.preset))
+        self.preset_row.connect("notify::selected", self.on_change)
         g.add(self.preset_row)
         self.mult_row = Adw.ComboRow(title="Images affichées par image rendue",
                                      model=Gtk.StringList.new(["×2", "×3", "×4"]))
-        self.mult_row.connect("notify::selected", self.changed)
+        self.mult_row.set_selected(max(0, min(2, self.opt.multiplier - 2)))
+        self.mult_row.connect("notify::selected", self.on_change)
         g.add(self.mult_row)
         self.mode_row = Adw.ComboRow(title="Mode",
                                      subtitle="L'extrapolation supprime la latence ajoutée",
                                      model=Gtk.StringList.new([m[0] for m in MODES]))
-        self.mode_row.connect("notify::selected", self.changed)
+        self.mode_row.set_selected(_combo_index(MODES, self.opt.mode))
+        self.mode_row.connect("notify::selected", self.on_change)
         g.add(self.mode_row)
 
-        # --- Upscaling ---
+    def _build_hud(self, page):
+        g = Adw.PreferencesGroup(
+            title="Compteur de FPS",
+            description="Affiche les FPS en surimpression dans le jeu (coin haut-gauche).")
+        page.add(g)
+        self.hud_row = Adw.ComboRow(
+            title="Affichage",
+            subtitle="Les 1% / 0.1% low sont les FPS aux 99e / 99,9e centiles du jeu",
+            model=Gtk.StringList.new([m[0] for m in HUD_MODES]))
+        self.hud_row.set_selected(self.opt.hud if 0 <= self.opt.hud < len(HUD_MODES) else 0)
+        self.hud_row.connect("notify::selected", self.on_change)
+        g.add(self.hud_row)
+
+    def _build_upscale(self, page):
         g = Adw.PreferencesGroup(title="Upscaling",
                                  description="Le jeu rend en résolution réduite, agrandie à l'affichage (X11/Xwayland).")
         page.add(g)
-        self.up_row = Adw.SwitchRow(title="Activer", active=False)
-        self.up_row.connect("notify::active", self.changed)
+        self.up_row = Adw.SwitchRow(title="Activer", active=self.opt.upscale)
+        self.up_row.connect("notify::active", self.on_change)
         g.add(self.up_row)
-        adj = Gtk.Adjustment(lower=50, upper=100, step_increment=1, page_increment=5, value=67)
-        self.scale_row = Adw.SpinRow(title="Résolution de rendu", subtitle="pourcentage de la résolution d'affichage",
-                                     adjustment=adj)
-        self.scale_row.connect("notify::value", self.changed)
+        adj = Gtk.Adjustment(lower=50, upper=100, step_increment=1, page_increment=5, value=self.opt.render_scale)
+        self.scale_row = Adw.SpinRow(title="Résolution de rendu",
+                                     subtitle="pourcentage de la résolution d'affichage", adjustment=adj)
+        self.scale_row.connect("notify::value", self.on_change)
         g.add(self.scale_row)
         self.filter_row = Adw.ComboRow(title="Filtre d'agrandissement",
                                        model=Gtk.StringList.new([f[0] for f in FILTERS]))
-        self.filter_row.connect("notify::selected", self.changed)
+        self.filter_row.set_selected(_combo_index(FILTERS, self.opt.filter))
+        self.filter_row.connect("notify::selected", self.on_change)
         g.add(self.filter_row)
-        adj2 = Gtk.Adjustment(lower=0, upper=100, step_increment=1, page_increment=10, value=0)
+        adj2 = Gtk.Adjustment(lower=0, upper=100, step_increment=1, page_increment=10, value=self.opt.sharpness)
         self.sharp_row = Adw.SpinRow(title="Netteté (CAS)", subtitle="0 = désactivé", adjustment=adj2)
-        self.sharp_row.connect("notify::value", self.changed)
+        self.sharp_row.connect("notify::value", self.on_change)
         g.add(self.sharp_row)
 
-        # --- Presentation ---
+    def _build_present(self, page):
         g = Adw.PreferencesGroup(title="Présentation")
         page.add(g)
         self.present_row = Adw.ComboRow(title="Mode de présentation",
                                         model=Gtk.StringList.new([p[0] for p in PRESENT]))
-        self.present_row.connect("notify::selected", self.changed)
+        self.present_row.set_selected(_combo_index(PRESENT, self.opt.present))
+        self.present_row.connect("notify::selected", self.on_change)
         g.add(self.present_row)
         self.ll_row = Adw.SwitchRow(title="Faible latence",
                                     subtitle="Empêche le jeu de prendre de l'avance (utile en FIFO)")
-        self.ll_row.connect("notify::active", self.changed)
+        self.ll_row.set_active(self.opt.low_latency)
+        self.ll_row.connect("notify::active", self.on_change)
         g.add(self.ll_row)
 
-        # --- Advanced / command ---
-        g = Adw.PreferencesGroup(title="Commande")
-        page.add(g)
-        if not installed:
-            self.build_row = Adw.EntryRow(title="Dossier de build de la couche")
-            self.build_row.set_text(self._guess_build())
-            self.build_row.connect("changed", self.changed)
-            g.add(self.build_row)
-        else:
-            self.build_row = None
-        self.preview = Adw.ActionRow(title="Options de lancement")
-        self.preview.add_css_class("monospace")
-        self.preview.set_subtitle_selectable(True)
-        g.add(self.preview)
-
-        self.changed()
-
-    def _guess_build(self):
-        here = os.path.dirname(os.path.abspath(__file__))
-        cand = os.path.join(os.path.dirname(here), "build", "layer")
-        return cand if os.path.isdir(cand) else ""
+    # -- state <-> UI ------------------------------------------------------
 
     def sync(self):
         o = self.opt
+        o.master = self.master_row.get_active()
         o.generate = self.gen_row.get_active()
         o.preset = PRESETS[self.preset_row.get_selected()][1]
         o.multiplier = self.mult_row.get_selected() + 2
@@ -245,74 +497,110 @@ class Window(Adw.ApplicationWindow):
         o.sharpness = int(self.sharp_row.get_value())
         o.present = PRESENT[self.present_row.get_selected()][1]
         o.low_latency = self.ll_row.get_active()
-        o.layer_path = self.build_row.get_text().strip() if self.build_row else ""
-        # enable/disable dependent rows
+        o.hud = HUD_MODES[self.hud_row.get_selected()][1]
+
+    def refresh_sensitivity(self):
+        o = self.opt
         for r in (self.preset_row, self.mult_row, self.mode_row):
             r.set_sensitive(o.generate)
         for r in (self.scale_row, self.filter_row, self.sharp_row):
             r.set_sensitive(o.upscale)
+        self.games_group.set_sensitive(not o.master)
 
-    def changed(self, *_):
+    def on_change(self, *_):
+        if self._loading:
+            return
         self.sync()
-        self.preview.set_subtitle(self.opt.env_string() + " %command%")
+        self.refresh_sensitivity()
+        self.save()
 
-    def build_env(self):
-        env = dict(os.environ)
-        env.update(self.opt.env())
-        if self.opt.layer_path:
-            env["VK_ADD_IMPLICIT_LAYER_PATH"] = self.opt.layer_path
-        return env
+    def save(self):
+        self.opt.write_into(self.cfg.glob)
+        try:
+            self.cfg.write()
+        except OSError as e:
+            self.toast(f"Échec de l'enregistrement : {e}")
 
     def toast(self, text):
         self.toasts.add_toast(Adw.Toast.new(text))
 
-    def on_browse(self, _btn):
-        dialog = Gtk.FileDialog(title="Choisir l'exécutable du jeu")
-        dialog.open(self, None, self._browsed)
+    # -- games -------------------------------------------------------------
 
-    def _browsed(self, dialog, result):
+    def on_game_toggle(self, sw, _p, name):
+        if self._loading:
+            return
+        self.cfg.set_game(name, sw.get_active())
+        self.save()
+
+    def on_remove_game(self, _btn, name):
+        row = self.game_rows.pop(name, None)
+        if row:
+            self.games_group.remove(row)
+        self.cfg.remove_game(name)
+        self._refresh_games_placeholder()
+        self.save()
+
+    def on_add_game(self, _btn):
+        dialog = Gtk.FileDialog(title="Choisir l'exécutable du jeu")
+        dialog.open(self, None, self._game_chosen)
+
+    def _game_chosen(self, dialog, result):
         try:
             f = dialog.open_finish(result)
         except GLib.Error:
             return
         if f:
-            self.cmd_row.set_text(shlex.quote(f.get_path()))
+            self._commit_game(game_name(f.get_path()))
 
-    def on_launch(self, _btn):
-        cmd = self.cmd_row.get_text().strip()
-        if not cmd:
-            self.toast("Choisis d'abord un jeu.")
+    def _commit_game(self, name):
+        if not name:
             return
-        try:
-            subprocess.Popen(shlex.split(cmd), env=self.build_env())
-            self.toast("Jeu lancé.")
-        except (OSError, ValueError) as e:
-            self.toast(f"Échec du lancement : {e}")
+        if name in self.game_rows:
+            self.toast(f"« {name} » est déjà dans la liste.")
+            return
+        self.cfg.set_game(name, True)
+        self._add_game_row(name)
+        self._refresh_games_placeholder()
+        self.save()
+        self.toast(f"« {name} » ajouté et activé.")
+
+    # -- header actions ----------------------------------------------------
 
     def on_copy(self, _btn):
-        text = self.opt.env_string() + " %command%"
-        Gdk.Display.get_default().get_clipboard().set(text)
-        self.toast("Options Steam copiées dans le presse-papiers.")
+        self.sync()
+        Gdk.Display.get_default().get_clipboard().set(self.opt.steam_string())
+        self.toast("Options Steam (équivalent par jeu) copiées.")
 
-    def on_save(self, _btn):
-        cmd = self.cmd_row.get_text().strip()
-        section = None
-        if cmd:
-            base = os.path.basename(shlex.split(cmd)[0])
-            if base.lower().endswith(".exe"):
-                base = base[:-4]
-            section = base
-        lines = [f"{k[len('BDEX_FG_'):].lower() if k != 'BDEX_FG' else 'enabled'} = {v}"
-                 for k, v in self.opt.env().items()]
-        block = ("\n[%s]\n" % section if section else "\n") + "\n".join(lines) + "\n"
-        try:
-            os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
-            with open(CONFIG_PATH, "a") as f:
-                f.write(block)
-            self.toast(f"Profil enregistré dans {CONFIG_PATH}"
-                       + (f" [{section}]" if section else ""))
-        except OSError as e:
-            self.toast(f"Échec de l'enregistrement : {e}")
+    def on_install(self, btn):
+        here = os.path.dirname(os.path.abspath(__file__))
+        script = os.path.join(here, "install.sh")
+        if not os.path.exists(script):
+            self.toast("tools/install.sh introuvable.")
+            return
+        btn.set_sensitive(False)
+        btn.set_label("Installation…")
+        self.toast("Installation de la couche… (compilation, quelques instants)")
+
+        def run():
+            try:
+                p = subprocess.run(["bash", script], capture_output=True, text=True, timeout=900)
+                ok, msg = p.returncode == 0, (p.stderr.strip().splitlines() or [""])[-1]
+            except (OSError, subprocess.SubprocessError) as e:
+                ok, msg = False, str(e)
+            GLib.idle_add(self._install_done, btn, ok, msg)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _install_done(self, btn, ok, msg):
+        if ok:
+            self.status_row.set_subtitle("Installée — chargée automatiquement dans tous les jeux Vulkan")
+            self.status_row.remove(btn)
+            self.toast("Couche installée. Lance ton jeu — c'est actif.")
+        else:
+            btn.set_sensitive(True)
+            btn.set_label("Réessayer")
+            self.toast(f"Échec de l'installation : {msg}")
+        return False
 
 
 class App(Adw.Application):
