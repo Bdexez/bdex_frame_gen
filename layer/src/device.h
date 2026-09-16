@@ -12,11 +12,23 @@ namespace bdex {
 
 class VirtualSwapchain;
 
+// Per-surface state for native-Wayland upscaling. On Wayland the surface never
+// reports its size (currentExtent is always UINT32_MAX), so the render-scale
+// hook cannot reduce it up front. Instead the first swapchain creation records
+// the true window size here and bounces the app through one recreation; the
+// caps hook then reports a reduced currentExtent so the app renders smaller.
+struct WaylandSurfaceState {
+    VkExtent2D displayExtent{};   // true window size, learned at CreateSwapchainKHR
+    bool reduce = false;          // report a reduced currentExtent for this surface
+};
+
 struct InstanceData {
     InstanceDispatch vt;
     VkInstance instance = VK_NULL_HANDLE;
     uint32_t apiVersion = VK_API_VERSION_1_0;
     Config config;  // loaded at instance creation; the render-scale hook needs it before the device exists
+    std::mutex surfMutex;
+    std::unordered_map<VkSurfaceKHR, WaylandSurfaceState> waylandSurfaces;
 };
 
 struct AllocatedImage {

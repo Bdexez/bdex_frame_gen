@@ -448,7 +448,7 @@ class Window(Adw.ApplicationWindow):
 
     def _build_upscale(self, page):
         g = Adw.PreferencesGroup(title="Upscaling",
-                                 description="Le jeu rend en résolution réduite, agrandie à l'affichage (X11/Xwayland).")
+                                 description="Le jeu rend en résolution réduite, agrandie à l'affichage (X11, Xwayland et Wayland natif).")
         page.add(g)
         self.up_row = Adw.SwitchRow(title="Activer", active=self.opt.upscale)
         self.up_row.connect("notify::active", self.on_change)
