@@ -144,6 +144,15 @@ private:
     clock::time_point lastAppPresent_{};
     double frameIntervalMs_ = 16.6;
 
+    // On-screen HUD: a rolling window of raw game frame intervals (ms) feeds the
+    // 1% / 0.1% low figures; recomputed a few times a second while the HUD is on.
+    void updateHudLows(double dtMs);
+    static constexpr size_t kHudWindow = 1000;
+    std::vector<float> hudIntervals_;
+    size_t hudRingPos_ = 0;
+    clock::time_point hudStatsAt_{};
+    int hudLow1_ = 0, hudLow01_ = 0;
+
     // statistics
     clock::time_point statsStart_{};
     uint64_t statsAppFrames_ = 0;

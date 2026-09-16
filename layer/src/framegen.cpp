@@ -16,8 +16,8 @@ struct DownsamplePC { int32_t size[2]; int32_t fromColor; int32_t srgbSource; };
 struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; };
 struct SizePC { int32_t size[2]; };
 struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; };
-struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; int32_t overlay; int32_t hudGame; int32_t hudOut; };
-struct UpscalePC { int32_t outSize[2]; int32_t srcSize[2]; uint32_t encoding; int32_t filter; int32_t overlay; int32_t hudGame; int32_t hudOut; };
+struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; };
+struct UpscalePC { int32_t outSize[2]; int32_t srcSize[2]; uint32_t encoding; int32_t filter; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; };
 struct CasPC { int32_t size[2]; uint32_t encoding; float sharpness; };
 
 constexpr uint32_t kBlockSize = 8;
@@ -32,10 +32,10 @@ FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, Vk
                    const std::vector<VkImage>& sources)
     : dev_(dev), format_(format), extent_(renderExtent), displayExtent_(displayExtent), outputs_(outputs) {
     upscaling_ = displayExtent_.width != extent_.width || displayExtent_.height != extent_.height;
-    overlay_ = dev.config.overlay;
+    hudMode_ = dev.config.overlayMode;
     // The real frame is resampled into an internal packed image when upscaling
     // or when the HUD must be drawn on it (otherwise it is copied straight).
-    packReal_ = upscaling_ || overlay_;
+    packReal_ = upscaling_ || hudMode_ > 0;
     // The CAS pass needs a linear rgba16f intermediate it can both write and
     // sample with filtering; skip sharpening if the driver cannot provide it.
     sharpen_ = upscaling_ && dev.config.sharpness > 0.f &&
@@ -618,7 +618,7 @@ void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cu
                 cfg.sceneCutLow, cfg.sceneCutHigh,
                 {1.f / (fine.fine.width * blk * flowScale_ * sx),
                  1.f / (fine.fine.height * blk * flowScale_ * sy)},
-                cfg.flowIterations, overlay_ ? 1 : 0, hudGame_, hudOut_};
+                cfg.flowIterations, hudMode_, hudGame_, hudOut_, hudLow1_, hudLow01_};
     vt.CmdPushConstants(cmd, interp_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
     const uint32_t N = static_cast<uint32_t>(sources_.size());
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, interp_.layout, 0, 1,
@@ -639,7 +639,7 @@ void FrameGen::recordUpscaleReal(VkCommandBuffer cmd, uint32_t cur) {
     UpscalePC pc{{(int32_t)displayExtent_.width, (int32_t)displayExtent_.height},
                  {(int32_t)extent_.width, (int32_t)extent_.height},
                  enc_.encoding, std::clamp(dev_.config.upscaleFilter, 0, 2),
-                 overlay_ ? 1 : 0, hudGame_, hudOut_};
+                 hudMode_, hudGame_, hudOut_, hudLow1_, hudLow01_};
     vt.CmdPushConstants(cmd, upscale_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, upscale_.layout, 0, 1, &dsUpscale_[cur], 0, nullptr);
     vt.CmdDispatch(cmd, divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), 1);

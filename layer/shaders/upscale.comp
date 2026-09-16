@@ -29,9 +29,11 @@ layout(push_constant) uniform PC {
     ivec2 srcSize;
     uint encoding;
     int filterMode;   // 0 bilinear, 1 Catmull-Rom (bicubic), 2 Lanczos-2
-    int overlay;      // draw the fps HUD
+    int hudMode;      // fps HUD detail level (0 = off)
     int hudGame;      // game fps (for the HUD)
     int hudOut;       // output fps (for the HUD)
+    int hudLow1;      // 1% low fps
+    int hudLow01;     // 0.1% low fps
 } pc;
 
 void store(ivec2 p, vec4 c) {
@@ -84,7 +86,7 @@ void main() {
     // the border row/column.
     if (all(equal(pc.outSize, pc.srcSize)) || pc.filterMode == 0) {
         vec4 c = all(equal(pc.outSize, pc.srcSize)) ? texelFetch(srcTex, p, 0) : texture(srcTex, uv);
-        if (pc.overlay != 0) { vec3 hc; if (hudPixel(p, pc.hudGame, pc.hudOut, hc)) c = vec4(hc, 1.0); }
+        if (pc.hudMode != 0) { vec3 hc; if (hudPixel(p, pc.hudMode, pc.hudGame, pc.hudOut, pc.hudLow1, pc.hudLow01, hc)) c = vec4(hc, 1.0); }
         store(p, c);
         return;
     }
@@ -109,6 +111,6 @@ void main() {
         }
     }
     vec4 c = acc / wsum;
-    if (pc.overlay != 0) { vec3 hc; if (hudPixel(p, pc.hudGame, pc.hudOut, hc)) c = vec4(hc, 1.0); }
+    if (pc.hudMode != 0) { vec3 hc; if (hudPixel(p, pc.hudMode, pc.hudGame, pc.hudOut, pc.hudLow1, pc.hudLow01, hc)) c = vec4(hc, 1.0); }
     store(p, c);
 }

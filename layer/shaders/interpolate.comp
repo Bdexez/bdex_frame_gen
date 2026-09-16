@@ -47,9 +47,11 @@ layout(push_constant) uniform PC {
     float cutHigh;
     vec2 flowInvSize;  // 1 / (pixels covered by the flow textures)
     int iterations;    // fixed-point iterations of the flow lookup
-    int overlay;       // draw the fps HUD
+    int hudMode;       // fps HUD detail level (0 = off)
     int hudGame;       // game fps (for the HUD)
     int hudOut;        // output fps (for the HUD)
+    int hudLow1;       // 1% low fps
+    int hudLow01;      // 0.1% low fps
 } pc;
 
 vec2 fwdAt(vec2 p) { return texture(flowFwd, p * pc.flowInvSize).xy * pc.flowScale; }
@@ -166,6 +168,6 @@ void main() {
         if (p.x > pc.size.x / 2) c = cur;
         if (abs(p.x - pc.size.x / 2) < 2) c = vec4(1.0, 0.0, 1.0, 1.0);
     }
-    if (pc.overlay != 0) { vec3 hc; if (hudPixel(p, pc.hudGame, pc.hudOut, hc)) c = vec4(hc, 1.0); }
+    if (pc.hudMode != 0) { vec3 hc; if (hudPixel(p, pc.hudMode, pc.hudGame, pc.hudOut, pc.hudLow1, pc.hudLow01, hc)) c = vec4(hc, 1.0); }
     store(p, c);
 }

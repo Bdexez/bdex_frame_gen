@@ -3,6 +3,7 @@
 #include "vk_util.h"
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 
 namespace bdex {
@@ -262,7 +263,7 @@ void VirtualSwapchain::createVirtualImages(const VkSwapchainCreateInfoKHR& appIn
     dev_.inst->vt.GetPhysicalDeviceFormatProperties(dev_.physDev, format_, &fp);
     const VkFormatFeatureFlags feats = fp.optimalTilingFeatures;
     VkImageUsageFlags usage = appInfo.imageUsage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-    if (forGeneration || upscaling_ || dev_.config.overlay)
+    if (forGeneration || upscaling_ || dev_.config.overlayMode > 0)
         usage |= VK_IMAGE_USAGE_SAMPLED_BIT;  // the upscale/HUD pass samples the source
     auto dropUnless = [&](VkImageUsageFlags bit, VkFormatFeatureFlags feature) {
         if ((usage & bit) && !(feats & feature)) usage &= ~bit;
@@ -474,6 +475,34 @@ void VirtualSwapchain::dumpFrame(FrameSlot& slot, bool generated, float t) {
 // Application side
 // ---------------------------------------------------------------------------
 
+// Feed one game frame interval into the HUD window and, a few times a second,
+// recompute the 1% / 0.1% low fps (fps at the 99th / 99.9th percentile frame
+// time over the window). Called under mutex_ from present().
+void VirtualSwapchain::updateHudLows(double dtMs) {
+    if (hudIntervals_.size() < kHudWindow) hudIntervals_.push_back(static_cast<float>(dtMs));
+    else hudIntervals_[hudRingPos_] = static_cast<float>(dtMs);
+    hudRingPos_ = (hudRingPos_ + 1) % kHudWindow;
+
+    const auto now = clock::now();
+    if (hudStatsAt_.time_since_epoch().count() != 0 &&
+        std::chrono::duration<double>(now - hudStatsAt_).count() < 0.25)
+        return;                              // recompute at most ~4x/second
+    hudStatsAt_ = now;
+    const size_t n = hudIntervals_.size();
+    // Percentiles are defined from the first sample; early on the lows simply
+    // track the current fps (better than showing 0) and diverge as the window
+    // fills and stutters accumulate.
+    std::vector<float> s = hudIntervals_;
+    std::sort(s.begin(), s.end());           // ascending frame times
+    auto lowFps = [&](double q) {
+        size_t i = static_cast<size_t>(std::ceil(q * (n - 1)));
+        float ft = s[std::min(i, n - 1)];
+        return ft > 0.05f ? static_cast<int>(1000.0f / ft + 0.5f) : 0;
+    };
+    hudLow1_ = lowFps(0.99);
+    hudLow01_ = lowFps(0.999);
+}
+
 VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& info, bool consumeWaitSemaphores) {
     std::lock_guard<std::mutex> lock(mutex_);
     const auto t0 = clock::now();
@@ -508,8 +537,9 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     }
 
     // Frame interval estimate (EMA) for pacing.
+    double dt = 0.0;
     if (lastAppPresent_.time_since_epoch().count() != 0) {
-        double dt = std::chrono::duration<double, std::milli>(t0 - lastAppPresent_).count();
+        dt = std::chrono::duration<double, std::milli>(t0 - lastAppPresent_).count();
         if (dt > 0.5 && dt < 500.0) frameIntervalMs_ = frameIntervalMs_ * 0.8 + dt * 0.2;
     }
     lastAppPresent_ = t0;
@@ -519,9 +549,10 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     const bool interpolate = generating_ && prevIndex_ >= 0 && mult > 1 && !historyLost_;
     historyLost_ = false;
     const int prev = prevIndex_;
-    if (dev_.config.overlay) {
+    if (dev_.config.overlayMode > 0) {
+        if (dt > 0.5 && dt < 500.0) updateHudLows(dt);
         const int gfps = frameIntervalMs_ > 0.05 ? static_cast<int>(1000.0 / frameIntervalMs_ + 0.5) : 0;
-        fg_->setHud(gfps, gfps * (interpolate ? mult : 1));
+        fg_->setHud(gfps, gfps * (interpolate ? mult : 1), hudLow1_, hudLow01_);
     }
 
     // Synthesis: analyse the application's frame (in place, no copy) and
