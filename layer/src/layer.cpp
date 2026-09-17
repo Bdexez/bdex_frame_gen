@@ -470,10 +470,11 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device, const VkSwapc
     }
     if (virtualise) {
         try {
-            auto vs = std::make_unique<VirtualSwapchain>(*dev, *pCreateInfo);
+            VirtualSwapchainPtr vs(new VirtualSwapchain(*dev, *pCreateInfo),
+                                   [](VirtualSwapchain* p) { delete p; });
             *pSwapchain = vs->handle();
             std::lock_guard<std::mutex> lock(dev->swapchainsMutex);
-            dev->swapchains[*pSwapchain] = std::move(vs);
+            dev->swapchains.insert_or_assign(*pSwapchain, std::move(vs));
             return VK_SUCCESS;
         } catch (const VkError& e) {
             BDEX_ERR("virtual swapchain creation failed (%s): passing through", e.what());
@@ -487,7 +488,7 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device, const VkSwapc
 VKAPI_ATTR void VKAPI_CALL DestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapchain, const VkAllocationCallbacks* pAllocator) {
     DeviceData* dev = getDevice(dispatchKey(device));
     if (swapchain) {
-        std::unique_ptr<VirtualSwapchain> vs;
+        VirtualSwapchainPtr vs(nullptr, nullptr);
         {
             std::lock_guard<std::mutex> lock(dev->swapchainsMutex);
             auto it = dev->swapchains.find(swapchain);

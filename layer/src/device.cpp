@@ -1,6 +1,5 @@
 #include "device.h"
 #include "log.h"
-#include "swapchain.h"
 #include "vk_util.h"
 
 namespace bdex {
