@@ -48,6 +48,10 @@ TEST(config_apply_values) {
     CHECK(c.apply("hud", "on") && c.overlayMode == 2);
     CHECK(c.apply("hud", "9") && c.overlayMode == 4);    // clamped to the top level
     CHECK(!c.apply("hud", "loud"));                      // unknown word rejected
+    CHECK(c.apply("census_weight", "0.5") && c.censusWeight == 0.5f);
+    CHECK(c.apply("CENSUS_MARGIN", "0.1") && c.censusMargin == 0.1f);
+    CHECK(c.apply("census_weight", "9") && c.censusWeight == 8.f);   // clamped
+    CHECK(c.apply("grad_weight", "1") && c.gradWeight == 1.0f);
 }
 
 TEST(config_rejects_garbage) {
