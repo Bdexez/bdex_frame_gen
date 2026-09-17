@@ -59,7 +59,7 @@ TEST(config_rejects_garbage) {
 }
 
 TEST(config_file_and_env_priority) {
-    const std::string path = "/tmp/bdex_test_config.conf";
+    const std::string path = test::tmpPath("bdex_test_config.conf");
     {
         std::ofstream f(path);
         f << "# comment\nmultiplier = 3\nlevels=5\n\nbogus line\nsearch = 1\n";
@@ -96,7 +96,7 @@ TEST(config_scene_cut_ordering) {
 }
 
 TEST(config_sections) {
-    const std::string path = "/tmp/bdex_test_sections.conf";
+    const std::string path = test::tmpPath("bdex_test_sections.conf");
     {
         std::ofstream f(path);
         f << "multiplier = 2\n[MyGame.exe]\nmultiplier = 3\n[*]\nlevels = 5\n[other]\nlevels = 1\n";
@@ -115,7 +115,7 @@ TEST(config_sections) {
 TEST(config_enable_from_file) {
     // The layer is always loaded now; a config file alone (no BDEX_FG env) must
     // be able to turn it on, globally via [*] or for one game via its section.
-    const std::string path = "/tmp/bdex_test_enable.conf";
+    const std::string path = test::tmpPath("bdex_test_enable.conf");
     {
         std::ofstream f(path);
         f << "[*]\nenabled = 0\n[kenshi]\nenabled = 1\nmultiplier = 3\n";

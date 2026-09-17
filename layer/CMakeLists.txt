@@ -64,6 +64,7 @@ if(WIN32)
   set_target_properties(bdex_framegen PROPERTIES
     OUTPUT_NAME "VkLayer_bdex_framegen"
     PREFIX "")
+  target_sources(bdex_framegen PRIVATE bdex_framegen.def)
 else()
   set_target_properties(bdex_framegen PROPERTIES
     OUTPUT_NAME "bdex_framegen"

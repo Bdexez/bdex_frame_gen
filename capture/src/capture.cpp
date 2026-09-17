@@ -91,6 +91,8 @@ struct Capture::Impl {
     std::atomic<float> fps{0.0f};
     ULONGLONG statsT0 = 0;
 
+    static DWORD WINAPI threadMain(void* p);
+
     // Precondition: mtx is held (or the thread is not running yet). The old
     // textures may still be imported by the Vulkan side: move them to the
     // graveyard instead of releasing them. Main calls releaseGraveyard() once
@@ -196,7 +198,8 @@ struct Capture::Impl {
     }
 };
 
-static DWORD WINAPI captureThread(void* p) {
+// Thread entry (a static member: Impl is private to Capture).
+DWORD WINAPI Capture::Impl::threadMain(void* p) {
     auto* s = static_cast<Capture::Impl*>(p);
     HANDLE waits[2] = {s->frameEvent, s->quitEvent};
     try {
@@ -276,7 +279,7 @@ bool Capture::start(HWND target) {
 
         impl_->recreateRing(size.Width, size.Height);
 
-        impl_->thread = CreateThread(nullptr, 0, captureThread, impl_, 0, nullptr);
+        impl_->thread = CreateThread(nullptr, 0, Impl::threadMain, impl_, 0, nullptr);
         if (!impl_->thread) winrt::check_hresult(HRESULT_FROM_WIN32(GetLastError()));
 
         impl_->session.StartCapture();

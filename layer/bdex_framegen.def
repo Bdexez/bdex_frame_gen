@@ -1,0 +1,6 @@
+; Exports of VkLayer_bdex_framegen.dll (see the BDEX_EXPORT note in layer.cpp).
+; The Win32 build's __stdcall decorations (_name@N) are resolved by the linker.
+EXPORTS
+    vkGetInstanceProcAddr
+    vkGetDeviceProcAddr
+    vkNegotiateLoaderLayerInterfaceVersion
