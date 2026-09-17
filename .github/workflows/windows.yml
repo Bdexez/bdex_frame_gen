@@ -1,0 +1,98 @@
+# Windows build of both products: the Vulkan layer (mode 1, x64 + Win32) and
+# the capture PoC bdex_capture.exe (mode 2, x64). There is no Windows machine
+# in the development environment, so this job is the MSVC build the docs'
+# validation checklists start with. Artifacts: one zip per architecture.
+name: windows
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, Win32]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Vulkan SDK
+        shell: pwsh
+        run: |
+          $url = "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan_sdk.exe"
+          Invoke-WebRequest -Uri $url -OutFile vulkan_sdk.exe
+          Start-Process -Wait -FilePath .\vulkan_sdk.exe -ArgumentList @(
+            '--accept-licenses', '--default-answer', '--confirm-command', 'install')
+          $sdk = (Get-ChildItem C:\VulkanSDK | Sort-Object Name -Descending | Select-Object -First 1).FullName
+          "VULKAN_SDK=$sdk" >> $env:GITHUB_ENV
+          "$sdk\Bin" >> $env:GITHUB_PATH
+          Write-Host "Vulkan SDK at $sdk"
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A ${{ matrix.arch }} `
+            -DBDEX_BUILD_DEMO=OFF -DBDEX_BUILD_TESTS=ON
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release --parallel 2>&1 | Tee-Object -FilePath build.log
+
+      - name: Unit tests
+        shell: pwsh
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Compiler errors (on failure)
+        if: failure()
+        shell: pwsh
+        run: |
+          if (Test-Path build.log) {
+            "## Errors (${{ matrix.arch }})" >> $env:GITHUB_STEP_SUMMARY
+            '```' >> $env:GITHUB_STEP_SUMMARY
+            Select-String -Path build.log -Pattern 'error [A-Z]+[0-9]+|error:|fatal error' |
+              ForEach-Object { $_.Line } | Select-Object -First 80 >> $env:GITHUB_STEP_SUMMARY
+            '```' >> $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $out = "dist/bdex-framegen-windows-${{ matrix.arch }}"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Copy-Item build/layer/Release/VkLayer_bdex_framegen.dll $out
+          if (Test-Path build/capture/Release/bdex_capture.exe) {
+            Copy-Item build/capture/Release/bdex_capture.exe $out
+          }
+          Copy-Item tools/register-layer.ps1, tools/unregister-layer.ps1 $out
+          Copy-Item docs/windows-port.md, docs/windows-capture.md, docs/windows-README.md $out
+          Get-ChildItem $out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bdex-framegen-windows-${{ matrix.arch }}
+          path: dist/bdex-framegen-windows-${{ matrix.arch }}
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Zip
+        run: |
+          cd dist
+          for d in bdex-framegen-windows-*; do (cd "$d" && zip -r "../$d.zip" .); done
+          ls -l *.zip
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
