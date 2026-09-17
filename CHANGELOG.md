@@ -29,6 +29,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Block-match winner selection restored to bit-for-bit at `census_weight=0`.**
+  The census commit's sequential winner scan broke cost ties differently from
+  the original tree reduction (left subtree wins on a tie), so even with the
+  feature off (the default) the flow — and the generated frames — differed
+  from the pre-census build; flat / periodic regions pick among exactly tied
+  candidates. The default path now runs the original per-thread minimum + tree
+  reduction again (same costs, comparisons, tie-breaking); the sequential
+  scan and re-ranking are used only when `census_weight > 0`.
+
 - **Quality eval harness made reproducible.** The demo created its first
   swapchain while the window manager was still mapping/resizing the window,
   so `tools/run_eval.sh` intermittently produced sequences at two different
