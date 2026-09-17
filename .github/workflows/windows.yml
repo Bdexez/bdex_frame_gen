@@ -14,6 +14,8 @@ on:
 jobs:
   build:
     runs-on: windows-2022
+    permissions:
+      contents: write   # the ci-log-<arch> branches (see the last step)
     strategy:
       fail-fast: false
       matrix:
@@ -33,31 +35,54 @@ jobs:
           "$sdk\Bin" >> $env:GITHUB_PATH
           Write-Host "Vulkan SDK at $sdk"
 
+      # Every step below tees its output into logs/ so a failed run can be
+      # read without GitHub credentials (see the last step). Tee-Object hides
+      # the native exit code, hence the explicit $LASTEXITCODE checks.
       - name: Configure
         shell: pwsh
         run: |
+          New-Item -ItemType Directory -Force logs | Out-Null
           cmake -S . -B build -G "Visual Studio 17 2022" -A ${{ matrix.arch }} `
-            -DBDEX_BUILD_DEMO=OFF -DBDEX_BUILD_TESTS=ON
+            -DBDEX_BUILD_DEMO=OFF -DBDEX_BUILD_TESTS=ON 2>&1 | Tee-Object -FilePath logs/configure.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build
         shell: pwsh
-        run: cmake --build build --config Release --parallel 2>&1 | Tee-Object -FilePath build.log
+        run: |
+          cmake --build build --config Release --parallel 2>&1 | Tee-Object -FilePath logs/build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Unit tests
         shell: pwsh
-        run: ctest --test-dir build -C Release --output-on-failure
+        run: |
+          ctest --test-dir build -C Release --output-on-failure 2>&1 | Tee-Object -FilePath logs/ctest.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Compiler errors (on failure)
+      - name: Publish logs on failure
         if: failure()
         shell: pwsh
         run: |
-          if (Test-Path build.log) {
-            "## Errors (${{ matrix.arch }})" >> $env:GITHUB_STEP_SUMMARY
-            '```' >> $env:GITHUB_STEP_SUMMARY
-            Select-String -Path build.log -Pattern 'error [A-Z]+[0-9]+|error:|fatal error' |
-              ForEach-Object { $_.Line } | Select-Object -First 80 >> $env:GITHUB_STEP_SUMMARY
-            '```' >> $env:GITHUB_STEP_SUMMARY
+          # Job logs need repository admin rights through the API; the
+          # development environment has none, so a failed run pushes its logs
+          # to an orphan ci-log-<arch> branch readable with plain git.
+          "## Errors (${{ matrix.arch }})" >> $env:GITHUB_STEP_SUMMARY
+          '```' >> $env:GITHUB_STEP_SUMMARY
+          Get-ChildItem logs/*.log | ForEach-Object {
+            Select-String -Path $_ -Pattern 'error [A-Z]+[0-9]+|error:|fatal error|CMake Error' |
+              ForEach-Object { $_.Line } | Select-Object -First 60
+          } >> $env:GITHUB_STEP_SUMMARY
+          '```' >> $env:GITHUB_STEP_SUMMARY
+          if (Test-Path build/CMakeFiles/CMakeConfigureLog.yaml) {
+            Copy-Item build/CMakeFiles/CMakeConfigureLog.yaml logs/
           }
+          cd logs
+          git init -q
+          git checkout -q -b ci-log-${{ matrix.arch }}
+          git config user.email "ci@bdex"
+          git config user.name "ci"
+          git add .
+          git commit -q -m "logs of run ${{ github.run_id }} (${{ github.sha }})"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD:refs/heads/ci-log-${{ matrix.arch }}
 
       - name: Package
         shell: pwsh
