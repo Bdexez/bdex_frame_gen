@@ -6,6 +6,21 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Census re-ranking for the block matcher** (opt-in `census_weight`, default
+  0 = bit-for-bit off; `census_margin`, default 0.05): when the runner-up
+  candidate scores within the margin of the winner, the near-winners are
+  re-ranked on census Hamming distance — an 8-bit rank transform (bit k =
+  neighbour k ≥ centre) computed from the tiles already staged in shared
+  memory, with no extra pass or bandwidth. Measured on the quality eval:
+  broad re-ranking (`census_weight=2`, `census_margin=1`) gains ≈ +0.5 dB on
+  fast motion (`--speed 2`) but costs ≈ −1.5 dB on static/small-motion scenes;
+  tight gating is the only non-negative setting (+0.12 dB normal). Same
+  trade-off pattern as `grad_weight`, hence the same opt-in default: for
+  motion-heavy games, `census_weight=2` + `census_margin=1` in the game's
+  config section.
+
 ### Changed
 
 - `DeviceData::swapchains` holds `VirtualSwapchain`s through a
@@ -13,6 +28,16 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   the layer's swapchain virtualisation (the capture product reuses them).
 
 ### Fixed
+
+- **Quality eval harness made reproducible.** The demo created its first
+  swapchain while the window manager was still mapping/resizing the window,
+  so `tools/run_eval.sh` intermittently produced sequences at two different
+  sizes ("no comparable frames"), and a tiling WM re-tiled concurrent demo
+  windows to half height. The demo now waits for the framebuffer size to
+  settle before creating the swapchain and pins the window size
+  (`GLFW_RESIZABLE=false`) under `--deterministic`; `run_eval.sh` pins
+  `BDEX_FG_PRESET=balanced` unless the caller sets one, so a user config file
+  no longer silently changes the measured operating point.
 
 - **Windows layer** `log_file` now expands environment references before
   opening the file: `%VAR%` on Windows (via `ExpandEnvironmentStringsA`),

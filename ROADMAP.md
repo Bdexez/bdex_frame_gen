@@ -127,9 +127,23 @@ a Windows machine.
   - Sub-pixel parabolic refinement: −0.1 both (synthesis already samples flow
     bilinearly). Adaptive zero-bias: only +0.16 fast (SAD-zero is a poor
     "is-moving" discriminator).
-- Identified next step (not started): decouple the discriminative signal from
-  the additive regularisation — a **census/rank-transform pyramid** as a
-  separate pass — or a matcher that models rotation/scale.
+- Identified next step was: decouple the discriminative signal from the
+  additive regularisation — a **census/rank-transform pyramid** — or a matcher
+  that models rotation/scale. **Done (2026-09-17): the census re-ranking.**
+  The census (8-bit rank transform on the 3×3, computed from the tiles already
+  staged in shared memory — no extra pass or bandwidth) re-ranks the
+  near-winners of an ambiguous match (runner-up within `census_margin` of the
+  winner). Measured on the eval (quality preset, 2026-09-17): like the
+  gradient term it is **not a clean win** — re-ranking broadly
+  (`census_weight=2`, `census_margin=1`) gains **+0.45 dB fast but loses
+  −1.5 dB normal**; tight gating (`margin=0.05`, `weight=0.5`) is the only
+  non-negative setting (+0.12 dB normal, fast unchanged); a soft
+  ambiguity-proportional weight is dominated by the hard gate. Shipped as an
+  **opt-in `census_weight` knob (default 0 = bit-for-bit)**, same pattern as
+  `grad_weight`. Conclusion so far: the residual fast-motion error is only
+  marginally a *candidate-selection* problem; the next lever to try is on the
+  synthesis side (occlusion handling in the interpolation) or a matcher that
+  models rotation/scale.
 
 ---
 
