@@ -96,12 +96,28 @@ private:
 void Demo::initWindow() {
     if (!glfwInit()) throw std::runtime_error("glfwInit failed");
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    // Deterministic runs (the quality eval) must start at the same window
+    // size every time; a tiling window manager otherwise re-tiles the window
+    // (e.g. when several demos run concurrently) and the two eval sequences
+    // land at different sizes. A fixed-size window cannot be resized.
+    glfwWindowHint(GLFW_RESIZABLE, opt_.deterministic ? GLFW_FALSE : GLFW_TRUE);
     window_ = glfwCreateWindow(opt_.width, opt_.height, "bdex frame generation demo", nullptr, nullptr);
     if (!window_) throw std::runtime_error("glfwCreateWindow failed");
     glfwSetWindowUserPointer(window_, this);
     glfwSetFramebufferSizeCallback(window_, [](GLFWwindow* w, int, int) {
         static_cast<Demo*>(glfwGetWindowUserPointer(w))->resized_ = true;
     });
+    // The window manager maps the window at a transient size and resizes it
+    // afterwards; the first swapchain must not be created on that transient
+    // size (it breaks the deterministic eval alignment). Wait until the
+    // framebuffer size has been stable for a few polls.
+    int w = 0, h = 0, lw = -1, lh = -1, stable = 0;
+    for (int i = 0; i < 100 && stable < 3; ++i) {
+        glfwWaitEventsTimeout(0.05);
+        glfwGetFramebufferSize(window_, &w, &h);
+        stable = (w > 0 && w == lw && h == lh) ? stable + 1 : 0;
+        lw = w; lh = h;
+    }
 }
 
 void Demo::initVulkan() {
