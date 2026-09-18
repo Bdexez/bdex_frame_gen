@@ -52,16 +52,20 @@ See [`docs/windows-port.md`](docs/windows-port.md).
   miHoYo and forces the layer off for that process (also runs on Linux, catching
   the Wine/Proton case via `/proc`).
 
-### Windows mode 2 (capture-based product) — Phase 1 PoC implemented in code
+### Windows mode 2 (capture-based product) — Phases 1 and 2 implemented
 
 `capture/` builds `bdex_capture.exe` (MSVC, x64): Windows.Graphics.Capture of
 one game window → D3D11 ring textures (NT handles + keyed mutex) → imported
 into Vulkan (`VK_KHR_external_memory_win32` / `VK_KHR_win32_keyed_mutex`) →
-the layer's `upscale.comp` → Win32 swapchain in a topmost overlay that follows
-the game window. Window picker, `--scale` / `--fit`, filter choice, fps HUD.
-Same caveat as mode 1: **compiled by CI only, never run on Windows**. See
-[`docs/windows-capture.md`](docs/windows-capture.md) §3 for the validation
-checklist and [`docs/windows-README.md`](docs/windows-README.md) for usage.
+**the layer's `FrameGen` engine unchanged** (history ring, optical flow,
+x2/x3/x4 interpolation or extrapolation, upscaling, HUD) → Win32 swapchain in
+a topmost overlay that follows the game window, paced like the layer. Window
+picker, `--scale` / `--fit`, `--multiplier`, `--mode`, `--preset`, `--gpu`.
+**Phase 1 was validated on real hardware on 2026-09-15** (Intel iGPU + RTX
+3050 laptop, PRAGMATA): capture, interop and presentation work; phase 2 is
+compiled by CI but not yet run. See
+[`docs/windows-capture.md`](docs/windows-capture.md) §3 and
+[`docs/windows-README.md`](docs/windows-README.md) for usage.
 
 ### Windows CI
 
@@ -90,16 +94,11 @@ a Windows machine.
 
 ### Windows mode 2 (capture-based product, multiplayer-safe)
 
-- **Phase 1 (PoC) is coded** in `capture/` — see the Done section — but, like
-  mode 1, **never run on Windows**. The phase-1 checklist in
-  [`docs/windows-capture.md`](docs/windows-capture.md) §3 is the next step.
-- **Phase 2** (the actual frame generation on captured frames: port the
-  `framegen.cpp` flow + interpolate/extrapolate orchestration onto the
-  imported textures, multiplier, pacing, present-rate detection) and
-  **phase 3** (config window, hotkey, tray, per-game profiles, Desktop
-  Duplication fallback, HDR/VRR, installer) are untouched. The product
-  remains a multi-week effort; only the three risky unknowns (capture,
-  interop, present) have code.
+- **Validate phase 2 on hardware**: frame generation on captured frames is
+  coded but its first real run is pending (quality, pacing, the x2 at 32 fps
+  → 64 fps figure, mouse pass-through of the overlay).
+- **Phase 3** (config window, hotkey, tray, per-game profiles, Desktop
+  Duplication fallback, HDR/VRR, installer, input pass-through) is untouched.
 
 ### Optical-flow quality
 
@@ -111,6 +110,7 @@ a Windows machine.
 ---
 
 **In one line:** the **Linux product is complete and shipping**; the **Windows
-mode-1 layer and the mode-2 capture PoC are both coded and built by CI, but
-never run on Windows** (the concrete next step, which needs a Windows machine);
-mode-2 frame generation and its product shell remain to be built.
+mode-2 capture app runs on real hardware** (capture/interop/present validated)
+and now carries the full frame-generation engine, awaiting its first run; the
+mode-1 layer is CI-built but never run on Windows; the mode-2 product shell
+(phase 3) remains to be built.
