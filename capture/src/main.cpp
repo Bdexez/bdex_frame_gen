@@ -10,12 +10,15 @@
 //                [--preset <name>] [--filter 0|1|2] [--sharpness <f>]
 //                [--hud 0..4] [--gpu <n>] [--fifo] [--list]
 //
-// Without --title/--pid the foreground window 5 s after launch is captured
+// With no arguments a launcher window opens instead: pick the game window,
+// set the same options as the Linux control panel, press Démarrer. With
+// --title/--pid only, the foreground window 5 s after launch is captured
 // (alt-tab into the game). Ctrl+Alt+Q or closing the game window quits.
 // Everything else comes from %APPDATA%\bdex-framegen\bdex-framegen.conf and
 // the BDEX_FG_* environment, like the layer.
 #include "capture.h"
 #include "config.h"
+#include "launcher.h"
 #include "log.h"
 #include "vkctx.h"
 
@@ -73,6 +76,8 @@ void usage() {
         "\n"
         "Other options (levels, scene cut, pacing...) come from\n"
         "%%APPDATA%%\\bdex-framegen\\bdex-framegen.conf and BDEX_FG_* variables.\n"
+        "With no arguments, a launcher window opens (game picker + options);\n"
+        "Démarrer saves them to the config file and starts the capture.\n"
         "Ctrl+Alt+Q quits; so does closing the game window.\n"
         "Set BDEX_CAP_VALIDATION=1 to load the Khronos validation layer.\n");
 }
@@ -158,72 +163,15 @@ bool parse(int argc, char** argv, Options& o) {
 }
 
 // --------------------------------------------------------- target window --
-
-std::wstring lower(std::wstring s) {
-    for (auto& c : s) c = static_cast<wchar_t>(towlower(c));
-    return s;
-}
-
-// UTF-8 for the byte-oriented log/console (SetConsoleOutputCP(CP_UTF8) in main).
-std::string narrow(const std::wstring& w) {
-    int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
-    if (n <= 1) return {};
-    std::string s(static_cast<size_t>(n - 1), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, s.data(), n, nullptr, nullptr);
-    return s;
-}
-
-std::wstring processName(DWORD pid) {
-    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    if (!h) return L"?";
-    wchar_t buf[MAX_PATH];
-    DWORD n = MAX_PATH;
-    std::wstring name = L"?";
-    if (QueryFullProcessImageNameW(h, 0, buf, &n)) {
-        name = buf;
-        size_t p = name.find_last_of(L"\\/");
-        if (p != std::wstring::npos) name = name.substr(p + 1);
-    }
-    CloseHandle(h);
-    return name;
-}
-
-struct WindowInfo {
-    HWND hwnd;
-    DWORD pid;
-    std::wstring title;
-};
-
-// Visible, titled, un-cloaked top-level windows — what WGC can capture and
-// what a user would recognise in --list.
-std::vector<WindowInfo> capturableWindows() {
-    std::vector<WindowInfo> out;
-    EnumWindows(
-        [](HWND h, LPARAM lp) -> BOOL {
-            auto* v = reinterpret_cast<std::vector<WindowInfo>*>(lp);
-            if (!IsWindowVisible(h) || GetWindowTextLengthW(h) == 0) return TRUE;
-            if (GetAncestor(h, GA_ROOT) != h) return TRUE;
-            DWORD cloaked = 0;
-            DwmGetWindowAttribute(h, DWMWA_CLOAKED, &cloaked, sizeof cloaked);
-            if (cloaked) return TRUE;
-            wchar_t title[256];
-            GetWindowTextW(h, title, 256);
-            DWORD pid = 0;
-            GetWindowThreadProcessId(h, &pid);
-            if (pid == GetCurrentProcessId()) return TRUE;
-            v->push_back({h, pid, title});
-            return TRUE;
-        },
-        reinterpret_cast<LPARAM>(&out));
-    return out;
-}
+// The window picking itself (capturableWindows, processName, narrow) lives
+// in launcher.{h,cpp}: the launcher window and the --list option share it.
 
 HWND findTarget(const Options& o) {
     if (!o.title.empty() || o.pid) {
-        std::wstring want = lower(o.title);
-        for (auto& w : capturableWindows()) {
+        std::wstring want = bdex::wideLower(o.title);
+        for (auto& w : bdex::capturableWindows()) {
             if (o.pid && w.pid != o.pid) continue;
-            if (!want.empty() && lower(w.title).find(want) == std::wstring::npos) continue;
+            if (!want.empty() && bdex::wideLower(w.title).find(want) == std::wstring::npos) continue;
             return w.hwnd;
         }
         LOGE("no visible window matches");
@@ -345,28 +293,17 @@ void setDpiAware() {
 
 } // namespace
 
-int main(int argc, char** argv) {
-    Options o;
-    if (!parse(argc, argv, o)) return 2;
-    SetConsoleOutputCP(CP_UTF8);
-    setDpiAware();
-
-    if (o.list) {
-        for (auto& w : capturableWindows())
-            std::printf("%6lu  %-24s  %s\n", static_cast<unsigned long>(w.pid),
-                        narrow(processName(w.pid)).c_str(), narrow(w.title).c_str());
-        return 0;
-    }
-
-    HWND target = findTarget(o);
-    if (!target) return 1;
+// One capture session: overlay + engine + presentation loop. `choice` (the
+// launcher) overrides the config file and the command line; nullptr = CLI.
+int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) {
+    g_running = true;
     {
         wchar_t title[256];
         GetWindowTextW(target, title, 256);
         DWORD pid = 0;
         GetWindowThreadProcessId(target, &pid);
-        LOGI("target: \"%s\" (%s, pid %lu)", narrow(title).c_str(),
-             narrow(processName(pid)).c_str(), static_cast<unsigned long>(pid));
+        LOGI("target: \"%s\" (%s, pid %lu)", bdex::narrow(title).c_str(),
+             bdex::narrow(bdex::processName(pid)).c_str(), static_cast<unsigned long>(pid));
     }
 
     RECT ov = overlayRect(o, target, windowRect(target));
@@ -377,8 +314,9 @@ int main(int argc, char** argv) {
     }
 
     // Frame-generation settings: the layer's config file / environment, then
-    // the command line. Extrapolation is the default here: capture already
-    // costs a frame of latency, interpolation would add half of one more.
+    // the command line, then the launcher. Extrapolation is the default
+    // here: capture already costs a frame of latency, interpolation would
+    // add half of one more.
     bdex::Config cfg = bdex::Config::load();
     cfg.enabled = true;
     if (o.mode < 0 && !cfg.extrapolate) cfg.extrapolate = true;
@@ -391,10 +329,22 @@ int main(int argc, char** argv) {
     if (o.filter >= 0) cfg.upscaleFilter = o.filter;
     if (o.sharpness >= 0.f) cfg.sharpness = o.sharpness;
     if (o.hud >= 0) cfg.overlayMode = o.hud;
+    bool fifo = o.fifo;
+    if (choice) {
+        cfg.multiplier = choice->multiplier;
+        cfg.extrapolate = choice->extrapolate;
+        if (!choice->preset.empty()) cfg.apply("preset", choice->preset);
+        cfg.upscaleFilter = choice->filter;
+        cfg.sharpness = choice->sharpness;
+        cfg.overlayMode = choice->hud;
+        fifo = fifo || choice->fifo;
+    }
+    // The config file's present_mode = fifo asks for vsync in CLI mode too.
+    if (!fifo && cfg.presentMode == VK_PRESENT_MODE_FIFO_KHR) fifo = true;
 
     bdex::VkCtx vk;
     bdex::Capture cap;
-    if (!vk.init(overlay, o.gpu, o.fifo, cfg)) return 1;
+    if (!vk.init(overlay, o.gpu, fifo, cfg)) return 1;
     LUID luid{};
     if (!cap.start(target, vk.luid(luid) ? &luid : nullptr)) return 1;
     vk.setCapture(&cap);
@@ -404,7 +354,6 @@ int main(int argc, char** argv) {
                     static_cast<uint32_t>(ov.bottom - ov.top)))
         return 1;
 
-    SetConsoleCtrlHandler(ctrlHandler, TRUE);
     if (!RegisterHotKey(nullptr, 1, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'Q'))
         LOGW("Ctrl+Alt+Q hotkey unavailable; close the game window or Ctrl+C to quit");
     LOGI("overlay %ldx%ld at %ld,%ld (%s) — Ctrl+Alt+Q to quit", ov.right - ov.left,
@@ -533,4 +482,54 @@ int main(int argc, char** argv) {
     cap.stop();
     DestroyWindow(overlay);
     return 0;
+}
+
+int main(int argc, char** argv) {
+    Options o;
+    if (!parse(argc, argv, o)) return 2;
+    SetConsoleOutputCP(CP_UTF8);
+    setDpiAware();
+
+    if (o.list) {
+        for (auto& w : bdex::capturableWindows())
+            std::printf("%6lu  %-24s  %s\n", static_cast<unsigned long>(w.pid),
+                        bdex::narrow(bdex::processName(w.pid)).c_str(),
+                        bdex::narrow(w.title).c_str());
+        return 0;
+    }
+
+    SetConsoleCtrlHandler(ctrlHandler, TRUE);
+
+    // No arguments: the launcher window (game picker + options), then the
+    // chosen capture runs; when it stops we come back to the launcher until
+    // the user quits. With arguments the CLI path runs once, as before.
+    const bool useLauncher = argc == 1;
+    bdex::LaunchChoice choice;
+    HWND target = nullptr;
+    if (useLauncher) {
+        const bdex::Config d = bdex::Config::load();
+        choice.multiplier = std::max(1, d.multiplier);
+        const std::string mode = bdex::globalConfigValue("mode");
+        choice.extrapolate = mode.empty() || mode.find("extrap") == 0;
+        choice.filter = d.upscaleFilter;
+        choice.sharpness = d.sharpness;
+        choice.hud = d.overlayMode;
+        choice.preset = bdex::globalConfigValue("preset");
+        choice.fifo = bdex::globalConfigValue("present_mode") == "fifo";
+        if (!bdex::runLauncher(choice)) return 0;
+        target = choice.target;
+        if (!target) return 1;
+        o.scale = choice.scale;
+        o.fit = choice.fit;
+    } else {
+        target = findTarget(o);
+        if (!target) return 1;
+    }
+
+    for (;;) {
+        const int rc = runCapture(o, target, useLauncher ? &choice : nullptr);
+        if (!useLauncher || rc != 0) return rc;
+        if (!bdex::runLauncher(choice)) return 0;
+        target = choice.target;
+    }
 }

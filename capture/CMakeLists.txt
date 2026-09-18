@@ -7,12 +7,15 @@
 
 add_executable(bdex_capture
   src/main.cpp
+  src/launcher.cpp
   src/capture.cpp
   src/vkctx.cpp
   # The layer's engine and device helpers, shared as source: they only
-  # depend on bdex_core and the generated shaders.h.
+  # depend on bdex_core and the generated shaders.h. platform.cpp joins for
+  # platformConfigPath() (the launcher's config-file save).
   ../layer/src/framegen.cpp
   ../layer/src/device.cpp
+  ../layer/src/platform.cpp
 )
 add_dependencies(bdex_capture bdex_layer_shaders)
 target_include_directories(bdex_capture PRIVATE
