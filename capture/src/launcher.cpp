@@ -184,7 +184,7 @@ std::string globalConfigValue(const std::string& want) {
             continue;
         }
         std::string key;
-        if (global && keyOf(raw, key) && key == lower(trim(want))))
+        if (global && keyOf(raw, key) && key == lower(trim(want)))
             return lower(trim(raw.substr(raw.find('=') + 1)));  // keyword values, case-insensitive
     }
     return "";
@@ -520,8 +520,8 @@ bool runLauncher(LaunchChoice& choice) {
     RECT wa{};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
     const int w = client.right - client.left, h = client.bottom - client.top;
-    const int x = wa.left + std::max(0, (wa.right - wa.left) - w) / 2;
-    const int y = wa.top + std::max(0, (wa.bottom - wa.top) - h) / 2;
+    const int x = wa.left + static_cast<int>(std::max<LONG>(0, (wa.right - wa.left) - w)) / 2;
+    const int y = wa.top + static_cast<int>(std::max<LONG>(0, (wa.bottom - wa.top) - h)) / 2;
     Ui ui;
     ui.choice = &choice;
     HWND hwnd = CreateWindowExW(WS_EX_CONTROLPARENT, cls, L"bdex framegen — lanceur",
