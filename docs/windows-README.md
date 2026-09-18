@@ -78,3 +78,12 @@ hud=2
 game: the HUD shows `game > output`. `unregister-layer.ps1` removes the layer;
 `BDEX_FG_DISABLE=1` in the environment skips it for one launch. Details and
 the full option list: `windows-port.md` and the main README.
+
+**Known limitation (mode 1, not yet validated on hardware):** the layer
+virtualises the swapchain and does **not** yet forward
+`VK_EXT_full_screen_exclusive`. A native-Vulkan game asking for true
+exclusive fullscreen will fall back to a composited (borderless-like) present
+through the layer. For the first tests prefer **borderless / windowed**
+fullscreen, which is the well-trodden path. Forwarding FSE is a planned
+phase-2 item. If a game shows nothing or stutters in exclusive fullscreen,
+switch it to borderless.

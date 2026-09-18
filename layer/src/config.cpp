@@ -155,7 +155,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     }
     if (key == "pacing")                      return parseBool(value, pacing);
     if (key == "log" || key == "log_level")   return parseInt(value, logLevel, 0, 3);
-    if (key == "log_file")                    { logFile = value; return true; }
+    if (key == "log_file")                    { logFile = platformExpandPath(value); return true; }
     if (key == "scene_cut_low")               return parseFloat(value, sceneCutLow, 0.f, 1.f);
     if (key == "scene_cut_high")              return parseFloat(value, sceneCutHigh, 0.f, 1.f);
     if (key == "smoothness")                  return parseFloat(value, smoothness, 0.f, 1.f);

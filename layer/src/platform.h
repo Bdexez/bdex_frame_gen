@@ -18,6 +18,13 @@ char** platformEnviron();
 // is known. The BDEX_FG_CONFIG override is handled by the caller.
 std::string platformConfigPath();
 
+// Expands environment references in a path the user wrote in the config file,
+// so e.g. `log_file=%TEMP%\bdex-fg.log` resolves to a real path instead of
+// being opened verbatim. Windows expands `%VAR%` (via the OS); Linux expands
+// `$VAR`, `${VAR}` and a leading `~`. Unknown variables are left as-is, and a
+// string with nothing to expand is returned unchanged.
+std::string platformExpandPath(const std::string& in);
+
 // True when a known multiplayer anti-cheat process is running, in which
 // case the caller must leave the layer disabled for this process. Fills
 // `foundName` (optional) with the matching process name.
