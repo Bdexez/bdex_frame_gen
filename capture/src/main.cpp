@@ -291,10 +291,16 @@ LRESULT CALLBACK overlayProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;  // never take focus from the game
     case WM_SETCURSOR:
-        // No class cursor and no SetCursor here: the visible cursor keeps
-        // whatever shape the game chose. With a class cursor the overlay
-        // painted its own arrow over games that hide the hardware cursor
-        // (PRAGMATA, Dark Souls III), i.e. a lingering/double cursor.
+        // The overlay has no class cursor: never impose our own shape. When
+        // the game has hidden the hardware cursor (PRAGMATA, Dark Souls III
+        // in gameplay), a class-less window still inherits the last-set
+        // shape over it — so force-hide in that case instead of showing a
+        // lingering/double arrow. In menus the game shows the cursor and we
+        // leave its shape untouched.
+        if (LOWORD(lp) == HTCLIENT) {
+            CURSORINFO ci{sizeof ci};
+            if (GetCursorInfo(&ci) && !(ci.flags & CURSOR_SHOWING)) SetCursor(nullptr);
+        }
         return TRUE;
     case WM_ERASEBKGND:
         return 1;              // Vulkan paints; no GDI flicker
