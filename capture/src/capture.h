@@ -36,15 +36,20 @@ public:
     Capture(const Capture&) = delete;
     Capture& operator=(const Capture&) = delete;
 
-    // Starts capturing `target` on a dedicated thread. False (with a logged
-    // reason) if WGC refused: unsupported window, capture denied, no D3D11.
-    bool start(HWND target);
+    // Starts capturing `target` on a dedicated thread, with the D3D11 device
+    // on the adapter `luid` (the Vulkan GPU; null = default adapter). False
+    // (with a logged reason) if WGC refused: unsupported window, capture
+    // denied, no D3D11.
+    bool start(HWND target, const LUID* luid);
     void stop();
 
     // Main thread: waits up to `timeoutMs` and returns the newest captured
     // frame; frames that arrived behind it are dropped (their slots go back
     // to the ring — the Vulkan side never saw them).
     bool pop(Frame& frame, uint32_t timeoutMs);
+    // Waits up to `timeoutMs` for a frame to be queued, without taking it
+    // (the pacing drops predicted frames once a real one has arrived).
+    bool waitPending(uint32_t timeoutMs);
 
     // Hands a popped slot back to the capture thread. `consumed` says whether
     // a Vulkan submit acquired (key 1) and released (key 0) the slot's mutex.

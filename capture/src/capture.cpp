@@ -234,7 +234,7 @@ DWORD WINAPI Capture::Impl::threadMain(void* p) {
 
 Capture::~Capture() { stop(); }
 
-bool Capture::start(HWND target) {
+bool Capture::start(HWND target, const LUID* luid) {
     stop();
     impl_ = new Impl();
     impl_->target = target;
@@ -247,11 +247,30 @@ bool Capture::start(HWND target) {
         impl_->dataEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
         impl_->quitEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
 
+        // The D3D11 device goes on the same adapter as the Vulkan device so
+        // the shared textures never cross GPUs (laptops: Intel + NVIDIA).
+        winrt::com_ptr<IDXGIAdapter1> adapter;
+        if (luid) {
+            winrt::com_ptr<IDXGIFactory1> factory;
+            winrt::check_hresult(CreateDXGIFactory1(__uuidof(IDXGIFactory1), factory.put_void()));
+            for (UINT i = 0;; ++i) {
+                winrt::com_ptr<IDXGIAdapter1> a;
+                if (factory->EnumAdapters1(i, a.put()) == DXGI_ERROR_NOT_FOUND) break;
+                DXGI_ADAPTER_DESC1 d;
+                a->GetDesc1(&d);
+                if (d.AdapterLuid.LowPart == luid->LowPart && d.AdapterLuid.HighPart == luid->HighPart) {
+                    adapter = a;
+                    LOGI("D3D11 on adapter %s", narrow(d.Description).c_str());
+                    break;
+                }
+            }
+            if (!adapter) LOGW("no DXGI adapter matches the Vulkan GPU's LUID; using the default one");
+        }
         D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0};
         winrt::check_hresult(D3D11CreateDevice(
-            nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-            levels, 2, D3D11_SDK_VERSION, impl_->device.put(), nullptr,
-            impl_->context.put()));
+            adapter.get(), adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, nullptr,
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT, levels, 2, D3D11_SDK_VERSION, impl_->device.put(),
+            nullptr, impl_->context.put()));
 
         auto dxgi = impl_->device.as<IDXGIDevice>();
         winrt::com_ptr<::IInspectable> inspectable;
@@ -320,11 +339,20 @@ void Capture::stop() {
     impl_ = nullptr;
 }
 
-bool Capture::pop(Frame& frame, uint32_t timeoutMs) {
+bool Capture::waitPending(uint32_t timeoutMs) {
     if (!impl_) return false;
+    {
+        std::lock_guard lk(impl_->mtx);
+        if (!impl_->pending.empty()) return true;
+    }
+    // dataEvent is auto-reset: a wait consumes the signal, which is fine
+    // since pop() checks the queue before waiting.
     HANDLE waits[2] = {impl_->dataEvent, impl_->quitEvent};
-    DWORD r = WaitForMultipleObjects(2, waits, FALSE, timeoutMs);
-    if (r != WAIT_OBJECT_0) return false;
+    return WaitForMultipleObjects(2, waits, FALSE, timeoutMs) == WAIT_OBJECT_0;
+}
+
+bool Capture::pop(Frame& frame, uint32_t timeoutMs) {
+    if (!waitPending(timeoutMs)) return false;
     std::lock_guard lk(impl_->mtx);
     if (impl_->pending.empty()) return false;
     frame = impl_->pending.back();  // newest; older ones were overtaken
