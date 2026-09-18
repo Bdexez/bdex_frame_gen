@@ -61,9 +61,11 @@ into Vulkan (`VK_KHR_external_memory_win32` / `VK_KHR_win32_keyed_mutex`) →
 x2/x3/x4 interpolation or extrapolation, upscaling, HUD) → Win32 swapchain in
 a topmost overlay that follows the game window, paced like the layer. Window
 picker, `--scale` / `--fit`, `--multiplier`, `--mode`, `--preset`, `--gpu`.
-**Phase 1 was validated on real hardware on 2026-09-15** (Intel iGPU + RTX
-3050 laptop, PRAGMATA): capture, interop and presentation work; phase 2 is
-compiled by CI but not yet run. See
+**Phases 1 and 2 were validated on real hardware on 2026-09-15** (Intel
+iGPU + RTX 3050 laptop): phase 1 on PRAGMATA (capture, interop, presentation);
+phase 2's first run the same day on PRAGMATA (D3D12), Dark Souls III and
+Skyrim SE (D3D11) and Fallout: New Vegas (D3D9) — steady x2 extrapolation at
+≈2× output fps, pacing survives game stutters. See
 [`docs/windows-capture.md`](docs/windows-capture.md) §3 and
 [`docs/windows-README.md`](docs/windows-README.md) for usage.
 
@@ -94,9 +96,10 @@ a Windows machine.
 
 ### Windows mode 2 (capture-based product, multiplayer-safe)
 
-- **Validate phase 2 on hardware**: frame generation on captured frames is
-  coded but its first real run is pending (quality, pacing, the x2 at 32 fps
-  → 64 fps figure, mouse pass-through of the overlay).
+- **Assess phase 2 quality on hardware**: the first run works (D3D9/11/12
+  titles, x2 extrapolation, pacing survives stutters); still to judge: flow
+  quality vs the Linux build, the low-fps regime (x2 at 30/32 fps), the x3/x4
+  multipliers, interpolation vs extrapolation.
 - **Phase 3** (config window, hotkey, tray, per-game profiles, Desktop
   Duplication fallback, HDR/VRR, installer, input pass-through) is untouched.
 
@@ -110,7 +113,6 @@ a Windows machine.
 ---
 
 **In one line:** the **Linux product is complete and shipping**; the **Windows
-mode-2 capture app runs on real hardware** (capture/interop/present validated)
-and now carries the full frame-generation engine, awaiting its first run; the
-mode-1 layer is CI-built but never run on Windows; the mode-2 product shell
-(phase 3) remains to be built.
+mode-2 capture app runs frame generation on real hardware** (D3D9/11/12
+validated, phase-2 first run done); the mode-1 layer is CI-built but never run
+on Windows; the mode-2 product shell (phase 3) remains to be built.

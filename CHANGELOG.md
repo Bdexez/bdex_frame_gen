@@ -12,6 +12,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   function-pointer deleter, so `device.cpp` and `FrameGen` compile without
   the layer's swapchain virtualisation (the capture product reuses them).
 
+### Fixed
+
+- `bdex_capture`'s overlay no longer paints its own arrow cursor over the
+  game: on titles that hide the hardware cursor (PRAGMATA, Dark Souls III)
+  the overlay's class cursor stayed visible on top of the game (double /
+  lingering cursor). The overlay now has no class cursor and swallows
+  `WM_SETCURSOR`, mirroring the game's own cursor choice. Found during the
+  phase-2 first run on hardware (2026-09-15).
+
 ### Added
 
 - **Windows capture product** (`capture/`, mode 2 of the Windows plan,
@@ -26,7 +35,9 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   `--preset`, `--filter`, `--sharpness`, `--hud`, `--gpu`, `--fifo`,
   Ctrl+Alt+Q; the config file and `BDEX_FG_*` apply). The discrete GPU is
   preferred and the D3D11 device is created on the same adapter. MSVC/x64
-  only. Phase 1 (capture/interop/present) validated on hardware.
+  only. Phases 1 (capture/interop/present) and 2 (frame generation on the
+  captured frames) validated on hardware (2026-09-15: PRAGMATA, Dark Souls
+  III, Skyrim SE, Fallout: New Vegas — D3D12/11/9).
 - **Windows CI** (`.github/workflows/windows.yml`): MSVC build of the layer
   (x64 + Win32) and the capture PoC, unit tests, one zip artifact per
   architecture, GitHub release assets on `v*` tags. `docs/windows-README.md`
