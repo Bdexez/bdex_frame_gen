@@ -39,6 +39,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   only. Phases 1 (capture/interop/present) and 2 (frame generation on the
   captured frames) validated on hardware (2026-09-15: PRAGMATA, Dark Souls
   III, Skyrim SE, Fallout: New Vegas — D3D12/11/9).
+- **Windows launcher GUI** (`capture/src/launcher.{h,cpp}`): `bdex_capture.exe`
+  run without arguments opens a native Win32 window (no toolkit): pick the
+  game window, set the same options as the Linux control panel (generation
+  on/off, ×2–×4, mode, quality preset, overlay size / fit, upscale filter,
+  CAS sharpness, FIFO, fps HUD) and Démarrer persists them to the shared
+  `bdex-framegen.conf` — game sections and unknown keys preserved — and
+  starts the capture; when the capture stops the launcher reopens.
+  `present_mode = fifo` in the config now also selects FIFO in capture mode.
 - **Windows CI** (`.github/workflows/windows.yml`): MSVC build of the layer
   (x64 + Win32) and the capture PoC, unit tests, one zip artifact per
   architecture, GitHub release assets on `v*` tags. `docs/windows-README.md`
