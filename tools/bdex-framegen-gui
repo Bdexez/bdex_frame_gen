@@ -47,6 +47,46 @@ HUD_NAMED = {"off": 0, "false": 0, "no": 0, "none": 0, "fps": 1,
              "framegen": 2, "fg": 2, "on": 2, "true": 2, "yes": 2,
              "low": 3, "1low": 3, "lows": 3, "full": 4, "detailed": 4, "all": 4}
 
+# Advanced optical-flow tuning exposed in a collapsed section. Each entry maps a
+# config key to a spin control:
+#   (attr, config_key, title, subtitle, lower, upper, step, digits, default)
+# digits == 0 means an integer control. A value equal to its default is not
+# written to the file (nor to the Steam string), so leaving these alone keeps
+# the config minimal and the layer on its own defaults.
+ADVANCED = [
+    ("grad_weight", "grad_weight", "Netteté du mouvement rapide",
+     "Cale le suivi sur les contours plutôt que la seule luminosité : réduit le déchirement "
+     "(« images coupées ») en mouvement rapide, au prix d'un peu de fidélité sur l'image fixe. "
+     "0 = désactivé ; essayer 1.",
+     0.0, 3.0, 0.1, 1, 0.0),
+    ("smoothness", "smoothness", "Lissage du mouvement",
+     "Régularise le champ de mouvement (pénalise les écarts entre blocs voisins). Défaut 0,004.",
+     0.0, 0.03, 0.001, 3, 0.004),
+    ("zero_bias", "zero_bias", "Stabilité de l'image fixe",
+     "Favorise l'absence de mouvement pour garder l'ATH/HUD parfaitement stable. Défaut 0,002.",
+     0.0, 0.02, 0.001, 3, 0.002),
+    ("search_fine", "search_fine", "Précision de recherche",
+     "Rayon de recherche fin autour de la prédiction (plus haut = mouvements plus fins, plus coûteux). Défaut 2.",
+     1, 4, 1, 0, 2),
+    ("flow_iterations", "flow_iterations", "Itérations de synthèse",
+     "Raffinements de la recherche du mouvement lors de l'interpolation. Défaut 1.",
+     0, 3, 1, 0, 1),
+    ("scene_cut_low", "scene_cut_low", "Coupure de scène — début du fondu",
+     "Coût de mouvement moyen au-delà duquel on commence à fondre vers l'image réelle. "
+     "Le monter rend la détection de coupure plus franche et réduit le scintillement aux transitions. Défaut 0,05.",
+     0.0, 0.30, 0.01, 2, 0.05),
+    ("scene_cut_high", "scene_cut_high", "Coupure de scène — image réelle",
+     "Coût au-delà duquel l'image générée est remplacée par une vraie image dupliquée. Défaut 0,09.",
+     0.0, 0.50, 0.01, 2, 0.09),
+]
+
+
+def _fmt_num(value, digits):
+    if digits == 0:
+        return str(int(round(value)))
+    s = f"{value:.{digits}f}".rstrip("0").rstrip(".")
+    return s or "0"
+
 
 def _combo_index(table, value, default=0):
     for i, (_, v) in enumerate(table):
@@ -77,7 +117,7 @@ def game_name(text):
 # Keys the UI owns in the global section; anything else found there is kept.
 GLOBAL_KEYS = ("enabled", "preset", "multiplier", "mode", "present_mode",
                "low_latency", "render_scale", "upscale_filter", "sharpness",
-               "overlay", "hud")
+               "overlay", "hud") + tuple(key for _, key, *_ in ADVANCED)
 
 
 class ConfigFile:
@@ -172,6 +212,7 @@ class Options:
         self.filter = "lanczos"
         self.sharpness = 0           # percent, 0..100
         self.hud = 0                 # on-screen fps counter level, 0..4
+        self.advanced = {attr: default for attr, _, *_, default in ADVANCED}
 
     def load_from(self, glob):
         g = {k.lower(): v for k, v in glob.items()}
@@ -210,6 +251,11 @@ class Options:
                 self.hud = max(0, min(4, int(float(hud))))
             except ValueError:
                 self.hud = 0
+        for attr, key, _title, _sub, lower, upper, _step, _digits, default in ADVANCED:
+            try:
+                self.advanced[attr] = min(upper, max(lower, float(g[key])))
+            except (KeyError, ValueError):
+                self.advanced[attr] = default
 
     def write_into(self, glob):
         """Update the managed keys in `glob` in place, keeping unknown ones."""
@@ -230,6 +276,10 @@ class Options:
                 glob["sharpness"] = f"{self.sharpness / 100:.2f}".rstrip("0").rstrip(".")
         if self.hud > 0:
             glob["overlay"] = str(self.hud)
+        for attr, key, _title, _sub, _lo, _hi, _step, digits, default in ADVANCED:
+            value = self.advanced.get(attr, default)
+            if _fmt_num(value, digits) != _fmt_num(default, digits):
+                glob[key] = _fmt_num(value, digits)
 
     def steam_string(self):
         """Equivalent per-game Steam launch options (BDEX_FG_* ... %command%)."""
@@ -249,6 +299,10 @@ class Options:
                 e.append("BDEX_FG_SHARPNESS=" + f"{self.sharpness / 100:.2f}".rstrip("0").rstrip("."))
         if self.hud > 0:
             e.append(f"BDEX_FG_OVERLAY={self.hud}")
+        for attr, key, _title, _sub, _lo, _hi, _step, digits, default in ADVANCED:
+            value = self.advanced.get(attr, default)
+            if _fmt_num(value, digits) != _fmt_num(default, digits):
+                e.append(f"BDEX_FG_{key.upper()}={_fmt_num(value, digits)}")
         return " ".join(e) + " %command%"
 
 
@@ -321,6 +375,7 @@ class Window(Adw.ApplicationWindow):
         self._build_hud(page)
         self._build_upscale(page)
         self._build_present(page)
+        self._build_advanced(page)
 
         self._loading = False
         self.refresh_sensitivity()
@@ -482,6 +537,25 @@ class Window(Adw.ApplicationWindow):
         self.ll_row.connect("notify::active", self.on_change)
         g.add(self.ll_row)
 
+    def _build_advanced(self, page):
+        g = Adw.PreferencesGroup(
+            title="Réglages avancés",
+            description="Affinage de la génération d'images. Les valeurs par défaut conviennent à "
+                        "la plupart des jeux — n'y touche que si tu veux corriger un artefact précis.")
+        page.add(g)
+        self.adv_expander = Adw.ExpanderRow(
+            title="Afficher les réglages avancés du mouvement",
+            subtitle="Netteté du mouvement rapide, coupures de scène, recherche du mouvement…")
+        g.add(self.adv_expander)
+        self.adv_rows = {}
+        for attr, _key, title, subtitle, lower, upper, step, digits, _default in ADVANCED:
+            adj = Gtk.Adjustment(lower=lower, upper=upper, step_increment=step,
+                                 page_increment=step * 10, value=self.opt.advanced[attr])
+            row = Adw.SpinRow(title=title, subtitle=subtitle, adjustment=adj, digits=digits)
+            row.connect("notify::value", self.on_change)
+            self.adv_expander.add_row(row)
+            self.adv_rows[attr] = row
+
     # -- state <-> UI ------------------------------------------------------
 
     def sync(self):
@@ -498,6 +572,8 @@ class Window(Adw.ApplicationWindow):
         o.present = PRESENT[self.present_row.get_selected()][1]
         o.low_latency = self.ll_row.get_active()
         o.hud = HUD_MODES[self.hud_row.get_selected()][1]
+        for attr, row in self.adv_rows.items():
+            o.advanced[attr] = row.get_value()
 
     def refresh_sensitivity(self):
         o = self.opt
@@ -505,6 +581,7 @@ class Window(Adw.ApplicationWindow):
             r.set_sensitive(o.generate)
         for r in (self.scale_row, self.filter_row, self.sharp_row):
             r.set_sensitive(o.upscale)
+        self.adv_expander.set_sensitive(o.generate)
         self.games_group.set_sensitive(not o.master)
 
     def on_change(self, *_):
