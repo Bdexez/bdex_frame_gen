@@ -50,6 +50,8 @@ struct Config {
     float smoothness    = 0.004f; // penalty per pixel of deviation from the coarse prediction
     float zeroBias      = 0.002f; // bias toward zero motion (helps static HUDs)
     float gradWeight    = 0.0f;   // weight of the gradient-constancy matching term (0 = plain luma SAD; ~1 sharpens fast motion at some cost to static fidelity)
+    float censusWeight  = 0.0f;   // weight of the census re-ranking term: when the block matcher is ambiguous (runner-up within census_margin of the winner), near-winners are re-ranked on census Hamming distance (0 = off, bit-for-bit)
+    float censusMargin  = 0.05f;  // relative cost margin that makes a match ambiguous (triggers the census re-ranking)
     bool  refine        = true;   // flow refinement pass (better motion boundaries, costs GPU time)
     bool  refineAll     = true;   // refine every pyramid level (off: only the finest, cheaper, ~2 dB worse)
     int   flowIterations = 1;     // fixed-point iterations of the flow lookup in the interpolation (0-3)

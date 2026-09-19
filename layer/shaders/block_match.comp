@@ -18,6 +18,15 @@
 // structure (edges) and disambiguates those cases. gradWeight = 0 is the plain
 // luma-SAD behaviour, bit-for-bit.
 //
+// Ambiguity re-ranking (when censusWeight > 0): if the runner-up candidate
+// scores within censusMargin of the winner, luma SAD alone cannot be trusted.
+// The near-winners are then re-ranked on census Hamming distance — an 8-bit
+// rank transform (bit k = neighbour k >= centre) computed from the staged
+// tiles, which compares local structure instead of brightness. Blocks whose
+// winner is confident are chosen exactly as before, so static / small-motion
+// content is unaffected; with censusWeight = 0 the pass is bit-for-bit
+// identical to plain luma SAD matching.
+//
 // Output flow is the displacement (in pixels of this level) that maps a
 // position in the reference image to the matching position in the target.
 #include "common.glsl"
@@ -45,17 +54,35 @@ layout(push_constant) uniform PC {
     float smoothness;  // penalty per pixel of deviation from the prediction
     float zeroBias;    // penalty per pixel of absolute displacement
     float gradWeight;  // weight of the gradient-constancy term (0 = plain luma SAD)
+    float censusWeight;// weight of the census re-ranking term (0 = off)
+    float censusMargin;// relative cost margin that triggers a re-ranking
 } pc;
 
 shared float refBlk[RB * RB];
 shared float tgt[REG * REG];
 shared float qsad[4][MAXCAND];
-shared float sCost[NT];
-shared int   sIdx[NT];
+shared uint  refCen[NT];               // census of the 8x8 block interior
+shared uint  tgtCen[(REG - 2) * (REG - 2)];  // census of the staged target interior
+shared float sCost2[MAXCAND + 1];      // full per-candidate cost
 shared ivec2 sBase;
+
+// Neighbour order for the 8-bit census (3x3 minus the centre).
+const ivec2 kCenOff[8] = ivec2[8](ivec2(-1, -1), ivec2(0, -1), ivec2(1, -1), ivec2(-1, 0),
+                                  ivec2(1, 0), ivec2(-1, 1), ivec2(0, 1), ivec2(1, 1));
 
 float loadRef(ivec2 p) { return imageLoad(refImg, clamp(p, ivec2(0), pc.size - 1)).r; }
 float loadTgt(ivec2 p) { return imageLoad(tgtImg, clamp(p, ivec2(0), pc.size - 1)).r; }
+
+// Mean census Hamming distance (0..1) between the reference block and the
+// target region at candidate offset d (in staged-region pixels).
+float censusHamming(ivec2 d, int regG) {
+    int tc = regG - 2;
+    uint acc = 0u;
+    for (int y = 0; y < BS; ++y)
+        for (int x = 0; x < BS; ++x)
+            acc += uint(bitCount(refCen[y * BS + x] ^ tgtCen[(y + d.y) * tc + (x + d.x)]));
+    return float(acc) * (1.0 / float(NT * 8));
+}
 
 void main() {
     ivec2 blk = ivec2(gl_WorkGroupID.xy);
@@ -91,6 +118,32 @@ void main() {
         tgt[i] = loadTgt(regOrigin + o);
     }
     barrier();
+
+    // Census (rank transform) of the staged tiles; the 1-pixel gradient border
+    // doubles as the census border. Uniform branch: censusWeight is a push
+    // constant. The barrier after the quadrant costs below also publishes this.
+    if (pc.censusWeight > 0.0) {
+        {
+            int px = tid & (BS - 1), py = tid / BS;
+            float c = refBlk[(py + 1) * RB + (px + 1)];
+            uint bits = 0u;
+            for (int k = 0; k < 8; ++k) {
+                float n = refBlk[(py + 1 + kCenOff[k].y) * RB + (px + 1 + kCenOff[k].x)];
+                bits |= (n >= c ? 1u : 0u) << k;
+            }
+            refCen[tid] = bits;
+        }
+        for (int i = tid; i < (regG - 2) * (regG - 2); i += NT) {
+            int px = i % (regG - 2), py = i / (regG - 2);
+            float c = tgt[(py + 1) * regG + (px + 1)];
+            uint bits = 0u;
+            for (int k = 0; k < 8; ++k) {
+                float n = tgt[(py + 1 + kCenOff[k].y) * regG + (px + 1 + kCenOff[k].x)];
+                bits |= (n >= c ? 1u : 0u) << k;
+            }
+            tgtCen[i] = bits;
+        }
+    }
 
     // Partial costs: quadrant q = tid / 16, candidates c = tid % 16 + 16k.
     // Candidate `ncand` is "no motion" (always considered so that static HUD
@@ -138,34 +191,52 @@ void main() {
     }
     barrier();
 
-    float best = 1e30;
-    int bestIdx = 0;
+    // Full per-candidate costs (luma SAD + penalties). Slot ncand holds the
+    // zero-motion candidate when it falls outside the window.
     for (int c = tid; c < total; c += NT) {
         float sad = (qsad[0][c] + qsad[1][c] + qsad[2][c] + qsad[3][c]) * (1.0 / float(NT));
-        float cost;
         if (c < ncand) {
             ivec2 d = ivec2(c % W, c / W);
             vec2 disp = vec2(base + d - R);
-            cost = sad + pc.smoothness * length(vec2(d - R)) + pc.zeroBias * length(disp);
+            sCost2[c] = sad + pc.smoothness * length(vec2(d - R)) + pc.zeroBias * length(disp);
         } else {
-            cost = sad;
+            sCost2[c] = sad;
         }
-        if (cost < best) { best = cost; bestIdx = c; }
     }
-    sCost[tid] = best;
-    sIdx[tid] = bestIdx;
     barrier();
 
-    for (int s = NT / 2; s > 0; s >>= 1) {
-        if (tid < s && sCost[tid + s] < sCost[tid]) {
-            sCost[tid] = sCost[tid + s];
-            sIdx[tid] = sIdx[tid + s];
+    // Winner and runner-up: lowest cost, first index on a tie (deterministic;
+    // the zero-motion candidate sits last so it wins ties least). Computed
+    // redundantly by every thread, so no extra broadcast is needed.
+    float best = 1e30, second = 1e30;
+    int bestIdx = 0;
+    for (int c = 0; c < total; ++c) {
+        float v = sCost2[c];
+        if (v < best) { second = best; best = v; bestIdx = c; }
+        else if (v < second) second = v;
+    }
+
+    // Ambiguity re-ranking: a runner-up within the margin means luma SAD does
+    // not discriminate; let the census (structure, not brightness) decide among
+    // the near-winners. The extra zero-motion candidate is not re-ranked: the
+    // zero bias already protects static content, and static blocks are
+    // confident winners anyway.
+    if (pc.censusWeight > 0.0) {
+        float margin = pc.censusMargin * max(best, 0.02);
+        if (second < best + margin) {
+            int bi = bestIdx;
+            float bc = 1e30;
+            for (int c = 0; c < ncand; ++c) {
+                if (sCost2[c] >= best + margin) continue;
+                float cc = sCost2[c] + pc.censusWeight * censusHamming(ivec2(c % W, c / W), regG);
+                if (cc < bc) { bc = cc; bi = c; }
+            }
+            bestIdx = bi;
         }
-        barrier();
     }
 
     if (tid == 0) {
-        int bi = sIdx[0];
+        int bi = bestIdx;
         ivec2 d = (bi >= ncand) ? -base : ivec2(bi % W, bi / W) - R;  // block displacement in this level's pixels
         vec2 flow = (bi >= ncand) ? vec2(0.0) : vec2(base + d);
         // The cost output feeds scene-cut detection, whose thresholds are tuned
@@ -176,6 +247,6 @@ void main() {
             for (int x = 0; x < BS; ++x)
                 lumaSad += abs(refBlk[(y + 1) * RB + (x + 1)] - loadTgt(origin + ivec2(x, y) + base + d));
         imageStore(flowOut, blk, vec4(flow, 0.0, 0.0));
-        imageStore(costOut, blk, vec4(lumaSad * (1.0 / float(NT))));
+        imageStore(costOut, blk, vec4(lumaSad * (1.0 / float(NT)), 0.0, 0.0, 0.0));
     }
 }
