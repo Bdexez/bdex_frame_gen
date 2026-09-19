@@ -135,6 +135,12 @@ The installation drops:
 
 Uninstall: `tools/uninstall.sh`.
 
+> **Windows** (native-Vulkan games and emulators): the layer also builds as a
+> Windows DLL — register it with `tools\register-layer.ps1`, then enable it
+> per game from Steam's launch options
+> (`cmd /c "set BDEX_FG=1 && %command%"`). See
+> [`docs/windows-README.md`](docs/windows-README.md).
+
 <details>
 <summary>Manual build</summary>
 

@@ -69,5 +69,6 @@ Write-Host "  Registry : $keyPath"
 Write-Host ''
 Write-Host 'Verify with:  vulkaninfo --summary    (should list VK_LAYER_BDEX_framegen)'
 Write-Host 'Config file:  %APPDATA%\bdex-framegen\bdex-framegen.conf   (enabled=1 to turn on)'
+Write-Host 'Steam launch options:  cmd /c "set BDEX_FG=1 && %command%"   (per game, no config file needed)'
 Write-Host 'Logs: stderr by default; set log_file in the config, e.g. log_file=%TEMP%\bdex-fg.log'
 Write-Host 'Unload without uninstalling: set BDEX_FG_DISABLE=1 in the environment.'
