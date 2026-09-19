@@ -111,10 +111,25 @@ a Windows machine.
 
 ### Optical-flow quality
 
-- The weak regime is **fast motion** (~23.6 dB in the eval). Identified next
-  step (not started): a more discriminative matching cost, or a matcher that
-  models rotation/scale. Prior A/B experiments and rejections are recorded in
-  the session notes.
+- The weak regime is **fast motion** (~23.6 dB in the eval). The eval harness
+  (`tools/run_eval.sh`) is fixed and reproduces the baseline (31.0 / 23.7 dB at
+  normal / `--speed 2`).
+- A round of matcher A/B (2026-09-15) found the fast case is a *matching-cost
+  ambiguity* problem, not range or regularisation: `levels=5` is byte-identical
+  and both smoothness directions hurt. Three fixes were measured; none is a
+  clean win, because everything that adds discrimination also degrades the
+  static/small-motion case the current tuning nails:
+  - **Gradient-constancy term** — fast +0.5 dB but normal −2.1 (the grad term
+    inflates the SAD scale so the additive regularisation goes slack). Shipped
+    as an **opt-in `grad_weight` knob (default 0 = unchanged, bit-for-bit)** for
+    motion-heavy games; whole-frame PSNR likely understates its anti-tearing
+    benefit (tearing is localised to moving edges).
+  - Sub-pixel parabolic refinement: −0.1 both (synthesis already samples flow
+    bilinearly). Adaptive zero-bias: only +0.16 fast (SAD-zero is a poor
+    "is-moving" discriminator).
+- Identified next step (not started): decouple the discriminative signal from
+  the additive regularisation — a **census/rank-transform pyramid** as a
+  separate pass — or a matcher that models rotation/scale.
 
 ---
 
