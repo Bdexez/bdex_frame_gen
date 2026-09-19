@@ -95,7 +95,6 @@ a Windows machine.
 - **Phase 3**: a Windows config tool (there is currently **no** Windows GUI —
   the GTK panel is Linux-only), Authenticode signing, a Windows section in the
   README.
-- No **Linux** CI yet (unit + integration tests still run by hand).
 
 ### Windows mode 2 (capture-based product, multiplayer-safe)
 
@@ -144,6 +143,50 @@ a Windows machine.
   marginally a *candidate-selection* problem; the next lever to try is on the
   synthesis side (occlusion handling in the interpolation) or a matcher that
   models rotation/scale.
+- **Synthesis-side round (2026-09-20, measured, no change shipped):** four
+  interpolation variants were A/B-tested on the eval harness (balanced preset,
+  RTX 3060 Ti, baseline **28.91 dB normal / 23.52 dB fast**; at `quality`:
+  30.25 / 23.57, close to the published 31.0 / 23.7):
+  - forward/backward-consistency penalty added to each candidate's
+    photometric error (the signal the extrapolation branch already uses):
+    0.25 → 26.47 / 22.13; 0.1 → 28.65 / 23.44 — the inconsistency signal is
+    too noisy at reduced flow resolution;
+  - "best-candidate" fallback instead of the cross-fade where neither
+    candidate explains the pixel: 28.30 / 22.98 (hard switching ghosts more
+    than the cross-fade);
+  - sharper candidate weights (1/e³ instead of 1/e²): 28.92 / 23.52 —
+    byte-identical outcome, the weights already saturate to a hard pick;
+  - tighter cross-fade thresholds (0.08–0.18 instead of 0.12–0.25):
+    28.81 / 23.49.
+  An error-map analysis of the fast case shows the residual error is
+  concentrated entirely on the fast *rotating* objects, where the flow itself
+  is wrong — confirming the synthesis side cannot recover it.
+- **Matcher rotation/scale round (2026-09-20, shipped as opt-in
+  `rot_weight`, default 0 = bit-for-bit):** the top-2 displacements of an
+  ambiguous, non-static block are re-evaluated under 15 local transforms
+  (3 scales × 5 angles, sampled bilinearly from the staged tile) and the
+  winner switches only on a clear improvement; the flow output stays a
+  translation. Measured on the eval (RTX 3060 Ti): **+0.25 dB normal, +0.32 dB
+  fast (`--speed 2`), +0.11 dB at `--speed 2.5`** at `balanced`, +0.28 dB fast
+  at `quality` — the first matcher change that is non-negative in *both*
+  regimes (static scenes skip the re-ranking by construction). A gate on
+  ambiguity is required: without it the fast case regresses (−0.2 dB). Stays
+  opt-in until validated on more real titles; candidate next steps are more
+  angles/scales, top-3 re-ranking, or an affine output (non-translational
+  flow) so the synthesis can warp with the transform instead of only
+  re-ranking with it. **Combining it with `census_weight` was measured and
+  rejected (2026-09-20):** both broad (`2`/`1` → 28.52 / 23.67) and tight
+  (`0.5`/`0.05` → 29.03 / 23.82) census settings are dominated by
+  `rot_weight` alone (29.16 / 23.84) — the census re-ranking perturbs winners
+  the rotation re-ranking then cannot repair, so the two knobs should not be
+  combined.
+- **Linux CI (2026-09-20, `.github/workflows/linux.yml`):** every push builds
+  the layer and demo, runs the unit + integration tests (under Xvfb, on
+  lavapipe — the runners have no GPU) and gates the PSNR quality eval
+  (fail below 27 dB normal / 22 dB fast at `balanced`, a few dB under the
+  ≈28.9 / ≈23.5 baselines to leave margin for software-renderer noise). This
+  replaces the hand-run test suite and protects the matcher quality numbers
+  against regressions.
 
 ---
 

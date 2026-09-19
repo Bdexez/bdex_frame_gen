@@ -1,0 +1,60 @@
+# Linux CI: build, unit + integration tests, and the PSNR quality eval as a
+# regression gate. No GPU on the runners: the demo runs on lavapipe (Mesa's
+# software Vulkan) under Xvfb; the demo scene is deterministic, so the
+# measured PSNR is a stable reference point (see tools/run_eval.sh). The
+# thresholds below are a few dB under the measured baselines (≈28.9 dB
+# normal / ≈23.5 dB at --speed 2, balanced preset) to catch regressions
+# without flaking on software-renderer noise.
+name: linux
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # Mesa lavapipe (software Vulkan) — the runners have no real GPU.
+  VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake g++ pkg-config glslc-tools libvulkan-dev vulkan-tools \
+            mesa-vulkan-drivers libglfw3-dev xvfb python3-numpy python3-pil
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j
+
+      # Unit tests run headless; the integration test (demo through the
+      # layer, checks the doubled frame rate) needs a display, hence Xvfb.
+      - name: Tests
+        run: xvfb-run -a ctest --test-dir build --output-on-failure
+
+      # Quality regression gate: PSNR of the generated frames against the
+      # 60 fps ground truth, normal and fast-motion scenes.
+      - name: Quality eval
+        run: |
+          normal="$(xvfb-run -a tools/run_eval.sh build 40 | awk '/^  mean/{print $2; exit}')"
+          fast="$(xvfb-run -a env BDEX_EVAL_ARGS='--speed 2' tools/run_eval.sh build 40 | awk '/^  mean/{print $2; exit}')"
+          echo "PSNR normal: ${normal} dB, fast: ${fast} dB"
+          python3 - "$normal" "$fast" <<'EOF'
+          import sys
+          normal, fast = float(sys.argv[1]), float(sys.argv[2])
+          failures = []
+          if normal < 27.0: failures.append(f"normal {normal:.2f} < 27.0 dB")
+          if fast < 22.0:   failures.append(f"fast {fast:.2f} < 22.0 dB")
+          if failures:
+              print("quality regression:", "; ".join(failures)); sys.exit(1)
+          EOF

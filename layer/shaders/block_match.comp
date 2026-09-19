@@ -28,13 +28,33 @@
 // luma-SAD pass (same costs, same comparisons, same tie-breaking); only the
 // opt-in path uses the sequential winner/runner-up scan.
 //
+// Rotation/scale re-ranking (when rotWeight > 0): plain translation SAD
+// cannot tell apart the near-winners of an ambiguous match on rotating or
+// scaling content — every candidate is evaluated as a pure shift. When the
+// winner is ambiguous (runner-up within ~4% of the winner), the top-2
+// displacements are re-evaluated under a small set of local transforms
+// (rotations x scales about the block centre, sampled bilinearly from the
+// staged tile) and the winner is switched only if a transformed candidate
+// beats it by a clear margin (2%). The flow output stays a translation — the
+// transform only re-ranks candidates. Blocks whose winner already explains
+// the content (low SAD, i.e. static / small motion) skip the re-ranking, and
+// with rotWeight = 0 the pass is bit-for-bit identical to plain matching.
+//
 // Output flow is the displacement (in pixels of this level) that maps a
 // position in the reference image to the matching position in the target.
 #include "common.glsl"
 
 #define BS   8
 #define MAXR 4
-#define REG  (BS + 2 * MAXR + 2)   // staged target region, +2 for the gradient border
+#define ROTANC 3                       // staged-tile border (pixels) when rotation re-ranking is on
+#define REG  (BS + 2 * MAXR + 2 * ROTANC)  // staged target region, incl. border
+#define ROT_S 3                        // scales: 0.92, 1.0, 1.08
+#define ROT_A 5                        // angles: -30, -10, 0, 10, 30 degrees
+#define NROT (ROT_S * ROT_A)
+#define ROT_ID (1 * ROT_A + 2)         // index of the identity transform (scale 1, angle 0)
+
+const float kRotScale[ROT_S] = float[ROT_S](0.92, 1.0, 1.08);
+const float kRotAngle[ROT_A] = float[ROT_A](-30.0, -10.0, 0.0, 10.0, 30.0);
 #define RB   (BS + 2)              // staged reference block, +2 for the gradient border
 #define NT   (BS * BS)
 #define MAXCAND ((2 * MAXR + 1) * (2 * MAXR + 1) + 1)  // + the zero-motion candidate
@@ -56,7 +76,8 @@ layout(push_constant) uniform PC {
     float zeroBias;    // penalty per pixel of absolute displacement
     float gradWeight;  // weight of the gradient-constancy term (0 = plain luma SAD)
     float censusWeight;// weight of the census re-ranking term (0 = off)
-    float censusMargin;// relative cost margin that triggers a re-ranking
+    float censusMargin;// relative cost margin that makes a match ambiguous
+    float rotWeight;   // rotation/scale re-ranking of ambiguous winners (0 = off)
 } pc;
 
 shared float refBlk[RB * RB];
@@ -67,6 +88,8 @@ shared int   sIdx[NT];
 shared uint  refCen[NT];               // census of the 8x8 block interior
 shared uint  tgtCen[(REG - 2) * (REG - 2)];  // census of the staged target interior
 shared float sCost2[MAXCAND + 1];      // full per-candidate cost
+shared float rpix[2][NROT][NT];        // per-pixel costs of the rotated re-evaluation
+shared float rsum[2][NROT];            // block sums of rpix
 shared ivec2 sBase;
 
 // Neighbour order for the 8-bit census (3x3 minus the centre).
@@ -77,9 +100,10 @@ float loadRef(ivec2 p) { return imageLoad(refImg, clamp(p, ivec2(0), pc.size - 1
 float loadTgt(ivec2 p) { return imageLoad(tgtImg, clamp(p, ivec2(0), pc.size - 1)).r; }
 
 // Mean census Hamming distance (0..1) between the reference block and the
-// target region at candidate offset d (in staged-region pixels).
-float censusHamming(ivec2 d, int regG) {
-    int tc = regG - 2;
+// target region at candidate offset d (in staged-region pixels). `border` is
+// the staged tile's border (1, or ROTANC when rotation re-ranking is on).
+float censusHamming(ivec2 d, int regG, int border) {
+    int tc = regG - 2 * border;
     uint acc = 0u;
     for (int y = 0; y < BS; ++y)
         for (int x = 0; x < BS; ++x)
@@ -94,7 +118,9 @@ void main() {
     ivec2 origin = blk * BS;
     int R = clamp(pc.radius, 1, MAXR);
     int W = 2 * R + 1;
-    int regG = BS + 2 * R + 2;      // dynamic staged region side (incl. gradient border)
+    bool rotOn = pc.rotWeight > 0.0;
+    int anc = rotOn ? ROTANC : 1;   // staged-tile border: wider when the rotation re-ranking samples beyond the block
+    int regG = BS + 2 * R + 2 * anc;      // dynamic staged region side (incl. borders)
     int ncand = W * W;
     float gw = pc.gradWeight;
 
@@ -114,8 +140,10 @@ void main() {
     barrier();
 
     ivec2 base = sBase;
-    // Target region with a 1-pixel gradient border, top-left at origin+base-R-1.
-    ivec2 regOrigin = origin + base - R - 1;
+    // Target region staged with a border (1 px normally, ROTANC when the
+    // rotation re-ranking samples rotated positions), top-left at
+    // origin+base-R-anc.
+    ivec2 regOrigin = origin + base - R - anc;
     for (int i = tid; i < regG * regG; i += NT) {
         ivec2 o = ivec2(i % regG, i / regG);
         tgt[i] = loadTgt(regOrigin + o);
@@ -136,12 +164,12 @@ void main() {
             }
             refCen[tid] = bits;
         }
-        for (int i = tid; i < (regG - 2) * (regG - 2); i += NT) {
-            int px = i % (regG - 2), py = i / (regG - 2);
-            float c = tgt[(py + 1) * regG + (px + 1)];
+        for (int i = tid; i < (regG - 2 * anc) * (regG - 2 * anc); i += NT) {
+            int px = i % (regG - 2 * anc), py = i / (regG - 2 * anc);
+            float c = tgt[(py + anc) * regG + (px + anc)];
             uint bits = 0u;
             for (int k = 0; k < 8; ++k) {
-                float n = tgt[(py + 1 + kCenOff[k].y) * regG + (px + 1 + kCenOff[k].x)];
+                float n = tgt[(py + anc + kCenOff[k].y) * regG + (px + anc + kCenOff[k].x)];
                 bits |= (n >= c ? 1u : 0u) << k;
             }
             tgtCen[i] = bits;
@@ -166,7 +194,7 @@ void main() {
                 for (int x = 0; x < 4; ++x) {
                     int bx = qo.x + x;
                     int ri = (by + 1) * RB + (bx + 1);
-                    int ti = (d.y + by + 1) * regG + (d.x + bx + 1);
+                    int ti = (d.y + by + anc) * regG + (d.x + bx + anc);
                     sad += abs(refBlk[ri] - tgt[ti]);
                     if (gw > 0.0) {
                         vec2 rg = vec2(refBlk[ri + 1] - refBlk[ri - 1], refBlk[ri + RB] - refBlk[ri - RB]);
@@ -208,22 +236,31 @@ void main() {
     }
     barrier();
 
-    // Winner selection. censusWeight = 0: the original per-thread minimum over
-    // strided candidates plus the tree reduction — bit-for-bit identical to
-    // the plain luma-SAD pass from before the census term existed. censusWeight
-    // > 0: a sequential scan for the winner and the runner-up (first index on
-    // a tie; the zero-motion candidate sits last so it wins ties least),
-    // computed redundantly by every thread so no extra broadcast is needed.
-    int bestIdx;
-    if (pc.censusWeight > 0.0) {
-        float best = 1e30, second = 1e30;
-        bestIdx = 0;
-        for (int c = 0; c < total; ++c) {
-            float v = sCost2[c];
-            if (v < best) { second = best; best = v; bestIdx = c; }
-            else if (v < second) second = v;
-        }
+    // Winner and runner-up: lowest cost, first index on a tie (deterministic;
+    // the zero-motion candidate sits last so it wins ties least). Computed
+    // redundantly by every thread, so no extra broadcast is needed. This scan
+    // supplies the runner-up (secondIdx/second) that the rotation re-ranking
+    // needs; the winner it finds does NOT decide the output on its own — at
+    // censusWeight = 0 the bit-for-bit tree reduction below overrides bestIdx
+    // (AGENTS.md §6), and at censusWeight > 0 the census rerank does.
+    float best = 1e30, second = 1e30;
+    int bestIdx = 0, secondIdx = -1;
+    for (int c = 0; c < total; ++c) {
+        float v = sCost2[c];
+        if (v < best) { second = best; secondIdx = bestIdx; best = v; bestIdx = c; }
+        else if (v < second) { second = v; secondIdx = c; }
+    }
 
+    // Displacement of a candidate slot in this level's pixels (the zero-motion
+    // slot `ncand` means "no motion").
+#define DISPOF(c) ((c) >= ncand ? ivec2(0) : base + ivec2((c) % W, (c) / W) - R)
+
+    // Winner selection proper. censusWeight = 0: the original per-thread minimum
+    // over strided candidates plus the tree reduction — bit-for-bit identical to
+    // the plain luma-SAD pass from before the census term existed (the scan
+    // above only supplies the runner-up, never the output). censusWeight > 0:
+    // re-rank the ambiguous near-winners on census structure.
+    if (pc.censusWeight > 0.0) {
         // Ambiguity re-ranking: a runner-up within the margin means luma SAD
         // does not discriminate; let the census (structure, not brightness)
         // decide among the near-winners. The extra zero-motion candidate is
@@ -235,7 +272,7 @@ void main() {
             float bc = 1e30;
             for (int c = 0; c < ncand; ++c) {
                 if (sCost2[c] >= best + margin) continue;
-                float cc = sCost2[c] + pc.censusWeight * censusHamming(ivec2(c % W, c / W), regG);
+                float cc = sCost2[c] + pc.censusWeight * censusHamming(ivec2(c % W, c / W), regG, anc);
                 if (cc < bc) { bc = cc; bi = c; }
             }
             bestIdx = bi;
@@ -259,19 +296,85 @@ void main() {
         }
         bestIdx = sIdx[0];
     }
+    // Final output displacement of the winner (the census=0 tree reduction or
+    // the census>0 rerank set bestIdx above); the rotation re-ranking may
+    // override it below. Set here, after selection, so the bit-for-bit census=0
+    // path uses the tree-reduction winner and nothing else.
+    ivec2 outDisp = DISPOF(bestIdx);
+    // Rotation/scale re-ranking: when the winner is ambiguous (runner-up
+    // close behind) and does not already explain the block well, the top-2
+    // displacements are re-evaluated under local rotations and scales about
+    // the block centre — a rotating object scores a much better SAD under its
+    // true transform than any pure shift. The flow output stays a translation;
+    // the transform only decides which translation wins. Uniform branch.
+    if (rotOn && bestIdx < ncand && secondIdx >= 0 && second < best * 1.50 && best > 0.02) {
+        ivec2 dd[2];
+        dd[0] = outDisp;
+        dd[1] = secondIdx >= 0 ? DISPOF(secondIdx) : ivec2(0);
+        int nj = (secondIdx >= 0 && dd[1] != dd[0]) ? 2 : 1;
+        int px = tid & (BS - 1), py = tid >> 3;
+        float rv = refBlk[(py + 1) * RB + (px + 1)];
+        vec2 q = vec2(px, py) - 3.5;
+        for (int j = 0; j < nj; ++j)
+            for (int k = 0; k < NROT; ++k) {
+                float sc = kRotScale[k / ROT_A];
+                float th = radians(kRotAngle[k % ROT_A]);
+                vec2 p = (sc == 1.0 && th == 0.0) ? q
+                        : sc * vec2(cos(th) * q.x - sin(th) * q.y, sin(th) * q.x + cos(th) * q.y);
+                // Sample position in staged-tile pixels: anchor at origin+base-R-anc.
+                vec2 pos = vec2(R + anc) + vec2(dd[j]) + 3.5 + p;
+                float tv;
+                if (sc == 1.0 && th == 0.0) {
+                    // Identity transform: integer sampling, exactly the first
+                    // pass's evaluation of the same displacement.
+                    ivec2 ip = ivec2(round(pos));
+                    tv = tgt[ip.y * regG + ip.x];
+                } else {
+                    vec2 fl = floor(pos), f = pos - fl;
+                    ivec2 i0 = ivec2(fl);
+                    i0 = clamp(i0, ivec2(0), ivec2(regG - 2));
+                    float t00 = tgt[i0.y * regG + i0.x];
+                    float t10 = tgt[i0.y * regG + i0.x + 1];
+                    float t01 = tgt[(i0.y + 1) * regG + i0.x];
+                    float t11 = tgt[(i0.y + 1) * regG + i0.x + 1];
+                    tv = mix(mix(t00, t10, f.x), mix(t01, t11, f.x), f.y);
+                }
+                rpix[j][k][tid] = abs(rv - tv);
+            }
+        barrier();
+        if (tid < 2 * NROT) {
+            int j = tid / NROT, k = tid % NROT;
+            if (j < nj) {
+                float s = 0.0;
+                for (int i = 0; i < NT; ++i) s += rpix[j][k][i];
+                rsum[j][k] = s;
+            }
+        }
+        barrier();
+        // The identity evaluation of the winner is the control; a transformed
+        // candidate must beat the running best by 2% to switch, and the
+        // winner's displacement is preferred on ties (it is scanned first).
+        int bj = 0, bk = ROT_ID;
+        float bv = rsum[0][ROT_ID];
+        for (int j = 0; j < nj; ++j)
+            for (int k = 0; k < NROT; ++k) {
+                if (j == 0 && k == ROT_ID) continue;
+                float v = rsum[j][k] * (1.0 + 0.03 * float(j));
+                if (v < bv * 0.995) { bv = v; bj = j; bk = k; }
+            }
+        outDisp = dd[bj];
+    }
+#undef DISPOF
 
     if (tid == 0) {
-        int bi = bestIdx;
-        ivec2 d = (bi >= ncand) ? -base : ivec2(bi % W, bi / W) - R;  // block displacement in this level's pixels
-        vec2 flow = (bi >= ncand) ? vec2(0.0) : vec2(base + d);
         // The cost output feeds scene-cut detection, whose thresholds are tuned
         // against plain luma SAD; recompute the winner's luma-only SAD rather
         // than exporting the (gradient-inflated) combined cost.
         float lumaSad = 0.0;
         for (int y = 0; y < BS; ++y)
             for (int x = 0; x < BS; ++x)
-                lumaSad += abs(refBlk[(y + 1) * RB + (x + 1)] - loadTgt(origin + ivec2(x, y) + base + d));
-        imageStore(flowOut, blk, vec4(flow, 0.0, 0.0));
+                lumaSad += abs(refBlk[(y + 1) * RB + (x + 1)] - loadTgt(origin + ivec2(x, y) + outDisp));
+        imageStore(flowOut, blk, vec4(vec2(outDisp), 0.0, 0.0));
         imageStore(costOut, blk, vec4(lumaSad * (1.0 / float(NT)), 0.0, 0.0, 0.0));
     }
 }

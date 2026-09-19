@@ -52,6 +52,9 @@ TEST(config_apply_values) {
     CHECK(c.apply("CENSUS_MARGIN", "0.1") && c.censusMargin == 0.1f);
     CHECK(c.apply("census_weight", "9") && c.censusWeight == 8.f);   // clamped
     CHECK(c.apply("grad_weight", "1") && c.gradWeight == 1.0f);
+    CHECK(c.apply("rot_weight", "0.5") && c.rotWeight == 0.5f);
+    CHECK(c.apply("ROT_WEIGHT", "1") && c.rotWeight == 1.0f);
+    CHECK(c.apply("rot_weight", "9") && c.rotWeight == 1.f);   // clamped
 }
 
 TEST(config_rejects_garbage) {

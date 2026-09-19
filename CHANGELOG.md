@@ -8,6 +8,30 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Linux CI** (`.github/workflows/linux.yml`): every push builds the layer
+  and demo on Ubuntu, runs the unit + integration tests under Xvfb on
+  lavapipe (software Vulkan — the runners have no GPU) and gates the PSNR
+  quality eval, failing below 27 dB normal / 22 dB fast (`balanced`, a few dB
+  under the measured baselines to leave margin for renderer noise).
+
+- **Rotation/scale re-ranking for the block matcher** (opt-in `rot_weight`,
+  default 0 = bit-for-bit off): when a block's match is ambiguous (runner-up
+  within 50% of the winner) and the winner does not explain the block well
+  (mean SAD above 0.02), the top-2 displacements are re-evaluated under 15
+  local transforms — scales 0.92/1.0/1.08 × angles −30/−10/0/+10/+30° about
+  the block centre, sampled bilinearly from the tile already staged in shared
+  memory — and the winner is switched only if a transformed candidate beats
+  it by 0.5%. The flow output stays a translation; the transform only
+  re-ranks candidates, so the extra cost is paid only on ambiguous,
+  non-static blocks. Measured on the quality eval (2026-09-20, RTX 3060 Ti,
+  vs the same build with `rot_weight=0`): **+0.25 dB normal, +0.32 dB fast
+  motion (`--speed 2`), +0.11 dB at `--speed 2.5`** at `balanced` (+0.28 dB
+  fast at `quality`) — a consistent gain on both regimes, unlike the
+  opt-in `grad_weight`/`census_weight` knobs. Unlike those two it is also
+  non-negative on static scenes by construction (confident and static blocks
+  skip the re-ranking), but it stays opt-in until validated on more titles:
+  `rot_weight = 1` globally or in a game's config section.
+
 - **Census re-ranking for the block matcher** (opt-in `census_weight`, default
   0 = bit-for-bit off; `census_margin`, default 0.05): when the runner-up
   candidate scores within the margin of the winner, the near-winners are
