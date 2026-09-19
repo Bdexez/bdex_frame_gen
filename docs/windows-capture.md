@@ -215,9 +215,11 @@ the game's own cursor.
 
 **Phase 3 — product.**
 - Config window ✅ (v1: running `bdex_capture.exe` with no arguments opens a
-  native launcher — window picker, generation/upscale/presentation/HUD
-  options, persisted to the shared config file; `capture/src/launcher.{h,cpp}`,
-  Win32, no toolkit). Remaining: global hotkey, per-game profiles, tray,
+  native launcher — window picker, generation/upscale/presentation/HUD options
+  plus an **Advanced optical-flow group** (grad_weight, scene-cut thresholds,
+  smoothness, zero_bias, search_fine, flow_iterations), persisted to the shared
+  config file; `capture/src/launcher.{h,cpp}`, Win32, no toolkit). Remaining:
+  global hotkey, per-game profiles, tray,
   DupliAPI fallback, fullscreen/borderless handling, HDR, VRR, multi-GPU.
 - Installer + signing + docs.
 

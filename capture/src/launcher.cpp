@@ -193,8 +193,10 @@ std::string globalConfigValue(const std::string& want) {
 // Keys the launcher manages in the global scope; a stale one not present in
 // the new set is removed from the file (preset / present_mode = "auto").
 static bool managedKey(const std::string& key) {
-    static const char* kManaged[] = {"preset",       "multiplier", "mode",   "present_mode",
-                                     "upscale_filter", "sharpness", "overlay", "hud"};
+    static const char* kManaged[] = {"preset",        "multiplier",  "mode",      "present_mode",
+                                     "upscale_filter", "sharpness",  "overlay",   "hud",
+                                     "grad_weight",   "smoothness",  "zero_bias", "search_fine",
+                                     "flow_iterations", "scene_cut_low", "scene_cut_high"};
     for (const char* m : kManaged)
         if (key == m) return true;
     return false;
@@ -265,6 +267,13 @@ enum {
     ID_SHARP,
     ID_FIFO,
     ID_HUD,
+    ID_GRAD,
+    ID_SCLOW,
+    ID_SCHIGH,
+    ID_SMOOTH,
+    ID_ZBIAS,
+    ID_SFINE,
+    ID_FITER,
 };
 
 const wchar_t* const kPresets[] = {L"Auto", L"Qualité", L"Équilibré", L"Performance"};
@@ -280,6 +289,8 @@ struct Ui {
     HWND lb = nullptr, gen = nullptr, preset = nullptr, mult = nullptr, mode = nullptr;
     HWND size = nullptr, scaleEd = nullptr, filter = nullptr, sharpEd = nullptr;
     HWND fifo = nullptr, hud = nullptr;
+    HWND grad = nullptr, scLow = nullptr, scHigh = nullptr, smooth = nullptr;
+    HWND zbias = nullptr, sfine = nullptr, fiter = nullptr;
 };
 
 int sel(HWND combo) {
@@ -293,6 +304,21 @@ int readInt(HWND edit, int fallback) {
     wchar_t* end = nullptr;
     const long v = wcstol(buf, &end, 10);
     return end && end != buf ? static_cast<int>(v) : fallback;
+}
+
+float readFloat(HWND edit, float fallback) {
+    wchar_t buf[32] = {};
+    GetWindowTextW(edit, buf, 32);
+    wchar_t* end = nullptr;
+    const float v = wcstof(buf, &end);
+    return end && end != buf ? v : fallback;
+}
+
+// Formats a number the way the config file expects it (no trailing zeros).
+void setNum(HWND edit, double value) {
+    wchar_t buf[32];
+    swprintf(buf, 32, L"%g", value);
+    SetWindowTextW(edit, buf);
 }
 
 void updateEnabled(Ui& ui) {
@@ -342,6 +368,13 @@ void fillFromChoice(Ui& ui) {
     SendMessageW(ui.filter, CB_SETCURSEL, f, 0);
     SendMessageW(ui.fifo, BM_SETCHECK, c.fifo ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(ui.hud, CB_SETCURSEL, std::clamp(c.hud, 0, 4), 0);
+    setNum(ui.grad, c.gradWeight);
+    setNum(ui.scLow, c.sceneCutLow);
+    setNum(ui.scHigh, c.sceneCutHigh);
+    setNum(ui.smooth, c.smoothness);
+    setNum(ui.zbias, c.zeroBias);
+    setNum(ui.sfine, c.searchFine);
+    setNum(ui.fiter, c.flowIterations);
     updateEnabled(ui);
 }
 
@@ -357,6 +390,22 @@ void persist(const LaunchChoice& c) {
     kv.emplace_back("overlay", std::to_string(c.hud));
     if (!c.preset.empty()) kv.emplace_back("preset", c.preset);
     if (c.fifo) kv.emplace_back("present_mode", "fifo");
+    // Advanced flow keys: written only when they differ from the default, so an
+    // untouched panel keeps the file minimal and the engine on its own defaults
+    // (same behaviour as the Linux control panel).
+    auto addNum = [&](const char* key, double value, double def) {
+        char a[32], b[32];
+        std::snprintf(a, sizeof a, "%g", value);
+        std::snprintf(b, sizeof b, "%g", def);
+        if (std::string(a) != std::string(b)) kv.emplace_back(key, a);
+    };
+    addNum("grad_weight", c.gradWeight, 0.0);
+    addNum("smoothness", c.smoothness, 0.004);
+    addNum("zero_bias", c.zeroBias, 0.002);
+    addNum("search_fine", c.searchFine, 2);
+    addNum("flow_iterations", c.flowIterations, 1);
+    addNum("scene_cut_low", c.sceneCutLow, 0.05);
+    addNum("scene_cut_high", c.sceneCutHigh, 0.09);
     if (!saveGlobalConfig(kv)) LOGW("could not write the config file");
 }
 
@@ -381,6 +430,13 @@ void gather(Ui& ui) {
     c.sharpness = std::clamp(readInt(ui.sharpEd, 0), 0, 100) / 100.f;
     c.fifo = SendMessageW(ui.fifo, BM_GETCHECK, 0, 0) == BST_CHECKED;
     c.hud = sel(ui.hud);
+    c.gradWeight = std::clamp(readFloat(ui.grad, 0.f), 0.f, 8.f);
+    c.sceneCutLow = std::clamp(readFloat(ui.scLow, 0.05f), 0.f, 1.f);
+    c.sceneCutHigh = std::clamp(readFloat(ui.scHigh, 0.09f), 0.f, 1.f);
+    c.smoothness = std::clamp(readFloat(ui.smooth, 0.004f), 0.f, 1.f);
+    c.zeroBias = std::clamp(readFloat(ui.zbias, 0.002f), 0.f, 1.f);
+    c.searchFine = std::clamp(readInt(ui.sfine, 2), 1, 4);
+    c.flowIterations = std::clamp(readInt(ui.fiter, 1), 0, 3);
 }
 
 LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -443,8 +499,26 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         add(L"STATIC", L"Compteur de FPS", SS_LEFT, 36, 515, 140, 16, 0);
         ui->hud = combo(180, 512, 292, ID_HUD);
 
-        add(L"BUTTON", L"Démarrer", BS_DEFPUSHBUTTON | WS_TABSTOP, 286, 556, 96, 26, IDOK);
-        add(L"BUTTON", L"Quitter", BS_PUSHBUTTON | WS_TABSTOP, 390, 556, 94, 26, IDCANCEL);
+        // Advanced optical-flow tuning. A plain EDIT (no ES_NUMBER) accepts a
+        // decimal point; the two integer radii use ES_NUMBER.
+        group(L"Réglages avancés", 12, 552, 472, 226);
+        add(L"STATIC", L"Laisser par défaut convient à la plupart des jeux. 0 pour désactiver la netteté.",
+            SS_LEFT, 24, 570, 452, 16, 0);
+        auto advEdit = [&](const wchar_t* label, int y, int id, bool integer) -> HWND {
+            add(L"STATIC", label, SS_LEFT, 36, y + 3, 214, 16, 0);
+            const DWORD st = WS_TABSTOP | WS_BORDER | (integer ? ES_NUMBER : 0);
+            return add(L"EDIT", nullptr, st, 258, y, 90, 23, id);
+        };
+        ui->grad   = advEdit(L"Netteté du mouvement rapide", 592, ID_GRAD, false);
+        ui->scLow  = advEdit(L"Coupure de scène — début du fondu", 618, ID_SCLOW, false);
+        ui->scHigh = advEdit(L"Coupure de scène — image réelle", 644, ID_SCHIGH, false);
+        ui->smooth = advEdit(L"Lissage du mouvement", 670, ID_SMOOTH, false);
+        ui->zbias  = advEdit(L"Stabilité de l'image fixe", 696, ID_ZBIAS, false);
+        ui->sfine  = advEdit(L"Précision de recherche (1–4)", 722, ID_SFINE, true);
+        ui->fiter  = advEdit(L"Itérations de synthèse (0–3)", 748, ID_FITER, true);
+
+        add(L"BUTTON", L"Démarrer", BS_DEFPUSHBUTTON | WS_TABSTOP, 286, 790, 96, 26, IDOK);
+        add(L"BUTTON", L"Quitter", BS_PUSHBUTTON | WS_TABSTOP, 390, 790, 94, 26, IDCANCEL);
 
         for (const wchar_t* s : kPresets)
             SendMessageW(ui->preset, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
@@ -515,7 +589,7 @@ bool runLauncher(LaunchChoice& choice) {
         wc.lpszClassName = cls;
         if (!RegisterClassExW(&wc)) return false;
     }
-    RECT client{0, 0, 496, 594};
+    RECT client{0, 0, 496, 830};
     AdjustWindowRect(&client, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, FALSE);
     RECT wa{};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
