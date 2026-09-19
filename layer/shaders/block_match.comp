@@ -22,10 +22,11 @@
 // scores within censusMargin of the winner, luma SAD alone cannot be trusted.
 // The near-winners are then re-ranked on census Hamming distance — an 8-bit
 // rank transform (bit k = neighbour k >= centre) computed from the staged
-// tiles, which compares local structure instead of brightness. Blocks whose
-// winner is confident are chosen exactly as before, so static / small-motion
-// content is unaffected; with censusWeight = 0 the pass is bit-for-bit
-// identical to plain luma SAD matching.
+// tiles, which compares local structure instead of brightness. When
+// censusWeight = 0 the winner is picked by the original per-thread minimum +
+// tree reduction, so the default path is bit-for-bit identical to the plain
+// luma-SAD pass (same costs, same comparisons, same tie-breaking); only the
+// opt-in path uses the sequential winner/runner-up scan.
 //
 // Output flow is the displacement (in pixels of this level) that maps a
 // position in the reference image to the matching position in the target.
@@ -61,6 +62,8 @@ layout(push_constant) uniform PC {
 shared float refBlk[RB * RB];
 shared float tgt[REG * REG];
 shared float qsad[4][MAXCAND];
+shared float sCost[NT];                // per-thread minima for the tree reduction
+shared int   sIdx[NT];
 shared uint  refCen[NT];               // census of the 8x8 block interior
 shared uint  tgtCen[(REG - 2) * (REG - 2)];  // census of the staged target interior
 shared float sCost2[MAXCAND + 1];      // full per-candidate cost
@@ -205,23 +208,27 @@ void main() {
     }
     barrier();
 
-    // Winner and runner-up: lowest cost, first index on a tie (deterministic;
-    // the zero-motion candidate sits last so it wins ties least). Computed
-    // redundantly by every thread, so no extra broadcast is needed.
-    float best = 1e30, second = 1e30;
-    int bestIdx = 0;
-    for (int c = 0; c < total; ++c) {
-        float v = sCost2[c];
-        if (v < best) { second = best; best = v; bestIdx = c; }
-        else if (v < second) second = v;
-    }
-
-    // Ambiguity re-ranking: a runner-up within the margin means luma SAD does
-    // not discriminate; let the census (structure, not brightness) decide among
-    // the near-winners. The extra zero-motion candidate is not re-ranked: the
-    // zero bias already protects static content, and static blocks are
-    // confident winners anyway.
+    // Winner selection. censusWeight = 0: the original per-thread minimum over
+    // strided candidates plus the tree reduction — bit-for-bit identical to
+    // the plain luma-SAD pass from before the census term existed. censusWeight
+    // > 0: a sequential scan for the winner and the runner-up (first index on
+    // a tie; the zero-motion candidate sits last so it wins ties least),
+    // computed redundantly by every thread so no extra broadcast is needed.
+    int bestIdx;
     if (pc.censusWeight > 0.0) {
+        float best = 1e30, second = 1e30;
+        bestIdx = 0;
+        for (int c = 0; c < total; ++c) {
+            float v = sCost2[c];
+            if (v < best) { second = best; best = v; bestIdx = c; }
+            else if (v < second) second = v;
+        }
+
+        // Ambiguity re-ranking: a runner-up within the margin means luma SAD
+        // does not discriminate; let the census (structure, not brightness)
+        // decide among the near-winners. The extra zero-motion candidate is
+        // not re-ranked: the zero bias already protects static content, and
+        // static blocks are confident winners anyway.
         float margin = pc.censusMargin * max(best, 0.02);
         if (second < best + margin) {
             int bi = bestIdx;
@@ -233,6 +240,24 @@ void main() {
             }
             bestIdx = bi;
         }
+    } else {
+        float best = 1e30;
+        bestIdx = 0;
+        for (int c = tid; c < total; c += NT) {
+            float v = sCost2[c];
+            if (v < best) { best = v; bestIdx = c; }
+        }
+        sCost[tid] = best;
+        sIdx[tid] = bestIdx;
+        barrier();
+        for (int s = NT / 2; s > 0; s >>= 1) {
+            if (tid < s && sCost[tid + s] < sCost[tid]) {
+                sCost[tid] = sCost[tid + s];
+                sIdx[tid] = sIdx[tid + s];
+            }
+            barrier();
+        }
+        bestIdx = sIdx[0];
     }
 
     if (tid == 0) {
