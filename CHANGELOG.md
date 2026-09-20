@@ -11,8 +11,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 - **Linux CI** (`.github/workflows/linux.yml`): every push builds the layer
   and demo on Ubuntu, runs the unit + integration tests under Xvfb on
   lavapipe (software Vulkan — the runners have no GPU) and gates the PSNR
-  quality eval, failing below 27 dB normal / 22 dB fast (`balanced`, a few dB
-  under the measured baselines to leave margin for renderer noise).
+  quality eval, failing below 28.0 dB normal / 23.0 dB fast (`balanced`).
+  lavapipe tracks the hardware baseline to within ~0.04 dB (measured
+  28.87 / 23.49 dB vs 28.91 / 23.52 on a GPU), so the gate sits just under
+  the real numbers — tight enough to catch a matcher regression, with
+  headroom for renderer noise.
 
 - **Rotation/scale re-ranking for the block matcher** (opt-in `rot_weight`,
   default 0 = bit-for-bit off): when a block's match is ambiguous (runner-up
@@ -52,6 +55,20 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   the layer's swapchain virtualisation (the capture product reuses them).
 
 ### Fixed
+
+- **Linux CI brought up green** (bring-up of the workflow above): the
+  `Dependencies` step installed a non-existent package (`glslc-tools`) — the
+  `glslc` binary that `find_program(GLSLC glslc REQUIRED)` needs ships in the
+  `glslc` package on Ubuntu noble. lavapipe is then selected robustly: the ICD
+  path is resolved with a glob (hardcoding `VK_ICD_FILENAMES` at a fixed path
+  made the loader find no driver at all — a bare `vkCreateInstance` -9 — on
+  runner images where the file lives elsewhere) and verified with `vulkaninfo`
+  so a broken environment fails fast. Finally the layer is registered in the
+  global `implicit_layer.d` (the canonical discovery path every loader honours,
+  and how the layer ships) rather than only via `VK_ADD_IMPLICIT_LAYER_PATH`,
+  which some loader builds ignore — so the integration test's demo actually
+  loads the layer instead of running pass-through ("layer did not activate
+  frame generation").
 
 - **Block-match winner selection restored to bit-for-bit at `census_weight=0`.**
   The census commit's sequential winner scan broke cost ties differently from
