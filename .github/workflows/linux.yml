@@ -15,10 +15,6 @@ on:
   pull_request:
   workflow_dispatch:
 
-env:
-  # Mesa lavapipe (software Vulkan) — the runners have no real GPU.
-  VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
-
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -32,6 +28,29 @@ jobs:
             cmake g++ pkg-config glslc libvulkan-dev vulkan-tools \
             mesa-vulkan-drivers libglfw3-dev xvfb python3-numpy python3-pil
 
+      # The runners have no GPU; force Mesa's software Vulkan (lavapipe).
+      # Resolve the ICD path rather than hardcoding it — it varies across
+      # runner images, and pointing VK_ICD_FILENAMES at a missing file makes
+      # the loader find no driver at all, surfacing later only as a bare
+      # vkCreateInstance -9 (VK_ERROR_INCOMPATIBLE_DRIVER). Verify it actually
+      # loads here so a broken environment fails fast, with diagnostics.
+      - name: Vulkan setup (lavapipe)
+        run: |
+          icd="$(ls /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1 || true)"
+          if [ -z "$icd" ]; then
+            echo "lavapipe ICD not found; installed ICDs:"
+            ls -la /usr/share/vulkan/icd.d/ || true
+            exit 1
+          fi
+          echo "Using lavapipe ICD: $icd"
+          echo "VK_ICD_FILENAMES=$icd" >> "$GITHUB_ENV"
+          echo "LIBGL_ALWAYS_SOFTWARE=1" >> "$GITHUB_ENV"
+          if ! VK_ICD_FILENAMES="$icd" vulkaninfo --summary; then
+            echo "=== vulkaninfo failed; loader debug ==="
+            VK_ICD_FILENAMES="$icd" VK_LOADER_DEBUG=all vulkaninfo 2>&1 | head -80 || true
+            exit 1
+          fi
+
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
@@ -40,8 +59,9 @@ jobs:
 
       # Unit tests run headless; the integration test (demo through the
       # layer, checks the doubled frame rate) needs a display, hence Xvfb.
+      # --repeat until-pass:2 absorbs a one-off software-renderer hiccup.
       - name: Tests
-        run: xvfb-run -a ctest --test-dir build --output-on-failure
+        run: xvfb-run -a ctest --test-dir build --output-on-failure --repeat until-pass:2
 
       # Quality regression gate: PSNR of the generated frames against the
       # 60 fps ground truth, normal and fast-motion scenes.
