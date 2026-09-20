@@ -28,7 +28,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake g++ pkg-config glslc-tools libvulkan-dev vulkan-tools \
+            cmake g++ pkg-config glslc libvulkan-dev vulkan-tools \
             mesa-vulkan-drivers libglfw3-dev xvfb python3-numpy python3-pil
 
       - name: Configure
