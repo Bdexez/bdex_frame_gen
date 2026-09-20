@@ -1,10 +1,11 @@
 # Linux CI: build, unit + integration tests, and the PSNR quality eval as a
 # regression gate. No GPU on the runners: the demo runs on lavapipe (Mesa's
 # software Vulkan) under Xvfb; the demo scene is deterministic, so the
-# measured PSNR is a stable reference point (see tools/run_eval.sh). The
-# thresholds below are a few dB under the measured baselines (≈28.9 dB
-# normal / ≈23.5 dB at --speed 2, balanced preset) to catch regressions
-# without flaking on software-renderer noise.
+# measured PSNR is a stable reference point (see tools/run_eval.sh). lavapipe
+# tracks the GPU baseline to within ~0.04 dB (measured 28.87 / 23.49 dB vs
+# 28.91 / 23.52 on hardware, balanced preset), so the thresholds below sit
+# just under it (28.0 normal / 23.0 at --speed 2) — a tight gate that still
+# leaves headroom for renderer noise while catching any matcher regression.
 name: linux
 
 on:
@@ -53,8 +54,8 @@ jobs:
           import sys
           normal, fast = float(sys.argv[1]), float(sys.argv[2])
           failures = []
-          if normal < 27.0: failures.append(f"normal {normal:.2f} < 27.0 dB")
-          if fast < 22.0:   failures.append(f"fast {fast:.2f} < 22.0 dB")
+          if normal < 28.0: failures.append(f"normal {normal:.2f} < 28.0 dB")
+          if fast < 23.0:   failures.append(f"fast {fast:.2f} < 23.0 dB")
           if failures:
               print("quality regression:", "; ".join(failures)); sys.exit(1)
           EOF
