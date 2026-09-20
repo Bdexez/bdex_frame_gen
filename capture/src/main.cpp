@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -76,9 +77,13 @@ void usage() {
         "\n"
         "Other options (levels, scene cut, pacing...) come from\n"
         "%%APPDATA%%\\bdex-framegen\\bdex-framegen.conf and BDEX_FG_* variables.\n"
+        "A [game] section (the target's .exe name) overrides the globals for\n"
+        "that title — a per-game profile; the launcher writes one on request.\n"
         "With no arguments, a launcher window opens (game picker + options);\n"
         "Démarrer saves them to the config file and starts the capture.\n"
-        "Ctrl+Alt+Q quits; so does closing the game window.\n"
+        "Ctrl+Alt+Q quits; Ctrl+Alt+G toggles generation on/off (set the\n"
+        "'hotkey' config key, e.g. hotkey = ctrl+shift+f1, to rebind it).\n"
+        "Closing the game window also quits.\n"
         "Set BDEX_CAP_VALIDATION=1 to load the Khronos validation layer.\n");
 }
 
@@ -279,6 +284,54 @@ BOOL WINAPI ctrlHandler(DWORD) {
     return TRUE;
 }
 
+// A global hotkey spec, e.g. "ctrl+alt+g" -> MOD_CONTROL|MOD_ALT + 'G'.
+// Accepts ctrl/control, alt, shift, win/super as modifiers and a single key:
+// a letter, a digit, or F1..F24. Returns false (leaving out untouched) for an
+// empty or unparsable string; a lone modifier with no key is rejected too, so
+// the caller keeps its default.
+struct Hotkey {
+    UINT mods = 0;
+    UINT vk = 0;
+};
+
+bool parseHotkey(const std::string& spec, Hotkey& out) {
+    Hotkey hk;
+    bool haveKey = false;
+    size_t i = 0;
+    while (i < spec.size()) {
+        while (i < spec.size() && (spec[i] == '+' || spec[i] == '-' ||
+                                   std::isspace(static_cast<unsigned char>(spec[i]))))
+            ++i;
+        size_t j = i;
+        while (j < spec.size() && spec[j] != '+' && spec[j] != '-' &&
+               !std::isspace(static_cast<unsigned char>(spec[j])))
+            ++j;
+        if (j == i) break;
+        std::string tok = spec.substr(i, j - i);
+        i = j;
+        for (auto& c : tok) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (tok == "ctrl" || tok == "control") { hk.mods |= MOD_CONTROL; continue; }
+        if (tok == "alt")                       { hk.mods |= MOD_ALT; continue; }
+        if (tok == "shift")                     { hk.mods |= MOD_SHIFT; continue; }
+        if (tok == "win" || tok == "super" || tok == "meta") { hk.mods |= MOD_WIN; continue; }
+        if (haveKey) return false;  // a second non-modifier token: ambiguous
+        if (tok.size() == 1 && ((tok[0] >= 'a' && tok[0] <= 'z') || (tok[0] >= '0' && tok[0] <= '9'))) {
+            hk.vk = static_cast<UINT>(std::toupper(static_cast<unsigned char>(tok[0])));
+            haveKey = true;
+        } else if (tok.size() >= 2 && tok[0] == 'f') {
+            const int n = std::atoi(tok.c_str() + 1);
+            if (n < 1 || n > 24) return false;
+            hk.vk = static_cast<UINT>(VK_F1 + (n - 1));
+            haveKey = true;
+        } else {
+            return false;
+        }
+    }
+    if (!haveKey) return false;
+    out = hk;
+    return true;
+}
+
 // Per-monitor DPI awareness so window rectangles and WGC sizes are all in
 // physical pixels (the API needs Windows 10 1703+; older builds fall back).
 void setDpiAware() {
@@ -297,13 +350,15 @@ void setDpiAware() {
 // launcher) overrides the config file and the command line; nullptr = CLI.
 int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) {
     g_running = true;
+    std::string gameProc;  // target's executable name, for the config's [game] section
     {
         wchar_t title[256];
         GetWindowTextW(target, title, 256);
         DWORD pid = 0;
         GetWindowThreadProcessId(target, &pid);
-        LOGI("target: \"%s\" (%s, pid %lu)", bdex::narrow(title).c_str(),
-             bdex::narrow(bdex::processName(pid)).c_str(), static_cast<unsigned long>(pid));
+        gameProc = bdex::narrow(bdex::processName(pid));
+        LOGI("target: \"%s\" (%s, pid %lu)", bdex::narrow(title).c_str(), gameProc.c_str(),
+             static_cast<unsigned long>(pid));
     }
 
     RECT ov = overlayRect(o, target, windowRect(target));
@@ -317,7 +372,10 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
     // the command line, then the launcher. Extrapolation is the default
     // here: capture already costs a frame of latency, interpolation would
     // add half of one more.
-    bdex::Config cfg = bdex::Config::load();
+    // The game's process name is added to the section matcher, so a [game]
+    // profile in the config file overrides the globals for this title — the
+    // per-game profiles the launcher writes and hand-edited sections alike.
+    bdex::Config cfg = bdex::Config::load(gameProc);
     cfg.enabled = true;
     if (o.mode < 0 && !cfg.extrapolate) cfg.extrapolate = true;
     if (o.mode >= 0) cfg.extrapolate = o.mode == 1;
@@ -354,10 +412,24 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
                     static_cast<uint32_t>(ov.bottom - ov.top)))
         return 1;
 
-    if (!RegisterHotKey(nullptr, 1, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'Q'))
+    // Global hotkeys (delivered to this thread's queue, id in msg.wParam):
+    //   1 = quit (Ctrl+Alt+Q, fixed);
+    //   2 = toggle frame generation on/off, configurable via the `hotkey` key
+    //       (default Ctrl+Alt+G). A busy combo (RegisterHotKey fails) is only
+    //       a warning: the overlay still runs, generation stays on.
+    enum { HK_QUIT = 1, HK_TOGGLE = 2 };
+    if (!RegisterHotKey(nullptr, HK_QUIT, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'Q'))
         LOGW("Ctrl+Alt+Q hotkey unavailable; close the game window or Ctrl+C to quit");
-    LOGI("overlay %ldx%ld at %ld,%ld (%s) — Ctrl+Alt+Q to quit", ov.right - ov.left,
-         ov.bottom - ov.top, ov.left, ov.top, o.fit ? "fit" : "scaled");
+    Hotkey toggle{MOD_CONTROL | MOD_ALT, 'G'};
+    const std::string toggleSpec = bdex::globalConfigValue("hotkey");
+    if (!toggleSpec.empty() && !parseHotkey(toggleSpec, toggle))
+        LOGW("could not parse hotkey '%s'; using Ctrl+Alt+G", toggleSpec.c_str());
+    const bool toggleOk =
+        RegisterHotKey(nullptr, HK_TOGGLE, toggle.mods | MOD_NOREPEAT, toggle.vk) != 0;
+    if (!toggleOk) LOGW("frame-generation toggle hotkey unavailable (combo in use)");
+    LOGI("overlay %ldx%ld at %ld,%ld (%s) — Ctrl+Alt+Q to quit%s", ov.right - ov.left,
+         ov.bottom - ov.top, ov.left, ov.top, o.fit ? "fit" : "scaled",
+         toggleOk ? ", the toggle hotkey to turn generation on/off" : "");
 
     auto resizeToOverlay = [&] {
         vk.setSize(static_cast<uint32_t>(ov.right - ov.left),
@@ -370,7 +442,12 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
     while (g_running) {
         MSG msg;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-            if (msg.message == WM_HOTKEY || msg.message == WM_QUIT) g_running = false;
+            if (msg.message == WM_QUIT || (msg.message == WM_HOTKEY && msg.wParam == HK_QUIT)) {
+                g_running = false;
+            } else if (msg.message == WM_HOTKEY && msg.wParam == HK_TOGGLE) {
+                const bool on = vk.toggleGeneration();
+                LOGI("frame generation %s", on ? "on" : "off");
+            }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
@@ -475,7 +552,8 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
         }
     }
 
-    UnregisterHotKey(nullptr, 1);
+    UnregisterHotKey(nullptr, HK_QUIT);
+    if (toggleOk) UnregisterHotKey(nullptr, HK_TOGGLE);
     // Order matters: Vulkan drops its references to the shared textures
     // before Capture destroys them.
     vk.shutdown();

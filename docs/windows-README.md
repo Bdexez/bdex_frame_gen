@@ -41,7 +41,19 @@ checklist in `windows-port.md` §3. Please report what happens.
    bdex_capture.exe --title "Kenshi" --mode interpolate
    bdex_capture.exe --hud 2                           # no --title/--pid: foreground, 5 s
    ```
-4. **Ctrl+Alt+Q** quits, and so does closing the game.
+4. **Ctrl+Alt+Q** quits, and so does closing the game. **Ctrl+Alt+G**
+   toggles frame generation on and off without stopping the capture (off = the
+   real frames pass straight through). Rebind it with a `hotkey` line in the
+   config file, e.g. `hotkey = ctrl+shift+f1` (modifiers `ctrl`/`alt`/`shift`/
+   `win` + a letter, digit, or `F1`–`F24`).
+
+**Per-game profiles.** In the launcher, tick **"Profil pour ce jeu"** before
+Démarrer to save the options into a `[game]` section (named after the target's
+executable) instead of the global ones; selecting a game that already has a
+profile loads it and ticks the box automatically. On the command line the same
+sections apply — `bdex_capture` reads the config as the *target* game, so a
+hand-written `[DarkSoulsIII]` section overrides the globals for that title. A
+per-game section overrides the global one only for the game it names.
 
 The frame-generation engine is the Linux layer's (`framegen.cpp` and its
 shaders, unchanged): the quality presets, `--filter`, `--sharpness`, and every

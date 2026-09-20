@@ -141,7 +141,14 @@ pacing comme `presentOne`. Sélection GPU discrète par LUID commun D3D/Vulkan
 (`--gpu`). Options CLI : `--list/--title/--pid`, `--multiplier`, `--mode`,
 `--preset`, `--filter`, `--sharpness`, `--hud`, `--scale/--fit`, `--fifo`.
 Sans argument : launcher natif (sélecteur de fenêtre + options avancées flow,
-persistées dans la config partagée).
+persistées dans la config partagée). **Hotkey global** : Ctrl+Alt+Q quitte,
+Ctrl+Alt+G bascule la génération on/off à chaud (`VkCtx::toggleGeneration`,
+off = passthrough des frames réelles) ; rebindable via la clé config `hotkey`
+(parseur `parseHotkey` dans `main.cpp`). **Profils par jeu** : `bdex_capture`
+charge la config avec le nom du process *jeu* ciblé
+(`Config::load(extraProcess)`), donc une section `[jeu]` (écrite par la case
+« Profil pour ce jeu » du launcher, ou à la main) prime sur les globaux pour
+ce titre — le chemin layer reste `Config::load("")`, bit-for-bit inchangé.
 
 Validé sur hardware le 2026-09-15 (laptop Intel iGPU + RTX 3050) : PRAGMATA
 (D3D12), Dark Souls III, Skyrim SE (D3D11), Fallout: New Vegas (D3D9) — x2
@@ -200,10 +207,10 @@ réintroduire) :
    `tests/`) — aurait attrapé la régression `0549e44` sans GPU.
 
 **Produit Windows capture (mode 2)**
-6. Phase 3 restante : hotkey global, profils par jeu, tray, fallback Desktop
-   Duplication, HDR/VRR, multi-GPU, borderless plein écran, installateur +
-   signing Authenticode, passe Input robuste (le `--fit` et les clics via
-   `WS_EX_TRANSPARENT` à durcir).
+6. Phase 3 restante : tray, fallback Desktop Duplication, HDR/VRR, multi-GPU,
+   borderless plein écran, installateur + signing Authenticode, passe Input
+   robuste (le `--fit` et les clics via `WS_EX_TRANSPARENT` à durcir). Faits :
+   hotkey global (toggle) et profils par jeu.
 7. Évaluer la qualité phase 2 sur hardware : flow vs build Linux, régime bas
    fps (x2 à 30 fps), multipliers x3/x4, interpolation vs extrapolation.
 8. Mesurer la latence réelle de la chaîne capture (timestamps

@@ -190,6 +190,49 @@ std::string globalConfigValue(const std::string& want) {
     return "";
 }
 
+// Canonical form of a section name for matching: lower-cased, no `.exe`
+// (same reduction as Config::sectionMatches, so a [Game] / [game.exe] header
+// and a target executable "Game.exe" all resolve to the same key).
+static std::string sectionKey(std::string s) {
+    s = lower(trim(s));
+    if (s.size() > 4 && s.compare(s.size() - 4, 4, ".exe") == 0) s.resize(s.size() - 4);
+    return s;
+}
+
+// Section header to write for a game window: the target's executable name
+// without the .exe suffix, original case kept for readability.
+static std::string sectionForPid(DWORD pid) {
+    std::string s = narrow(processName(pid));
+    const size_t p = s.find_last_of("\\/");
+    if (p != std::string::npos) s = s.substr(p + 1);
+    if (s.size() > 4 && lower(s.substr(s.size() - 4)) == ".exe") s.resize(s.size() - 4);
+    return s;
+}
+
+// Every key = value pair in one scope of the config file: `section` empty is
+// the global scope (preamble + [*]), otherwise the matching [section]. Keys
+// come back lower-cased, values keep their case; later duplicates win.
+static std::vector<std::pair<std::string, std::string>> readScope(const std::string& want) {
+    std::vector<std::pair<std::string, std::string>> out;
+    const std::wstring path = configPathW();
+    if (path.empty()) return out;
+    std::vector<std::string> lines;
+    if (!readLines(path, lines)) return out;
+    const std::string target = sectionKey(want);
+    bool active = target.empty();  // preamble before any header is global
+    for (const auto& raw : lines) {
+        std::string section;
+        if (headerOf(raw, section)) {
+            active = target.empty() ? section.empty() : sectionKey(section) == target;
+            continue;
+        }
+        std::string key;
+        if (active && keyOf(raw, key))
+            out.emplace_back(key, trim(raw.substr(raw.find('=') + 1)));
+    }
+    return out;
+}
+
 // Keys the launcher manages in the global scope; a stale one not present in
 // the new set is removed from the file (preset / present_mode = "auto").
 static bool managedKey(const std::string& key) {
@@ -249,6 +292,46 @@ static bool saveGlobalConfig(const std::vector<std::pair<std::string, std::strin
     return writeLines(path, out);
 }
 
+// Writes `pairs` into the [section] scope (a per-game profile), rewriting only
+// that section's managed keys and preserving everything else — the global
+// scope, comments, other games' sections, and any hand-written keys in this
+// section that the launcher does not manage. Creates the section at the end of
+// the file when it does not exist yet.
+static bool savePerGameConfig(const std::string& section,
+                              const std::vector<std::pair<std::string, std::string>>& pairs) {
+    const std::wstring path = configPathW();
+    if (path.empty() || sectionKey(section).empty()) return false;
+    std::vector<std::string> old;
+    readLines(path, old);  // a missing file is fine — we create it
+
+    const std::string want = sectionKey(section);
+    std::vector<std::string> out;
+    bool inTarget = false;
+    bool inserted = false;
+    auto insertPairs = [&] {
+        for (const auto& kv : pairs) out.push_back(kv.first + " = " + kv.second);
+        inserted = true;
+    };
+    for (const auto& raw : old) {
+        std::string sec;
+        if (headerOf(raw, sec)) {
+            inTarget = sectionKey(sec) == want;
+            out.push_back(raw);
+            if (inTarget && !inserted) insertPairs();  // our values first in the section
+            continue;
+        }
+        std::string key;
+        if (inTarget && keyOf(raw, key) && managedKey(key)) continue;  // drop stale managed value
+        out.push_back(raw);
+    }
+    if (!inserted) {  // no such section yet: append it
+        if (!out.empty() && !trim(out.back()).empty()) out.emplace_back();
+        out.push_back("[" + section + "]");
+        insertPairs();
+    }
+    return writeLines(path, out);
+}
+
 // ------------------------------------------------------------ the window --
 
 namespace {
@@ -257,6 +340,7 @@ enum {
     // 100+: Windows reserves 0..10 for IDOK/IDCANCEL/…
     ID_LB = 100,
     ID_REFRESH,
+    ID_PERGAME,
     ID_GEN,
     ID_PRESET,
     ID_MULT,
@@ -285,8 +369,9 @@ const wchar_t* const kHud[] = {L"Désactivé", L"FPS", L"FPS + génération", L"
 
 struct Ui {
     LaunchChoice* choice;
+    LaunchChoice baseline;   // the global options, restored when a game with no profile is picked
     std::vector<WindowInfo> windows;
-    HWND lb = nullptr, gen = nullptr, preset = nullptr, mult = nullptr, mode = nullptr;
+    HWND lb = nullptr, perGame = nullptr, gen = nullptr, preset = nullptr, mult = nullptr, mode = nullptr;
     HWND size = nullptr, scaleEd = nullptr, filter = nullptr, sharpEd = nullptr;
     HWND fifo = nullptr, hud = nullptr;
     HWND grad = nullptr, scLow = nullptr, scHigh = nullptr, smooth = nullptr;
@@ -345,6 +430,61 @@ void refreshList(Ui& ui) {
     if (keep)
         for (size_t i = 0; i < ui.windows.size(); ++i)
             if (ui.windows[i].hwnd == keep) SendMessageW(ui.lb, LB_SETCURSEL, i, 0);
+}
+
+void fillFromChoice(Ui& ui);  // defined below; onGameSelected refills the panel
+
+// Overlays a config scope's managed keys onto a LaunchChoice (per-game
+// prefill); keys absent from the scope keep their baseline value. Mirrors the
+// key names persist() writes and Config::apply() understands.
+void applyScopeToChoice(const std::vector<std::pair<std::string, std::string>>& kv, LaunchChoice& c) {
+    auto toF = [](const std::string& s, float d) {
+        char* e = nullptr;
+        const float v = std::strtof(s.c_str(), &e);
+        return e && e != s.c_str() ? v : d;
+    };
+    auto toI = [](const std::string& s, int d) {
+        char* e = nullptr;
+        const long v = std::strtol(s.c_str(), &e, 10);
+        return e && e != s.c_str() ? static_cast<int>(v) : d;
+    };
+    for (const auto& p : kv) {
+        const std::string& k = p.first;
+        const std::string v = lower(trim(p.second));
+        if (k == "multiplier" || k == "mult") c.multiplier = std::clamp(toI(v, c.multiplier), 1, 4);
+        else if (k == "mode") c.extrapolate = v.rfind("interp", 0) != 0;  // else extrapolate
+        else if (k == "preset") {
+            if (v == "quality" || v == "balanced" || v == "performance") c.preset = v;
+            else if (v == "auto" || v.empty()) c.preset.clear();
+        } else if (k == "upscale_filter") {
+            if (v == "bilinear" || v == "0") c.filter = 0;
+            else if (v == "bicubic" || v == "catmull" || v == "catmull-rom" || v == "1") c.filter = 1;
+            else c.filter = 2;
+        } else if (k == "sharpness" || k == "sharpen") c.sharpness = std::clamp(toF(v, c.sharpness), 0.f, 1.f);
+        else if (k == "overlay" || k == "hud") c.hud = std::clamp(toI(v, c.hud), 0, 4);
+        else if (k == "present_mode") c.fifo = (v == "fifo" || v == "vsync");
+        else if (k == "grad_weight") c.gradWeight = std::clamp(toF(v, c.gradWeight), 0.f, 8.f);
+        else if (k == "smoothness") c.smoothness = std::clamp(toF(v, c.smoothness), 0.f, 1.f);
+        else if (k == "zero_bias") c.zeroBias = std::clamp(toF(v, c.zeroBias), 0.f, 1.f);
+        else if (k == "search_fine") c.searchFine = std::clamp(toI(v, c.searchFine), 1, 4);
+        else if (k == "flow_iterations") c.flowIterations = std::clamp(toI(v, c.flowIterations), 0, 3);
+        else if (k == "scene_cut_low") c.sceneCutLow = std::clamp(toF(v, c.sceneCutLow), 0.f, 1.f);
+        else if (k == "scene_cut_high") c.sceneCutHigh = std::clamp(toF(v, c.sceneCutHigh), 0.f, 1.f);
+    }
+}
+
+// A game was selected: show its saved [game] profile if one exists (checking
+// the per-game box), otherwise fall back to the global options.
+void onGameSelected(Ui& ui) {
+    const int i = static_cast<int>(SendMessageW(ui.lb, LB_GETCURSEL, 0, 0));
+    if (i < 0 || i >= static_cast<int>(ui.windows.size())) return;
+    const std::string section = sectionForPid(ui.windows[i].pid);
+    const auto scope = readScope(section);
+    LaunchChoice merged = ui.baseline;
+    applyScopeToChoice(scope, merged);
+    *ui.choice = merged;
+    fillFromChoice(ui);
+    SendMessageW(ui.perGame, BM_SETCHECK, scope.empty() ? BST_UNCHECKED : BST_CHECKED, 0);
 }
 
 void fillFromChoice(Ui& ui) {
@@ -406,6 +546,18 @@ void persist(const LaunchChoice& c) {
     addNum("flow_iterations", c.flowIterations, 1);
     addNum("scene_cut_low", c.sceneCutLow, 0.05);
     addNum("scene_cut_high", c.sceneCutHigh, 0.09);
+    // A per-game profile writes into the target's [game] section (Config::load
+    // applies it over the globals when bdex_capture runs on that title);
+    // otherwise the global [*] scope, as before.
+    if (c.perGame && c.target) {
+        DWORD pid = 0;
+        GetWindowThreadProcessId(c.target, &pid);
+        const std::string section = sectionForPid(pid);
+        if (!sectionKey(section).empty()) {
+            if (!savePerGameConfig(section, kv)) LOGW("could not write the config file");
+            return;
+        }
+    }
     if (!saveGlobalConfig(kv)) LOGW("could not write the config file");
 }
 
@@ -437,6 +589,7 @@ void gather(Ui& ui) {
     c.zeroBias = std::clamp(readFloat(ui.zbias, 0.002f), 0.f, 1.f);
     c.searchFine = std::clamp(readInt(ui.sfine, 2), 1, 4);
     c.flowIterations = std::clamp(readInt(ui.fiter, 1), 0, 3);
+    c.perGame = SendMessageW(ui.perGame, BM_GETCHECK, 0, 0) == BST_CHECKED;
 }
 
 LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -446,6 +599,7 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         auto* cs = reinterpret_cast<CREATESTRUCTW*>(lp);
         ui = reinterpret_cast<Ui*>(cs->lpCreateParams);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(ui));
+        ui->baseline = *ui->choice;  // the global options, before any per-game merge
         const HINSTANCE inst = cs->hInstance;
         const HFONT font = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
         auto add = [&](const wchar_t* cls, const wchar_t* text, DWORD style, int x, int y,
@@ -470,6 +624,8 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                      24, 26, 448, 108, ID_LB);
         add(L"BUTTON", L"Actualiser la liste", BS_PUSHBUTTON | WS_TABSTOP, 356, 140, 116, 23,
             ID_REFRESH);
+        ui->perGame = add(L"BUTTON", L"Profil pour ce jeu (sinon réglages globaux)",
+                          BS_AUTOCHECKBOX | WS_TABSTOP, 24, 143, 324, 20, ID_PERGAME);
 
         group(L"Génération d'images", 12, 184, 472, 136);
         ui->gen = add(L"BUTTON", L"Activer (plusieurs images par image du jeu)",
@@ -541,6 +697,9 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         switch (LOWORD(wp)) {
         case ID_REFRESH:
             refreshList(*ui);
+            return 0;
+        case ID_LB:
+            if (HIWORD(wp) == LBN_SELCHANGE) onGameSelected(*ui);
             return 0;
         case ID_GEN:
         case ID_SIZE:

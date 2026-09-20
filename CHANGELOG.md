@@ -8,6 +8,24 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Windows capture (mode 2): global toggle hotkey.** **Ctrl+Alt+G** turns
+  frame generation on and off at runtime without stopping the capture (off =
+  the real captured frames pass through unchanged, `multiplier` 1, minimal
+  latency). Rebindable through a new `hotkey` config key (e.g.
+  `hotkey = ctrl+shift+f1`; modifiers `ctrl`/`alt`/`shift`/`win` + a letter,
+  digit, or `F1`–`F24`). Ctrl+Alt+Q still quits. A busy combo is a warning,
+  not a failure.
+
+- **Windows capture (mode 2): per-game profiles.** `bdex_capture` now applies
+  the config file's `[game]` section for the *captured* title, not just its
+  own process — a hand-written `[DarkSoulsIII]` section (or one saved from the
+  launcher) overrides the globals for that game. The launcher gained a
+  **"Profil pour ce jeu"** checkbox that writes the options into the target's
+  `[game]` section (preserving the global scope, other games' sections and
+  hand-written keys); selecting a game with an existing profile loads it and
+  ticks the box. Implemented as an `extraProcess` argument to
+  `Config::load()` (the layer path is unchanged, bit-for-bit).
+
 - **Linux CI** (`.github/workflows/linux.yml`): every push builds the layer
   and demo on Ubuntu, runs the unit + integration tests under Xvfb on
   lavapipe (software Vulkan — the runners have no GPU) and gates the PSNR

@@ -86,7 +86,13 @@ struct Config {
     // "performance", discrete GPUs "balanced", large discrete GPUs "quality".
     void autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhysicalDeviceMemoryProperties& mem);
 
-    static Config load();  // defaults + file + env
+    // defaults + file + env. `extraProcess` (an executable name, `.exe`
+    // optional) is added to the process names that `[section]` headers match,
+    // so a caller that runs on behalf of another process — bdex_capture, which
+    // targets a game window — gets that game's `[game]` section applied even
+    // though it is not the current process. Empty (the default) = current
+    // process only, the layer's case.
+    static Config load(const std::string& extraProcess = "");
 
     // Executable names of the current process (platform-specific source),
     // lower-case, without directory or .exe suffix; used for section matching.
