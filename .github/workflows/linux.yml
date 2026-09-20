@@ -57,6 +57,28 @@ jobs:
       - name: Build
         run: cmake --build build -j
 
+      # Register the layer as a global implicit layer — the canonical discovery
+      # path, honoured by every loader version. VK_ADD_IMPLICIT_LAYER_PATH (set
+      # by the test/eval scripts) is not honoured by all loader builds, and the
+      # GitHub runner images vary, so relying on it alone flakes: the demo runs
+      # but the layer never loads ("layer did not activate frame generation").
+      # The build wrote the manifest with an absolute library_path, so a copy
+      # is enough; this also matches how the layer ships.
+      - name: Install layer
+        run: |
+          manifest=build/layer/VK_LAYER_BDEX_framegen.json
+          test -f "$manifest" || { echo "layer manifest missing"; ls -la build/layer; exit 1; }
+          sudo install -Dm644 "$manifest" \
+            /usr/share/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen.json
+          echo "Registered implicit layer:"; cat "$manifest"
+          # The layer is pass-through unless BDEX_FG=1, so loading it here is
+          # harmless; verify the loader actually discovers and loads it.
+          if ! vulkaninfo 2>/dev/null | grep -qi bdex; then
+            echo "=== layer not discovered/loadable by the loader ==="
+            VK_LOADER_DEBUG=all vulkaninfo 2>&1 | grep -i "bdex\|implicit\|layer" | head -40 || true
+            exit 1
+          fi
+
       # Unit tests run headless; the integration test (demo through the
       # layer, checks the doubled frame rate) needs a display, hence Xvfb.
       # --repeat until-pass:2 absorbs a one-off software-renderer hiccup.
