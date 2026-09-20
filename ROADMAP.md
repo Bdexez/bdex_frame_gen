@@ -180,13 +180,23 @@ a Windows machine.
   `rot_weight` alone (29.16 / 23.84) — the census re-ranking perturbs winners
   the rotation re-ranking then cannot repair, so the two knobs should not be
   combined.
-- **Linux CI (2026-09-20, `.github/workflows/linux.yml`):** every push builds
-  the layer and demo, runs the unit + integration tests (under Xvfb, on
-  lavapipe — the runners have no GPU) and gates the PSNR quality eval
-  (fail below 27 dB normal / 22 dB fast at `balanced`, a few dB under the
-  ≈28.9 / ≈23.5 baselines to leave margin for software-renderer noise). This
-  replaces the hand-run test suite and protects the matcher quality numbers
-  against regressions.
+- **Linux CI (2026-09-20, green 2026-09-21, `.github/workflows/linux.yml`):**
+  every push builds the layer and demo, runs the unit + integration tests
+  (under Xvfb, on lavapipe — the runners have no GPU) and gates the PSNR
+  quality eval (fail below **28.0 dB normal / 23.0 dB fast** at `balanced`).
+  This replaces the hand-run test suite and protects the matcher quality
+  numbers against regressions. lavapipe turned out to track the GPU baseline
+  to within ~0.04 dB (28.87 / 23.49 vs 28.91 / 23.52), so the gate could be
+  set tight, just under the real numbers, instead of the initial loose
+  27 / 22. Bring-up took three fixes worth remembering for any future runner
+  work (all in the workflow): the shader compiler is the `glslc` package (not
+  `glslc-tools`); lavapipe must be selected by **globbing** the ICD path and
+  verifying it with `vulkaninfo` (a hardcoded `VK_ICD_FILENAMES` makes the
+  loader find no driver at all on some runner images — a bare
+  `vkCreateInstance` -9); and the layer must be registered in the global
+  `implicit_layer.d`, because `VK_ADD_IMPLICIT_LAYER_PATH` (what the test/eval
+  scripts set) is not honoured by every loader build, so the demo otherwise
+  runs pass-through and the integration test fails "layer did not activate".
 
 ---
 
