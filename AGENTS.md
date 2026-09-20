@@ -54,6 +54,11 @@ tous les shaders de `layer/shaders/`.
 - `.github/workflows/windows.yml` — build MSVC x64 + Win32, tests, zip par arch
   (`bdex-framegen-windows-<arch>`), logs poussés sur `ci-log-<arch>` en cas
   d'échec ; tags `v*` → GitHub Release (pré-release si suffixe `-`).
+- `.github/workflows/linux.yml` — build + tests unit/intégration (Xvfb,
+  lavapipe) + gate qualité PSNR (échec sous 28,0 dB normal / 23,0 dB rapide) à
+  chaque push. Pièges runner (cf. §9) : paquet `glslc` (pas `glslc-tools`),
+  ICD lavapipe résolu par glob + vérifié `vulkaninfo`, couche enregistrée dans
+  `implicit_layer.d` global.
 
 ## 4. Commandes
 
@@ -158,7 +163,10 @@ réintroduire) :
   shader.
 - Les artefacts se diagnostiquent avec `BDEX_FG_DEBUG=flow` (voir le flux) et
   `dump_dir` (PPM), cf. CONTRIBUTING.md.
-- Aucune CI Linux ; les tests Linux tournent à la main.
+- CI Linux depuis le 2026-09-21 (`linux.yml`, verte) : unit + intégration +
+  gate PSNR sur lavapipe à chaque push. On peut toujours tout lancer à la main
+  (cf. §4). Le seuil PSNR (28,0/23,0) est calibré au chiffre lavapipe réel, qui
+  colle au GPU à ~0,04 dB — toute régression matcher le fait chuter.
 
 ## 10. Décisions & mesures clés (retenir les chiffres)
 
@@ -209,10 +217,9 @@ réintroduire) :
     GUI GTK est Linux-only) ; installateur.
 
 **Plateforme / infra**
-11. CI Linux (unit + intégration) — aujourd'hui manuel.
-12. Packaging Linux (paquets distro / Flatpak pour la GUI) ; polish de
+11. Packaging Linux (paquets distro / Flatpak pour la GUI) ; polish de
     `windows-README.md` (section Windows dans le README principal).
-13. Piste phase 4 (optionnelle, fragile) : present-hook injection D3D11/12 en
+12. Piste phase 4 (optionnelle, fragile) : present-hook injection D3D11/12 en
     mode low-latency opt-in par jeu solo — jamais par défaut (anti-cheat).
 
 ---
