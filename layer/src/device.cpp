@@ -32,6 +32,41 @@ bool DeviceData::formatSupports(VkFormat format, VkFormatFeatureFlags features) 
     return (fp.optimalTilingFeatures & features) == features;
 }
 
+bool DeviceData::ensurePresentQueue(VkSurfaceKHR surface) {
+    VkBool32 supported = VK_FALSE;
+    if (inst->vt.GetPhysicalDeviceSurfaceSupportKHR(physDev, queueFamily, surface, &supported) == VK_SUCCESS && supported)
+        return true;
+    // A compute-only spare queue is not necessarily presentation-capable.
+    // Queue resources are device-wide, so switch only before any virtual
+    // swapchain has allocated command buffers from the current pool.
+    std::lock_guard<std::mutex> lock(swapchainsMutex);
+    if (!swapchains.empty()) return false;
+    for (uint32_t f : appFamilies) {
+        if (f >= families.size() || !(families[f].queueFlags & VK_QUEUE_COMPUTE_BIT)) continue;
+        supported = VK_FALSE;
+        if (inst->vt.GetPhysicalDeviceSurfaceSupportKHR(physDev, f, surface, &supported) != VK_SUCCESS || !supported)
+            continue;
+        VkCommandPoolCreateInfo pi{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+        pi.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        pi.queueFamilyIndex = f;
+        VkCommandPool replacement = VK_NULL_HANDLE;
+        if (vt.CreateCommandPool(device, &pi, nullptr, &replacement) != VK_SUCCESS) continue;
+        VkQueue fallback = VK_NULL_HANDLE;
+        vt.GetDeviceQueue(device, f, 0, &fallback);
+        if (!fallback) { vt.DestroyCommandPool(device, replacement, nullptr); continue; }
+        adoptDispatch(fallback, device);
+        vt.DestroyCommandPool(device, cmdPool, nullptr);
+        cmdPool = replacement;
+        queue = fallback;
+        queueFamily = f;
+        queueIndex = 0;
+        queueShared = true;
+        BDEX_INFO("layer queue switched to application family %u for surface presentation", f);
+        return true;
+    }
+    return false;
+}
+
 AllocatedImage DeviceData::createImage(VkFormat format, VkExtent2D extent, VkImageUsageFlags usage, bool withView,
                                        VkImageCreateFlags flags, const void* pNext,
                                        const std::vector<uint32_t>* sharingFamilies) {

@@ -14,6 +14,7 @@ namespace bdex {
     X(GetPhysicalDeviceQueueFamilyProperties)        \
     X(GetPhysicalDeviceMemoryProperties)             \
     X(GetPhysicalDeviceFormatProperties)             \
+    X(GetPhysicalDeviceImageFormatProperties)        \
     X(GetPhysicalDeviceFeatures)                     \
     X(GetPhysicalDeviceSurfaceSupportKHR)            \
     X(GetPhysicalDeviceSurfaceCapabilitiesKHR)       \

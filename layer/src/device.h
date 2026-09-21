@@ -92,6 +92,9 @@ struct DeviceData {
     AllocatedBuffer createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible = false);
     void destroyBuffer(AllocatedBuffer& buf);
     bool formatSupports(VkFormat format, VkFormatFeatureFlags features) const;
+    // Before the first virtual swapchain, fall back to an application queue
+    // if the preferred compute queue cannot present to this surface.
+    bool ensurePresentQueue(VkSurfaceKHR surface);
 
     // Allocates a primary command buffer from cmdPool with a valid dispatch pointer.
     VkResult allocateCommandBuffer(VkCommandBuffer* cmd);
