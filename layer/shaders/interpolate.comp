@@ -52,6 +52,7 @@ layout(push_constant) uniform PC {
     int hudOut;        // output fps (for the HUD)
     int hudLow1;       // 1% low fps
     int hudLow01;      // 0.1% low fps
+    float occlusionStrength; // 0 keeps the historical interpolation path
 } pc;
 
 vec2 fwdAt(vec2 p) { return texture(flowFwd, p * pc.flowInvSize).xy * pc.flowScale; }
@@ -149,11 +150,29 @@ void main() {
     const float eps = 0.01;
     float wf = (1.0 - t) / ((ef + eps) * (ef + eps));
     float wb = t / ((eb + eps) * (eb + eps));
+    if (pc.occlusionStrength > 0.0) {
+        // A trajectory crossing an occlusion often matches a similar colour
+        // on the wrong object. Reject it when the reverse flow does not bring
+        // its endpoint back to its source, even if the colour error is low.
+        vec2 ff = fwdAt(pf);
+        vec2 bb = bwdAt(pb);
+        float cfwd = 1.0 - smoothstep(1.0, 4.0, length(ff + bwdAt(pf + ff)));
+        float cbwd = 1.0 - smoothstep(1.0, 4.0, length(bb + fwdAt(pb + bb)));
+        // Block flow is approximate even on correct trajectories, so a low
+        // colour error remains decisive. Consistency only resolves candidates
+        // whose photometric evidence is already weak.
+        float uncertainF = smoothstep(0.04, 0.12, ef);
+        float uncertainB = smoothstep(0.04, 0.12, eb);
+        wf *= 1.0 - 0.5 * pc.occlusionStrength * uncertainF * (1.0 - cfwd);
+        wb *= 1.0 - 0.5 * pc.occlusionStrength * uncertainB * (1.0 - cbwd);
+
+    }
     c = (wf * cfc + wb * cbc) / (wf + wb);
 
-    // Neither candidate explains the pixel (occlusion the flow could not
-    // resolve): a plain cross-fade is less objectionable than a smeared edge.
-    float bad = smoothstep(0.12, 0.25, min(ef, eb));
+    // Historical fallback for regions neither trajectory explains. The
+    // opt-in occlusion control retains the warp estimate more strongly; on
+    // newly revealed pixels it avoids blending in the hidden endpoint.
+    float bad = smoothstep(0.12, 0.25, min(ef, eb)) * (1.0 - pc.occlusionStrength);
     c = mix(c, mix(texture(prevTex, uv), cur, t), bad);
     }
 

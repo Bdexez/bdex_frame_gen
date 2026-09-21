@@ -53,6 +53,7 @@ struct Config {
     float censusWeight  = 0.0f;   // weight of the census re-ranking term: when the block matcher is ambiguous (runner-up within census_margin of the winner), near-winners are re-ranked on census Hamming distance (0 = off, bit-for-bit)
     float censusMargin  = 0.05f;  // relative cost margin that makes a match ambiguous (triggers the census re-ranking)
     float rotWeight     = 0.0f;   // rotation/scale re-ranking of ambiguous winners: the top-2 displacements are re-evaluated under local rotations and scales (0 = off, bit-for-bit; 1 = on)
+    float occlusionStrength = 0.0f; // opt-in flow confidence and reduced cross-fade fallback (0 = historical synthesis)
     bool  refine        = true;   // flow refinement pass (better motion boundaries, costs GPU time)
     bool  refineAll     = true;   // refine every pyramid level (off: only the finest, cheaper, ~2 dB worse)
     int   flowIterations = 1;     // fixed-point iterations of the flow lookup in the interpolation (0-3)
