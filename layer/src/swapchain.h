@@ -93,7 +93,6 @@ private:
     void destroySlots(std::vector<FrameSlot>& slots);
     void destroyAll();
     FrameSlot& nextSlot(std::vector<FrameSlot>& slots, uint32_t& cursor);
-    void waitVirtualRelease(VirtualImage& vi);
     VkResult consumeSemaphores(const VkSemaphore* sems, uint32_t count);
     void dumpFrame(FrameSlot& slot, bool generated, float t);
 
@@ -106,6 +105,7 @@ private:
 
     DeviceData& dev_;
     std::mutex mutex_;   // application-side state (acquire / present)
+    std::condition_variable acquireCv_;  // virtual image released by present or application
     VkSwapchainKHR real_ = VK_NULL_HANDLE;
     VkSwapchainCreateInfoKHR realInfo_{};  // how the real swapchain was created (pNext not kept)
     std::atomic<bool> surfaceChanged_{false};  // the worker saw VK_SUBOPTIMAL_KHR on the real swapchain

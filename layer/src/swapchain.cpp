@@ -217,6 +217,7 @@ void VirtualSwapchain::followSurface() {
         upscaling_ = (old.width != extent_.width || old.height != extent_.height);
         std::lock_guard<std::mutex> wlock(workerMutex_);
         pendingResult_ = VK_ERROR_OUT_OF_DATE_KHR;  // let the application rebuild everything
+        acquireCv_.notify_all();
         return;
     }
 
@@ -235,6 +236,7 @@ void VirtualSwapchain::followSurface() {
         upscaling_ = (old.width != extent_.width || old.height != extent_.height);
         std::lock_guard<std::mutex> wlock(workerMutex_);
         pendingResult_ = VK_ERROR_OUT_OF_DATE_KHR;
+        acquireCv_.notify_all();
         return;
     }
     std::vector<RealImage> oldImages = std::move(realImages_);
@@ -249,6 +251,7 @@ void VirtualSwapchain::followSurface() {
         BDEX_WARN("real swapchain images unavailable after resize (%s)", e.what());
         std::lock_guard<std::mutex> wlock(workerMutex_);
         pendingResult_ = VK_ERROR_OUT_OF_DATE_KHR;
+        acquireCv_.notify_all();
     }
     destroyRealImages(oldImages);
     dev_.vt.DestroySwapchainKHR(dev_.device, oldReal, nullptr);
@@ -344,6 +347,7 @@ void VirtualSwapchain::waitIdle() {
 void VirtualSwapchain::retire() {
     std::lock_guard<std::mutex> lock(mutex_);
     retired_ = true;
+    acquireCv_.notify_all();
     std::unique_lock<std::mutex> wlock(workerMutex_);
     waitWorkerIdle(wlock);
 }
@@ -387,39 +391,50 @@ VkResult VirtualSwapchain::getImages(uint32_t* count, VkImage* images) {
     return m < n ? VK_INCOMPLETE : VK_SUCCESS;
 }
 
-void VirtualSwapchain::waitVirtualRelease(VirtualImage& vi) {
-    if (!vi.pendingRelease) return;
-    FrameSlot& s = slots_[vi.releaseSlot];
-    if (s.generation == vi.releaseGeneration && s.submitted) {
-        dev_.vt.WaitForFences(dev_.device, 1, &s.fence, VK_TRUE, UINT64_MAX);
-    }
-    vi.pendingRelease = false;
-}
-
 VkResult VirtualSwapchain::acquire(uint64_t timeout, VkSemaphore semaphore, VkFence fence, uint32_t* index) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    (void)timeout;
-
-    VkResult pending;
-    {
-        std::lock_guard<std::mutex> wlock(workerMutex_);
-        pending = pendingResult_;
-        if (pending != VK_ERROR_OUT_OF_DATE_KHR) pendingResult_ = VK_SUCCESS;
-    }
-    if (pending == VK_ERROR_OUT_OF_DATE_KHR || retired_ || throwaway_) return VK_ERROR_OUT_OF_DATE_KHR;
-
+    std::unique_lock<std::mutex> lock(mutex_);
+    const bool infinite = timeout == UINT64_MAX;
+    const auto start = clock::now();
+    const auto requested = std::chrono::duration_cast<clock::duration>(
+        std::chrono::nanoseconds(std::min<uint64_t>(timeout, static_cast<uint64_t>(INT64_MAX))));
+    const auto deadline = infinite ? clock::time_point::max() : start + std::min(requested, clock::time_point::max() - start);
     const uint32_t n = static_cast<uint32_t>(virtualImages_.size());
     int chosen = -1;
-    for (uint32_t k = 0; k < n; ++k) {
-        uint32_t i = (acquireCursor_ + k) % n;
-        if (!virtualImages_[i].acquired && !virtualImages_[i].held) { chosen = static_cast<int>(i); break; }
-    }
-    if (chosen < 0) {
-        BDEX_WARN("application acquired every swapchain image");
-        return VK_NOT_READY;
+    VkResult pending = VK_SUCCESS;
+    for (;;) {
+        {
+            std::lock_guard<std::mutex> wlock(workerMutex_);
+            pending = pendingResult_;
+        }
+        if (pending < 0) return pending;
+        if (retired_ || throwaway_) return VK_ERROR_OUT_OF_DATE_KHR;
+        bool gpuPending = false;
+        for (uint32_t k = 0; k < n; ++k) {
+            uint32_t i = (acquireCursor_ + k) % n;
+            VirtualImage& candidate = virtualImages_[i];
+            if (candidate.acquired || candidate.held) continue;
+            if (candidate.pendingRelease) {
+                FrameSlot& s = slots_[candidate.releaseSlot];
+                if (s.generation == candidate.releaseGeneration && s.submitted) {
+                    VkResult ready = dev_.vt.WaitForFences(dev_.device, 1, &s.fence, VK_TRUE, 0);
+                    if (ready == VK_TIMEOUT) { gpuPending = true; continue; }
+                    if (ready < 0) return ready;
+                }
+                candidate.pendingRelease = false;
+            }
+            chosen = static_cast<int>(i);
+            break;
+        }
+        if (chosen >= 0) break;
+        if (timeout == 0) return VK_NOT_READY;
+        if (!infinite && clock::now() >= deadline) return VK_TIMEOUT;
+        // Fence completion has no CPU notification. Worker errors are also
+        // published under workerMutex_, not mutex_, so a notification can
+        // race with this wait. Recheck periodically even for UINT64_MAX.
+        const auto poll = clock::now() + std::chrono::milliseconds(gpuPending ? 1 : 10);
+        acquireCv_.wait_until(lock, std::min(deadline, poll));
     }
     VirtualImage& vi = virtualImages_[chosen];
-    waitVirtualRelease(vi);
     vi.acquired = true;
     acquireCursor_ = static_cast<uint32_t>(chosen) + 1;
     *index = static_cast<uint32_t>(chosen);
@@ -430,9 +445,15 @@ VkResult VirtualSwapchain::acquire(uint64_t timeout, VkSemaphore semaphore, VkFe
         si.pSignalSemaphores = &semaphore;
         VkResult r = dev_.submit(si, fence);
         if (r < 0) {
+            vi.acquired = false;
+            acquireCv_.notify_all();
             BDEX_ERR("failed to signal acquire semaphore: %s", vkResultName(r));
             return r;
         }
+    }
+    if (pending != VK_SUCCESS) {
+        std::lock_guard<std::mutex> wlock(workerMutex_);
+        if (pendingResult_ == pending) pendingResult_ = VK_SUCCESS;
     }
     return pending;
 }
@@ -441,6 +462,7 @@ VkResult VirtualSwapchain::release(uint32_t count, const uint32_t* indices) {
     std::lock_guard<std::mutex> lock(mutex_);
     for (uint32_t i = 0; i < count; ++i)
         if (indices[i] < virtualImages_.size()) virtualImages_[indices[i]].acquired = false;
+    acquireCv_.notify_all();
     return VK_SUCCESS;
 }
 
@@ -524,6 +546,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     }
     VirtualImage& vi = virtualImages_[imageIndex];
     vi.acquired = false;
+    acquireCv_.notify_all();
 
     if (surfaceChanged_.exchange(false)) followSurface();
 
@@ -627,6 +650,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         pv.pendingRelease = true;
         pv.releaseSlot = slotIdx;
         pv.releaseGeneration = slot.generation;
+        acquireCv_.notify_all();
     }
     vi.held = true;
     if (dumping_) {
@@ -757,6 +781,7 @@ void VirtualSwapchain::runJob(const Job& job) {
             }
             std::lock_guard<std::mutex> wlock(workerMutex_);
             pendingResult_ = r;
+            acquireCv_.notify_all();
             return;
         }
         // VK_SUBOPTIMAL is deliberately not forwarded: it reports that *our*
