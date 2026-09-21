@@ -5,15 +5,24 @@ set -u
 DEMO="$1"
 LAYER_DIR="$2"
 if [ -z "${WAYLAND_DISPLAY:-}" ] && [ -z "${DISPLAY:-}" ]; then
+  if [ "${BDEX_REQUIRE_DISPLAY:-0}" = 1 ]; then
+    echo "a graphical display is required for this test"
+    exit 1
+  fi
   echo "no display available, skipping"
   exit 77
 fi
 LOG="$(mktemp)"
 trap 'rm -f "$LOG"' EXIT
-VK_ADD_IMPLICIT_LAYER_PATH="$LAYER_DIR" BDEX_FG=1 BDEX_FG_LOG=2 BDEX_FG_STATS_INTERVAL=2 \
+unset VK_ADD_IMPLICIT_LAYER_PATH
+VK_IMPLICIT_LAYER_PATH="$LAYER_DIR" BDEX_FG=1 BDEX_FG_LOG=2 BDEX_FG_STATS_INTERVAL=2 \
   timeout 60 "$DEMO" --fps 30 --frames 150 --deterministic >"$LOG" 2>&1
 status=$?
 if [ $status -ne 0 ]; then
+  if [ "${BDEX_REQUIRE_DISPLAY:-0}" != 1 ] && grep -q 'demo: glfwInit failed' "$LOG"; then
+    echo "no usable graphical display, skipping"
+    exit 77
+  fi
   echo "demo exited with status $status"
   cat "$LOG"
   exit 1

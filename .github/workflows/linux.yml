@@ -20,6 +20,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      # The last build before the census term: the default matcher path must
+      # stay byte-identical to it (AGENTS.md, invariant n°1).
+      - uses: actions/checkout@v4
+        with:
+          ref: f2cec5f29d90775a3d1a847620058ffaccca19af
+          path: baseline
 
       - name: Dependencies
         run: |
@@ -55,7 +61,10 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: cmake --build build -j
+        run: |
+          cmake --build build -j
+          cmake -S baseline -B baseline/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build baseline/build -j
 
       # Register the layer as a global implicit layer — the canonical discovery
       # path, honoured by every loader version. VK_ADD_IMPLICIT_LAYER_PATH (set
@@ -83,7 +92,19 @@ jobs:
       # layer, checks the doubled frame rate) needs a display, hence Xvfb.
       # --repeat until-pass:2 absorbs a one-off software-renderer hiccup.
       - name: Tests
-        run: xvfb-run -a ctest --test-dir build --output-on-failure --repeat until-pass:2
+        run: BDEX_REQUIRE_DISPLAY=1 xvfb-run -a ctest --test-dir build --output-on-failure --repeat until-pass:2
+
+      # Default generated frames must match the pre-census build byte for byte.
+      # The script selects each build with VK_IMPLICIT_LAYER_PATH; if the
+      # loader ignored it, both runs would load the globally installed layer
+      # and the comparison would pass vacuously — check that first.
+      - name: Matcher invariant (bit-for-bit vs f2cec5f)
+        run: |
+          if VK_IMPLICIT_LAYER_PATH=/nonexistent vulkaninfo 2>/dev/null | grep -qi bdex; then
+            echo "loader ignores VK_IMPLICIT_LAYER_PATH: the invariant check would be vacuous"; exit 1
+          fi
+          BDEX_INVARIANT_SEQUENTIAL=1 xvfb-run -a -s '-screen 0 1280x800x24' \
+            python3 tests/check_matcher_invariant.py build baseline/build
 
       # Quality regression gate: PSNR of the generated frames against the
       # 60 fps ground truth, normal and fast-motion scenes.
@@ -101,3 +122,10 @@ jobs:
           if failures:
               print("quality regression:", "; ".join(failures)); sys.exit(1)
           EOF
+          # x3/x4 score every generated position (local reference on llvmpipe:
+          # 31.81/31.98 dB at 800x600); same 28 dB floor, shorter runs.
+          for mult in 3 4; do
+            report="$(BDEX_FG_MULTIPLIER=$mult xvfb-run -a tools/run_eval.sh build 12)"
+            echo "$report"
+            echo "$report" | awk '/^  mean/ { seen=1; if ($2 < 28) bad=1 } END { exit !seen || bad }'
+          done
