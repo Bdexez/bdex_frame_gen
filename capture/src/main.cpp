@@ -35,6 +35,7 @@
 #include <cwchar>
 #include <cwctype>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -438,6 +439,7 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
 
     ULONGLONG lastRectCheck = 0, statsT0 = GetTickCount64();
     uint32_t presented = 0, presentedReal = 0;
+    std::vector<double> arrivalToSubmitMs, arrivalToPresentMs;
     bool hidden = false;
     while (g_running) {
         MSG msg;
@@ -502,6 +504,8 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
             break;
         }
         if (r != 0) continue;
+        const double synthLatencyMs = std::chrono::duration<double, std::milli>(
+            bdex::VkCtx::clock::now() - frame.dequeuedAt).count();
 
         // Presentation of the job, paced like VirtualSwapchain::presentOne:
         // with FIFO the display paces; otherwise spread the frames over the
@@ -538,14 +542,33 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
                 break;
             }
             ++presented;
-            if (job.realFirst ? i == 0 : i == job.frames - 1) ++presentedReal;
+            if (job.realFirst ? i == 0 : i == job.frames - 1) {
+                ++presentedReal;
+                arrivalToSubmitMs.push_back(synthLatencyMs);
+                arrivalToPresentMs.push_back(std::chrono::duration<double, std::milli>(
+                    bdex::VkCtx::clock::now() - frame.dequeuedAt).count());
+            }
         }
 
+        now = GetTickCount64();
         if (now - statsT0 >= 2000) {
             const float secs = static_cast<float>(now - statsT0) / 1000.0f;
             const float outFps = presented / secs, realFps = presentedReal / secs;
-            LOGI("capture %.1f fps -> shown %.1f fps -> output %.1f fps", cap.captureFps(),
-                 realFps, outFps);
+            auto stats = [](std::vector<double>& samples) {
+                if (samples.empty()) return std::pair<double, double>{0.0, 0.0};
+                double sum = 0.0;
+                for (double v : samples) sum += v;
+                std::sort(samples.begin(), samples.end());
+                const size_t p95 = (samples.size() * 95 - 1) / 100;
+                auto result = std::pair<double, double>{sum / samples.size(), samples[p95]};
+                samples.clear();
+                return result;
+            };
+            const auto synthLatency = stats(arrivalToSubmitMs);
+            const auto presentLatency = stats(arrivalToPresentMs);
+            LOGI("capture %.1f fps -> shown %.1f fps -> output %.1f fps; WGC dequeue -> synth submit %.1f/%.1f ms, -> present API %.1f/%.1f ms (mean/p95)",
+                 cap.captureFps(), realFps, outFps, synthLatency.first, synthLatency.second,
+                 presentLatency.first, presentLatency.second);
             vk.setHud(static_cast<int>(cap.captureFps() + 0.5f), static_cast<int>(outFps + 0.5f));
             presented = presentedReal = 0;
             statsT0 = now;

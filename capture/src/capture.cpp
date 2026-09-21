@@ -137,6 +137,7 @@ struct Capture::Impl {
     // Returns true when the frame pool must be recreated at `poolSize`
     // (content grew past the pool's surfaces).
     bool onFrame(wgc::Direct3D11CaptureFrame const& frame) {
+        const auto dequeuedAt = std::chrono::steady_clock::now();
         auto size = frame.ContentSize();
         if (size.Width <= 0 || size.Height <= 0) return false;
         bool growPool = size.Width > poolSize.Width || size.Height > poolSize.Height;
@@ -187,7 +188,7 @@ struct Capture::Impl {
             ring[pending.front().slot].busy = false;
             pending.erase(pending.begin());
         }
-        pending.push_back({sl.shared, contentW, contentH, slot, generation});
+        pending.push_back({sl.shared, contentW, contentH, slot, generation, dequeuedAt});
         SetEvent(dataEvent);
 
         ++captured;
@@ -323,14 +324,17 @@ bool Capture::start(HWND target, const LUID* luid) {
 void Capture::stop() {
     if (!impl_) return;
     if (impl_->quitEvent) SetEvent(impl_->quitEvent);
-    if (impl_->thread) {
-        WaitForSingleObject(impl_->thread, 2000);
-        CloseHandle(impl_->thread);
-    }
     if (impl_->session) {
         try { impl_->session.Close(); } catch (...) {}
     }
     impl_->arrived.revoke();
+    // The capture thread uses Impl, its frame pool, and the ring. Do not free
+    // any of them until it has actually stopped; a timed-out wait followed by
+    // delete would leave the thread with dangling pointers.
+    if (impl_->thread) {
+        WaitForSingleObject(impl_->thread, INFINITE);
+        CloseHandle(impl_->thread);
+    }
     if (impl_->pool) {
         try { impl_->pool.Close(); } catch (...) {}
     }
