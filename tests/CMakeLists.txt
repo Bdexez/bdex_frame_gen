@@ -1,4 +1,4 @@
-add_executable(bdex_tests test_main.cpp test_config.cpp test_format.cpp)
+add_executable(bdex_tests test_main.cpp test_config.cpp test_format.cpp test_present_slice.cpp)
 target_link_libraries(bdex_tests PRIVATE bdex_core)
 if(MSVC)
   target_compile_options(bdex_tests PRIVATE /W4)

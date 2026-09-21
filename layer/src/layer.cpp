@@ -4,6 +4,7 @@
 #include "device.h"
 #include "dispatch.h"
 #include "log.h"
+#include "present_slice.h"
 #include "swapchain.h"
 #include "vk_util.h"
 
@@ -579,42 +580,59 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue, const VkPresentInf
         std::lock_guard<std::mutex> lock(dev->queueMutex(queue));
         return dev->vt.QueuePresentKHR(queue, pPresentInfo);
     }
+    if (n == 1) {
+        VkResult r = virt[0]->present(pPresentInfo->pImageIndices[0], *pPresentInfo, true);
+        if (pPresentInfo->pResults) pPresentInfo->pResults[0] = r;
+        return r;
+    }
 
     VkResult result = VK_SUCCESS;
     bool semaphoresConsumed = false;
+
+    // Build every reduced pNext chain before submitting anything. Vulkan's
+    // per-swapchain arrays must use the same indexing as the reduced list,
+    // including when the only real swapchain was not first in the app call.
+    std::vector<uint32_t> realPositions;
+    std::vector<std::unique_ptr<PresentSlice>> virtualPresents(n);
+    for (uint32_t i = 0; i < n; ++i)
+        if (!virt[i]) realPositions.push_back(i);
+    std::unique_ptr<PresentSlice> realPresent;
+    if (!realPositions.empty()) {
+        realPresent = std::make_unique<PresentSlice>(*pPresentInfo, realPositions, true);
+        if (!realPresent->valid()) {
+            BDEX_ERR("cannot split mixed present: %s", realPresent->error());
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
+        }
+    }
+    bool firstVirtual = realPositions.empty();
+    for (uint32_t i = 0; i < n; ++i) {
+        if (!virt[i]) continue;
+        virtualPresents[i] = std::make_unique<PresentSlice>(*pPresentInfo, std::vector<uint32_t>{i}, firstVirtual);
+        firstVirtual = false;
+        if (!virtualPresents[i]->valid()) {
+            BDEX_ERR("cannot split virtual present: %s", virtualPresents[i]->error());
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
+        }
+    }
 
     if (nVirtual < n) {
         // Mixed present: forward the real swapchains in one call (it consumes
         // the wait semaphores), then handle ours without them.
         static bool warned = false;
         if (!warned) { BDEX_WARN("present mixes layer and pass-through swapchains; synchronisation is best-effort"); warned = true; }
-        std::vector<VkSwapchainKHR> scs;
-        std::vector<uint32_t> idx;
-        std::vector<uint32_t> map;
-        for (uint32_t i = 0; i < n; ++i) {
-            if (virt[i]) continue;
-            scs.push_back(pPresentInfo->pSwapchains[i]);
-            idx.push_back(pPresentInfo->pImageIndices[i]);
-            map.push_back(i);
-        }
-        std::vector<VkResult> results(scs.size());
-        VkPresentInfoKHR pi = *pPresentInfo;
-        pi.swapchainCount = static_cast<uint32_t>(scs.size());
-        pi.pSwapchains = scs.data();
-        pi.pImageIndices = idx.data();
-        pi.pResults = results.data();
         {
             std::lock_guard<std::mutex> lock(dev->queueMutex(queue));
-            result = dev->vt.QueuePresentKHR(queue, &pi);
+            result = dev->vt.QueuePresentKHR(queue, &realPresent->info());
         }
         if (pPresentInfo->pResults)
-            for (size_t k = 0; k < map.size(); ++k) pPresentInfo->pResults[map[k]] = results[k];
+            for (size_t k = 0; k < realPositions.size(); ++k)
+                pPresentInfo->pResults[realPositions[k]] = realPresent->results()[k];
         semaphoresConsumed = true;
     }
 
     for (uint32_t i = 0; i < n; ++i) {
         if (!virt[i]) continue;
-        VkResult r = virt[i]->present(pPresentInfo->pImageIndices[i], *pPresentInfo, !semaphoresConsumed);
+        VkResult r = virt[i]->present(pPresentInfo->pImageIndices[i], virtualPresents[i]->info(), !semaphoresConsumed);
         semaphoresConsumed = true;
         if (pPresentInfo->pResults) pPresentInfo->pResults[i] = r;
         result = worstResult(result, r);
