@@ -138,7 +138,7 @@ hard requirement, capture is the wrong tool and only present-hook injection (per
 API, anti-cheat risk) gets there — decide now.
 
 **Phase 1 — a proof of concept end to end (the risky 20% first). —
-Implemented in `capture/` (pending on-hardware validation).**
+Implemented in `capture/` and validated on hardware (2026-09-15).**
 - WGC capture of one windowed D3D11 game → D3D11 texture. ✅ `capture.cpp`:
   `GraphicsCaptureItem` from the HWND, free-threaded frame pool, a capture
   thread copying each frame into a 3-slot ring of `B8G8R8A8` textures created
@@ -159,14 +159,15 @@ Implemented in `capture/` (pending on-hardware validation).**
   with acceptable latency. This validates capture + interop + present — the
   three genuinely new risks — before wiring the full flow pipeline.
 
-**Phase-1 validation checklist** (first run on a real machine; the MSVC build
+**Phase-1 validation checklist** (repeat for new GPUs and drivers; the MSVC build
 itself is done by the `windows` GitHub Actions workflow, artifact
 `bdex-framegen-windows-x64`):
 1. `bdex_capture.exe --list` prints the open windows.
 2. Start a windowed D3D game; `bdex_capture.exe --title <game> --hud 2`.
    Expected log lines: `GPU: …`, `vulkan ready`, `capturing window WxH`,
    `capture ring WxH (generation 1)`, `swapchain WxH, N images, mailbox`,
-   `imported ring slot 0…2`, then `capture X fps -> output Y fps` every 2 s.
+   `imported ring slot 0…2`, then periodic capture/shown/output fps and WGC
+   dequeue-to-submit/present timing lines.
 3. The overlay shows the game live; `--fit` fills the monitor; `--scale 2`
    on a small window shows the bicubic upscale.
 4. Resize / move / minimise the game window: overlay follows, ring
@@ -176,8 +177,9 @@ itself is done by the `windows` GitHub Actions workflow, artifact
 5. Note the latency subjectively (mailbox vs `--fifo`) and whether mouse
    clicks reach the game through the overlay (`WS_EX_TRANSPARENT`); both
    feed phase 3.
-6. Test on both vendors available (the RTX 3060 Ti box first; AMD/Intel
-   if any) — D3D11 import + keyed mutex is the cross-vendor unknown.
+6. Repeat on other vendors and driver versions; the first validation used an
+   Intel iGPU + RTX 3050 laptop. D3D11 import + keyed mutex remain the main
+   cross-vendor risks.
 
 **Phase 2 — frame generation. — Implemented, first run validated on hardware
 (2026-09-15).**
@@ -212,6 +214,11 @@ cursor on PRAGMATA and DS3) — fixed: the overlay has no class cursor and
 never sets a shape in `WM_SETCURSOR`; when the game has hidden the hardware
 cursor, `GetCursorInfo` gates a force-hide over the overlay, while menus keep
 the game's own cursor.
+
+The console now reports mean and p95 time from retrieval of a WGC frame to the
+Vulkan synthesis submission and to return from `vkQueuePresentKHR` for its
+real frame. This measures processing and queueing after WGC delivery; it does
+not measure game-present-to-WGC delay or display scanout.
 
 **Phase 3 — product.**
 - Config window ✅ (v1: running `bdex_capture.exe` with no arguments opens a

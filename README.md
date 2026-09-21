@@ -68,7 +68,7 @@ Design notes:
 | **Separate queue** | The layer's work runs on a compute queue distinct from the game's whenever the GPU has one. |
 | **No frame copies** | The images the game renders into double as the frame history: nothing is copied before the analysis. |
 | **Latency first** | FIFO is replaced by mailbox + pacing (queued frames are pure display latency), and an extrapolation mode predicts the next frame instead of holding the real one back. |
-| **All on the GPU** | Five compute shaders (pyramid, matching, median, refinement, interpolation), no CPU round trip. |
+| **All on the GPU** | Compute shaders handle the luma pyramid, flow, synthesis, upscaling and sharpening without a CPU round trip. |
 | **Scene cuts** | When the motion cannot be explained, the layer shows the real frame rather than a blend. |
 
 <img src="docs/comparison.png" alt="Real frame, generated frame, next real frame" width="900">
@@ -217,8 +217,10 @@ BDEX_FG=1 BDEX_FG_MULTIPLIER=3 BDEX_FG_MODE=extrapolate %command%
 Without installing, from the build tree:
 
 ```sh
-VK_ADD_IMPLICIT_LAYER_PATH=$PWD/build/layer BDEX_FG=1 ./build/demo/bdex_demo --fps 30
+VK_IMPLICIT_LAYER_PATH=$PWD/build/layer BDEX_FG=1 ./build/demo/bdex_demo --fps 30
 ```
+
+This command uses the build-tree layer even if another version is installed.
 
 The layer periodically prints its statistics to the terminal:
 
@@ -250,7 +252,7 @@ takes precedence).
 | `BDEX_FG` | – | `1` enables the layer, `0` disables it |
 | `MULTIPLIER` | `2` | frames displayed per rendered frame: 2, 3 or 4 |
 | `MODE` | `interpolate` | `extrapolate` predicts the next frame from the last two: no added latency, more artefacts on abrupt motion |
-| `PRESET` | `auto` | `auto` picks the flow quality from the GPU (integrated / small → `performance`, discrete → `balanced`); or force `quality` (full-resolution flow, ~3× the cost), `balanced`, `performance` (quarter-resolution flow, ~2× cheaper), `latency` (extrapolation + x2 for minimal input lag) |
+| `PRESET` | `auto` | `auto` picks `performance` for integrated/small GPUs and `balanced` for discrete GPUs with at least 2 GiB of VRAM; or force `quality` (full-resolution flow, ~3× the cost), `balanced`, `performance` (quarter-resolution flow, ~2× cheaper), `latency` (extrapolation + x2 for minimal input lag) |
 | `FLOW_SCALE` | `auto` | resolution divisor of the flow: `1`, `2`, `4`; `auto` keeps the flow around 0.5 Mpixel |
 | `LEVELS` | `4` | flow pyramid levels (1–6) |
 | `SEARCH` / `SEARCH_FINE` | `4` / `2` | search radius at the coarsest level / at the finer levels (1–4) |
@@ -262,6 +264,7 @@ takes precedence).
 | `FLOW_ITERATIONS` | `1` | fixed-point iterations of the flow lookup in the interpolation (0–3) |
 | `CENSUS_WEIGHT` / `CENSUS_MARGIN` | `0` / `0.05` | opt-in discrimination for the block matcher: when the runner-up scores within the margin of the winner, near-winners are re-ranked on census (rank-transform) Hamming distance. `census_weight=2` + `census_margin=1` buys ≈ +0.5 dB on fast motion at ≈ −1.5 dB on static/small-motion scenes; `0` is off (bit-for-bit) |
 | `ROT_WEIGHT` | `0` | opt-in rotation/scale re-ranking for the block matcher: ambiguous, non-static blocks re-evaluate their top-2 displacements under local rotations (±10/±30°) and scales (0.92/1.08); the flow stays a translation, only the winner can change. Measured ≈ +0.25 dB normal / +0.3 dB fast motion on the eval, non-negative on static scenes; `1` to enable, `0` is off (bit-for-bit) |
+| `OCCLUSION_STRENGTH` | `0` | Experimental interpolation confidence and reduced cross-fade fallback, from `0` (historical output) to `1`. On the demo, `1` improves PSNR in newly revealed regions but can add GPU cost; keep disabled until validated on games. |
 | `PRESENT_MODE` | `auto` | `auto` presents with mailbox when the game asks for FIFO; `app` keeps the game's mode; or force `fifo`, `mailbox`, `immediate`, `relaxed` |
 | `PACING` | `1` | even spacing of the frames in non-FIFO modes |
 | `LOW_LATENCY` | `0` | block the game until its previous frame has been handed to the display (only matters with FIFO) |
@@ -391,14 +394,20 @@ It also loads inside the Steam Linux Runtime container (pressure-vessel).
 
 ```sh
 cmake -S . -B build && cmake --build build -j
-ctest --test-dir build --output-on-failure     # unit tests + end-to-end test
+ctest --test-dir build --output-on-failure     # unit, evaluator and GPU integration tests
 tools/run_eval.sh build 40                      # PSNR against ground truth
 BDEX_EVAL_ARGS="--speed 2.5" tools/run_eval.sh build 40   # fast-motion scene
 ```
 
-`tools/run_eval.sh` renders the demo at 60 fps (reference) and then at 30 fps
-through the layer, and compares each generated frame with the matching real
-frame thanks to the frame counter drawn on screen.
+`tools/run_eval.sh` renders the demo at `30 × MULTIPLIER` fps (reference) and
+then at 30 fps through the layer. Set `BDEX_FG_MULTIPLIER=3` or `4` to evaluate
+every generated position. The report includes quality in changing regions and
+on moving edges, pixels revealed by the moving yellow bar, and moving edges
+around the rotating square, as well as whole-frame PSNR. The local scores
+exclude the demo's frame-counter patch, which is only used for temporal alignment. The
+runner ignores `~/.config/bdex-framegen.conf`; pass `BDEX_FG_*` variables to
+compare variants. It prints aligned, expected and dumped frame counts, and
+fails below 75% of the expected generated frames (rounded down).
 
 ---
 

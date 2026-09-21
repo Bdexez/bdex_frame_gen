@@ -15,7 +15,7 @@ reprendre le projet sans re-dérivation. Sources de vérité complémentaires :
 **bdex-framegen** génère des frames de jeu par optical flow GPU (comme Lossless
 Scaling / AFMF maison) : pyramide luma + block matching hiérarchique, puis
 synthèse par interpolation ou extrapolation ; upscaling spatial + sharpening
-CAS + HUD fps en option. Projet C++17 / Vulkan / CMake, shaders GLSL→SPIR-V
+CAS + HUD fps en option. Projet C++20 / Vulkan / CMake, shaders GLSL→SPIR-V
 embarqués au build. Auteur : Bdexez.
 
 ## 2. Les deux produits
@@ -36,7 +36,8 @@ tous les shaders de `layer/shaders/`.
 
 - `layer/src/` — la couche : `layer.cpp` (négociation loader, dispatch,
   `vkGetInstanceProcAddr`), `swapchain.cpp` (virtualisation des swapchains,
-  pacing), `framegen.cpp` (orchestration du pipeline), `config.cpp`,
+  pacing), `present_slice.{h,cpp}` (réindexation des tableaux `pNext` lors
+  d'un present multi-swapchain), `framegen.cpp` (orchestration du pipeline), `config.cpp`,
   `device.cpp`, `platform.cpp` (shims Linux/Windows), `format.cpp`, `log.cpp`.
 - `layer/shaders/` — `downsample`, `block_match`, `flow_smooth`,
   `flow_refine`, `reduce_cost`, `interpolate`, `upscale`, `cas`,
@@ -49,8 +50,11 @@ tous les shaders de `layer/shaders/`.
   tests ; `tools/run_eval.sh` + `tools/eval_quality.py` (PSNR vs référence).
 - `tools/` — GUI de contrôle GTK4 (`bdex-framegen-gui`, Linux), `install.sh` /
   `uninstall.sh` (x64 + x86), scripts PowerShell d'enregistrement du layer.
-- `tests/` — tests unitaires (config, formats) + `integration.sh` (démo 30 fps
-  à travers la couche, vérifie le ratio x2 et "generation on").
+- `tests/` — tests unitaires (config, formats), alignement de l'évaluateur,
+  réindexation des métadonnées de present sur deux swapchains,
+  `integration.sh` (démo 30 fps à travers la couche, vérifie le ratio x2 et
+  "generation on") et `test_acquire.cpp` (délais nuls/finis après épuisement
+  des images virtuelles, puis réveil à la libération).
 - `.github/workflows/windows.yml` — build MSVC x64 + Win32, tests, zip par arch
   (`bdex-framegen-windows-<arch>`), logs poussés sur `ci-log-<arch>` en cas
   d'échec ; tags `v*` → GitHub Release (pré-release si suffixe `-`).
@@ -64,7 +68,7 @@ tous les shaders de `layer/shaders/`.
 
 ```bash
 cmake -S . -B build && cmake --build build -j$(nproc)   # Linux
-ctest --test-dir build --output-on-failure              # unit + intégration
+ctest --test-dir build --output-on-failure              # unit + éval + intégration GPU
 tests/integration.sh build/demo/bdex_demo build/layer   # e2e GPU (X11/Wayland)
 tools/run_eval.sh                                       # éval qualité (PSNR)
 ```
@@ -121,7 +125,7 @@ La couche est toujours chargée et reste pass-through tant que `enabled=0`
 (ou section absente) ; `BDEX_FG=1` l'active. Presets : `balanced` (défaut),
 `quality` (flow_scale 1, levels 5, iterations 2), `performance` (flow_scale 4,
 refine_all 0, iterations 0), `latency` (extrapolation + x2), `auto`
-(iGPU→performance, dGPU→balanced, grosse dGPU→quality). Les knobs flow
+(iGPU→performance, dGPU avec ≥2 Gio de VRAM→balanced). Les knobs flow
 avisés (`levels`, `search*`, `refine*`, `flow_scale`, `flow_iterations`)
 désactivent l'auto-tune. Voir `Config` dans `layer/src/config.h` pour la liste
 complète (multiplier 1-4, render_scale, upscale_filter, sharpness, scene cut
@@ -159,6 +163,9 @@ réintroduire) :
 - **Double curseur** (jeux qui cachent le curseur matériel) : pas de class
   cursor sur l'overlay, `GetCursorInfo` force la dissimulation.
 - **`log_file`** : `%VAR%`/`~` expansés avant ouverture (`platformExpandPath`).
+- **Arrêt WGC** : fermer la session, révoquer le callback, puis joindre le
+  thread avant de libérer pool/ring ; le callback possède son événement de
+  réveil via `shared_ptr`, sans capturer `Capture` ou `Impl`.
 
 ## 9. Pièges transverses
 
@@ -168,17 +175,38 @@ réintroduire) :
 - Les tests d'intégration nécessitent un display (skip propre sinon) ; le test
   e2e exerce la génération sur GPU — le faire tourner après toute modif de
   shader.
+- Les images virtuelles conservent tous les bits `imageUsage` demandés par le
+  jeu ; si Vulkan ne peut pas créer une image ordinaire compatible, revenir au
+  swapchain du pilote. Ne jamais retirer silencieusement un usage demandé.
+- `run_eval.sh` ignore le fichier de config utilisateur (`BDEX_FG_CONFIG=/dev/null`)
+  mais accepte les overrides `BDEX_FG_*` explicites. L'évaluateur publie le
+  nombre de frames comparables, attendues et exportées, puis échoue sous le
+  seuil minimal (75 % des frames attendues, arrondi à l'entier inférieur).
+  Il conserve les dumps en `uint8` pour limiter la mémoire et mesure aussi les
+  pixels révélés par la barre jaune et les arêtes du carré en rotation.
+- Capture Windows : la valeur par défaut `extrapolate=1` est posée avant
+  lecture du fichier/env (`Config::loadWithDefaults`) ; priorité : défauts <
+  fichier < env < preset CLI < options CLI explicites < launcher. Le launcher
+  lit le mode effectif, y compris `BDEX_FG_MODE`.
+- La CI Windows utilise le SDK Vulkan `1.4.357.0` et contrôle son SHA256 avant
+  installation ; elle compile le mode 1 avec MSVC x64/Win32, sans l'exécuter
+  sur hardware.
 - Les artefacts se diagnostiquent avec `BDEX_FG_DEBUG=flow` (voir le flux) et
   `dump_dir` (PPM), cf. CONTRIBUTING.md.
-- CI Linux depuis le 2026-09-21 (`linux.yml`, verte) : unit + intégration +
-  gate PSNR sur lavapipe à chaque push. On peut toujours tout lancer à la main
-  (cf. §4). Le seuil PSNR (28,0/23,0) est calibré au chiffre lavapipe réel, qui
-  colle au GPU à ~0,04 dB — toute régression matcher le fait chuter.
+- CI Linux depuis le 2026-09-21 (`linux.yml`, verte) : unit + intégration
+  (dont épuisement des images de swapchain et `VK_NOT_READY`/`VK_TIMEOUT`) +
+  gate PSNR sur lavapipe à chaque push (x2 normal/rapide, x3/x4), et
+  comparaison bit à bit du chemin par défaut avec `f2cec5f` (vrai pré-census).
+  On peut toujours tout lancer à la main (cf. §4). Le seuil PSNR (28,0/23,0)
+  est calibré au chiffre lavapipe réel, qui colle au GPU à ~0,04 dB — toute
+  régression matcher le fait chuter.
 
 ## 10. Décisions & mesures clés (retenir les chiffres)
 
-- Éval qualité (reproductible depuis `a296641`) : baseline **31,0 dB normal /
-  23,7 dB fast** (`--speed 2`). Le régime faible = **mouvement rapide**, et
+- Éval qualité historique (2026-09-15, affichage fixé) : baseline **31,0 dB normal /
+  23,7 dB fast** (`--speed 2`). La taille imposée par le compositeur change les
+  valeurs absolues ; comparer les variantes sur le même affichage. Le régime
+  faible = **mouvement rapide**, et
   c'est un problème d'ambiguïté du coût de matching, pas de rayon ni de
   régularisation (`levels=5` byte-identique ; les deux directions de
   `smoothness` dégradent).
@@ -190,17 +218,35 @@ réintroduire) :
   arêtes en mouvement).
 - Interpolation ajoute ~8,4 ms de hold ; extrapolation ~0,1 ms (preset
   `latency`).
+- L'évaluation accepte x2/x3/x4 et rapporte le PSNR des zones changeantes et
+  des arêtes en mouvement (en excluant le compteur de frames des masques
+  locaux). `occlusion_strength` est un essai opt-in de
+  cohérence aller/retour dans la synthèse ; défaut 0. Sur Radeon Vega 8,
+  x2/40 frames, force 1 n'a pas amélioré le PSNR normal/fast (28,63/22,04 dB
+  dans les deux cas) ; arêtes en mouvement : −0,01 dB dans les deux cas. Sur
+  llvmpipe à affichage fixe, x2/12 frames : 31,91/23,64 dB normal/fast,
+  inchangés avec force 1. Un
+  poids plus agressif fondé sur le désaccord des deux candidats a perdu
+  0,10 dB normal sous Xvfb/llvmpipe (12 frames), sans gain sur les arêtes
+  rapides ; essai abandonné.
+- Nouveau prototype `occlusion_strength=1` : réduit aussi le repli en fondu
+  simple quand les deux trajectoires ont un coût élevé. Radeon Vega 8,
+  x2/30 frames (26 alignées), défaut→option : normal 29,35→29,43 dB global,
+  19,97→20,16 dB arêtes, 25,88→26,69 dB zones révélées, 21,94→22,18 dB
+  rotation ; rapide (`--speed 2`) 22,12→22,15 / 15,35→15,38 /
+  19,62→19,95 / 13,88→13,95 dB. Coût GPU interp bruité, environ 7–16 ms
+  défaut / 9–15 ms option sur cet iGPU ; défaut laissé à 0. 38 dumps du
+  chemin à 0 sont identiques octet pour octet au shader précédent.
 
 ## 11. Axes d'amélioration
 
 **Qualité du flow (le levier principal)**
-1. **Côté synthèse** : gestion des occlusions dans `interpolate` (exclusion /
-   confidence par direction de warp) — identifié comme le prochain levier après
-   les mesures census/grad.
+1. **Côté synthèse** : valider le prototype opt-in d'occlusion sur GPU stable
+   et sur jeux réels ; une gestion explicite de visibilité par direction reste
+   à explorer après les mesures census/grad.
 2. Matcher invariant aux rotations/zoom (modèle affine local par bloc).
-3. Métrique d'éval locale (zones en mouvement / arêtes) — le PSNR global
-   masque le tearing ; une métrique ciblée permettrait enfin de trancher
-   grad/census au lieu de les shipper opt-in.
+3. Étendre les métriques locales existantes (zones révélées / rotation) à des
+   scènes plus variées ; le PSNR global masque encore le tearing.
 4. Régression qualité automatisée : runner CI auto-hébergé avec GPU tournant
    `run_eval.sh` à chaque push (ou nuit), traquer les dB.
 5. Test hôte du block matcher (référence CPU des coûts + tie-breaking dans
@@ -213,8 +259,9 @@ réintroduire) :
    hotkey global (toggle) et profils par jeu.
 7. Évaluer la qualité phase 2 sur hardware : flow vs build Linux, régime bas
    fps (x2 à 30 fps), multipliers x3/x4, interpolation vs extrapolation.
-8. Mesurer la latence réelle de la chaîne capture (timestamps
-   arrivée→présentation) au lieu du ressenti.
+8. Compléter la mesure de latence de la chaîne capture : le log actuel mesure
+   la sortie du pool WGC jusqu'au retour de `vkQueuePresentKHR`, mais pas le
+   délai entre la présentation du jeu et WGC, ni le balayage écran.
 
 **Windows mode 1 (layer)**
 9. Validation hardware complète (checklist §3 de `docs/windows-port.md`) —
