@@ -3,6 +3,7 @@
 #include "dispatch.h"
 #include "vk_util.h"
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -31,6 +32,7 @@ struct InstanceData {
     VkInstance instance = VK_NULL_HANDLE;
     uint32_t apiVersion = VK_API_VERSION_1_0;
     Config config;  // loaded at instance creation; the render-scale hook needs it before the device exists
+    std::atomic<bool> renderScaleAllowed{true};  // disabled if a device needs pass-through present extensions
     std::mutex surfMutex;
     std::unordered_map<VkSurfaceKHR, WaylandSurfaceState> waylandSurfaces;
 };
