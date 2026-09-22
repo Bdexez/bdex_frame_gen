@@ -123,6 +123,7 @@ private:
     OutputEncoding enc_;
     int levels_ = 0;
     float flowScale_ = 1.f;
+    bool flowValid_ = false;    // the flow images hold a computed flow (temporal candidate source)
     VkFormat lumaFormat_ = VK_FORMAT_R32_SFLOAT;
 
     struct Source {
