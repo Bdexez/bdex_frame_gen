@@ -264,12 +264,12 @@ void Config::loadEnv() {
     }
 }
 
-Config Config::load() {
+Config Config::load(const std::string& extraProcess) {
     Config c;
     std::string path;
     if (const char* p = getenv("BDEX_FG_CONFIG")) path = p;
     else path = platformConfigPath();
-    if (!path.empty()) c.loadFile(path, "");
+    if (!path.empty()) c.loadFile(path, extraProcess);
     c.loadEnv();
     // Multiplayer anti-cheat present: stay a pass-through for this process,
     // whatever the config/env says. Injection into a protected process is

@@ -529,7 +529,7 @@ int VkCtx::synthesize(const Capture::Frame& f, bool& consumed) {
     lastArrival_ = now;
 
     const Config& cfg = layerDev_.config;
-    const int mult = std::max(1, cfg.multiplier);
+    const int mult = genEnabled_ ? std::max(1, cfg.multiplier) : 1;  // hotkey off -> passthrough
     const bool interpolate = prev_ >= 0 && mult > 1;
     const uint32_t cur = cur_;
     const int prev = prev_;

@@ -43,6 +43,8 @@ struct LaunchChoice {
     bool fifo = false;      // vsync (FIFO) presentation instead of mailbox
     float scale = 1.f;      // overlay size factor (unused when fit)
     bool fit = false;       // overlay fills the game's monitor
+    bool perGame = false;   // save these options to the target's [game] section
+                            // (a per-game profile) instead of the global [*]
     // Advanced optical-flow tuning (defaults mirror Config; a value left at its
     // default is not written to the file). Same keys the Linux panel exposes.
     float gradWeight = 0.f;      // grad_weight

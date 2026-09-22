@@ -82,6 +82,15 @@ public:
     void setHud(int gameFps, int outFps);
 
     void setCapture(Capture* c) { cap_ = c; }
+
+    // Runtime on/off of frame generation (the global hotkey). Off = the real
+    // captured frames pass through unchanged (as if multiplier 1): no flow, no
+    // in-between frames, minimal latency. Toggled from the message loop, the
+    // same thread that calls synthesize(), so a plain bool is enough.
+    bool toggleGeneration() { genEnabled_ = !genEnabled_; return genEnabled_; }
+    void setGeneration(bool on) { genEnabled_ = on; }
+    bool generation() const { return genEnabled_; }
+
     bool hasSwapchain() const { return swapchain_ != VK_NULL_HANDLE; }
     const char* presentModeName() const;
     bool fifo() const;
@@ -130,6 +139,7 @@ private:
     uint32_t parity_ = 0;
     uint64_t frameNo_ = 0;
     bool generated_ = false;                 // the last job has generated frames
+    bool genEnabled_ = true;                  // frame generation on (global hotkey toggle)
     Job job_;
     clock::time_point lastArrival_{};
     double intervalMs_ = 16.7;

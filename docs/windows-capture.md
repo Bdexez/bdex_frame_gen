@@ -218,8 +218,15 @@ the game's own cursor.
   native launcher — window picker, generation/upscale/presentation/HUD options
   plus an **Advanced optical-flow group** (grad_weight, scene-cut thresholds,
   smoothness, zero_bias, search_fine, flow_iterations), persisted to the shared
-  config file; `capture/src/launcher.{h,cpp}`, Win32, no toolkit). Remaining:
-  global hotkey, per-game profiles, tray,
+  config file; `capture/src/launcher.{h,cpp}`, Win32, no toolkit).
+- **Global toggle hotkey** ✅ (Ctrl+Alt+G toggles generation on/off at runtime
+  in `runCapture`'s message loop — `VkCtx::toggleGeneration`, off = passthrough;
+  rebindable via the `hotkey` config key, `parseHotkey` in `main.cpp`).
+- **Per-game profiles** ✅ (`Config::load(extraProcess)` adds the captured
+  game's process name to the section matcher, so a `[game]` section overrides
+  the globals for that title; the launcher's **"Profil pour ce jeu"** checkbox
+  writes that section via `savePerGameConfig`, preserving the rest of the file,
+  and prefills from it on selection). Remaining: tray,
   DupliAPI fallback, fullscreen/borderless handling, HDR, VRR, multi-GPU.
 - Installer + signing + docs.
 
