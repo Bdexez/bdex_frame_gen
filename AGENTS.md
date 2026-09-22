@@ -46,6 +46,11 @@ tous les shaders de `layer/shaders/`.
 - `capture/src/` — `capture.cpp` (WGC, frame pool, ring D3D11), `vkctx.cpp`
   (interop D3D11→Vulkan + pilote `FrameGen` + swapchain overlay), `launcher.cpp`
   (fenêtre de config native Win32), `main.cpp`.
+- `tools/offline/bdex_offline.cpp` — le moteur `FrameGen` sans fenêtre ni layer
+  sur une séquence PPM (1 frame sur `multiplier` en entrée, les autres = vérité
+  terrain) ; piloté par `tools/eval_sequence.py` (PSNR global / mouvement /
+  arêtes + références répétition et fondu, A/B `--variant`). Reproduit
+  exactement les frames du layer en ligne (hors compteur de la démo).
 - `demo/` — démo Vulkan (scène animée) servant de cobaye pour l'éval et les
   tests ; `tools/run_eval.sh` + `tools/eval_quality.py` (PSNR vs référence).
 - `tools/` — GUI de contrôle GTK4 (`bdex-framegen-gui`, Linux), `install.sh` /
@@ -71,6 +76,7 @@ cmake -S . -B build && cmake --build build -j$(nproc)   # Linux
 ctest --test-dir build --output-on-failure              # unit + éval + intégration GPU
 tests/integration.sh build/demo/bdex_demo build/layer   # e2e GPU (X11/Wayland)
 tools/run_eval.sh                                       # éval qualité (PSNR)
+tools/eval_sequence.py <dir_ppm> --variant KEY=VAL     # éval hors ligne (bdex_offline, sans fenêtre) sur séquence enregistrée
 ```
 
 Windows : **pas de machine Windows dans l'environnement** — le build MSVC, les
