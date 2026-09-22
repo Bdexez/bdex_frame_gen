@@ -39,6 +39,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   see-through HUDs (a glyph's neighbours move); conditioning on warp
   consistency removed most of the HUD gain; in extrapolation the guard costs
   0.5–0.8 dB on the demo, so it is interpolation-only.
+- `zero_bias_contrast` (opt-in, default 0 = bit-for-bit): scales the zero
+  bias by min(1, E / zero_bias_contrast), E the block's mean luma gradient.
+  At 0.1, online `run_eval.sh` (40 frames, Vega 8): normal 29.48 → 29.50 dB,
+  `--speed 2` 23.26 → 23.74 dB (rotating edges 18.61 → 21.29 dB); offline:
+  HUD scene +0.03, smooth pan +17.2 dB, extrapolation +0.06..+0.44 dB. The
+  first matcher change measured non-negative in both regimes that also fixes
+  the smooth-content failure; `zero_bias=0` gains more on fast motion
+  (+0.75) but loses 0.10 at normal speed. 0.2–0.4 behave like `zero_bias=0`.
 - `temporal_prediction` (opt-in, default 0 = bit-for-bit): the coarsest
   block-matching level searches around a constant-velocity prediction from
   the previous frame pair (minus its backward flow, which is indexed by the

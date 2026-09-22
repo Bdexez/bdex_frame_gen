@@ -160,6 +160,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "scene_cut_high")              return parseFloat(value, sceneCutHigh, 0.f, 1.f);
     if (key == "smoothness")                  return parseFloat(value, smoothness, 0.f, 1.f);
     if (key == "zero_bias")                   return parseFloat(value, zeroBias, 0.f, 1.f);
+    if (key == "zero_bias_contrast")          return parseFloat(value, zeroBiasContrast, 0.f, 1.f);
     if (key == "grad_weight")                 return parseFloat(value, gradWeight, 0.f, 8.f);
     if (key == "census_weight")               return parseFloat(value, censusWeight, 0.f, 8.f);
     if (key == "census_margin")               return parseFloat(value, censusMargin, 0.f, 1.f);
@@ -310,6 +311,7 @@ std::string Config::describe() const {
     if (censusWeight > 0.f) o << " census_weight=" << censusWeight << " census_margin=" << censusMargin;
     if (rotWeight > 0.f) o << " rot_weight=" << rotWeight;
     if (occlusionStrength > 0.f) o << " occlusion_strength=" << occlusionStrength;
+    if (zeroBiasContrast > 0.f) o << " zero_bias_contrast=" << zeroBiasContrast;
     if (temporalPrediction) o << " temporal_prediction=1";
     if (extrapolateHold > 0.f) o << " extrapolate_hold=" << extrapolateHold;
     if (staticGuard > 0.f) o << " static_guard=" << staticGuard;
