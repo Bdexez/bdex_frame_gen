@@ -6,6 +6,20 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed (2026-09-24)
+
+- **Extrapolation no longer ghosts.** Where the forward/backward flow was
+  inconsistent, extrapolation kept the pixel in place, so a moving object
+  showed at its old position next to its warped copy — the double images
+  reported in extrapolation mode (Kenshi, and the Windows capture app, which
+  extrapolates by default). It now follows the warp everywhere, stretching
+  disoccluded areas instead. Online `run_eval.sh` (extrapolate, 40 frames,
+  Vega 8): normal 23.21 → 25.00 dB, `--speed 2` 19.68 → 20.70 dB, moving
+  edges 13.09 → 15.61 dB, pixels revealed by the moving bar 7.58 → 20.32 dB.
+  Offline: HUD scene +0.49 dB, fractal pan +1.0 dB. Looser consistency
+  thresholds scored in between. `extrapolate_hold=1` restores the old
+  behaviour. Interpolation is unchanged (byte-identical).
+
 ### Added (2026-09-24)
 
 - `bdex_offline` + `tools/eval_sequence.py`: offline quality evaluation on

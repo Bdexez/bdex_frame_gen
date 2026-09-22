@@ -222,7 +222,18 @@ réintroduire) :
 - Sub-pixel parabolique : −0,1 les deux. Zero-bias adaptatif : +0,16 fast.
   Le PSNR whole-frame sous-estime le bénéfice anti-tearing (localisé aux
   arêtes en mouvement).
-- Interpolation ajoute ~8,4 ms de hold ; extrapolation ~0,1 ms (preset
+- Extrapolation (2026-09-24) : l'ancien repli « pixel incohérent → garder le
+  pixel en place » dessinait l'objet à son ancienne position (double image,
+  cf. retour Kenshi). Supprimé (`extrapolate_hold=0` par défaut, 1 = ancien) :
+  +1,8 dB normal / +1,0 rapide en ligne, zones révélées 7,6 → 20,3 dB.
+- `zero_bias` (0,002 absolu, non normalisé par le contraste) est la cause
+  principale des échecs en mouvement rapide : sur contenu peu contrasté le
+  candidat zéro gratuit gagne → fondu fantôme. `zero_bias=0` : rapide +0,75 dB
+  en ligne (rotation +2,8), normal −0,10 ; en extrapolation gain partout
+  (+0,3 à +0,5). Défaut non changé (décision utilisateur, déplace la référence
+  CI). `temporal_prediction=1` n'est utile qu'avec un `zero_bias` faible
+  (panoramique 64 px/paire : 23,5 → 36,0 dB).
+- - Interpolation ajoute ~8,4 ms de hold ; extrapolation ~0,1 ms (preset
   `latency`).
 - L'évaluation accepte x2/x3/x4 et rapporte le PSNR des zones changeantes et
   des arêtes en mouvement (en excluant le compteur de frames des masques

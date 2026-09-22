@@ -207,6 +207,12 @@ a Windows machine.
   repetition (normal), 19.74 vs 19.24 (fast), against 31.53 / 23.54 dB for
   interpolation. This matches the Kenshi feedback (artefacts very visible in
   extrapolation) and makes the extrapolation synthesis the next target.
+- **Extrapolation double images fixed (2026-09-24):** the fallback that kept
+  inconsistent pixels in place drew moving objects at their old position.
+  Following the warp everywhere: +1.8 dB normal / +1.0 dB fast (online), and
+  revealed areas 7.6 → 20.3 dB. With `zero_bias=0` on top (offline):
+  demo 26.03 dB, fast 21.39 dB, vs 23.50 / 19.74 before — extrapolation now
+  clearly beats frame repetition (22.28 / 19.24).
 - **`zero_bias` is the fast-motion culprit (2026-09-24).** Its displacement
   penalty is absolute, not relative to the block's contrast, so on smooth or
   low-contrast content the free zero-motion candidate beats the true motion

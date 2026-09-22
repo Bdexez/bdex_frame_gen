@@ -59,6 +59,7 @@ TEST(config_apply_values) {
     CHECK(c.apply("occlusion_strength", "2") && c.occlusionStrength == 1.0f);
     CHECK(c.apply("static_guard", "1") && c.staticGuard == 1.0f);
     CHECK(c.apply("TEMPORAL_PREDICTION", "1") && c.temporalPrediction);
+    CHECK(c.apply("extrapolate_hold", "1") && c.extrapolateHold == 1.0f);
     CHECK(c.apply("STATIC_GUARD", "3") && c.staticGuard == 1.0f);   // clamped
 }
 
