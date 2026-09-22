@@ -12,6 +12,11 @@ if(Python3_Interpreter_FOUND)
                   RESULT_VARIABLE BDEX_EVAL_PYTHON_DEPS)
   if(BDEX_EVAL_PYTHON_DEPS EQUAL 0)
     add_test(NAME eval_quality COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_eval_quality.py")
+    if(TARGET bdex_offline)
+      # Headless: the engine on a synthetic sequence (needs a Vulkan device, no display).
+      add_test(NAME offline COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_offline.py" "${CMAKE_BINARY_DIR}")
+      set_tests_properties(offline PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    endif()
   endif()
 endif()
 
