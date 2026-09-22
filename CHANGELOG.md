@@ -47,6 +47,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   first matcher change measured non-negative in both regimes that also fixes
   the smooth-content failure; `zero_bias=0` gains more on fast motion
   (+0.75) but loses 0.10 at normal speed. 0.2–0.4 behave like `zero_bias=0`.
+- `subpixel` (opt-in, default 0 = bit-for-bit): parabolic fit of the finest
+  flow on an 8×8 SAD window around each 4×4 block's winner. Online
+  (40 frames): normal +0.08 dB, `--speed 2` +0.06 dB, moving edges
+  +0.1–0.2 dB; with `zero_bias_contrast=0.1`: 29.58 / 23.80 dB vs 29.48 /
+  23.26 (rotating edges +2.4 dB). Offline sub-pixel pan +0.42 dB. The 2026-09
+  attempt (−0.1 dB) fitted the 4×4 SAD under the absolute zero bias.
 - `temporal_prediction` (opt-in, default 0 = bit-for-bit): the coarsest
   block-matching level searches around a constant-velocity prediction from
   the previous frame pair (minus its backward flow, which is indexed by the

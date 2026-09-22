@@ -24,6 +24,7 @@ layout(push_constant) uniform PC {
     int coarseBlock;   // coarse block size in pixels (8)
     int fineBlock;     // fine block size in pixels (4)
     float ownBias;     // cost bonus for keeping the block's own flow
+    int subpixel;      // 1: parabolic sub-pixel fit of the winner (finest level only)
 } pc;
 
 float loadRef(ivec2 p) { return imageLoad(refImg, clamp(p, ivec2(0), pc.size - 1)).r; }
@@ -40,6 +41,21 @@ float sad(ivec2 origin, ivec2 d, float refWin[WN]) {
     for (int y = -WIN; y < 4 + WIN; ++y)
         for (int x = -WIN; x < 4 + WIN; ++x) s += abs(refWin[i++] - loadTgt(origin + ivec2(x, y) + d));
     return s;
+}
+
+// SAD over an 8x8 window centred on the 4x4 block: the sub-pixel fit needs a
+// smoother cost surface than the 16 pixels of the block itself.
+float sad8(ivec2 origin, ivec2 d) {
+    float s = 0.0;
+    for (int y = -2; y < 6; ++y)
+        for (int x = -2; x < 6; ++x) s += abs(loadRef(origin + ivec2(x, y)) - loadTgt(origin + ivec2(x, y) + d));
+    return s;
+}
+
+// Vertex of the parabola through (-1, a), (0, b), (1, c), within +-0.5.
+float parabola(float a, float b, float c) {
+    float den = a - 2.0 * b + c;
+    return den > 1e-6 ? clamp(0.5 * (a - c) / den, -0.5, 0.5) : 0.0;
 }
 
 void main() {
@@ -84,5 +100,14 @@ void main() {
             float c = sad(origin, ivec2(round(f)), refWin);
             if (c < bestCost) { bestCost = c; best = f; }
         }
+    if (pc.subpixel != 0) {
+        // Integer block matching quantises the motion to one pixel of this
+        // level — two display pixels at flow_scale 2. Fit a parabola to the
+        // cost around the winner on each axis.
+        ivec2 d = ivec2(round(best));
+        float c0 = sad8(origin, d);
+        best = vec2(d) + vec2(parabola(sad8(origin, d - ivec2(1, 0)), c0, sad8(origin, d + ivec2(1, 0))),
+                              parabola(sad8(origin, d - ivec2(0, 1)), c0, sad8(origin, d + ivec2(0, 1))));
+    }
     imageStore(fineFlow, fb, vec4(best, 0.0, 0.0));
 }

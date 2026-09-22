@@ -57,6 +57,7 @@ struct Config {
     float occlusionStrength = 0.0f; // opt-in flow confidence and reduced cross-fade fallback (0 = historical synthesis)
     bool  temporalPrediction = false; // coarsest matching level searches around the previous frame pair's motion instead of zero, so sustained fast pans are followed beyond the pyramid's range (opt-in; off = bit-for-bit)
     float extrapolateHold = 0.0f; // extrapolation: keep pixels with inconsistent motion in place (1 = pre-0.4 behaviour, shows double images; 0 = follow the warp)
+    bool  subpixel      = false;  // parabolic sub-pixel fit of the finest flow (opt-in; off = bit-for-bit)
     float staticGuard   = 0.0f;   // opt-in per-pixel static guard: pixels identical in both frames (3x3) keep the current frame, so static HUD/UI over moving content does not smear with the block's motion (0 = off, bit-for-bit)
     bool  refine        = true;   // flow refinement pass (better motion boundaries, costs GPU time)
     bool  refineAll     = true;   // refine every pyramid level (off: only the finest, cheaper, ~2 dB worse)
