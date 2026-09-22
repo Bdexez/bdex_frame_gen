@@ -17,6 +17,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   A/B-compares `--variant` options on identical inputs. On the demo it
   reproduces the layer's online frames exactly (outside the frame counter).
   New `offline` ctest (synthetic panning sequence, no display needed).
+- `static_guard` (opt-in, default 0 = bit-for-bit): in interpolation, a pixel
+  identical in both frames keeps the current frame, so static HUD elements
+  over moving content no longer smear with their block's motion. Offline
+  (Vega 8, x2): HUD-over-pan scene +0.98 dB (minimap +4.4, text box +1.1),
+  demo +0.01 dB, demo `--speed 2` −0.20 dB. A 3×3 test never fires on
+  see-through HUDs (a glyph's neighbours move); conditioning on warp
+  consistency removed most of the HUD gain; in extrapolation the guard costs
+  0.5–0.8 dB on the demo, so it is interpolation-only.
 
 ### Improved (2026-09-24)
 

@@ -57,6 +57,8 @@ TEST(config_apply_values) {
     CHECK(c.apply("rot_weight", "9") && c.rotWeight == 1.f);   // clamped
     CHECK(c.apply("occlusion_strength", "0.6") && c.occlusionStrength == 0.6f);
     CHECK(c.apply("occlusion_strength", "2") && c.occlusionStrength == 1.0f);
+    CHECK(c.apply("static_guard", "1") && c.staticGuard == 1.0f);
+    CHECK(c.apply("STATIC_GUARD", "3") && c.staticGuard == 1.0f);   // clamped
 }
 
 TEST(config_rejects_garbage) {

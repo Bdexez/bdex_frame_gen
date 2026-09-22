@@ -200,6 +200,18 @@ a Windows machine.
   `implicit_layer.d`, because `VK_ADD_IMPLICIT_LAYER_PATH` (what the test/eval
   scripts set) is not honoured by every loader build, so the demo otherwise
   runs pass-through and the integration test fails "layer did not activate".
+- **Offline evaluation (2026-09-24):** `bdex_offline` + `tools/eval_sequence.py`
+  replay any recorded sequence headless and A/B options on identical inputs.
+  First finding on the demo (Vega 8, x2, 40 generated frames): **extrapolation
+  barely beats repeating the frame** — 23.50 dB vs 22.28 dB for plain
+  repetition (normal), 19.74 vs 19.24 (fast), against 31.53 / 23.54 dB for
+  interpolation. This matches the Kenshi feedback (artefacts very visible in
+  extrapolation) and makes the extrapolation synthesis the next target.
+- `static_guard` (opt-in): per-pixel "unchanged in both frames → keep the
+  current frame", interpolation only. HUD-over-pan scene +0.98 dB (minimap
+  +4.4 dB), demo +0.01, fast −0.20 dB (a small object crossing a pixel between
+  the frames is locally indistinguishable from a static glyph). Needs real
+  game sequences with HUDs to decide a default.
 - The first `occlusion_strength` experiment used local forward/backward flow
   consistency. On Radeon Vega 8, x2/40 frames, strength 1 matched the default
   whole-frame PSNR (28.63 dB normal, 22.04 dB fast) and reduced moving-edge

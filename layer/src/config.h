@@ -54,6 +54,7 @@ struct Config {
     float censusMargin  = 0.05f;  // relative cost margin that makes a match ambiguous (triggers the census re-ranking)
     float rotWeight     = 0.0f;   // rotation/scale re-ranking of ambiguous winners: the top-2 displacements are re-evaluated under local rotations and scales (0 = off, bit-for-bit; 1 = on)
     float occlusionStrength = 0.0f; // opt-in flow confidence and reduced cross-fade fallback (0 = historical synthesis)
+    float staticGuard   = 0.0f;   // opt-in per-pixel static guard: pixels identical in both frames (3x3) keep the current frame, so static HUD/UI over moving content does not smear with the block's motion (0 = off, bit-for-bit)
     bool  refine        = true;   // flow refinement pass (better motion boundaries, costs GPU time)
     bool  refineAll     = true;   // refine every pyramid level (off: only the finest, cheaper, ~2 dB worse)
     int   flowIterations = 1;     // fixed-point iterations of the flow lookup in the interpolation (0-3)
