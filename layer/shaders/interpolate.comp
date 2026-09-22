@@ -95,13 +95,12 @@ void store(ivec2 p, vec4 c) {
 // purpose: HUDs are see-through, so a glyph's neighbours usually move (a 3x3
 // test never fires on them). Known cost: a small object crossing a pixel
 // between the two frames leaves it unchanged in both and is dropped there at
-// intermediate t; with two frames that case is locally indistinguishable
-// from a static glyph over moving content.
+// intermediate t; the caller tells the two apart with the flow at the pixel.
 float staticness(vec2 uv) {
     ivec2 srcSize = textureSize(curTex, 0);  // render size (differs when upscaling)
     ivec2 sp = min(ivec2(uv * vec2(srcSize)), srcSize - 1);
     float d = luma(abs(texelFetch(prevTex, sp, 0).rgb - texelFetch(curTex, sp, 0).rgb));
-    return 1.0 - smoothstep(0.004, 0.02, d);
+    return 1.0 - smoothstep(0.0005, 0.003, d);
 }
 
 void main() {
@@ -201,7 +200,15 @@ void main() {
     // Interpolation only: an unchanged pixel says nothing about the frame
     // after cur, where the flow may bring an object in (measured: the guard
     // costs 0.5-0.8 dB on the demo in extrapolation).
-    if (pc.staticGuard > 0.0 && t <= 1.0) c = mix(c, cur, pc.staticGuard * staticness(uv));
+    if (pc.staticGuard > 0.0 && t <= 1.0) {
+        // Only where the flow *at q itself* says the content there moves: a
+        // static pixel inside moving content is an overlay (HUD glyph). A
+        // static background pixel that a small object crosses between the
+        // frames has zero flow at q — the object arrives along its trajectory
+        // from elsewhere — and keeps the warp.
+        float moving = smoothstep(0.5, 2.0, min(length(fwdAt(q)), length(bwdAt(q))));
+        c = mix(c, cur, pc.staticGuard * staticness(uv) * moving);
+    }
     c = mix(c, cur, cut);
 
     if (pc.debugMode == DBG_FLOW) {
