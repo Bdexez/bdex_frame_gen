@@ -129,3 +129,45 @@ jobs:
             echo "$report"
             echo "$report" | awk '/^  mean/ { seen=1; if ($2 < 28) bad=1 } END { exit !seen || bad }'
           done
+
+  # The layer and the demo built with ASan+UBSan, then with TSan, running the
+  # GPU tests on lavapipe (the swapchain virtualisation has a worker thread,
+  # three mutexes and condition variables). The tests load the build's layer
+  # through VK_IMPLICIT_LAYER_PATH; nothing is installed globally here.
+  sanitizers:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: asan-ubsan
+            flags: "-fsanitize=address,undefined -fno-omit-frame-pointer"
+            env: "ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1"
+          - name: tsan
+            flags: "-fsanitize=thread -fno-omit-frame-pointer"
+            env: "TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1"
+    name: sanitizers (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake g++ pkg-config glslc libvulkan-dev vulkan-tools \
+            mesa-vulkan-drivers libglfw3-dev xvfb python3-numpy python3-pil
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_CXX_FLAGS="${{ matrix.flags }}" \
+            -DCMAKE_SHARED_LINKER_FLAGS="${{ matrix.flags }}" \
+            -DCMAKE_EXE_LINKER_FLAGS="${{ matrix.flags }}"
+          cmake --build build -j
+      - name: GPU tests under the sanitizer
+        run: |
+          icd="$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -1)"
+          if VK_IMPLICIT_LAYER_PATH=/nonexistent vulkaninfo 2>/dev/null | grep -qi bdex; then
+            echo "an installed BDEX layer would shadow the sanitized build"; exit 1
+          fi
+          env ${{ matrix.env }} VK_ICD_FILENAMES="$icd" BDEX_REQUIRE_DISPLAY=1 \
+            xvfb-run -a -s '-screen 0 1280x800x24' \
+            ctest --test-dir build -R "unit|offline|integration|acquire" --output-on-failure

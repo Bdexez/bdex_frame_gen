@@ -109,8 +109,10 @@ Outils : `tools/run_eval.sh` (démo, en ligne) et `tools/eval_sequence.py`
   deux modes, toutes les passes optionnelles). Vérifié que la couche est
   bien sous notre layer (erreur injectée → 42 VUID). Résultat actuel :
   0 message. `vulkan-validationlayers` ajouté à la CI Linux.
-- [ ] **ASan et TSan** sur les tests d'intégration (`swapchain.cpp` : mutex,
-  thread de travail, variables de condition).
+- [x] **ASan et TSan** — fait : job CI `sanitizers` (ASan+UBSan, TSan) sur
+  les tests GPU. Localement (RADV) : unit, offline, intégration, acquire et
+  la démo avec toutes les options, dumps, limiteur et multiplicateur
+  dynamique — 0 rapport ASan/UBSan/TSan.
 - [ ] **Test du block matcher sur CPU** (coûts et départage des égalités),
   qui aurait attrapé la régression `0549e44` sans GPU.
 - [ ] **Repli en pass-through sur exception** dans `FrameGen` : une erreur du
