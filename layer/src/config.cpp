@@ -167,6 +167,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "rot_weight")                  return parseFloat(value, rotWeight, 0.f, 1.f);
     if (key == "occlusion_strength")           return parseFloat(value, occlusionStrength, 0.f, 1.f);
     if (key == "temporal_prediction")          return parseBool(value, temporalPrediction);
+    if (key == "extrapolate_splat")           return parseBool(value, extrapolateSplat);
     if (key == "extrapolate_hold")            return parseFloat(value, extrapolateHold, 0.f, 1.f);
     if (key == "subpixel")                    return parseBool(value, subpixel);
     if (key == "static_guard")                return parseFloat(value, staticGuard, 0.f, 1.f);
@@ -314,6 +315,7 @@ std::string Config::describe() const {
     if (occlusionStrength > 0.f) o << " occlusion_strength=" << occlusionStrength;
     if (zeroBiasContrast > 0.f) o << " zero_bias_contrast=" << zeroBiasContrast;
     if (temporalPrediction) o << " temporal_prediction=1";
+    if (extrapolateSplat) o << " extrapolate_splat=1";
     if (extrapolateHold > 0.f) o << " extrapolate_hold=" << extrapolateHold;
     if (subpixel) o << " subpixel=1";
     if (staticGuard > 0.f) o << " static_guard=" << staticGuard;

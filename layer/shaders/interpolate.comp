@@ -24,6 +24,7 @@ layout(binding = 4, rg32ui) uniform writeonly uimage2D outImg;
 layout(binding = 4, r32ui) uniform writeonly uimage2D outImg;
 #endif
 layout(std430, binding = 5) readonly buffer Cost { float meanCost; } cost;
+layout(binding = 6, r32ui) uniform readonly uimage2D splatMap;  // forward-splat sources (extrapolation, see splat.comp)
 
 #define ENC_RGBA8      0u
 #define ENC_BGRA8      1u
@@ -55,6 +56,7 @@ layout(push_constant) uniform PC {
     float occlusionStrength; // 0 keeps the historical interpolation path
     float staticGuard;       // 0 keeps the historical path; see staticness()
     float extrapHold;        // extrapolation: keep inconsistent pixels in place (1 = historical)
+    int splat;               // extrapolation: take the source from the forward-splat map where one landed
 } pc;
 
 vec2 fwdAt(vec2 p) { return texture(flowFwd, p * pc.flowInvSize).xy * pc.flowScale; }
@@ -130,6 +132,17 @@ void main() {
         vec2 B = bwdAt(q);
         vec2 pb = q + s * B;
         for (int i = 0; i < pc.iterations; ++i) { B = bwdAt(pb); pb = q + s * B; }
+        if (pc.splat != 0) {
+            uint key = imageLoad(splatMap, p).r;
+            if (key != 0xFFFFFFFFu) {
+                // A pixel of cur landed here: sample it, shifted by the
+                // sub-pixel offset between where it lands and q.
+                uint index = key & 0x7FFFFFu;
+                vec2 src = vec2(float(index % uint(pc.size.x)), float(index / uint(pc.size.x))) + 0.5;
+                B = bwdAt(src);
+                pb = src + (q - (src - s * B));
+            }
+        }
         vec4 ce = texture(curTex, pb / fsize);
         float inconsistency = length(B + fwdAt(pb + B));
         float w = pc.extrapHold * smoothstep(2.0, 6.0, inconsistency);

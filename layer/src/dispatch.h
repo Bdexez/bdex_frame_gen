@@ -92,6 +92,7 @@ namespace bdex {
     X(CmdPushConstants)               \
     X(CmdDispatch)                    \
     X(CmdFillBuffer)                  \
+    X(CmdClearColorImage)             \
     X(CreateQueryPool)                \
     X(DestroyQueryPool)               \
     X(CmdResetQueryPool)              \

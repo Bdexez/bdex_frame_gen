@@ -151,7 +151,7 @@ private:
     VkSampler sampler_ = VK_NULL_HANDLE;
     VkDescriptorPool pool_ = VK_NULL_HANDLE;
 
-    Pass downsample_, blockMatch_, smooth_, refine_, reduce_, interp_, upscale_, cas_;
+    Pass downsample_, blockMatch_, smooth_, refine_, reduce_, interp_, upscale_, cas_, splat_;
 
     // Descriptor sets, indexed [parity][level] etc.
     std::vector<VkDescriptorSet> dsDownSrc_[2];       // [parity] per source (level 0)
@@ -160,6 +160,9 @@ private:
     std::vector<VkDescriptorSet> dsSmooth_[2];        // [dir] per level
     std::vector<VkDescriptorSet> dsRefine_[2][2];     // [parity][dir] per level
     VkDescriptorSet dsReduce_ = VK_NULL_HANDLE;
+    VkDescriptorSet dsSplat_ = VK_NULL_HANDLE;
+    AllocatedImage splatMap_;  // forward-splat targets (display size), or 1x1 when splatting is off
+    bool splatting_ = false;   // extrapolate_splat in effect
     std::vector<VkDescriptorSet> dsInterp_;           // [(prev * N + cur) * outputs + output]
     std::vector<VkDescriptorSet> dsUpscale_;          // [source]; only when upscaling_
     std::vector<VkDescriptorSet> dsCas_;              // [output] generated frames; only when sharpen_
