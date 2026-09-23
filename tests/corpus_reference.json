@@ -1,0 +1,66 @@
+{
+ "fade/extrapolate/candidate": {
+  "psnr": 29.92,
+  "ssim": 0.8483
+ },
+ "fade/extrapolate/default": {
+  "psnr": 29.03,
+  "ssim": 0.8078
+ },
+ "fade/interpolate/candidate": {
+  "psnr": 34.19,
+  "ssim": 0.8899
+ },
+ "fade/interpolate/default": {
+  "psnr": 33.26,
+  "ssim": 0.8575
+ },
+ "hud/extrapolate/candidate": {
+  "psnr": 23.04,
+  "ssim": 0.9548
+ },
+ "hud/extrapolate/default": {
+  "psnr": 22.52,
+  "ssim": 0.9493
+ },
+ "hud/interpolate/candidate": {
+  "psnr": 25.5,
+  "ssim": 0.9679
+ },
+ "hud/interpolate/default": {
+  "psnr": 24.66,
+  "ssim": 0.9622
+ },
+ "pan/extrapolate/candidate": {
+  "psnr": 41.8,
+  "ssim": 0.9913
+ },
+ "pan/extrapolate/default": {
+  "psnr": 29.61,
+  "ssim": 0.8464
+ },
+ "pan/interpolate/candidate": {
+  "psnr": 46.41,
+  "ssim": 0.9966
+ },
+ "pan/interpolate/default": {
+  "psnr": 33.77,
+  "ssim": 0.9099
+ },
+ "subpixel/extrapolate/candidate": {
+  "psnr": 49.46,
+  "ssim": 0.9971
+ },
+ "subpixel/extrapolate/default": {
+  "psnr": 45.93,
+  "ssim": 0.993
+ },
+ "subpixel/interpolate/candidate": {
+  "psnr": 50.65,
+  "ssim": 0.9978
+ },
+ "subpixel/interpolate/default": {
+  "psnr": 51.86,
+  "ssim": 0.9986
+ }
+}
