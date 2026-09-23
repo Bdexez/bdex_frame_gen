@@ -52,8 +52,12 @@ Outils : `tools/run_eval.sh` (démo, en ligne) et `tools/eval_sequence.py`
 - [x] **Warp « en avant » pour l'extrapolation** — fait : `extrapolate_splat`
   (opt-in). En ligne : normal +1,08 dB, rapide +0,41, arêtes +1,56 ; x3 +1,05.
   Coût : +0,8 ms GPU (Vega 8). Candidat pour le défaut en extrapolation.
-- [ ] **Deux hypothèses de mouvement par bloc**, choix pixel par pixel dans la
-  synthèse, pour les frontières d'objets.
+- [x] **Deux hypothèses de mouvement par bloc** — fait sous une forme moins
+  coûteuse : `pixel_vectors` (opt-in) essaie par pixel les vecteurs non
+  mélangés des 4 blocs voisins et garde la trajectoire la plus cohérente.
+  En ligne : normal +0,39, rapide +0,57, arêtes en rotation jusqu'à +4,7 dB ;
+  avec `subpixel` + `zero_bias_contrast=0.1` : rapide +1,07. Synthèse ×2
+  (+1,4 ms sur Vega 8).
 
 ## Évaluation
 

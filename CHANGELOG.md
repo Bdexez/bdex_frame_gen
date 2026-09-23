@@ -39,6 +39,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   see-through HUDs (a glyph's neighbours move); conditioning on warp
   consistency removed most of the HUD gain; in extrapolation the guard costs
   0.5–0.8 dB on the demo, so it is interpolation-only.
+- `pixel_vectors` (opt-in): per pixel, the interpolation also tries the
+  unblended vectors of the four flow texels around each trajectory's source
+  and keeps the one whose endpoints agree best — the bilinear flow lookup
+  blends two motions into a wrong vector at object boundaries. Online
+  `run_eval.sh` (40 frames, Vega 8): normal 29.48 → 29.87 dB, `--speed 2`
+  23.26 → 23.83 dB; moving edges 22.13 → 23.14, revealed pixels +1.1 dB
+  (fast +4.0), rotating edges 27.18 → 31.89 dB. With `subpixel` and
+  `zero_bias_contrast=0.1`: 29.80 / 24.33 dB. Offline: HUD scene +0.64 dB,
+  no loss anywhere. Synthesis GPU time about doubles (1.4 → 2.8 ms).
 - `extrapolate_splat` (opt-in): extrapolation forward-splats every pixel of
   the current frame to its predicted position (atomicMin on a priority key:
   consistent, faster-moving pixels win) and falls back to the backward warp
