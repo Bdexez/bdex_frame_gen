@@ -534,6 +534,22 @@ void VirtualSwapchain::updateHudLows(double dtMs) {
     hudLow01_ = lowFps(0.999);
 }
 
+// Frames presented per game frame. Fixed at `multiplier`, unless target_fps
+// is set: then the multiplier follows target_fps x the game's frame interval
+// (so 72 fps on a 144 Hz target gives x2, 50 fps gives x3, and x1 once the
+// game reaches the target), capped at `multiplier`, which the output stage
+// was sized for. A switch needs the ideal ratio to pass the halfway point by
+// 0.15, so a game hovering on a boundary does not flip every frame.
+int VirtualSwapchain::chooseMultiplier() {
+    const int maxMult = std::max(1, dev_.config.multiplier);
+    if (dev_.config.targetFps <= 0.f) return maxMult;
+    const double ratio = dev_.config.targetFps * frameIntervalMs_ / 1000.0;
+    if (dynMult_ == 0) dynMult_ = std::clamp(static_cast<int>(ratio + 0.5), 1, maxMult);
+    else if (ratio >= dynMult_ + 0.65) dynMult_ = std::min(maxMult, static_cast<int>(ratio + 0.5));
+    else if (ratio <= dynMult_ - 0.65) dynMult_ = std::max(1, static_cast<int>(ratio + 0.5));
+    return dynMult_;
+}
+
 // Frame-rate limiter (fps_limit), like DXVK_FRAME_RATE: the application's
 // present blocks until its next slot, which paces the game itself. Frame
 // generation works best from an even base rate at a divisor of the refresh
@@ -597,7 +613,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     }
     lastAppPresent_ = t0;
 
-    const int mult = generating_ ? std::max(1, dev_.config.multiplier) : 1;
+    const int mult = generating_ ? chooseMultiplier() : 1;
     // A rebuilt output stage has no analysis of the previous frame yet.
     const bool interpolate = generating_ && prevIndex_ >= 0 && mult > 1 && !historyLost_;
     historyLost_ = false;

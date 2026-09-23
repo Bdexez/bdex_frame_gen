@@ -22,6 +22,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-24)
 
+- `target_fps`: dynamic multiplier. The frames presented per game frame
+  follow target_fps × the game's frame interval, capped at `multiplier`
+  (the output stage is sized for it), with a ±0.15 hysteresis around the
+  switch points. Demo, target 144, max x4: 30 fps → x4, 50 → x3, 72 → x2,
+  150 → x1.
 - `fps_limit` (alias `fps_cap`): built-in frame-rate cap for the game, in
   the application's present (sleep to ~1.5 ms before the slot, then a short
   spin; after a late frame the schedule restarts instead of bursting).

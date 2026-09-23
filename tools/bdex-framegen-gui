@@ -69,6 +69,11 @@ ADVANCED = [
      "Plafonne les FPS du jeu (0 = aucune). Une base stable qui divise le taux de rafraîchissement "
      "(60 → 120 Hz, 72 → 144 Hz) donne la génération la plus régulière.",
      0, 360, 1, 0, 0),
+    ("target_fps", "target_fps", "Multiplicateur automatique — cible",
+     "Taux de rafraîchissement visé (ex. 144) : le multiplicateur s'adapte aux FPS du jeu "
+     "(72 → ×2, 50 → ×3, ×1 quand le jeu atteint la cible), sans dépasser le multiplicateur choisi. "
+     "0 = multiplicateur fixe.",
+     0, 360, 1, 0, 0),
     ("zero_bias_contrast", "zero_bias_contrast", "Stabilité adaptée au contraste",
      "Rend la stabilité de l'image fixe relative au contraste : supprime les fondus fantômes sur les "
      "décors doux en mouvement rapide, sans déstabiliser le HUD. 0 = désactivé ; essayer 0,1.",
