@@ -92,14 +92,23 @@ Outils : `tools/run_eval.sh` (démo, en ligne) et `tools/eval_sequence.py`
   Démo, cible 144, max ×4 : 30 fps → ×4, 50 → ×3, 72 → ×2, 150 → ×1.
   Même limite que `fps_limit` : la cible est saisie à la main faute de
   connaître le rafraîchissement.
-- [ ] **Pacing précis** via `VK_EXT_present_timing` ; prise en charge du VRR.
-- [ ] **Profilage par étape sur la RTX 3060 Ti** avant toute optimisation
+- [ ] **Pacing précis** via `VK_EXT_present_timing` ; prise en charge du VRR —
+  reporté (2026-09-24) : RADV local n'expose pas `present_timing`, seulement
+  `present_wait`/`present_id`, que le layer masque au jeu (blocage
+  VKD3D-Proton) et devrait activer pour son propre swapchain ; bénéfice non
+  mesurable ici (ni instrument de timing d'affichage, ni écran VRR). Le mode
+  mailbox + pacing actuel est déjà celui qui convient au VRR.
+- [ ] **Profilage par étape sur la RTX 3060 Ti** (nécessite ta machine :
+  `BDEX_FG_PROFILE=1`) avant toute optimisation
   (barrières plus fines, recalcul du coût en série dans `block_match`).
 
 ## Fiabilité
 
-- [ ] **Couches de validation Khronos dans la CI** (validation de
-  synchronisation comprise), sur lavapipe.
+- [x] **Couches de validation Khronos dans la CI** — fait : test ctest
+  `validation` (démo à travers le layer, validation + synchronisation, les
+  deux modes, toutes les passes optionnelles). Vérifié que la couche est
+  bien sous notre layer (erreur injectée → 42 VUID). Résultat actuel :
+  0 message. `vulkan-validationlayers` ajouté à la CI Linux.
 - [ ] **ASan et TSan** sur les tests d'intégration (`swapchain.cpp` : mutex,
   thread de travail, variables de condition).
 - [ ] **Test du block matcher sur CPU** (coûts et départage des égalités),
