@@ -84,8 +84,10 @@ Outils : `tools/run_eval.sh` (démo, en ligne) et `tools/eval_sequence.py`
 
 ## Performance et latence
 
-- [ ] **Limiteur de fps intégré**, calé sur un sous-multiple du
-  rafraîchissement (60 → 120, 72 → 144).
+- [x] **Limiteur de fps intégré** — fait : `fps_limit` (GUI comprise), mesuré
+  45,0 fps pile sur la démo. Reste possible : une valeur `auto` (taux de
+  rafraîchissement / multiplicateur), qui demande de connaître le
+  rafraîchissement (`VK_GOOGLE_display_timing` / present timing).
 - [ ] **Multiplicateur dynamique** selon les fps réels : couper quand le jeu
   tient déjà le rafraîchissement, passer de x2 à x3 quand il chute.
 - [ ] **Pacing précis** via `VK_EXT_present_timing` ; prise en charge du VRR.

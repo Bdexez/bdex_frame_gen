@@ -22,6 +22,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-24)
 
+- `fps_limit` (alias `fps_cap`): built-in frame-rate cap for the game, in
+  the application's present (sleep to ~1.5 ms before the slot, then a short
+  spin; after a late frame the schedule restarts instead of bursting).
+  Demo at 120 fps capped to 45: game 45.0 fps → output 90.0 fps. The control
+  panel exposes it, together with `zero_bias_contrast`, `pixel_vectors`,
+  `subpixel` and `extrapolate_splat`.
+
 - `bdex_offline` + `tools/eval_sequence.py`: offline quality evaluation on
   any recorded frame sequence (a game dumped through the layer with
   `BDEX_FG_MULTIPLIER=1`). The unchanged engine runs headless (no window, no
