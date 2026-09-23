@@ -19,6 +19,11 @@ Reported per variant (mean over the generated frames, dB):
   dup      whole-frame PSNR of repeating the nearest input (what the player
            sees without frame generation) — the gain over it is `psnr - dup`
   blend    whole-frame PSNR of a plain cross-fade of the two inputs
+  ssim     luma SSIM (8x8 box windows) of the generated frames, 1 = identical
+  flicker  mean |e_k - e_(k-1)| of the luma error between successive
+           generated frames (0..255, lower is better): a stable error such
+           as a slight blur does not flicker, an error that jumps from frame
+           to frame does — PSNR alone cannot tell them apart
 Absolute dB depend on the scene; compare variants on the same sequence.
 """
 import argparse
@@ -54,6 +59,27 @@ def luma(img):
     return 0.299 * f[..., 0] + 0.587 * f[..., 1] + 0.114 * f[..., 2]
 
 
+def box(img, r):
+    """Mean over (2r)x(2r) windows, same size (edges clamped), via an integral image."""
+    p = np.pad(img, ((r, r), (r, r)), mode="edge")
+    c = np.pad(p.cumsum(0).cumsum(1), ((1, 0), (1, 0)))
+    h, w = img.shape
+    n = 2 * r
+    s = c[n:n + h, n:n + w] - c[0:h, n:n + w] - c[n:n + h, 0:w] + c[0:h, 0:w]
+    return s / (n * n)
+
+
+def ssim(a, b, mask):
+    x, y = luma(a), luma(b)
+    mx, my = box(x, 4), box(y, 4)
+    vx = box(x * x, 4) - mx * mx
+    vy = box(y * y, 4) - my * my
+    cxy = box(x * y, 4) - mx * my
+    c1, c2 = (0.01 * 255) ** 2, (0.03 * 255) ** 2
+    m = ((2 * mx * my + c1) * (2 * cxy + c2)) / ((mx * mx + my * my + c1) * (vx + vy + c2))
+    return float(m[mask].mean())
+
+
 def dilate(mask, r):
     out = mask.copy()
     for dy in range(-r, r + 1):
@@ -79,6 +105,7 @@ def masks(prev, cur, gt, exclude):
 
 def score(out_dir, exclude):
     rows = []
+    prev_err = None
     for line in (Path(out_dir) / "manifest.txt").read_text().splitlines():
         gen_name, gt_path, t, prev_path, cur_path = line.split()
         t = float(t)
@@ -92,8 +119,12 @@ def score(out_dir, exclude):
         # (1,2) after cur, where "repeat" is cur and the blend is meaningless.
         dup = prev if t < 0.5 else cur
         blend = (prev.astype(np.float32) * (1 - t) + cur.astype(np.float32) * t) if t < 1 else None
+        err = luma(gen) - luma(gt)
+        flicker = float(np.abs(err - prev_err)[valid].mean()) if prev_err is not None else None
+        prev_err = err
         rows.append((psnr(gen, gt, valid), psnr(gen, gt, motion), psnr(gen, gt, edges),
-                     psnr(dup, gt, valid), psnr(blend, gt, valid) if blend is not None else None))
+                     psnr(dup, gt, valid), psnr(blend, gt, valid) if blend is not None else None,
+                     ssim(gen, gt, valid), flicker))
     return rows
 
 
@@ -123,6 +154,7 @@ def main():
                     help="x0,y0,x1,y1 rectangle left out of every metric (e.g. a frame counter)")
     ap.add_argument("--max-inputs", type=int, default=0, help="limit the number of input frames")
     ap.add_argument("--keep", help="keep the generated frames under this directory")
+    ap.add_argument("--json", help="also write the per-variant means to this JSON file")
     args = ap.parse_args()
 
     binary = Path(args.build) / "tools" / "offline" / "bdex_offline"
@@ -146,13 +178,21 @@ def main():
         rows = score(out, exclude)
         results.append((name, rows))
 
-    print(f"{'variant':<32} {'psnr':>7} {'motion':>7} {'edges':>7} {'dup':>7} {'blend':>7}  frames")
+    print(f"{'variant':<32} {'psnr':>7} {'motion':>7} {'edges':>7} {'dup':>7} {'blend':>7} {'ssim':>7} {'flicker':>7}  frames")
     ref = None
+    report = []
     for name, rows in results:
         m = [mean(c) for c in zip(*rows)]
-        delta = "" if ref is None else "  Δ " + " ".join(f"{a - b:+.2f}" for a, b in zip(m[:3], ref[:3]))
+        delta = "" if ref is None else ("  Δ " + " ".join(f"{a - b:+.2f}" for a, b in zip(m[:3], ref[:3]))
+                                        + f" ssim {m[5] - ref[5]:+.4f} flicker {m[6] - ref[6]:+.2f}")
         ref = ref or m
-        print(f"{name:<32} {m[0]:7.2f} {m[1]:7.2f} {m[2]:7.2f} {m[3]:7.2f} {m[4]:7.2f}  {len(rows)}{delta}")
+        print(f"{name:<32} {m[0]:7.2f} {m[1]:7.2f} {m[2]:7.2f} {m[3]:7.2f} {m[4]:7.2f} {m[5]:7.4f} {m[6]:7.2f}  {len(rows)}{delta}")
+        if args.json:
+            report.append({"variant": name, "frames": len(rows),
+                           **dict(zip(("psnr", "motion", "edges", "dup", "blend", "ssim", "flicker"), m))})
+    if args.json:
+        import json
+        Path(args.json).write_text(json.dumps(report, indent=1))
     if not args.keep:
         import shutil
         shutil.rmtree(base, ignore_errors=True)

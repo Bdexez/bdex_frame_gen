@@ -64,8 +64,10 @@ Outils : `tools/run_eval.sh` (démo, en ligne) et `tools/eval_sequence.py`
 - [ ] **Corpus de séquences de vrais jeux dans la CI** (Kenshi, un FPS, un jeu
   chargé en HUD), en assets de release, rejoué par `bdex_offline` sur
   lavapipe à chaque push.
-- [ ] **Métriques perceptives** : SSIM et mesure de scintillement entre frames
-  générées successives, en plus du PSNR.
+- [x] **Métriques perceptives** — fait : `eval_sequence.py` rapporte le SSIM
+  (luma, fenêtres 8×8) et un scintillement (variation de l'erreur entre
+  frames générées successives), plus `--json`. Ex. démo rapide :
+  `pixel_vectors` SSIM 0,938 → 0,953, scintillement 4,37 → 3,34.
 - [ ] **Réglage automatique** : script de recherche des meilleurs
   `zero_bias` / `smoothness` / seuils sur le corpus.
 
