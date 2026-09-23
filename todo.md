@@ -75,8 +75,12 @@ Outils : `tools/run_eval.sh` (démo, en ligne) et `tools/eval_sequence.py`
   (luma, fenêtres 8×8) et un scintillement (variation de l'erreur entre
   frames générées successives), plus `--json`. Ex. démo rapide :
   `pixel_vectors` SSIM 0,938 → 0,953, scintillement 4,37 → 3,34.
-- [ ] **Réglage automatique** : script de recherche des meilleurs
-  `zero_bias` / `smoothness` / seuils sur le corpus.
+- [x] **Réglage automatique** — fait : `tools/tune.py SEQ...` (descente par
+  coordonnées sur une grille de réglages, objectif = gain PSNR moyen par
+  séquence, rejet des valeurs dont la pire séquence perd plus de 0,2 dB).
+  ~1 min sur le mini-corpus. À faire tourner sur la démo + de vraies
+  séquences de jeux avant de changer un défaut (le corpus synthétique seul
+  surpondère le panoramique).
 
 ## Performance et latence
 
