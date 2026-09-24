@@ -8,13 +8,17 @@ endif()
 add_test(NAME unit COMMAND bdex_tests)
 
 # The real block_match shader against a C++ model of its winner selection
-# (tie-breaking included). Needs a Vulkan device, not a display.
-add_executable(bdex_matcher_test test_matcher.cpp ../layer/src/device.cpp)
-add_dependencies(bdex_matcher_test bdex_layer_shaders)
-target_include_directories(bdex_matcher_test PRIVATE "${CMAKE_BINARY_DIR}/layer/generated" "${CMAKE_SOURCE_DIR}/layer/src")
-target_link_libraries(bdex_matcher_test PRIVATE bdex_core Vulkan::Vulkan)
-add_test(NAME matcher COMMAND bdex_matcher_test)
-set_tests_properties(matcher PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+# (tie-breaking included). Needs a Vulkan device, not a display. Linux only,
+# like the other GPU tests: the Windows runners have no GPU, and nothing else
+# links the Vulkan loader there (the Win32 build found no 32-bit vulkan-1.lib).
+if(NOT WIN32)
+  add_executable(bdex_matcher_test test_matcher.cpp ../layer/src/device.cpp)
+  add_dependencies(bdex_matcher_test bdex_layer_shaders)
+  target_include_directories(bdex_matcher_test PRIVATE "${CMAKE_BINARY_DIR}/layer/generated" "${CMAKE_SOURCE_DIR}/layer/src")
+  target_link_libraries(bdex_matcher_test PRIVATE bdex_core Vulkan::Vulkan)
+  add_test(NAME matcher COMMAND bdex_matcher_test)
+  set_tests_properties(matcher PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+endif()
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
   execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import numpy, PIL"
