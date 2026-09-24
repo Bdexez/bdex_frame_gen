@@ -154,4 +154,9 @@ Outils : `tools/run_eval.sh` (démo, en ligne) et `tools/eval_sequence.py`
     qui publie une Release GitHub via la CI Windows).
   - Publication AUR, Flatpak de la GUI (non fait : le bac à sable Flatpak
     complique l'écriture de la config et le lancement des jeux).
-- [ ] **Valider upscaling, HDR et 10 bits** sur de vrais écrans.
+- [~] **Valider upscaling, HDR et 10 bits** — chemins du moteur validés : test
+  ctest `formats` (`bdex_offline --format rgba8|bgra8|srgb|rgb10|rgba16f`,
+  `--render-scale`) : BGRA8 identique au RGBA8, 10 bits et FP16 à 65–66 dB
+  (quantification), sRGB à 0,15 dB du RGBA8 face à la vérité terrain,
+  upscaling ×0,75/×0,5 à 1,1–1,5 dB du natif. Reste **sur ta machine** : un
+  vrai jeu en swapchain 10 bits / HDR (scRGB, PQ) et l'upscaling à l'écran.

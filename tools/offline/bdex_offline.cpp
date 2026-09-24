@@ -9,7 +9,14 @@
 // Because no window is involved, the result does not depend on the size a
 // compositor gives the window, and any recorded game becomes a test scene.
 //
-// Usage: bdex_offline <in_dir> <out_dir> [--multiplier N] [--srgb] [--gpu I] [--max-inputs N]
+// Usage: bdex_offline <in_dir> <out_dir> [--multiplier N] [--format F] [--render-scale S]
+//                     [--gpu I] [--max-inputs N]
+//   --format        swapchain format the engine sees: rgba8 (default), bgra8,
+//                   srgb (R8G8B8A8_SRGB), rgb10 (A2B10G10R10), rgba16f —
+//                   exercises every output encoding (--srgb = --format srgb)
+//   --render-scale  the "game" renders at this fraction of the frames' size
+//                   (inputs are downscaled on the CPU) and the engine
+//                   upscales its output back to the frames' size
 // Settings come from BDEX_FG_* environment variables (the config file is
 // ignored unless BDEX_FG_CONFIG names one), e.g. BDEX_FG_MODE=extrapolate.
 //
@@ -22,6 +29,7 @@
 #include "log.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -69,6 +77,64 @@ bool readPpm(const fs::path& path, Image& img) {
     return ok;
 }
 
+uint16_t floatToHalf(float f) {  // round to nearest, finite inputs in [0, 1]
+    if (f <= 0.f) return 0;
+    int e;
+    float m = std::frexp(f, &e);           // f = m * 2^e, m in [0.5, 1)
+    int he = e - 1 + 15;                   // biased half exponent of 1.m form
+    if (he <= 0) return uint16_t(std::lround(std::ldexp(f, 24)));  // subnormal
+    uint32_t mant = uint32_t(std::lround((m * 2.f - 1.f) * 1024.f));
+    if (mant == 1024) { mant = 0; ++he; }
+    return uint16_t((he << 10) | mant);
+}
+
+// The "game" frame in the engine's source format, at render size (bilinear
+// downscale of the display-sized input when --render-scale < 1).
+void encode(const Image& img, VkExtent2D render, VkFormat format, void* out) {
+    const float sx = float(img.w) / render.width, sy = float(img.h) / render.height;
+    for (uint32_t y = 0; y < render.height; ++y)
+        for (uint32_t x = 0; x < render.width; ++x) {
+            float c[3];
+            if (render.width == img.w && render.height == img.h) {
+                for (int k = 0; k < 3; ++k) c[k] = img.rgb[(size_t(y) * img.w + x) * 3 + k];
+            } else {
+                // Box filter over the source footprint of this pixel.
+                const uint32_t x0 = uint32_t(x * sx), x1 = std::max(x0 + 1, uint32_t((x + 1) * sx));
+                const uint32_t y0 = uint32_t(y * sy), y1 = std::max(y0 + 1, uint32_t((y + 1) * sy));
+                float acc[3] = {0, 0, 0};
+                for (uint32_t v = y0; v < y1 && v < img.h; ++v)
+                    for (uint32_t u = x0; u < x1 && u < img.w; ++u)
+                        for (int k = 0; k < 3; ++k) acc[k] += img.rgb[(size_t(v) * img.w + u) * 3 + k];
+                const float n = float((std::min(x1, img.w) - x0) * (std::min(y1, img.h) - y0));
+                for (int k = 0; k < 3; ++k) c[k] = acc[k] / n;
+            }
+            const size_t i = size_t(y) * render.width + x;
+            switch (format) {
+            case VK_FORMAT_B8G8R8A8_UNORM: {
+                auto* d = static_cast<uint8_t*>(out) + i * 4;
+                d[0] = uint8_t(std::lround(c[2])); d[1] = uint8_t(std::lround(c[1])); d[2] = uint8_t(std::lround(c[0])); d[3] = 255;
+                break;
+            }
+            case VK_FORMAT_A2B10G10R10_UNORM_PACK32: {
+                auto q = [](float v) { return uint32_t(std::lround(v * 1023.f / 255.f)); };
+                static_cast<uint32_t*>(out)[i] = q(c[0]) | (q(c[1]) << 10) | (q(c[2]) << 20) | (3u << 30);
+                break;
+            }
+            case VK_FORMAT_R16G16B16A16_SFLOAT: {
+                auto* d = static_cast<uint16_t*>(out) + i * 4;
+                for (int k = 0; k < 3; ++k) d[k] = floatToHalf(c[k] / 255.f);
+                d[3] = floatToHalf(1.f);
+                break;
+            }
+            default: {  // RGBA8 unorm / sRGB: the bytes as they are
+                auto* d = static_cast<uint8_t*>(out) + i * 4;
+                for (int k = 0; k < 3; ++k) d[k] = uint8_t(std::lround(c[k]));
+                d[3] = 255;
+            }
+            }
+        }
+}
+
 [[noreturn]] void die(const char* msg) {
     fprintf(stderr, "bdex_offline: %s\n", msg);
     exit(1);
@@ -85,18 +151,21 @@ void check(VkResult r, const char* what) {
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        fprintf(stderr, "usage: %s <in_dir> <out_dir> [--multiplier N] [--srgb] [--gpu I] [--max-inputs N]\n", argv[0]);
+        fprintf(stderr, "usage: %s <in_dir> <out_dir> [--multiplier N] [--format F] [--render-scale S] [--gpu I] [--max-inputs N]\n", argv[0]);
         return 2;
     }
     const fs::path inDir = argv[1], outDir = argv[2];
     int mult = 2, gpu = -1, maxInputs = 0;
-    bool srgb = false;
+    std::string fmtName = "rgba8";
+    float renderScale = 1.f;
     for (int i = 3; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--multiplier" && i + 1 < argc) mult = atoi(argv[++i]);
         else if (a == "--gpu" && i + 1 < argc) gpu = atoi(argv[++i]);
         else if (a == "--max-inputs" && i + 1 < argc) maxInputs = atoi(argv[++i]);
-        else if (a == "--srgb") srgb = true;
+        else if (a == "--srgb") fmtName = "srgb";
+        else if (a == "--format" && i + 1 < argc) fmtName = argv[++i];
+        else if (a == "--render-scale" && i + 1 < argc) renderScale = float(atof(argv[++i]));
         else { fprintf(stderr, "unknown argument %s\n", a.c_str()); return 2; }
     }
     if (mult < 2 || mult > 4) die("--multiplier must be 2, 3 or 4");
@@ -108,7 +177,18 @@ int main(int argc, char** argv) {
     if (frames.size() < size_t(mult) + 1) die("not enough .ppm frames in the input directory");
     Image first;
     if (!readPpm(frames[0], first)) die("cannot read the first frame");
-    const VkExtent2D extent{first.w, first.h};
+    const VkExtent2D extent{first.w, first.h};  // display size (the frames, and the ground truth)
+    if (!(renderScale >= 0.25f && renderScale <= 1.f)) die("--render-scale must be in [0.25, 1]");
+    const VkExtent2D render{std::max(1u, uint32_t(std::lround(first.w * renderScale))),
+                            std::max(1u, uint32_t(std::lround(first.h * renderScale)))};
+    VkFormat format;
+    uint32_t bpp = 4;
+    if (fmtName == "rgba8") format = VK_FORMAT_R8G8B8A8_UNORM;
+    else if (fmtName == "bgra8") format = VK_FORMAT_B8G8R8A8_UNORM;
+    else if (fmtName == "srgb") format = VK_FORMAT_R8G8B8A8_SRGB;
+    else if (fmtName == "rgb10") format = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+    else if (fmtName == "rgba16f") { format = VK_FORMAT_R16G16B16A16_SFLOAT; bpp = 8; }
+    else die("--format must be rgba8, bgra8, srgb, rgb10 or rgba16f");
 
     // This process drives FrameGen itself: never load the implicit layer, and
     // do not inherit the user's game profiles unless explicitly asked to.
@@ -198,27 +278,27 @@ int main(int argc, char** argv) {
     cp.queueFamilyIndex = qf;
     check(vkCreateCommandPool(device, &cp, nullptr, &dev.cmdPool), "vkCreateCommandPool");
     dev.config.autoConfigure(dev.props, dev.memProps);
-    fprintf(stderr, "bdex_offline: %s, %ux%u, x%d %s, %s\n", dev.props.deviceName, extent.width, extent.height,
+    fprintf(stderr, "bdex_offline: %s, %s, render %ux%u -> %ux%u, x%d %s, %s\n", dev.props.deviceName, fmtName.c_str(),
+            render.width, render.height, extent.width, extent.height,
             mult, dev.config.extrapolate ? "extrapolate" : "interpolate", dev.config.describe().c_str());
 
-    const VkFormat format = srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
     int status = 0;
     {
         // Two history images play the role of the game's swapchain images.
         std::vector<AllocatedImage> hist(2);
         std::vector<VkImage> sources;
         for (auto& h : hist) {
-            h = dev.createImage(format, extent,
+            h = dev.createImage(format, render,
                                 VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
                                     VK_IMAGE_USAGE_SAMPLED_BIT,
                                 false);
             sources.push_back(h.image);
         }
-        AllocatedBuffer staging = dev.createBuffer(VkDeviceSize(extent.width) * extent.height * 4,
+        AllocatedBuffer staging = dev.createBuffer(VkDeviceSize(render.width) * render.height * bpp,
                                                    VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true);
         void* mapped = nullptr;
         check(vkMapMemory(device, staging.memory, 0, VK_WHOLE_SIZE, 0, &mapped), "vkMapMemory");
-        auto fgp = std::make_unique<FrameGen>(dev, format, extent, extent, static_cast<uint32_t>(mult - 1), sources);
+        auto fgp = std::make_unique<FrameGen>(dev, format, render, extent, static_cast<uint32_t>(mult - 1), sources);
         FrameGen& fg = *fgp;
 
         fs::create_directories(outDir);
@@ -243,13 +323,7 @@ int main(int argc, char** argv) {
                 status = 1;
                 break;
             }
-            auto* dst = static_cast<uint8_t*>(mapped);
-            for (size_t p = 0, n = size_t(img.w) * img.h; p < n; ++p) {
-                dst[p * 4 + 0] = img.rgb[p * 3 + 0];
-                dst[p * 4 + 1] = img.rgb[p * 3 + 1];
-                dst[p * 4 + 2] = img.rgb[p * 3 + 2];
-                dst[p * 4 + 3] = 255;
-            }
+            encode(img, render, format, mapped);
             const int cur = static_cast<int>(k % 2);
             const bool generate = prev >= 0;
             dev.immediate([&](VkCommandBuffer cmd) {
@@ -266,7 +340,7 @@ int main(int argc, char** argv) {
                                      nullptr, 0, nullptr, 1, &b);
                 VkBufferImageCopy region{};
                 region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-                region.imageExtent = {extent.width, extent.height, 1};
+                region.imageExtent = {render.width, render.height, 1};
                 vkCmdCopyBufferToImage(cmd, staging.buffer, hist[cur].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
                                        &region);
                 b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
