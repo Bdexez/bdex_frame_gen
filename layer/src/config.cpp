@@ -166,6 +166,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "rot_weight")                  return parseFloat(value, rotWeight, 0.f, 1.f);
     if (key == "occlusion_strength")           return parseFloat(value, occlusionStrength, 0.f, 1.f);
     if (key == "temporal_prediction")          return parseBool(value, temporalPrediction);
+    if (key == "extrapolate_hold")            return parseFloat(value, extrapolateHold, 0.f, 1.f);
     if (key == "static_guard")                return parseFloat(value, staticGuard, 0.f, 1.f);
     if (key == "refine")                      return parseBool(value, refine);
     if (key == "refine_all")                  return parseBool(value, refineAll);
@@ -310,6 +311,7 @@ std::string Config::describe() const {
     if (rotWeight > 0.f) o << " rot_weight=" << rotWeight;
     if (occlusionStrength > 0.f) o << " occlusion_strength=" << occlusionStrength;
     if (temporalPrediction) o << " temporal_prediction=1";
+    if (extrapolateHold > 0.f) o << " extrapolate_hold=" << extrapolateHold;
     if (staticGuard > 0.f) o << " static_guard=" << staticGuard;
     if (antiCheatDisabled) o << " [disabled: anti-cheat detected]";
     return o.str();
