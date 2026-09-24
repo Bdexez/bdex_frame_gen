@@ -20,11 +20,17 @@ bdex_use_layer "$LAYER_DIR"
 trap 'rm -rf "$LOG" "$BDEX_LAYER_XDG"' EXIT
 status=0
 # Second pass per mode: the per-frame state options (content-time t, repeated
-# frames, per-region scene cuts, acceleration, chroma, GPU budget), on a demo that presents every image twice so the repeat path
-# (gated flow dispatches, extrapolated real frame) runs too.
-for run in interpolate extrapolate interpolate:state extrapolate:state; do
+# frames, per-region scene cuts, acceleration, chroma, GPU budget), on a demo
+# that presents every image twice so the repeat path (gated flow dispatches,
+# extrapolated real frame) runs too. "direct": extrapolation with the real
+# frame copied straight (no upscaling / HUD), the path where the worker
+# submits the synthesis after the real frame.
+for run in interpolate extrapolate interpolate:state extrapolate:state extrapolate:direct; do
   mode=${run%%:*}
-  if [ "$run" != "$mode" ]; then
+  output="BDEX_FG_RENDER_SCALE=0.75 BDEX_FG_SHARPNESS=0.5 BDEX_FG_HUD=2"
+  if [ "$run" = extrapolate:direct ]; then
+    state=""; demo_args="--frames 90"; output="BDEX_FG_HUD=0"
+  elif [ "$run" != "$mode" ]; then
     # A tiny gpu_budget walks the whole quality ladder within the run,
     # output-stage rebuild included (level 3) unless the flow is at 1/4.
     state="BDEX_FG_FRAME_TIMING=1 BDEX_FG_DEDUP=1 BDEX_FG_SCENE_CUT_LOCAL=1 BDEX_FG_EXTRAPOLATE_ACCEL=1 BDEX_FG_CHROMA_WEIGHT=1 BDEX_FG_GPU_BUDGET=0.001"
@@ -32,9 +38,9 @@ for run in interpolate extrapolate interpolate:state extrapolate:state; do
   else
     state=""; demo_args="--frames 45"
   fi
-  env $state VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation \
+  env $state $output VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation \
   VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true BDEX_FG=1 BDEX_FG_CONFIG=/dev/null BDEX_FG_LOG=2 \
-  BDEX_FG_MODE=$mode BDEX_FG_MULTIPLIER=3 BDEX_FG_RENDER_SCALE=0.75 BDEX_FG_SHARPNESS=0.5 BDEX_FG_HUD=2 \
+  BDEX_FG_MODE=$mode BDEX_FG_MULTIPLIER=3 \
   BDEX_FG_ZERO_BIAS_CONTRAST=0.1 BDEX_FG_SUBPIXEL=1 BDEX_FG_PIXEL_VECTORS=1 BDEX_FG_EXTRAPOLATE_SPLAT=1 \
   BDEX_FG_TEMPORAL_PREDICTION=1 BDEX_FG_STATIC_GUARD=1 BDEX_FG_OCCLUSION_STRENGTH=1 \
     timeout 120 "$DEMO" --fps 30 --deterministic $demo_args >"$LOG" 2>&1

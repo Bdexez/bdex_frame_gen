@@ -729,19 +729,31 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     // semaphores and orders the worker's copy after its rendering.
     dev_.vt.EndCommandBuffer(slot.cmd);
 
+    // Extrapolation presents the real frame first. When it is copied straight
+    // from the application's image (no upscaling / HUD / repeat replacement,
+    // which the synthesis produces), the synthesis is handed to the worker
+    // and submitted after that copy: the real frame then leaves as soon as
+    // the game's rendering is done instead of queueing behind the analysis,
+    // flow and synthesis (their GPU time is the latency saved). Here only the
+    // game's semaphores are consumed, which orders the worker's copy after
+    // its rendering. Not while dumping (dumpFrame waits on the slot at once).
+    const bool deferSynthesis = dev_.config.extrapolate && interpolate && !fg_->packReal() && !dumping_;
     std::vector<VkPipelineStageFlags> stages(appWaitCount, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
     VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     si.waitSemaphoreCount = appWaitCount;
     si.pWaitSemaphores = appWaits;
     si.pWaitDstStageMask = stages.data();
-    si.commandBufferCount = 1;
+    si.commandBufferCount = deferSynthesis ? 0 : 1;
     si.pCommandBuffers = &slot.cmd;
-    VkResult r = dev_.submit(si, slot.fence);
+    VkResult r = dev_.submit(si, deferSynthesis ? VK_NULL_HANDLE : slot.fence);
     if (r < 0) {
         BDEX_ERR("synthesis submission failed: %s", vkResultName(r));
         consumeSemaphores(appWaits, appWaitCount);
         return r;
     }
+    // Deferred: the worker submits this slot before it finishes the job, and
+    // every wait on its fence happens after that (nextSlot comes after
+    // waitWorkerSubmitted; acquire only polls; waitIdle waits for the worker).
     slot.submitted = true;
     // The previous frame was read for the last time by this submission; the
     // current one stays held until the next present reads it as `prev`.
@@ -778,6 +790,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     job.realFirst = dev_.config.extrapolate;
     job.start = t0;
     job.intervalMs = frameIntervalMs_;
+    if (deferSynthesis) job.synthSlot = static_cast<int>(slotIdx);
     if (info.swapchainCount == 1) {
         if (auto* pid = findChain<VkPresentIdKHR>(info.pNext, VK_STRUCTURE_TYPE_PRESENT_ID_KHR))
             if (pid->pPresentIds) job.presentId = pid->pPresentIds[0];
@@ -876,6 +889,12 @@ void VirtualSwapchain::runJob(const Job& job) {
     };
     for (int i = 0; i < job.frames; ++i) {
         VkResult r = presentOne(job, i, i == job.frames - 1 ? &markSubmitted : nullptr);
+        // After the real frame (index 0 of a deferred job), whatever its
+        // outcome: the slot's fence must signal for the application thread.
+        if (i == 0 && job.synthSlot >= 0) {
+            const VkResult sr = submitDeferredSynthesis(job);
+            if (r >= 0 && sr < 0) r = sr;
+        }
         if (r == VK_EVENT_RESET) {  // predicted frame skipped: a newer real frame is waiting
             statsSkipped_.fetch_add(1, std::memory_order_relaxed);
             break;
@@ -908,6 +927,28 @@ void VirtualSwapchain::runJob(const Job& job) {
         statsOutFrames_.fetch_add(1, std::memory_order_relaxed);
     }
     markSubmitted();
+}
+
+// Submits the synthesis the application thread recorded but left to the
+// worker (Job::synthSlot), right after the real frame went out.
+VkResult VirtualSwapchain::submitDeferredSynthesis(const Job& job) {
+    FrameSlot& s = slots_[static_cast<size_t>(job.synthSlot)];
+    VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &s.cmd;
+    std::lock_guard<std::mutex> qlock(dev_.queueMutex(dev_.queue));
+    VkResult r = dev_.vt.QueueSubmit(dev_.queue, 1, &si, s.fence);
+    if (r < 0) {
+        BDEX_ERR("synthesis submission failed: %s", vkResultName(r));
+        // Still signal the fence (an empty batch) so nothing waits on it forever.
+        VkSubmitInfo empty{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        dev_.vt.QueueSubmit(dev_.queue, 1, &empty, s.fence);
+    }
+    if (job.presentFence) {
+        VkSubmitInfo fs{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        dev_.vt.QueueSubmit(dev_.queue, 1, &fs, job.presentFence);
+    }
+    return r;
 }
 
 // Presents frame `index` of the job. Interpolation: generated frames first,
@@ -998,8 +1039,9 @@ VkResult VirtualSwapchain::presentOne(const Job& job, int index, const std::func
     r = dev_.vt.QueueSubmit(dev_.queue, 1, &si, slot.fence);
     if (r < 0) return r;
     // Signal the application's present fence after the copy (queue-ordered): its
-    // virtual image is then free to reuse, so its next frame can proceed.
-    if (real && job.presentFence) {
+    // virtual image is then free to reuse, so its next frame can proceed. A
+    // deferred synthesis still reads it: submitDeferredSynthesis signals then.
+    if (real && job.presentFence && job.synthSlot < 0) {
         VkSubmitInfo fs{VK_STRUCTURE_TYPE_SUBMIT_INFO};
         dev_.vt.QueueSubmit(dev_.queue, 1, &fs, job.presentFence);
     }

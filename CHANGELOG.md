@@ -8,6 +8,17 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed (2026-09-25)
 
+- **Extrapolation: the real frame no longer waits for the synthesis.** It is
+  presented first, but its copy was queued behind the analysis, flow and
+  synthesis on the same queue. When the real frame is copied straight from
+  the game's image (no upscaling, HUD or repeat replacement), the
+  application thread now only consumes the game's semaphores and the
+  worker submits the synthesis right after the real frame's copy and
+  present (the game's present fence is signalled after the synthesis, which
+  still reads its image). Measured on the demo, real frame ready after the
+  game's present: balanced 3.5 → 1.5 ms, quality 3.7 → 0.8 ms — the
+  synthesis' GPU time, larger on slower GPUs. The validation test gains an
+  "extrapolate:direct" run for this path (0 messages).
 - **Static blocks skip the block-matching search.** A block predicted at
   zero and identical in both frames (1-pixel border included) has a
   zero-motion candidate costing exactly 0, the unique winner of every
