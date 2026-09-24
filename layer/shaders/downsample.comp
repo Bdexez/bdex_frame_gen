@@ -16,7 +16,7 @@ layout(binding = 1, LUMA_FMT) uniform writeonly image2D dstImg;
 layout(push_constant) uniform PC {
     ivec2 dstSize;
     int fromColor;
-    int srgbSource;  // source values are linear (decoded sRGB): re-encode perceptually
+    int transfer;    // TRANSFER_*: LINEAR = decoded sRGB, re-encode perceptually; SCRGB / PQ = HDR
 } pc;
 
 void main() {
@@ -27,7 +27,8 @@ void main() {
     if (pc.fromColor != 0) {
         vec4 c = texture(srcTex, uv);
         l = luma(c.rgb);
-        if (pc.srgbSource != 0) l = perceptual(l);
+        if (pc.transfer == TRANSFER_LINEAR) l = perceptual(l);
+        else if (pc.transfer >= TRANSFER_SCRGB) l = perceptual(luma(hdrToLinear(c.rgb, pc.transfer)));
     } else {
         l = texture(srcTex, uv).r;
     }

@@ -2,7 +2,7 @@
 
 namespace bdex {
 
-OutputEncoding encodingForFormat(VkFormat f) {
+OutputEncoding encodingForFormat(VkFormat f, VkColorSpaceKHR cs) {
     OutputEncoding e;
     e.supported = true;
     e.storageFormat = VK_FORMAT_R32_UINT;
@@ -26,6 +26,15 @@ OutputEncoding encodingForFormat(VkFormat f) {
         break;
     }
     if (e.srgb) e.encoding |= ENC_SRGB;
+    // The matching works on a perceptual scale with SDR white near 1. sRGB
+    // formats are decoded to linear on sampling; HDR colour spaces put white
+    // elsewhere entirely (scRGB: 1 = 80 nits, so a 1000-nit highlight is
+    // 12.5; PQ: white at 0.58), which would throw the matching costs and the
+    // scene-cut thresholds off by an order of magnitude.
+    if (e.srgb) e.transfer = TRANSFER_LINEAR;
+    else if (cs == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT || cs == VK_COLOR_SPACE_BT2020_LINEAR_EXT) e.transfer = TRANSFER_SCRGB;
+    else if (cs == VK_COLOR_SPACE_HDR10_ST2084_EXT) e.transfer = TRANSFER_PQ;
+    else if (cs == VK_COLOR_SPACE_DISPLAY_P3_LINEAR_EXT || cs == VK_COLOR_SPACE_BT709_LINEAR_EXT) e.transfer = TRANSFER_LINEAR;
     return e;
 }
 

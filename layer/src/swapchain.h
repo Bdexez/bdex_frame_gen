@@ -111,6 +111,7 @@ private:
     std::atomic<bool> surfaceChanged_{false};  // the worker saw VK_SUBOPTIMAL_KHR on the real swapchain
     bool historyLost_ = false;   // output stage rebuilt: the previous frame's analysis is gone
     VkFormat format_ = VK_FORMAT_UNDEFINED;
+    VkColorSpaceKHR colorSpace_ = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
     VkExtent2D extent_{};         // render resolution (what the application renders into)
     VkExtent2D displayExtent_{};  // real swapchain resolution (== extent_ unless upscaling)
     bool upscaling_ = false;

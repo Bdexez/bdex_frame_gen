@@ -12,11 +12,11 @@ namespace bdex {
 
 namespace {
 
-struct DownsamplePC { int32_t size[2]; int32_t fromColor; int32_t srgbSource; };
+struct DownsamplePC { int32_t size[2]; int32_t fromColor; int32_t transfer; };
 struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; float gradWeight; float censusWeight; float censusMargin; float rotWeight; int32_t temporal; float zeroBiasContrast; };
 struct SizePC { int32_t size[2]; };
 struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; int32_t subpixel; };
-struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; float occlusionStrength; float staticGuard; float extrapHold; int32_t splat; int32_t pixelVectors; };
+struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; float occlusionStrength; float staticGuard; float extrapHold; int32_t splat; int32_t pixelVectors; int32_t transfer; };
 struct UpscalePC { int32_t outSize[2]; int32_t srcSize[2]; uint32_t encoding; int32_t filter; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; };
 struct SplatPC { int32_t size[2]; float s; float flowScale; float flowInvSize[2]; };
 struct CasPC { int32_t size[2]; uint32_t encoding; float sharpness; };
@@ -31,7 +31,7 @@ uint32_t divUp(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
 } // namespace
 
 FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, VkExtent2D displayExtent, uint32_t outputs,
-                   const std::vector<VkImage>& sources)
+                   const std::vector<VkImage>& sources, VkColorSpaceKHR colorSpace)
     : dev_(dev), format_(format), extent_(renderExtent), displayExtent_(displayExtent), outputs_(outputs) {
     upscaling_ = displayExtent_.width != extent_.width || displayExtent_.height != extent_.height;
     hudMode_ = dev.config.overlayMode;
@@ -44,7 +44,7 @@ FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, Vk
                dev.formatSupports(VK_FORMAT_R16G16B16A16_SFLOAT,
                                   VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
                                       VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT);
-    enc_ = encodingForFormat(format);
+    enc_ = encodingForFormat(format, colorSpace);
     if (!enc_.supported) throw VkError(VK_ERROR_FORMAT_NOT_SUPPORTED, "swapchain format not supported by frame generation");
     dumpBuf_.resize(outputs_ + 1);
     dumpMapped_.resize(outputs_ + 1, nullptr);
@@ -491,6 +491,20 @@ static float halfToFloat(uint16_t h) {
     return sign ? -v : v;
 }
 
+// HDR dumps are written as SDR PPMs: the values are brought back to linear
+// light with SDR white (203 nits) at 1, then sRGB-encoded, so an HDR run can
+// be compared with the SDR ground truth it was made from.
+static float srgbEncode(float v) {
+    v = std::clamp(std::isfinite(v) ? v : 0.f, 0.f, 1.f);
+    return v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1.f / 2.4f) - 0.055f;
+}
+
+static float pqDecodeNits(float e) {  // SMPTE ST 2084 EOTF: code value -> nits
+    const float m1 = 0.1593017578125f, m2 = 78.84375f, c1 = 0.8359375f, c2 = 18.8515625f, c3 = 18.6875f;
+    const float p = std::pow(std::clamp(e, 0.f, 1.f), 1.f / m2);
+    return 10000.f * std::pow(std::max(p - c1, 0.f) / (c2 - c3 * p), 1.f / m1);
+}
+
 bool FrameGen::writeDump(const std::string& path, uint32_t which) {
     if (!dumpMapped_[which]) return false;
     if (which < outputs_ && costMapped_) BDEX_DBG("%s: mean matching cost %.4f", path.c_str(), *static_cast<const float*>(costMapped_));
@@ -506,8 +520,11 @@ bool FrameGen::writeDump(const std::string& path, uint32_t which) {
             if (enc_.is64) {
                 // RGBA16F: values as stored (linear, scRGB above 1 clipped).
                 const uint16_t* h = reinterpret_cast<const uint16_t*>(px) + (size_t(y) * displayExtent_.width + x) * 4;
-                auto q = [](uint16_t c) {
+                const int32_t tr = enc_.transfer;
+                auto q = [tr](uint16_t c) {
                     float f = halfToFloat(c);
+                    if (tr == TRANSFER_SCRGB) f = srgbEncode(f * (80.f / 203.f));
+                    else if (tr == TRANSFER_PQ) f = srgbEncode(pqDecodeNits(f) / 203.f);
                     return uint8_t(std::lround(std::clamp(std::isfinite(f) ? f : 0.f, 0.f, 1.f) * 255.f));
                 };
                 r = q(h[0]); g = q(h[1]); b = q(h[2]);
@@ -517,6 +534,13 @@ bool FrameGen::writeDump(const std::string& path, uint32_t which) {
             uint32_t v = px[y * displayExtent_.width + x];
             if (enc == ENC_BGRA8) { b = v & 0xff; g = (v >> 8) & 0xff; r = (v >> 16) & 0xff; }
             else if (enc == ENC_RGBA8) { r = v & 0xff; g = (v >> 8) & 0xff; b = (v >> 16) & 0xff; }
+            else if (enc_.transfer == TRANSFER_PQ) {
+                auto q = [](uint32_t c) {
+                    return uint8_t(std::lround(srgbEncode(pqDecodeNits(float(c & 1023u) / 1023.f) / 203.f) * 255.f));
+                };
+                if (enc == ENC_A2B10G10R10) { r = q(v); g = q(v >> 10); b = q(v >> 20); }
+                else { b = q(v); g = q(v >> 10); r = q(v >> 20); }
+            }
             else if (enc == ENC_A2B10G10R10) { r = (v & 1023) >> 2; g = ((v >> 10) & 1023) >> 2; b = ((v >> 20) & 1023) >> 2; }
             else { b = (v & 1023) >> 2; g = ((v >> 10) & 1023) >> 2; r = ((v >> 20) & 1023) >> 2; }
             row[x * 3] = r; row[x * 3 + 1] = g; row[x * 3 + 2] = b;
@@ -568,7 +592,7 @@ void FrameGen::recordAnalysis(VkCommandBuffer cmd, uint32_t parity, uint32_t cur
     vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, downsample_.pipeline);
     for (int l = 0; l < levels_; ++l) {
         const Level& lv = levels_v_[l];
-        DownsamplePC pc{{(int32_t)lv.size.width, (int32_t)lv.size.height}, l == 0 ? 1 : 0, enc_.srgb ? 1 : 0};
+        DownsamplePC pc{{(int32_t)lv.size.width, (int32_t)lv.size.height}, l == 0 ? 1 : 0, enc_.transfer};
         vt.CmdPushConstants(cmd, downsample_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
         const VkDescriptorSet* set = l == 0 ? &dsDownSrc_[parity][cur] : &dsDown_[parity][l];
         vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, downsample_.layout, 0, 1, set, 0, nullptr);
@@ -686,7 +710,7 @@ void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cu
                 cfg.sceneCutLow, cfg.sceneCutHigh,
                 {1.f / (fine.fine.width * blk * flowScale_ * sx),
                  1.f / (fine.fine.height * blk * flowScale_ * sy)},
-                cfg.flowIterations, hudMode_, hudGame_, hudOut_, hudLow1_, hudLow01_, cfg.occlusionStrength, cfg.staticGuard, cfg.extrapolateHold, splat ? 1 : 0, cfg.pixelVectors ? 1 : 0};
+                cfg.flowIterations, hudMode_, hudGame_, hudOut_, hudLow1_, hudLow01_, cfg.occlusionStrength, cfg.staticGuard, cfg.extrapolateHold, splat ? 1 : 0, cfg.pixelVectors ? 1 : 0, enc_.transfer};
     vt.CmdPushConstants(cmd, interp_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
     const uint32_t N = static_cast<uint32_t>(sources_.size());
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, interp_.layout, 0, 1,

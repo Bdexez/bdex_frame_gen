@@ -6,6 +6,36 @@ float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 // crushed when the swapchain hands us linear (sRGB-decoded) values.
 float perceptual(float l) { return sqrt(max(l, 0.0)); }
 
+// Transfer function of the sampled values (TRANSFER_* in format.h).
+#define TRANSFER_PERCEPTUAL 0
+#define TRANSFER_LINEAR     1
+#define TRANSFER_SCRGB      2
+#define TRANSFER_PQ         3
+
+// SMPTE ST 2084 (PQ) EOTF: code value -> luminance in units of SDR white
+// (203 nits, the reference white of BT.2408).
+vec3 pqToSdrRelative(vec3 e) {
+    const float m1 = 0.1593017578125, m2 = 78.84375;
+    const float c1 = 0.8359375, c2 = 18.8515625, c3 = 18.6875;
+    vec3 p = pow(clamp(e, 0.0, 1.0), vec3(1.0 / m2));
+    return pow(max(p - c1, vec3(0.0)) / (c2 - c3 * p), vec3(1.0 / m1)) * (10000.0 / 203.0);
+}
+
+// HDR values as linear light relative to SDR white (1 = 203 nits): scRGB
+// has 1 = 80 nits, PQ is decoded. The matching then applies the same
+// perceptual encoding as for decoded sRGB, so the SDR range of an HDR game
+// lands on the scale the costs and thresholds are tuned for (a PQ-domain
+// scale, measured, compresses the mid-tones and loses 3-10 dB to the zero
+// bias on smooth content). Other transfers are returned untouched.
+vec3 hdrToLinear(vec3 c, int transfer) {
+    if (transfer == TRANSFER_SCRGB) return max(c, vec3(0.0)) * (80.0 / 203.0);
+    if (transfer == TRANSFER_PQ) return pqToSdrRelative(c);
+    return c;
+}
+
+// Per-channel perceptual encoding of HDR values (colour errors).
+vec3 hdrToMatch(vec3 c, int transfer) { return sqrt(hdrToLinear(c, transfer)); }
+
 vec3 linearToSrgb(vec3 c) {
     c = clamp(c, 0.0, 1.0);
     vec3 lo = c * 12.92;

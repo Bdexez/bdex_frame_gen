@@ -21,8 +21,10 @@ public:
     // images); `displayExtent` is the swapchain resolution presented. They
     // differ when spatial upscaling is on, in which case every presented frame
     // is resampled from render to display size.
+    // `colorSpace` is the swapchain's: HDR colour spaces change how the
+    // sampled values are brought to the matching's perceptual scale.
     FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, VkExtent2D displayExtent, uint32_t outputs,
-             const std::vector<VkImage>& sources);
+             const std::vector<VkImage>& sources, VkColorSpaceKHR colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR);
     ~FrameGen();
     FrameGen(const FrameGen&) = delete;
     FrameGen& operator=(const FrameGen&) = delete;

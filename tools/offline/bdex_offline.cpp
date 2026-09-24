@@ -9,7 +9,7 @@
 // Because no window is involved, the result does not depend on the size a
 // compositor gives the window, and any recorded game becomes a test scene.
 //
-// Usage: bdex_offline <in_dir> <out_dir> [--multiplier N] [--format F] [--render-scale S]
+// Usage: bdex_offline <in_dir> <out_dir> [--multiplier N] [--format F] [--colorspace C] [--render-scale S]
 //                     [--gpu I] [--max-inputs N]
 //   --format        swapchain format the engine sees: rgba8 (default), bgra8,
 //                   srgb (R8G8B8A8_SRGB), rgb10 (A2B10G10R10), rgba16f —
@@ -17,6 +17,11 @@
 //   --render-scale  the "game" renders at this fraction of the frames' size
 //                   (inputs are downscaled on the CPU) and the engine
 //                   upscales its output back to the frames' size
+//   --colorspace    srgb (default), scrgb (FP16 linear, 1 = 80 nits; needs
+//                   --format rgba16f) or hdr10 (PQ; --format rgb10): the SDR
+//                   frames are converted with white at 203 nits, and the
+//                   dumps converted back, so HDR runs score against the same
+//                   ground truth
 // Settings come from BDEX_FG_* environment variables (the config file is
 // ignored unless BDEX_FG_CONFIG names one), e.g. BDEX_FG_MODE=extrapolate.
 //
@@ -88,9 +93,27 @@ uint16_t floatToHalf(float f) {  // round to nearest, finite inputs in [0, 1]
     return uint16_t((he << 10) | mant);
 }
 
+float srgbToLinear(float v) {  // v in [0, 1]
+    return v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f);
+}
+
+float pqEncode(float nits) {  // SMPTE ST 2084 inverse EOTF
+    const float m1 = 0.1593017578125f, m2 = 78.84375f, c1 = 0.8359375f, c2 = 18.8515625f, c3 = 18.6875f;
+    const float p = std::pow(std::max(nits, 0.f) / 10000.f, m1);
+    return std::pow((c1 + c2 * p) / (1.f + c3 * p), m2);
+}
+
+// An SDR byte as the HDR "game" would output it, SDR white at 203 nits:
+// scRGB (linear, 1 = 80 nits) or PQ, in [0, 1] code values for PQ.
+float toHdr(float byte, VkColorSpaceKHR cs) {
+    const float nits = srgbToLinear(byte / 255.f) * 203.f;
+    return cs == VK_COLOR_SPACE_HDR10_ST2084_EXT ? pqEncode(nits) : nits / 80.f;
+}
+
 // The "game" frame in the engine's source format, at render size (bilinear
 // downscale of the display-sized input when --render-scale < 1).
-void encode(const Image& img, VkExtent2D render, VkFormat format, void* out) {
+void encode(const Image& img, VkExtent2D render, VkFormat format, VkColorSpaceKHR cs, void* out) {
+    const bool hdr = cs != VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
     const float sx = float(img.w) / render.width, sy = float(img.h) / render.height;
     for (uint32_t y = 0; y < render.height; ++y)
         for (uint32_t x = 0; x < render.width; ++x) {
@@ -116,13 +139,15 @@ void encode(const Image& img, VkExtent2D render, VkFormat format, void* out) {
                 break;
             }
             case VK_FORMAT_A2B10G10R10_UNORM_PACK32: {
-                auto q = [](float v) { return uint32_t(std::lround(v * 1023.f / 255.f)); };
+                auto q = [&](float v) {
+                    return uint32_t(std::lround(std::clamp(hdr ? toHdr(v, cs) : v / 255.f, 0.f, 1.f) * 1023.f));
+                };
                 static_cast<uint32_t*>(out)[i] = q(c[0]) | (q(c[1]) << 10) | (q(c[2]) << 20) | (3u << 30);
                 break;
             }
             case VK_FORMAT_R16G16B16A16_SFLOAT: {
                 auto* d = static_cast<uint16_t*>(out) + i * 4;
-                for (int k = 0; k < 3; ++k) d[k] = floatToHalf(c[k] / 255.f);
+                for (int k = 0; k < 3; ++k) d[k] = floatToHalf(hdr ? toHdr(c[k], cs) : c[k] / 255.f);
                 d[3] = floatToHalf(1.f);
                 break;
             }
@@ -151,12 +176,12 @@ void check(VkResult r, const char* what) {
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        fprintf(stderr, "usage: %s <in_dir> <out_dir> [--multiplier N] [--format F] [--render-scale S] [--gpu I] [--max-inputs N]\n", argv[0]);
+        fprintf(stderr, "usage: %s <in_dir> <out_dir> [--multiplier N] [--format F] [--colorspace C] [--render-scale S] [--gpu I] [--max-inputs N]\n", argv[0]);
         return 2;
     }
     const fs::path inDir = argv[1], outDir = argv[2];
     int mult = 2, gpu = -1, maxInputs = 0;
-    std::string fmtName = "rgba8";
+    std::string fmtName = "rgba8", csName = "srgb";
     float renderScale = 1.f;
     for (int i = 3; i < argc; ++i) {
         std::string a = argv[i];
@@ -166,6 +191,7 @@ int main(int argc, char** argv) {
         else if (a == "--srgb") fmtName = "srgb";
         else if (a == "--format" && i + 1 < argc) fmtName = argv[++i];
         else if (a == "--render-scale" && i + 1 < argc) renderScale = float(atof(argv[++i]));
+        else if (a == "--colorspace" && i + 1 < argc) csName = argv[++i];
         else { fprintf(stderr, "unknown argument %s\n", a.c_str()); return 2; }
     }
     if (mult < 2 || mult > 4) die("--multiplier must be 2, 3 or 4");
@@ -189,6 +215,15 @@ int main(int argc, char** argv) {
     else if (fmtName == "rgb10") format = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
     else if (fmtName == "rgba16f") { format = VK_FORMAT_R16G16B16A16_SFLOAT; bpp = 8; }
     else die("--format must be rgba8, bgra8, srgb, rgb10 or rgba16f");
+    VkColorSpaceKHR colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    if (csName == "scrgb") {
+        if (format != VK_FORMAT_R16G16B16A16_SFLOAT) die("--colorspace scrgb needs --format rgba16f");
+        colorSpace = VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT;
+    } else if (csName == "hdr10") {
+        if (format != VK_FORMAT_A2B10G10R10_UNORM_PACK32 && format != VK_FORMAT_R16G16B16A16_SFLOAT)
+            die("--colorspace hdr10 needs --format rgb10 or rgba16f");
+        colorSpace = VK_COLOR_SPACE_HDR10_ST2084_EXT;
+    } else if (csName != "srgb") die("--colorspace must be srgb, scrgb or hdr10");
 
     // This process drives FrameGen itself: never load the implicit layer, and
     // do not inherit the user's game profiles unless explicitly asked to.
@@ -298,7 +333,8 @@ int main(int argc, char** argv) {
                                                    VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true);
         void* mapped = nullptr;
         check(vkMapMemory(device, staging.memory, 0, VK_WHOLE_SIZE, 0, &mapped), "vkMapMemory");
-        auto fgp = std::make_unique<FrameGen>(dev, format, render, extent, static_cast<uint32_t>(mult - 1), sources);
+        auto fgp = std::make_unique<FrameGen>(dev, format, render, extent, static_cast<uint32_t>(mult - 1), sources,
+                                              colorSpace);
         FrameGen& fg = *fgp;
 
         fs::create_directories(outDir);
@@ -323,7 +359,7 @@ int main(int argc, char** argv) {
                 status = 1;
                 break;
             }
-            encode(img, render, format, mapped);
+            encode(img, render, format, colorSpace, mapped);
             const int cur = static_cast<int>(k % 2);
             const bool generate = prev >= 0;
             dev.immediate([&](VkCommandBuffer cmd) {
