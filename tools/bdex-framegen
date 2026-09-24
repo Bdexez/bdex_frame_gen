@@ -102,7 +102,7 @@ check() {
     echo "vulkaninfo not found (install vulkan-tools)"; exit 1
   fi
   out="$(BDEX_FG=1 BDEX_FG_LOG=2 BDEX_FG_STATS=0 vulkaninfo --summary 2>&1)"
-  if echo "$out" | grep -q "VK_LAYER_BDEX_framegen.*loaded"; then
+  if grep -q "VK_LAYER_BDEX_framegen.*loaded" <<<"$out"; then  # no pipe: pipefail + SIGPIPE
     echo "layer loaded: $(echo "$out" | grep -o "VK_LAYER_BDEX_framegen v[0-9.]*" | head -1)"
     echo "$out" | grep -o "device '.*" | head -1
     exit 0

@@ -235,6 +235,19 @@ réintroduire) :
   jeux sous Wayland quand le device n'est pas détruit).
 - **Tags** : v0.2.0+ ne sont plus ancêtres de `main` (réécriture d'historique).
 
+### CI Linux — pièges (2026-09-24)
+
+- Le loader d'Ubuntu 24.04 (1.3.275) **ignore `VK_IMPLICIT_LAYER_PATH`** (et
+  parfois `VK_ADD_IMPLICIT_LAYER_PATH`). Les tests chargent la build voulue en
+  copiant son manifeste dans un `XDG_DATA_HOME` privé (`tools/layer_env.sh`,
+  `layer_env()` dans `check_matcher_invariant.py`, `test-xdg` généré par
+  CMake pour `acquire_timeout`) ; rien n'est installé au niveau système en CI.
+- Les étapes `run` sont en `bash -eo pipefail` : `cmd | grep -q` échoue quand
+  grep trouve (SIGPIPE). Capturer la sortie puis `grep -q <<<"$out"`.
+- **Avant de pousser un changement de CI** : `tools/ci/run.sh` (build) et
+  `tools/ci/run.sh asan|tsan` rejouent les jobs dans Docker, même loader,
+  lavapipe.
+
 ## 10. Décisions & mesures clés (retenir les chiffres)
 
 - Éval qualité historique (2026-09-15, affichage fixé) : baseline **31,0 dB normal /

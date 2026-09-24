@@ -7,6 +7,7 @@ The old commit is pinned in the Linux CI workflow. Real frames are checked
 first so a scene or display mismatch cannot masquerade as a flow regression.
 """
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -17,13 +18,23 @@ import numpy as np
 from PIL import Image
 
 
+def layer_env(build, work):
+    """Load exactly this build's layer (see tools/layer_env.sh): old loaders
+    ignore VK_IMPLICIT_LAYER_PATH but always search XDG_DATA_HOME."""
+    xdg = Path(work) / "vulkan" / "implicit_layer.d"
+    xdg.mkdir(parents=True, exist_ok=True)
+    for m in (build / "layer").glob("*.json"):
+        shutil.copy(m, xdg)
+    return {"VK_IMPLICIT_LAYER_PATH": str(build / "layer"), "XDG_DATA_HOME": str(work)}
+
+
 def render(build, dump):
     # Compare the historical default path, regardless of the caller's game
     # profile or experimental BDEX_FG_* settings.
     env = {k: v for k, v in os.environ.items()
            if k != "BDEX_FG" and not k.startswith("BDEX_FG_") and k != "VK_ADD_IMPLICIT_LAYER_PATH"}
     env.update({
-        "VK_IMPLICIT_LAYER_PATH": str(build / "layer"),  # exclude any installed older BDEX layer
+        **layer_env(build, Path(dump).parent / f"xdg-{build.resolve().as_posix().replace('/', '_')}"),
         "BDEX_FG_CONFIG": "/dev/null",
         "BDEX_FG": "1",
         "BDEX_FG_PRESET": "balanced",

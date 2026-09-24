@@ -45,11 +45,19 @@ if(TARGET bdex_demo)
            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/validation.sh" "$<TARGET_FILE:bdex_demo>" "${CMAKE_BINARY_DIR}/layer")
   set_tests_properties(validation PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
   if(NOT WIN32)
+    # This build's layer for the loader, whatever its version (see
+    # tools/layer_env.sh): old loaders ignore VK_IMPLICIT_LAYER_PATH but
+    # always search $XDG_DATA_HOME/vulkan/implicit_layer.d.
+    set(BDEX_TEST_XDG "${CMAKE_BINARY_DIR}/test-xdg")
+    # Same template as the build manifest (layer/CMakeLists.txt), generated
+    # at the same time; the file does not exist yet at configure time.
+    file(GENERATE OUTPUT "${BDEX_TEST_XDG}/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen.json"
+         INPUT "${CMAKE_BINARY_DIR}/layer/bdex_framegen.json.gen")
     add_executable(bdex_acquire_test test_acquire.cpp)
     target_link_libraries(bdex_acquire_test PRIVATE Vulkan::Vulkan PkgConfig::GLFW3)
     target_compile_options(bdex_acquire_test PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
     add_test(NAME acquire_timeout COMMAND bdex_acquire_test)
     set_tests_properties(acquire_timeout PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30
-      ENVIRONMENT "BDEX_FG=1;BDEX_FG_CONFIG=/dev/null;BDEX_FG_PRESET=performance;BDEX_FG_MULTIPLIER=2;BDEX_FG_LOG=2;VK_IMPLICIT_LAYER_PATH=${CMAKE_BINARY_DIR}/layer")
+      ENVIRONMENT "BDEX_FG=1;BDEX_FG_CONFIG=/dev/null;BDEX_FG_PRESET=performance;BDEX_FG_MULTIPLIER=2;BDEX_FG_LOG=2;VK_IMPLICIT_LAYER_PATH=${CMAKE_BINARY_DIR}/layer;XDG_DATA_HOME=${BDEX_TEST_XDG}")
   endif()
 endif()

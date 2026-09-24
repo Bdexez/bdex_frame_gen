@@ -13,9 +13,10 @@ if [ -z "${WAYLAND_DISPLAY:-}" ] && [ -z "${DISPLAY:-}" ]; then
   exit 77
 fi
 LOG="$(mktemp)"
-trap 'rm -f "$LOG"' EXIT
-unset VK_ADD_IMPLICIT_LAYER_PATH
-VK_IMPLICIT_LAYER_PATH="$LAYER_DIR" BDEX_FG=1 BDEX_FG_LOG=2 BDEX_FG_STATS_INTERVAL=2 \
+. "$(dirname "$0")/../tools/layer_env.sh"
+bdex_use_layer "$LAYER_DIR"
+trap 'rm -rf "$LOG" "$BDEX_LAYER_XDG"' EXIT
+BDEX_FG=1 BDEX_FG_LOG=2 BDEX_FG_STATS_INTERVAL=2 \
   timeout 60 "$DEMO" --fps 30 --frames 150 --deterministic >"$LOG" 2>&1
 status=$?
 if [ $status -ne 0 ]; then
