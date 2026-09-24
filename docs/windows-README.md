@@ -61,6 +61,21 @@ other option of `bdex-framegen.conf` (`%APPDATA%\bdex-framegen\`) or the
 `BDEX_FG_*` environment apply. The GPU is the discrete one by default
 (`--gpu n` to choose; the list is logged at start), and the D3D11 capture
 device is created on the same adapter.
+For capture, `mode` defaults to extrapolation, then the config file and
+`BDEX_FG_MODE` take precedence. An explicit `--mode` wins over those settings
+and over `--preset`; the mode selected in the launcher wins over all of them.
+
+After registering the layer, run `powershell -File .\validate-windows.ps1` to
+check registry and loader discovery plus capture window enumeration. For the
+first on-hardware runs, add `-GameExe <native-Vulkan-game.exe>` and/or
+`-WindowTitle <window-title>`; the script checks generation and records logs
+under `%TEMP%`. For the Win32 layer, use `-Wow6432` and supply a 32-bit
+`vulkaninfo.exe` with `-VulkanInfo` to check loader discovery.
+
+The periodic console statistics include mean/p95 time from retrieval of a WGC
+frame from its pool to the Vulkan synthesis submit and to the real frame's
+`vkQueuePresentKHR` call. These timings exclude the game's own present-to-WGC
+delay and display scanout.
 
 Known limits: capture itself costs about one frame of latency (see
 `windows-capture.md` §0); keyboard input reaches the game (the overlay never

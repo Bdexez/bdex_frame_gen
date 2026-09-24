@@ -6,6 +6,57 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Improved (2026-09-24)
+
+- Windows capture now applies its extrapolation default before config/env and
+  respects explicit interpolation, including in the launcher. CLI mode and
+  multiplier take precedence over presets. Windows CI pins and verifies the
+  Vulkan SDK version and checksum.
+- Experimental `occlusion_strength=1` now reduces fallback cross-fading in
+  uncertain interpolation regions. The quality evaluator reports revealed
+  pixels and rotating edges and stores dumps compactly; normal and fast demo
+  runs gained in those regions while the default output stayed byte-identical.
+- Virtual swapchain images retain every usage requested by the game. If an
+  ordinary image of that format cannot provide those usages, the layer keeps
+  the driver's swapchain. Multi-swapchain presents now reindex the known
+  per-swapchain `pNext` arrays for each forwarded present; a two-swapchain
+  unit test covers IDs, modes, regions, fences and device masks.
+- The quality runner ignores the user's config file while preserving explicit
+  `BDEX_FG_*` overrides. Reports show how many generated frames aligned with
+  ground truth, and runs with too few comparisons fail instead of publishing
+  a misleading PSNR mean.
+
+### Improved (2026-09-23)
+
+- Virtual swapchain acquisition now respects zero, finite and infinite Vulkan
+  timeouts, waits for images released by the application or the GPU, wakes on
+  worker/resize errors even if a notification races with the wait, and rolls
+  back the reservation when signalling the acquire semaphore fails. A Vulkan
+  integration test exhausts the virtual images and
+  checks `VK_NOT_READY`, `VK_TIMEOUT`, and reacquisition after presentation
+  under Xvfb/software Vulkan.
+- A game explicitly requesting present-timing extensions keeps its original
+  device features and uses a pass-through swapchain. The layer no longer
+  writes into the application's `pNext` feature chain. If the preferred
+  compute queue cannot present, the layer can use a compatible application
+  queue before its first virtual swapchain.
+- The Windows capture thread is joined before its frame pool and ring are
+  destroyed; the WGC callback now owns its wake event independently of
+  `Capture` lifetime. Capture logs mean/p95 WGC-frame-dequeue-to-synthesis and
+  dequeue-to-present-API times for successfully submitted real frames.
+- Frame dumping and the quality runner now cover every generated position at
+  x2/x3/x4. The report adds PSNR for changing regions and moving edges.
+  Those local masks exclude the demo's frame counter used for alignment.
+  `occlusion_strength` is an opt-in interpolation experiment using forward /
+  backward flow consistency; its default of zero retains the older synthesis.
+  Initial normal/fast GPU evaluations showed no whole-frame PSNR gain at full
+  strength, so this remains experimental.
+- Linux CI builds the layer, runs unit and GPU integration tests under Xvfb,
+  and compares default generated frames with the pre-census build to guard
+  exact tie-breaking. It also checks generous normal/fast PSNR floors at x2/x3/x4.
+  Test runners isolate the build-tree layer from any installed copy.
+  The integration test skips unavailable displays locally but must run in CI.
+
 ### Added
 
 - **Windows capture (mode 2): global toggle hotkey.** **Ctrl+Alt+G** turns

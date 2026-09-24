@@ -1,6 +1,6 @@
 # Roadmap — what's done and what remains
 
-Status overview of **bdex-framegen** as of 2026-09-15. It summarises the
+Status overview of **bdex-framegen** as of 2026-09-23. It summarises the
 current state across the three tracks (Linux, the Windows Vulkan-layer port,
 and the Windows capture product) and the algorithm-quality work. The detailed
 Windows scoping lives in [`docs/windows-port.md`](docs/windows-port.md) (mode 1)
@@ -36,8 +36,8 @@ in use day to day.
 
 ### Windows mode 1 (Vulkan-layer "injection") — Phase 1 implemented in code
 
-Targets **native-Vulkan games and emulators** (single-player). Written and
-compiled on Linux; **not yet built or validated on real Windows hardware**.
+Targets **native-Vulkan games and emulators** (single-player). Builds with
+MSVC in Windows CI (x64 and Win32); **not yet run or validated on Windows hardware**.
 See [`docs/windows-port.md`](docs/windows-port.md).
 
 - `layer/src/platform.{h,cpp}`: process names (`GetModuleFileNameW` /
@@ -83,10 +83,10 @@ a Windows machine.
 
 ### Windows mode 1 — validation & packaging
 
-- **No build or validation on real Windows hardware yet** (no Windows machine
-  available in this environment). The whole §3 checklist in `docs/windows-port.md`
-  — MSVC build, `register-layer.ps1`, `vulkaninfo`, running a native-Vulkan
-  title — is still to be exercised.
+- **No runtime validation on Windows hardware yet** (no Windows machine
+  available in this environment). Windows CI builds and tests the DLL with
+  MSVC; the §3 checklist in `docs/windows-port.md` — local install,
+  `register-layer.ps1`, `vulkaninfo`, and a native-Vulkan title — remains.
 - **Phase 2**: verify upscaling / HUD on Windows; 32-bit build +
   `WOW6432Node` registration; release zip + optional Inno/NSIS installer.
   **Forward `VK_EXT_full_screen_exclusive`** through the virtual swapchain so
@@ -112,9 +112,10 @@ a Windows machine.
 
 ### Optical-flow quality
 
-- The weak regime is **fast motion** (~23.6 dB in the eval). The eval harness
-  (`tools/run_eval.sh`) is fixed and reproduces the baseline (31.0 / 23.7 dB at
-  normal / `--speed 2`).
+- The weak regime is **fast motion** (~23.6 dB in the historical eval). The
+  2026-09-15 fixed-display baseline was 31.0 / 23.7 dB for normal / `--speed 2`.
+  Current scores vary with the window extent assigned by the compositor;
+  compare variants within one display setup.
 - A round of matcher A/B (2026-09-15) found the fast case is a *matching-cost
   ambiguity* problem, not range or regularisation: `levels=5` is byte-identical
   and both smoothness directions hurt. Three fixes were measured; none is a
@@ -199,6 +200,23 @@ a Windows machine.
   `implicit_layer.d`, because `VK_ADD_IMPLICIT_LAYER_PATH` (what the test/eval
   scripts set) is not honoured by every loader build, so the demo otherwise
   runs pass-through and the integration test fails "layer did not activate".
+- The first `occlusion_strength` experiment used local forward/backward flow
+  consistency. On Radeon Vega 8, x2/40 frames, strength 1 matched the default
+  whole-frame PSNR (28.63 dB normal, 22.04 dB fast) and reduced moving-edge
+  PSNR by 0.01 dB. A local flow-divergence variant also regressed and was
+  discarded. The current opt-in prototype additionally suppresses the plain
+  cross-fade fallback when both warp candidates are uncertain. On the same
+  GPU/display, x2/30 frames (26 aligned): normal strength 0→1 was 29.35→29.43
+  dB globally, 19.97→20.16 dB on moving edges, 25.88→26.69 dB in pixels
+  revealed by the moving bar, and 21.94→22.18 dB around rotating edges.
+  At `--speed 2`: 22.12→22.15, 15.35→15.38, 19.62→19.95, and 13.88→13.95
+  dB respectively. GPU interpolation time was noisy (roughly 7–16 ms default,
+  9–15 ms opt-in on this iGPU); measure on a stable GPU before making it a
+  default. At strength 0, 38 matching output dumps were byte-identical to the
+  prior shader. The evaluation tool now scores changing regions, moving edges,
+  revealed bar pixels, and rotating edges while excluding the demo's counter;
+  it scores every position of x3/x4. Linux CI also compares default frames
+  with the pre-census build byte for byte.
 
 ---
 

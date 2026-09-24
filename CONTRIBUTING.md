@@ -44,12 +44,12 @@ ctest --test-dir build --output-on-failure
 The layer can be tested without installing it:
 
 ```sh
-VK_ADD_IMPLICIT_LAYER_PATH=$PWD/build/layer BDEX_FG=1 ./build/demo/bdex_demo --fps 30
+VK_IMPLICIT_LAYER_PATH=$PWD/build/layer BDEX_FG=1 ./build/demo/bdex_demo --fps 30
 ```
 
 ### Before opening a pull request
 
-- `ctest` passes (unit tests + end-to-end test).
+- `ctest` passes (unit tests, evaluator checks, frame-generation and acquire-timeout GPU tests).
 - The layer stays clean under the Khronos validation layer, synchronization
   validation included:
   ```sh
@@ -60,8 +60,10 @@ VK_ADD_IMPLICIT_LAYER_PATH=$PWD/build/layer BDEX_FG=1 ./build/demo/bdex_demo --f
 - For any change to the shaders or the interpolation, attach the before/after
   numbers from `tools/run_eval.sh build 40`, as well as
   `BDEX_EVAL_ARGS="--speed 2.5" tools/run_eval.sh build 40` for fast motion.
-  A PSNR improvement on the demo is not absolute proof, but a regression is a
-  good one.
+  Include the moving-edge and changing-region scores; for multiplier changes,
+  also run with `BDEX_FG_MULTIPLIER=3` and `4`. A PSNR improvement on the demo
+  is not absolute proof, but a regression is a good signal. The runner ignores
+  the local config file; set experimental options with `BDEX_FG_*` variables.
 - For any change affecting performance, attach a statistics line with
   `BDEX_FG_PROFILE=1` before and after.
 - One PR = one topic. Commit messages are written in the imperative, with a

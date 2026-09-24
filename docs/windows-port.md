@@ -169,14 +169,14 @@ no `.desktop` concept on Windows. Options, cheapest first:
 
 ### 2.5 Tests / CI
 
-- The **unit tests** (`tests/test_*.cpp`, `test.h`) are portable C++ — they
-  should build and run under MSVC with a CMake tweak.
+- The **unit tests** (`tests/test_*.cpp`, `test.h`) build and run under MSVC
+  in the Windows CI.
 - The **integration test** (`tests/integration.sh`) is bash + `VK_ADD_IMPLICIT_
   LAYER_PATH` + the demo; on Windows it needs a PowerShell equivalent, or gets
   skipped on Windows CI initially.
-- Add a **Windows CI job** (GitHub Actions `windows-latest`) that installs the
-  Vulkan SDK, builds x64 (+ x86), and runs the unit tests. Prebuilt release
-  artifacts (a zip: DLLs + JSONs + register scripts) come from here.
+- The **Windows CI job** builds x64 and Win32, runs unit tests, and packages
+  the layer DLLs for both architectures, the x64 capture executable, register scripts and
+  `validate-windows.ps1`. It cannot exercise a game or WGC on hardware.
 - **Code signing:** unsigned DLLs trip SmartScreen/AV. For distribution, plan an
   Authenticode signing step (optional for early testers).
 
@@ -205,14 +205,18 @@ on-hardware validation).**
    For 32-bit games repeat with `-A Win32` and register with `-Wow6432`.
 3. `powershell -File tools\register-layer.ps1 -Dll build-win\layer\Release\VkLayer_bdex_framegen.dll`
 4. `vulkaninfo --summary` → `VK_LAYER_BDEX_framegen` listed.
+   `powershell -File tools\validate-windows.ps1` checks registration and loader
+   discovery; use `-Wow6432 -VulkanInfo <32-bit-vulkaninfo.exe>` for Win32.
 5. Create `%APPDATA%\bdex-framegen\bdex-framegen.conf` with `enabled=1` (and
    `log_file=%TEMP%\bdex-fg.log` — game stderr usually goes nowhere on Windows).
    Per-game instead of the config file: Steam launch options
    `cmd /c "set BDEX_FG=1 && %command%"` (Steam runs launch options through
    cmd on Windows; `set` defines the environment the layer reads — the
    `VAR=1 %command%` shell syntax is Linux-only).
-6. Run a native-Vulkan title / emulator; check the HUD and the log for the
-   `loaded` line with the config summary.
+6. Run a native-Vulkan title / emulator; check the HUD and the log for
+   `generation on`. `validate-windows.ps1 -GameExe <path>` checks that log and
+   keeps it under `%TEMP%` for inspection. Also verify resize, alt-tab,
+   presentation mode and input by hand.
 7. Debug knobs: `BDEX_FG_DISABLE=1` (loader skips the layer entirely),
    loader debug via `$env:VK_LOADER_DEBUG='all'`, config reload happens per
    Vulkan instance/device creation.
@@ -220,9 +224,9 @@ on-hardware validation).**
 **Phase 2 — parity and packaging.**
 - Verify **upscaling** on Windows (should work via the win32 fixed-extent path —
   §1); confirm the HUD and present-mode handling.
-- 32-bit build + `WOW6432Node` registration (many older Vulkan games/emulators
-  are 32-bit).
-- Release zip + optional Inno/NSIS installer; Windows CI + unit tests.
+- 32-bit build + `WOW6432Node` registration exist in CI; hardware validation
+  remains for older Vulkan games/emulators.
+- Release zip exists; optional Inno/NSIS installer remains.
 
 **Phase 3 — usability.**
 - A Windows config tool (§2.4 option 2), or a documented config-file workflow.
