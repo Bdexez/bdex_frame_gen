@@ -170,7 +170,10 @@ def main():
             env[k if k.startswith("BDEX_FG_") else "BDEX_FG_" + k] = v.strip()
         variants.append((spec, env))
 
-    base = Path(args.keep) if args.keep else Path(tempfile.mkdtemp(prefix="bdex-seq-"))
+    # Generated frames go to disk (~/.cache), not /tmp: /tmp is often a tmpfs.
+    cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    cache.mkdir(parents=True, exist_ok=True)
+    base = Path(args.keep) if args.keep else Path(tempfile.mkdtemp(prefix="bdex-seq-", dir=cache))
     results = []
     for i, (name, env) in enumerate(variants):
         out = base / f"v{i}"
