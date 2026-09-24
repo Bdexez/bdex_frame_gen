@@ -185,7 +185,7 @@ VkExtent2D scaledRenderExtent(VkExtent2D display, float renderScale) {
 // display resolution; the layer upscales every presented frame back up.
 void applyRenderScale(InstanceData* inst, VkSurfaceKHR surface, VkSurfaceCapabilitiesKHR* caps) {
     const Config& cfg = inst->config;
-    if (!cfg.enabled || cfg.renderScale >= 0.999f) return;
+    if (!cfg.enabled || !inst->renderScaleAllowed.load(std::memory_order_relaxed) || cfg.renderScale >= 0.999f) return;
     if (caps->currentExtent.width != UINT32_MAX && caps->currentExtent.width > 0) {
         // X11 / XWayland: the surface size is fixed, so we can hand back a
         // reduced one directly and the app adopts it.
@@ -259,11 +259,22 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
     data->config = Config::load();
 
     bool hasSwapchainExt = false;
+    bool requestedHiddenPresentExt = false;
     for (uint32_t i = 0; i < pCreateInfo->enabledExtensionCount; ++i) {
         const char* e = pCreateInfo->ppEnabledExtensionNames[i];
         if (strcmp(e, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0) hasSwapchainExt = true;
+        if (isHiddenPresentExtension(e)) requestedHiddenPresentExt = true;
         if (strcmp(e, "VK_EXT_swapchain_maintenance1") == 0 || strcmp(e, "VK_KHR_swapchain_maintenance1") == 0)
             data->hasSwapchainMaintenance1 = true;
+    }
+    // An application may request an extension by name without enumerating it.
+    // Its feature chain is const input: changing it in place is invalid, while
+    // dropping the extension but leaving its feature enabled can fail device
+    // creation. Preserve the application's request and use pass-through.
+    if (data->config.enabled && data->config.hidePresentExt && requestedHiddenPresentExt) {
+        BDEX_WARN("application explicitly requested present extensions; keeping device and swapchains pass-through");
+        data->config.enabled = false;
+        inst->renderScaleAllowed.store(false, std::memory_order_relaxed);
     }
 
     // Queue selection: prefer a compute-capable family with a spare queue so
@@ -323,33 +334,6 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
     VkDeviceCreateInfo ci = *pCreateInfo;
     ci.queueCreateInfoCount = static_cast<uint32_t>(qcis.size());
     ci.pQueueCreateInfos = qcis.data();
-
-    // Force-disable the present-timing extensions (swapchain_maintenance1,
-    // present_id/wait): filtering them from EnumerateDeviceExtensionProperties
-    // is not always honoured by the loader, so also strip them from the enabled
-    // list and clear their feature bits. VKD3D-Proton (Direct3D 12) then uses
-    // the basic present path, which our virtualised swapchain supports.
-    std::vector<const char*> devExts;
-    if (data->config.enabled && data->config.hidePresentExt) {
-        for (uint32_t i = 0; i < ci.enabledExtensionCount; ++i) {
-            if (isHiddenPresentExtension(ci.ppEnabledExtensionNames[i])) {
-                BDEX_INFO("disabling %s (incompatible with the virtualised swapchain)", ci.ppEnabledExtensionNames[i]);
-                data->hasSwapchainMaintenance1 = false;
-                continue;
-            }
-            devExts.push_back(ci.ppEnabledExtensionNames[i]);
-        }
-        ci.enabledExtensionCount = static_cast<uint32_t>(devExts.size());
-        ci.ppEnabledExtensionNames = devExts.data();
-        for (auto* s = static_cast<VkBaseOutStructure*>(const_cast<void*>(ci.pNext)); s; s = s->pNext) {
-            if (s->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR)
-                reinterpret_cast<VkPhysicalDevicePresentIdFeaturesKHR*>(s)->presentId = VK_FALSE;
-            else if (s->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR)
-                reinterpret_cast<VkPhysicalDevicePresentWaitFeaturesKHR*>(s)->presentWait = VK_FALSE;
-            else if (s->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT)
-                reinterpret_cast<VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT*>(s)->swapchainMaintenance1 = VK_FALSE;
-        }
-    }
 
     VkResult r = createDevice(physDev, &ci, pAllocator, pDevice);
     if (r != VK_SUCCESS) return r;
