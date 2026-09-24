@@ -84,6 +84,24 @@ TEST(config_file_and_env_priority) {
     remove(path.c_str());
 }
 
+TEST(config_product_defaults_and_mode_priority) {
+    const std::string path = test::tmpPath("bdex_test_capture_defaults.conf");
+    { std::ofstream f(path); f << "mode=interpolate\n"; }
+    setenv("BDEX_FG_CONFIG", path.c_str(), 1);
+    unsetenv("BDEX_FG_MODE");
+    Config defaults;
+    defaults.extrapolate = true;
+    CHECK(!Config::loadWithDefaults(defaults).extrapolate); // file overrides capture default
+    setenv("BDEX_FG_MODE", "extrapolate", 1);
+    CHECK(Config::loadWithDefaults(defaults).extrapolate);  // env overrides file
+    unsetenv("BDEX_FG_MODE");
+    { std::ofstream f(path); f << ""; }
+    CHECK(Config::loadWithDefaults(defaults).extrapolate);  // capture default survives
+    CHECK(!Config::load().extrapolate);                     // layer default is unchanged
+    unsetenv("BDEX_FG_CONFIG");
+    remove(path.c_str());
+}
+
 TEST(config_master_switch) {
     setenv("BDEX_FG", "0", 1);
     Config c = Config::load();

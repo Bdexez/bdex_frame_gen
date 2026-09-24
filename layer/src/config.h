@@ -83,7 +83,7 @@ struct Config {
 
     // When autoTune is still set (no preset or flow option chosen explicitly),
     // pick the quality preset from the GPU: integrated / software renderers get
-    // "performance", discrete GPUs "balanced", large discrete GPUs "quality".
+    // "performance", discrete GPUs with at least 2 GiB of VRAM "balanced".
     void autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhysicalDeviceMemoryProperties& mem);
 
     // defaults + file + env. `extraProcess` (an executable name, `.exe`
@@ -93,6 +93,9 @@ struct Config {
     // though it is not the current process. Empty (the default) = current
     // process only, the layer's case.
     static Config load(const std::string& extraProcess = "");
+    // Same, starting from product defaults instead of Config{} (the capture
+    // app defaults to extrapolation, still overridable by the file and env).
+    static Config loadWithDefaults(Config defaults, const std::string& extraProcess = "");
 
     // Executable names of the current process (platform-specific source),
     // lower-case, without directory or .exe suffix; used for section matching.

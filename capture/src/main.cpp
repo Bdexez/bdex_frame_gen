@@ -376,23 +376,24 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
     // The game's process name is added to the section matcher, so a [game]
     // profile in the config file overrides the globals for this title — the
     // per-game profiles the launcher writes and hand-edited sections alike.
-    bdex::Config cfg = bdex::Config::load(gameProc);
+    bdex::Config captureDefaults;
+    captureDefaults.extrapolate = true;
+    bdex::Config cfg = bdex::Config::loadWithDefaults(captureDefaults, gameProc);
     cfg.enabled = true;
-    if (o.mode < 0 && !cfg.extrapolate) cfg.extrapolate = true;
-    if (o.mode >= 0) cfg.extrapolate = o.mode == 1;
-    if (o.multiplier > 0) cfg.multiplier = o.multiplier;
     if (!o.preset.empty() && !cfg.apply("preset", o.preset)) {
         LOGE("unknown preset '%s' (performance, balanced, quality)", o.preset.c_str());
         return 2;
     }
+    if (o.mode >= 0) cfg.extrapolate = o.mode == 1;
+    if (o.multiplier > 0) cfg.multiplier = o.multiplier;
     if (o.filter >= 0) cfg.upscaleFilter = o.filter;
     if (o.sharpness >= 0.f) cfg.sharpness = o.sharpness;
     if (o.hud >= 0) cfg.overlayMode = o.hud;
     bool fifo = o.fifo;
     if (choice) {
+        if (!choice->preset.empty()) cfg.apply("preset", choice->preset);
         cfg.multiplier = choice->multiplier;
         cfg.extrapolate = choice->extrapolate;
-        if (!choice->preset.empty()) cfg.apply("preset", choice->preset);
         cfg.upscaleFilter = choice->filter;
         cfg.sharpness = choice->sharpness;
         cfg.overlayMode = choice->hud;
@@ -588,6 +589,10 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
 int main(int argc, char** argv) {
     Options o;
     if (!parse(argc, argv, o)) return 2;
+    // The capture product owns its Vulkan swapchain and drives FrameGen itself.
+    // Never load the implicit layer into this process, even when a global
+    // enabled=1 profile is active for games.
+    SetEnvironmentVariableA("BDEX_FG_DISABLE", "1");
     SetConsoleOutputCP(CP_UTF8);
     setDpiAware();
 
@@ -608,10 +613,11 @@ int main(int argc, char** argv) {
     bdex::LaunchChoice choice;
     HWND target = nullptr;
     if (useLauncher) {
-        const bdex::Config d = bdex::Config::load();
+        bdex::Config captureDefaults;
+        captureDefaults.extrapolate = true;
+        const bdex::Config d = bdex::Config::loadWithDefaults(captureDefaults);
         choice.multiplier = std::max(1, d.multiplier);
-        const std::string mode = bdex::globalConfigValue("mode");
-        choice.extrapolate = mode.empty() || mode.find("extrap") == 0;
+        choice.extrapolate = d.extrapolate;
         choice.filter = d.upscaleFilter;
         choice.sharpness = d.sharpness;
         choice.hud = d.overlayMode;

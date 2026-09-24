@@ -253,7 +253,7 @@ void Config::loadEnv() {
         if (eq == std::string::npos) continue;
         std::string key = entry.substr(sizeof(prefix) - 1, eq - (sizeof(prefix) - 1));
         std::string value = entry.substr(eq + 1);
-        if (lower(key) == "config" || lower(key) == "preset") continue;  // handled above / by load()
+        if (lower(key) == "config" || lower(key) == "preset" || lower(key) == "disable") continue;  // loader handles disable
         if (!apply(key, value))
             BDEX_WARN("ignored environment option %s", entry.c_str());
     }
@@ -265,7 +265,10 @@ void Config::loadEnv() {
 }
 
 Config Config::load(const std::string& extraProcess) {
-    Config c;
+    return loadWithDefaults(Config{}, extraProcess);
+}
+
+Config Config::loadWithDefaults(Config c, const std::string& extraProcess) {
     std::string path;
     if (const char* p = getenv("BDEX_FG_CONFIG")) path = p;
     else path = platformConfigPath();
