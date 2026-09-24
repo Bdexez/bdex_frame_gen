@@ -30,6 +30,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-24)
 
+- **The control panel exposes every layer option.** Its advanced section is
+  now six collapsible groups — Cadence, Motion quality, Experimental, Flow
+  structure, Diagnostic, Compatibility — with switches, lists and text fields
+  for the 38 options it did not show (only values that differ from the
+  layer's defaults are written), and a *Paused* switch applied live to
+  running games.
+
 - `bdex_offline --format rgba8|bgra8|srgb|rgb10|rgba16f` and
   `--render-scale S`, and the `formats` ctest: every output encoding and the
   upscaling path are checked headless (BGRA8 byte-identical to RGBA8, 10-bit

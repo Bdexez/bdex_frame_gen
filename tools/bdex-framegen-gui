@@ -47,62 +47,32 @@ HUD_NAMED = {"off": 0, "false": 0, "no": 0, "none": 0, "fps": 1,
              "framegen": 2, "fg": 2, "on": 2, "true": 2, "yes": 2,
              "low": 3, "1low": 3, "lows": 3, "full": 4, "detailed": 4, "all": 4}
 
-# Advanced optical-flow tuning exposed in a collapsed section. Each entry maps a
-# config key to a spin control:
-#   (attr, config_key, title, subtitle, lower, upper, step, digits, default)
-# digits == 0 means an integer control. A value equal to its default is not
-# written to the file (nor to the Steam string), so leaving these alone keeps
-# the config minimal and the layer on its own defaults.
-ADVANCED = [
-    ("grad_weight", "grad_weight", "Netteté du mouvement rapide",
-     "Cale le suivi sur les contours plutôt que la seule luminosité : réduit le déchirement "
-     "(« images coupées ») en mouvement rapide, au prix d'un peu de fidélité sur l'image fixe. "
-     "0 = désactivé ; essayer 1.",
-     0.0, 3.0, 0.1, 1, 0.0),
-    ("smoothness", "smoothness", "Lissage du mouvement",
-     "Régularise le champ de mouvement (pénalise les écarts entre blocs voisins). Défaut 0,004.",
-     0.0, 0.03, 0.001, 3, 0.004),
-    ("zero_bias", "zero_bias", "Stabilité de l'image fixe",
-     "Favorise l'absence de mouvement pour garder l'ATH/HUD parfaitement stable. Défaut 0,002.",
-     0.0, 0.02, 0.001, 3, 0.002),
-    ("fps_limit", "fps_limit", "Limite d'images du jeu",
-     "Plafonne les FPS du jeu (0 = aucune). Une base stable qui divise le taux de rafraîchissement "
-     "(60 → 120 Hz, 72 → 144 Hz) donne la génération la plus régulière.",
-     0, 360, 1, 0, 0),
-    ("target_fps", "target_fps", "Multiplicateur automatique — cible",
-     "Taux de rafraîchissement visé (ex. 144) : le multiplicateur s'adapte aux FPS du jeu "
-     "(72 → ×2, 50 → ×3, ×1 quand le jeu atteint la cible), sans dépasser le multiplicateur choisi. "
-     "0 = multiplicateur fixe.",
-     0, 360, 1, 0, 0),
-    ("zero_bias_contrast", "zero_bias_contrast", "Stabilité adaptée au contraste",
-     "Rend la stabilité de l'image fixe relative au contraste : supprime les fondus fantômes sur les "
-     "décors doux en mouvement rapide, sans déstabiliser le HUD. 0 = désactivé ; essayer 0,1.",
-     0.0, 0.5, 0.01, 2, 0.0),
-    ("pixel_vectors", "pixel_vectors", "Contours d'objets (expérimental)",
-     "Choisit le mouvement pixel par pixel aux frontières d'objets (moins de bavures, "
-     "synthèse ~2× plus coûteuse). 1 = activé.",
-     0, 1, 1, 0, 0),
-    ("subpixel", "subpixel", "Mouvement sous-pixel (expérimental)",
-     "Affine le mouvement au-delà du pixel entier. 1 = activé.",
-     0, 1, 1, 0, 0),
-    ("extrapolate_splat", "extrapolate_splat", "Extrapolation par projection (expérimental)",
-     "En mode extrapolation : projette les pixels vers leur position future (moins d'images doubles "
-     "et de bavures). 1 = activé.",
-     0, 1, 1, 0, 0),
-    ("search_fine", "search_fine", "Précision de recherche",
-     "Rayon de recherche fin autour de la prédiction (plus haut = mouvements plus fins, plus coûteux). Défaut 2.",
-     1, 4, 1, 0, 2),
-    ("flow_iterations", "flow_iterations", "Itérations de synthèse",
-     "Raffinements de la recherche du mouvement lors de l'interpolation. Défaut 1.",
-     0, 3, 1, 0, 1),
-    ("scene_cut_low", "scene_cut_low", "Coupure de scène — début du fondu",
-     "Coût de mouvement moyen au-delà duquel on commence à fondre vers l'image réelle. "
-     "Le monter rend la détection de coupure plus franche et réduit le scintillement aux transitions. Défaut 0,05.",
-     0.0, 0.30, 0.01, 2, 0.05),
-    ("scene_cut_high", "scene_cut_high", "Coupure de scène — image réelle",
-     "Coût au-delà duquel l'image générée est remplacée par une vraie image dupliquée. Défaut 0,09.",
-     0.0, 0.50, 0.01, 2, 0.09),
-]
+# Every other layer option, in collapsed sections under "Réglages avancés".
+# Each option maps a config key to a control:
+#   spin   — a number (lower, upper, step, digits; digits 0 = integer)
+#   switch — on/off, written as 1/0
+#   choice — one of fixed values
+#   text   — free text (paths)
+# A value equal to its default is not written to the file (nor to the Steam
+# string), so leaving these alone keeps the config minimal and the layer on
+# its own defaults (config.h holds the same defaults).
+
+
+def spin(key, title, sub, lower, upper, step, digits, default):
+    return dict(kind="spin", key=key, title=title, sub=sub, lower=lower, upper=upper,
+                step=step, digits=digits, default=_fmt_num(default, digits))
+
+
+def switch(key, title, sub, default=False):
+    return dict(kind="switch", key=key, title=title, sub=sub, default="1" if default else "0")
+
+
+def choice(key, title, sub, choices, default):
+    return dict(kind="choice", key=key, title=title, sub=sub, choices=choices, default=default)
+
+
+def text(key, title, sub):
+    return dict(kind="text", key=key, title=title, sub=sub, default="")
 
 
 def _fmt_num(value, digits):
@@ -110,6 +80,139 @@ def _fmt_num(value, digits):
         return str(int(round(value)))
     s = f"{value:.{digits}f}".rstrip("0").rstrip(".")
     return s or "0"
+
+
+SECTIONS = [
+    ("cadence", "Cadence", "Limite de FPS, multiplicateur automatique, régularité", False, [
+        spin("fps_limit", "Limite d'images du jeu",
+             "Plafonne les FPS du jeu (0 = aucune). Une base stable qui divise le taux de rafraîchissement "
+             "(60 → 120 Hz, 72 → 144 Hz) donne la génération la plus régulière.", 0, 360, 1, 0, 0),
+        spin("target_fps", "Multiplicateur automatique — cible",
+             "Taux de rafraîchissement visé (ex. 144) : le multiplicateur s'adapte aux FPS du jeu "
+             "(72 → ×2, 50 → ×3, ×1 quand le jeu atteint la cible), sans dépasser le multiplicateur choisi. "
+             "0 = multiplicateur fixe.", 0, 360, 1, 0, 0),
+        switch("pacing", "Espacement régulier des images",
+               "Répartit les images générées dans l'intervalle du jeu (hors vsync FIFO).", True),
+        switch("sync_present", "Présentation synchrone (compatibilité)",
+               "Bloque le jeu jusqu'à l'affichage de chaque image. Pour certains jeux Direct3D 12 "
+               "(VKD3D-Proton) qui se figent ; ajoute de la latence."),
+    ]),
+    ("motion", "Qualité du mouvement", "Stabilité, contours, sous-pixel, coupures de scène…", True, [
+        spin("zero_bias_contrast", "Stabilité adaptée au contraste",
+             "Rend la stabilité de l'image fixe relative au contraste : supprime les fondus fantômes sur les "
+             "décors doux en mouvement rapide, sans déstabiliser le HUD. 0 = désactivé ; recommandé 0,1.",
+             0.0, 0.5, 0.01, 2, 0.0),
+        switch("pixel_vectors", "Contours d'objets",
+               "Choisit le mouvement pixel par pixel aux frontières d'objets : moins de bavures, "
+               "synthèse ~2× plus coûteuse."),
+        switch("subpixel", "Mouvement sous-pixel", "Affine le mouvement au-delà du pixel entier."),
+        spin("grad_weight", "Netteté du mouvement rapide",
+             "Cale le suivi sur les contours plutôt que la seule luminosité : réduit le déchirement "
+             "en mouvement rapide, au prix d'un peu de fidélité sur l'image fixe. 0 = désactivé ; essayer 1.",
+             0.0, 3.0, 0.1, 1, 0.0),
+        spin("smoothness", "Lissage du mouvement",
+             "Régularise le champ de mouvement (pénalise les écarts entre blocs voisins). Défaut 0,004.",
+             0.0, 0.03, 0.001, 3, 0.004),
+        spin("zero_bias", "Stabilité de l'image fixe",
+             "Favorise l'absence de mouvement pour garder le HUD parfaitement stable. Défaut 0,002.",
+             0.0, 0.02, 0.001, 3, 0.002),
+        spin("search_fine", "Précision de recherche",
+             "Rayon de recherche fin autour de la prédiction (plus haut = mouvements plus fins, plus coûteux). "
+             "Défaut 2.", 1, 4, 1, 0, 2),
+        spin("flow_iterations", "Itérations de synthèse",
+             "Raffinements de la recherche du mouvement lors de l'interpolation. Défaut 1.", 0, 3, 1, 0, 1),
+        spin("scene_cut_low", "Coupure de scène — début du fondu",
+             "Coût de mouvement moyen au-delà duquel on commence à fondre vers l'image réelle. Défaut 0,05.",
+             0.0, 0.30, 0.01, 2, 0.05),
+        spin("scene_cut_high", "Coupure de scène — image réelle",
+             "Coût au-delà duquel l'image générée est remplacée par une vraie image dupliquée. Défaut 0,09.",
+             0.0, 0.50, 0.01, 2, 0.09),
+    ]),
+    ("experimental", "Expérimental", "Options en cours d'évaluation", True, [
+        switch("extrapolate_splat", "Extrapolation par projection",
+               "En mode extrapolation : projette les pixels vers leur position future (moins d'images "
+               "doubles et de bavures), ~0,8 ms de plus."),
+        spin("static_guard", "Protection du HUD statique",
+             "Garde tels quels les pixels identiques dans les deux images quand le mouvement autour "
+             "bouge (glyphes du HUD). Peut effacer de petits objets très rapides. 0 = désactivé.",
+             0.0, 1.0, 0.1, 1, 0.0),
+        switch("temporal_prediction", "Prédiction temporelle",
+               "Cherche le mouvement autour de celui de l'image précédente : suit les panoramiques très "
+               "rapides (surtout avec « Stabilité adaptée au contraste »)."),
+        spin("occlusion_strength", "Gestion des occlusions",
+             "Confiance aller/retour du mouvement dans la synthèse. 0 = désactivé.", 0.0, 1.0, 0.1, 1, 0.0),
+        spin("rot_weight", "Rotation / zoom",
+             "Réévalue les correspondances ambiguës sous rotation et mise à l'échelle. 0 = désactivé, 1 = activé.",
+             0.0, 1.0, 1.0, 0, 0.0),
+        spin("census_weight", "Recherche par structure (census)",
+             "Départage les correspondances ambiguës par la structure locale. 0 = désactivé.",
+             0.0, 8.0, 0.1, 1, 0.0),
+        spin("census_margin", "Seuil d'ambiguïté (census)",
+             "Écart relatif en dessous duquel une correspondance est jugée ambiguë. Défaut 0,05.",
+             0.0, 1.0, 0.01, 2, 0.05),
+        spin("extrapolate_hold", "Extrapolation : figer les pixels incertains",
+             "1 = ancien comportement (images doubles). 0 = suivre le mouvement partout.",
+             0.0, 1.0, 0.1, 1, 0.0),
+    ]),
+    ("flow", "Structure du flux", "Résolution et pyramide du calcul du mouvement — désactive l'auto-réglage", True, [
+        choice("flow_scale", "Résolution du flux",
+               "Diviseur de résolution du calcul du mouvement ; « Auto » vise ~0,5 Mpixel.",
+               [("Auto", "auto"), ("Pleine (1)", "1"), ("Moitié (2)", "2"), ("Quart (4)", "4")], "auto"),
+        spin("levels", "Niveaux de pyramide", "Plus de niveaux = mouvements plus amples suivis. Défaut 4.",
+             1, 6, 1, 0, 4),
+        spin("search_radius", "Rayon de recherche grossier",
+             "Rayon de recherche au niveau le plus grossier. Défaut 4.", 1, 4, 1, 0, 4),
+        switch("refine", "Raffinement 4×4", "Meilleurs contours du mouvement ; coûte du temps GPU.", True),
+        switch("refine_all", "Raffiner tous les niveaux",
+               "Désactivé : seulement le plus fin (moins cher, ~2 dB moins bon).", True),
+        spin("refine_bias", "Préférence pour le mouvement du bloc",
+             "Bonus pour garder le mouvement propre d'un bloc lors du raffinement. Défaut 0,5.",
+             0.0, 5.0, 0.1, 1, 0.5),
+    ]),
+    ("diagnostic", "Diagnostic", "Journal, statistiques, profilage, captures d'images", False, [
+        choice("debug", "Mode de débogage",
+               "Flux : colore le mouvement estimé. Écran partagé : moitié générée / moitié réelle. "
+               "Transparent : aucune génération (isole un problème).",
+               [("Aucun", "none"), ("Flux", "flow"), ("Écran partagé", "split"), ("Transparent", "passthrough")],
+               "none"),
+        choice("log", "Verbosité du journal", "",
+               [("Silencieux (0)", "0"), ("Avertissements (1)", "1"), ("Infos (2)", "2"), ("Débogage (3)", "3")],
+               "1"),
+        text("log_file", "Fichier journal", "Chemin du fichier de log (vide = sortie standard). ~ accepté."),
+        switch("stats", "Statistiques de FPS dans le journal", "", True),
+        spin("stats_interval", "Intervalle des statistiques (s)", "", 0.5, 60.0, 0.5, 1, 5.0),
+        switch("profile", "Profilage GPU", "Temps GPU par étape, avec les statistiques."),
+        text("dump", "Dossier de capture d'images",
+             "Écrit les images présentées en PPM dans ce dossier (vide = désactivé). À éviter dans /tmp."),
+        spin("dump_frames", "Nombre d'images capturées", "", 1, 100000, 1, 0, 24),
+    ]),
+    ("compat", "Compatibilité", "Réglages de secours pour les jeux récalcitrants", False, [
+        switch("hide_present_ext", "Masquer les extensions de présentation",
+               "Cache swapchain_maintenance1 / present_id au jeu (nécessaire pour VKD3D-Proton).", True),
+        switch("shared_queue", "File GPU partagée avec le jeu",
+               "Force le layer à partager la file du jeu (test / pilotes sans file libre)."),
+    ]),
+]
+OPTIONS = [o for _, _, _, _, opts in SECTIONS for o in opts]
+
+
+def _parse_option(o, raw):
+    """Canonical string of an option's value read from the file (default if absent/invalid)."""
+    if raw is None:
+        return o["default"]
+    raw = raw.strip()
+    if o["kind"] == "spin":
+        try:
+            v = min(o["upper"], max(o["lower"], float(raw)))
+        except ValueError:
+            return o["default"]
+        return _fmt_num(v, o["digits"])
+    if o["kind"] == "switch":
+        return "1" if raw.lower() in ("1", "true", "on", "yes") else "0"
+    if o["kind"] == "choice":
+        values = [v for _, v in o["choices"]]
+        return raw.lower() if raw.lower() in values else o["default"]
+    return raw
 
 
 def _combo_index(table, value, default=0):
@@ -141,7 +244,7 @@ def game_name(text):
 # Keys the UI owns in the global section; anything else found there is kept.
 GLOBAL_KEYS = ("enabled", "preset", "multiplier", "mode", "present_mode",
                "low_latency", "render_scale", "upscale_filter", "sharpness",
-               "overlay", "hud") + tuple(key for _, key, *_ in ADVANCED)
+               "overlay", "hud", "paused") + tuple(o["key"] for o in OPTIONS)
 
 
 class ConfigFile:
@@ -236,7 +339,8 @@ class Options:
         self.filter = "lanczos"
         self.sharpness = 0           # percent, 0..100
         self.hud = 0                 # on-screen fps counter level, 0..4
-        self.advanced = {attr: default for attr, _, *_, default in ADVANCED}
+        self.paused = False          # live pause (the layer reloads it while games run)
+        self.values = {o["key"]: o["default"] for o in OPTIONS}   # canonical strings
 
     def load_from(self, glob):
         g = {k.lower(): v for k, v in glob.items()}
@@ -275,11 +379,9 @@ class Options:
                 self.hud = max(0, min(4, int(float(hud))))
             except ValueError:
                 self.hud = 0
-        for attr, key, _title, _sub, lower, upper, _step, _digits, default in ADVANCED:
-            try:
-                self.advanced[attr] = min(upper, max(lower, float(g[key])))
-            except (KeyError, ValueError):
-                self.advanced[attr] = default
+        self.paused = flag("paused")
+        for o in OPTIONS:
+            self.values[o["key"]] = _parse_option(o, g.get(o["key"]))
 
     def write_into(self, glob):
         """Update the managed keys in `glob` in place, keeping unknown ones."""
@@ -300,10 +402,12 @@ class Options:
                 glob["sharpness"] = f"{self.sharpness / 100:.2f}".rstrip("0").rstrip(".")
         if self.hud > 0:
             glob["overlay"] = str(self.hud)
-        for attr, key, _title, _sub, _lo, _hi, _step, digits, default in ADVANCED:
-            value = self.advanced.get(attr, default)
-            if _fmt_num(value, digits) != _fmt_num(default, digits):
-                glob[key] = _fmt_num(value, digits)
+        if self.paused:
+            glob["paused"] = "1"
+        for o in OPTIONS:
+            value = self.values[o["key"]]
+            if value != o["default"]:
+                glob[o["key"]] = value
 
     def steam_string(self):
         """Equivalent per-game Steam launch options (BDEX_FG_* ... %command%)."""
@@ -323,10 +427,10 @@ class Options:
                 e.append("BDEX_FG_SHARPNESS=" + f"{self.sharpness / 100:.2f}".rstrip("0").rstrip("."))
         if self.hud > 0:
             e.append(f"BDEX_FG_OVERLAY={self.hud}")
-        for attr, key, _title, _sub, _lo, _hi, _step, digits, default in ADVANCED:
-            value = self.advanced.get(attr, default)
-            if _fmt_num(value, digits) != _fmt_num(default, digits):
-                e.append(f"BDEX_FG_{key.upper()}={_fmt_num(value, digits)}")
+        for o in OPTIONS:
+            value = self.values[o["key"]]
+            if value != o["default"]:
+                e.append(f"BDEX_FG_{o['key'].upper()}={shlex.quote(value)}")
         return " ".join(e) + " %command%"
 
 
@@ -511,6 +615,13 @@ class Window(Adw.ApplicationWindow):
         self.mode_row.set_selected(_combo_index(MODES, self.opt.mode))
         self.mode_row.connect("notify::selected", self.on_change)
         g.add(self.mode_row)
+        self.pause_row = Adw.SwitchRow(
+            title="En pause",
+            subtitle="Suspend la génération dans les jeux en cours (s'applique en moins d'une seconde ; "
+                     "raccourci : bdex-framegen --toggle)",
+            active=self.opt.paused)
+        self.pause_row.connect("notify::active", self.on_change)
+        g.add(self.pause_row)
 
     def _build_hud(self, page):
         g = Adw.PreferencesGroup(
@@ -564,21 +675,37 @@ class Window(Adw.ApplicationWindow):
     def _build_advanced(self, page):
         g = Adw.PreferencesGroup(
             title="Réglages avancés",
-            description="Affinage de la génération d'images. Les valeurs par défaut conviennent à "
-                        "la plupart des jeux — n'y touche que si tu veux corriger un artefact précis.")
+            description="Toutes les autres options du layer. Les valeurs par défaut conviennent à "
+                        "la plupart des jeux ; seules les valeurs modifiées sont écrites. La plupart "
+                        "s'appliquent aussi aux jeux déjà lancés.")
         page.add(g)
-        self.adv_expander = Adw.ExpanderRow(
-            title="Afficher les réglages avancés du mouvement",
-            subtitle="Netteté du mouvement rapide, coupures de scène, recherche du mouvement…")
-        g.add(self.adv_expander)
-        self.adv_rows = {}
-        for attr, _key, title, subtitle, lower, upper, step, digits, _default in ADVANCED:
-            adj = Gtk.Adjustment(lower=lower, upper=upper, step_increment=step,
-                                 page_increment=step * 10, value=self.opt.advanced[attr])
-            row = Adw.SpinRow(title=title, subtitle=subtitle, adjustment=adj, digits=digits)
-            row.connect("notify::value", self.on_change)
-            self.adv_expander.add_row(row)
-            self.adv_rows[attr] = row
+        self.opt_rows = {}
+        self.section_rows = {}
+        for sid, title, subtitle, needs_gen, opts in SECTIONS:
+            exp = Adw.ExpanderRow(title=title, subtitle=subtitle)
+            g.add(exp)
+            self.section_rows[sid] = (exp, needs_gen)
+            for o in opts:
+                value = self.opt.values[o["key"]]
+                if o["kind"] == "spin":
+                    adj = Gtk.Adjustment(lower=o["lower"], upper=o["upper"], step_increment=o["step"],
+                                         page_increment=o["step"] * 10, value=float(value))
+                    row = Adw.SpinRow(title=o["title"], subtitle=o["sub"], adjustment=adj, digits=o["digits"])
+                    row.connect("notify::value", self.on_change)
+                elif o["kind"] == "switch":
+                    row = Adw.SwitchRow(title=o["title"], subtitle=o["sub"], active=value == "1")
+                    row.connect("notify::active", self.on_change)
+                elif o["kind"] == "choice":
+                    row = Adw.ComboRow(title=o["title"], subtitle=o["sub"],
+                                       model=Gtk.StringList.new([c[0] for c in o["choices"]]))
+                    row.set_selected(_combo_index(o["choices"], value))
+                    row.connect("notify::selected", self.on_change)
+                else:
+                    row = Adw.EntryRow(title=o["title"], text=value, show_apply_button=True)
+                    row.set_tooltip_text(o["sub"])
+                    row.connect("apply", self.on_change)
+                exp.add_row(row)
+                self.opt_rows[o["key"]] = (o, row)
 
     # -- state <-> UI ------------------------------------------------------
 
@@ -596,8 +723,16 @@ class Window(Adw.ApplicationWindow):
         o.present = PRESENT[self.present_row.get_selected()][1]
         o.low_latency = self.ll_row.get_active()
         o.hud = HUD_MODES[self.hud_row.get_selected()][1]
-        for attr, row in self.adv_rows.items():
-            o.advanced[attr] = row.get_value()
+        o.paused = self.pause_row.get_active()
+        for key, (spec, row) in self.opt_rows.items():
+            if spec["kind"] == "spin":
+                o.values[key] = _fmt_num(row.get_value(), spec["digits"])
+            elif spec["kind"] == "switch":
+                o.values[key] = "1" if row.get_active() else "0"
+            elif spec["kind"] == "choice":
+                o.values[key] = spec["choices"][row.get_selected()][1]
+            else:
+                o.values[key] = row.get_text().strip()
 
     def refresh_sensitivity(self):
         o = self.opt
@@ -605,7 +740,9 @@ class Window(Adw.ApplicationWindow):
             r.set_sensitive(o.generate)
         for r in (self.scale_row, self.filter_row, self.sharp_row):
             r.set_sensitive(o.upscale)
-        self.adv_expander.set_sensitive(o.generate)
+        for exp, needs_gen in self.section_rows.values():
+            exp.set_sensitive(o.generate or not needs_gen)
+        self.pause_row.set_sensitive(o.generate)
         self.games_group.set_sensitive(not o.master)
 
     def on_change(self, *_):
