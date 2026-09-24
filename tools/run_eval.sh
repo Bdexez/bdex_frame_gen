@@ -13,7 +13,9 @@ case "$MULT" in 2|3|4) ;; *) echo "BDEX_FG_MULTIPLIER must be 2, 3 or 4" >&2; ex
 case "$FRAMES" in ''|*[!0-9]*) echo "frames must be an integer >= 2" >&2; exit 2 ;; esac
 if [ "$FRAMES" -lt 2 ]; then echo "frames must be an integer >= 2" >&2; exit 2; fi
 BUILD="$(cd "$BUILD" && pwd)"
-OUT="${BDEX_EVAL_DIR:-/tmp/bdex-eval}"
+# On disk, not in /tmp: /tmp is often a tmpfs, and hundreds of MB of dumps in
+# RAM can get a game killed by the OOM killer on a small machine.
+OUT="${BDEX_EVAL_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/bdex-eval}"
 # Test exactly this build even if an older implicit layer is installed.
 # shellcheck source=layer_env.sh
 . "$(dirname "$0")/layer_env.sh"
