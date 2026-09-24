@@ -135,11 +135,25 @@ The installation drops:
 
 Uninstall: `tools/uninstall.sh`.
 
-> **Windows** (native-Vulkan games and emulators): the layer also builds as a
-> Windows DLL — register it with `tools\register-layer.ps1`, then enable it
-> per game from Steam's launch options
-> (`cmd /c "set BDEX_FG=1 && %command%"`). See
-> [`docs/windows-README.md`](docs/windows-README.md).
+> **Arch Linux**: `packaging/arch/PKGBUILD` builds a `bdex-framegen-git`
+> package (`makepkg -si` in that directory) installing to `/usr`.
+
+### Windows
+
+Two products, built by the Windows CI (download the `bdex-framegen-windows-x64`
+artifact or a release zip) — see [`docs/windows-README.md`](docs/windows-README.md):
+
+- **`bdex_capture.exe` — recommended.** Captures a game's window
+  (Windows.Graphics.Capture), generates frames with the same engine and shows
+  them in an overlay on top of the game. Works with every API (Direct3D 9–12,
+  OpenGL, Vulkan) and is safe with anti-cheats (nothing is injected), at the
+  cost of about one frame of latency. Run it without arguments for the
+  launcher (window picker, options, per-game profiles, global on/off hotkey).
+  Validated on hardware on D3D9/11/12 titles (Intel iGPU + RTX 3050).
+- **The Vulkan layer DLL** (native-Vulkan games and emulators): register it
+  with `tools\register-layer.ps1`, then enable it per game from Steam's
+  launch options (`cmd /c "set BDEX_FG=1 && %command%"`). Built and
+  unit-tested by the CI but **not yet validated on Windows hardware**.
 
 <details>
 <summary>Manual build</summary>

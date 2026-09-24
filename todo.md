@@ -142,6 +142,16 @@ Outils : `tools/run_eval.sh` (démo, en ligne) et `tools/eval_sequence.py`
   jamais `[*]`). Une entrée vérifiée : Kenshi en interpolation. Liste
   anti-cheat : + EasyAntiCheat_EOS, GameMon64, PunkBuster. **À enrichir avec
   chaque jeu que tu valides.**
-- [ ] **Packaging et versions** : AUR ou Flatpak pour la GUI, releases
-  versionnées (toujours 0.3.0), section Windows dans le README.
+- [~] **Packaging et versions** — fait : `packaging/arch/PKGBUILD`
+  (`bdex-framegen-git`, testé avec `makepkg` : layer, manifeste, profils, GUI,
+  licence) et une vraie section Windows dans le README (app de capture
+  recommandée, DLL non validée sur matériel).
+  **À décider par toi :**
+  - Les tags `v0.2.0`, `v0.3.0`, `v0.4.0-pre1/2` ne sont **plus des ancêtres
+    de `main`** (ils pointent sur l'historique d'avant la réécriture qui a
+    retiré les attributions) : les recréer sur les commits équivalents ?
+  - Sortir la 0.4.0 (version CMake + section du CHANGELOG + tag `v0.4.0`,
+    qui publie une Release GitHub via la CI Windows).
+  - Publication AUR, Flatpak de la GUI (non fait : le bac à sable Flatpak
+    complique l'écriture de la config et le lancement des jeux).
 - [ ] **Valider upscaling, HDR et 10 bits** sur de vrais écrans.
