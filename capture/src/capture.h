@@ -17,6 +17,7 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <chrono>
 
 namespace bdex {
 
@@ -27,6 +28,7 @@ public:
         uint32_t width = 0, height = 0;
         uint32_t slot = 0;          // ring index; recycle() hands it back
         uint32_t generation = 0;    // bumped when the ring is recreated (resize)
+        std::chrono::steady_clock::time_point dequeuedAt{}; // retrieved from the WGC frame pool
     };
 
     static constexpr uint32_t kRingSize = 3;
