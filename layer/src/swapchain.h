@@ -1,5 +1,6 @@
 #pragma once
 #include "device.h"
+#include "budget.h"
 #include "framegen.h"
 
 #include <atomic>
@@ -87,6 +88,7 @@ private:
     // Re-creates the real swapchain (and the output stage) at the surface's
     // current extent when it no longer matches; application thread, mutex_ held.
     void followSurface();
+    void applyGpuBudget();  // gpu_budget: re-evaluates the quality level about once a second
     std::unique_ptr<FrameGen> makeFrameGen(bool& generating);
     void createVirtualImages(const VkSwapchainCreateInfoKHR& appInfo, bool forGeneration);
     void createSlots(std::vector<FrameSlot>& slots, uint32_t count, bool withSemaphore);
@@ -154,6 +156,9 @@ private:
     void limitFrameRate();
     double frameIntervalMs_ = 16.6;
     uint32_t statsRepeats_ = 0;  // repeated-frame counter at the last statistics line (dedup)
+    GpuBudget budget_;           // gpu_budget governor
+    clock::time_point budgetAt_{};
+    int flowScaleFactor_ = 1;    // flow resolution divisor multiplier of the current output stage (gpu_budget)
     int dynMult_ = 0;               // target_fps: current dynamic multiplier (0 = not chosen yet)
     int chooseMultiplier();
 

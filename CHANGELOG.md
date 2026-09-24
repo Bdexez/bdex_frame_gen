@@ -44,6 +44,18 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-24)
 
+- **`gpu_budget`: dynamic quality under a GPU-time budget.** Auto-tuning
+  picked a preset once, at start-up, from the GPU type; a heavy scene or an
+  iGPU could still let the generation eat the game's frame time. With
+  `gpu_budget = <share of the frame interval>`, GPU timestamps (always
+  recorded when it is set) are averaged every second and a governor
+  (`layer/src/budget.cpp`, unit-tested) steps down a ladder — costly opt-in
+  passes off, narrowest search, flow at 1/2 then 1/4 resolution (output
+  stage rebuilt) — after two windows over budget, and back up after five
+  calm windows unless the level above is known not to fit. Demo at
+  1272×1386 with the quality preset and a 2 % budget: 3.6 ms → 0.6 ms in
+  four steps. The validation test walks the ladder, rebuild included, with
+  0 messages.
 - **`chroma_weight` (opt-in): the block matcher sees colour.** Matching ran
   on luma only, so an edge between two colours of equal brightness was
   invisible and those areas cross-faded. A Cb/Cr pyramid

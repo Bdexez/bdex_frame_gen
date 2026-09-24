@@ -43,6 +43,7 @@ add_library(bdex_core STATIC
   src/present_slice.cpp
   src/platform.cpp
   src/vk_util.cpp
+  src/budget.cpp
 )
 target_include_directories(bdex_core PUBLIC src)
 target_link_libraries(bdex_core PUBLIC Vulkan::Headers)

@@ -177,6 +177,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "paused" || key == "pause")    return parseBool(value, paused);
     if (key == "target_fps")                  return parseFloat(value, targetFps, 0.f, 1000.f);
     if (key == "fps_limit" || key == "fps_cap") return parseFloat(value, fpsLimit, 0.f, 1000.f);
+    if (key == "gpu_budget")                  return parseFloat(value, gpuBudget, 0.f, 1.f);
     if (key == "pixel_vectors")               return parseBool(value, pixelVectors);
     if (key == "subpixel")                    return parseBool(value, subpixel);
     if (key == "static_guard")                return parseFloat(value, staticGuard, 0.f, 1.f);
@@ -310,6 +311,7 @@ void Config::applyLive(const Config& n) {
     extrapolateHold = n.extrapolateHold; extrapolateAccel = n.extrapolateAccel; flowIterations = n.flowIterations; refineBias = n.refineBias;
     sceneCutLow = n.sceneCutLow; sceneCutHigh = n.sceneCutHigh; sceneCutLocal = n.sceneCutLocal;
     fpsLimit = n.fpsLimit; targetFps = n.targetFps;
+    if (gpuBudget > 0.f && n.gpuBudget > 0.f) gpuBudget = n.gpuBudget;  // 0 <-> >0 creates the timestamp queries
     frameTiming = n.frameTiming;  // dedup sizes the output stage (extrapolation): restart
     if (sharpness > 0.f && n.sharpness > 0.f) sharpness = n.sharpness;  // 0 <-> >0 changes the passes
     if (chromaWeight > 0.f && n.chromaWeight > 0.f) chromaWeight = n.chromaWeight;  // likewise (chroma pyramid)
@@ -361,6 +363,7 @@ std::string Config::describe() const {
     if (extrapolateAccel > 0.f) o << " extrapolate_accel=" << extrapolateAccel;
     if (targetFps > 0.f) o << " target_fps=" << targetFps;
     if (fpsLimit > 0.f) o << " fps_limit=" << fpsLimit;
+    if (gpuBudget > 0.f) o << " gpu_budget=" << gpuBudget;
     if (pixelVectors) o << " pixel_vectors=1";
     if (subpixel) o << " subpixel=1";
     if (staticGuard > 0.f) o << " static_guard=" << staticGuard;
