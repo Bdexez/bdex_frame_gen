@@ -1,7 +1,8 @@
 # Windows build of both products: the Vulkan layer (mode 1, x64 + Win32) and
 # the capture PoC bdex_capture.exe (mode 2, x64). There is no Windows machine
 # in the development environment, so this job is the MSVC build the docs'
-# validation checklists start with. Artifacts: one zip per architecture.
+# validation checklists start with. Artifacts: one zip per architecture;
+# register-layer.ps1 generates the per-user manifest when installed.
 name: windows
 
 on:
@@ -26,11 +27,18 @@ jobs:
       - name: Install Vulkan SDK
         shell: pwsh
         run: |
-          $url = "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan_sdk.exe"
+          $ErrorActionPreference = 'Stop'
+          $version = '1.4.357.0'
+          $expectedSha256 = '81f474711e9042f4cd22b31b2f7a8870db2e428b21586fb43dd80150be97310d'
+          $url = "https://sdk.lunarg.com/sdk/download/$version/windows/vulkan_sdk.exe"
           Invoke-WebRequest -Uri $url -OutFile vulkan_sdk.exe
-          Start-Process -Wait -FilePath .\vulkan_sdk.exe -ArgumentList @(
+          $actualSha256 = (Get-FileHash .\vulkan_sdk.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $expectedSha256) { throw "Vulkan SDK checksum mismatch: $actualSha256" }
+          $installer = Start-Process -Wait -PassThru -FilePath .\vulkan_sdk.exe -ArgumentList @(
             '--accept-licenses', '--default-answer', '--confirm-command', 'install')
-          $sdk = (Get-ChildItem C:\VulkanSDK | Sort-Object Name -Descending | Select-Object -First 1).FullName
+          if ($installer.ExitCode -ne 0) { throw "Vulkan SDK installer failed: $($installer.ExitCode)" }
+          $sdk = "C:\VulkanSDK\$version"
+          if (-not (Test-Path "$sdk\Bin\glslc.exe")) { throw "Vulkan SDK glslc missing at $sdk" }
           "VULKAN_SDK=$sdk" >> $env:GITHUB_ENV
           "$sdk\Bin" >> $env:GITHUB_PATH
           Write-Host "Vulkan SDK at $sdk"
@@ -93,7 +101,7 @@ jobs:
           if (Test-Path build/capture/Release/bdex_capture.exe) {
             Copy-Item build/capture/Release/bdex_capture.exe $out
           }
-          Copy-Item tools/register-layer.ps1, tools/unregister-layer.ps1 $out
+          Copy-Item tools/register-layer.ps1, tools/unregister-layer.ps1, tools/validate-windows.ps1 $out
           Copy-Item docs/windows-port.md, docs/windows-capture.md, docs/windows-README.md $out
           Get-ChildItem $out
 
