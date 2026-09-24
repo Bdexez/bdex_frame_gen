@@ -30,6 +30,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-24)
 
+- **Shipped per-game profiles** (`layer/profiles.conf`, installed to
+  `share/bdex-framegen/`, next to the DLL/exe in the Windows zip), loaded
+  before the user's file. They only apply to named games and can never enable
+  or pause the layer; a `[*]` section in them is ignored. First entry: Kenshi
+  in interpolation (extrapolation artefacts reported on it). The anti-cheat
+  list gains EasyAntiCheat_EOS, GameMon64 and the PunkBuster services.
+
 - **Live configuration and an on/off toggle on Linux.** Running games check
   the config file every ~0.5 s and reload the settings that can change on the
   fly (flow/synthesis knobs, scene-cut thresholds, `fps_limit`, `target_fps`,

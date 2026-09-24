@@ -226,25 +226,32 @@ bool Config::sectionMatches(const std::string& section, const std::vector<std::s
     return std::find(names.begin(), names.end(), s) != names.end();
 }
 
-void Config::loadFile(const std::string& path, const std::string& processName) {
+void Config::loadFile(const std::string& path, const std::string& processName, bool bundled) {
     std::ifstream in(path);
     if (!in) return;
     std::vector<std::string> names = processNames();
     if (!processName.empty()) names.push_back(baseName(processName));
     std::string line;
     int lineNo = 0;
-    bool active = true;
+    bool active = !bundled;  // lines before any section are global
     while (std::getline(in, line)) {
         ++lineNo;
         std::string t = trim(line);
         if (t.empty() || t[0] == '#' || t[0] == ';') continue;
         if (t.front() == '[' && t.back() == ']') {
-            active = sectionMatches(t.substr(1, t.size() - 2), names);
+            const std::string section = trim(t.substr(1, t.size() - 2));
+            // Shipped profiles only tune named games; they never apply globally.
+            active = !(bundled && section == "*") && sectionMatches(section, names);
             continue;
         }
         if (!active) continue;
         size_t eq = t.find('=');
         if (eq == std::string::npos) continue;
+        if (bundled) {
+            // Turning the layer on (or pausing it) stays the user's decision.
+            const std::string key = lower(trim(t.substr(0, eq)));
+            if (key == "enabled" || key == "enable" || key == "paused" || key == "pause") continue;
+        }
         if (!apply(t.substr(0, eq), t.substr(eq + 1)))
             BDEX_WARN("%s:%d: ignored option '%s'", path.c_str(), lineNo, t.c_str());
     }
@@ -302,6 +309,8 @@ void Config::applyLive(const Config& n) {
 }
 
 Config Config::loadWithDefaults(Config c, const std::string& extraProcess) {
+    const std::string profiles = platformBundledProfilesPath();
+    if (!profiles.empty()) c.loadFile(profiles, extraProcess, true);
     const std::string path = filePath();
     if (!path.empty()) c.loadFile(path, extraProcess);
     c.loadEnv();

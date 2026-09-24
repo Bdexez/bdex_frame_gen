@@ -13,6 +13,7 @@
 extern char** _environ;  // MSVCRT/MinGW (also in <stdlib.h>); must stay at global scope
 #else
 #include <dirent.h>
+#include <dlfcn.h>
 #include <fstream>
 #include <unistd.h>
 extern char** environ;
@@ -41,11 +42,15 @@ bool isDeniedAntiCheat(const std::string& name) {
     static const char* const kDenied[] = {
         "easyanticheat",          // Easy Anti-Cheat
         "easyanticheat_launcher", // EAC launcher
+        "easyanticheat_eos",      // EAC through Epic Online Services
         "start_protected_game",   // EAC-wrapped game stub
         "beservice",              // BattlEye service (32-bit)
         "beservice64",            // BattlEye service (64-bit)
         "bedaisy",                // BattlEye driver helper
         "gamemon",                // nProtect GameGuard
+        "gamemon64",              // nProtect GameGuard (64-bit)
+        "pnkbstra",               // PunkBuster services
+        "pnkbstrb",
         "xigncode",               // XIGNCODE3
         "mhyprot2",               // miHoYo Protect
     };
@@ -111,6 +116,33 @@ std::string platformConfigPath() {
     if (const char* x = std::getenv("XDG_CONFIG_HOME")) return std::string(x) + "/bdex-framegen.conf";
     if (const char* h = std::getenv("HOME")) return std::string(h) + "/.config/bdex-framegen.conf";
     return "";
+#endif
+}
+
+std::string platformBundledProfilesPath() {
+    if (const char* p = std::getenv("BDEX_FG_PROFILES")) return p;  // "" disables them
+#ifdef _WIN32
+    // Next to the module that contains this code (the layer DLL, or
+    // bdex_capture.exe): the release zip ships profiles.conf beside both.
+    HMODULE self = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCWSTR>(&platformBundledProfilesPath), &self))
+        return "";
+    wchar_t buf[MAX_PATH];
+    DWORD n = GetModuleFileNameW(self, buf, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return "";
+    std::string path = narrow(buf);
+    size_t slash = path.find_last_of("\\/");
+    return slash == std::string::npos ? "" : path.substr(0, slash + 1) + "profiles.conf";
+#else
+    // Installed layout: <prefix>/lib[32]/libVkLayer_bdex_framegen.so and
+    // <prefix>/share/bdex-framegen/profiles.conf.
+    Dl_info info{};
+    if (!dladdr(reinterpret_cast<void*>(&platformBundledProfilesPath), &info) || !info.dli_fname) return "";
+    std::string lib = info.dli_fname;
+    size_t slash = lib.rfind('/');
+    if (slash == std::string::npos) return "";
+    return lib.substr(0, slash) + "/../share/bdex-framegen/profiles.conf";
 #endif
 }
 

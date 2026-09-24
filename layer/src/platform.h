@@ -17,6 +17,9 @@ char** platformEnviron();
 // ~/.config; Windows: %APPDATA%\bdex-framegen), or "" when no location
 // is known. The BDEX_FG_CONFIG override is handled by the caller.
 std::string platformConfigPath();
+// Per-game profiles shipped with the build (loaded before the user's file);
+// BDEX_FG_PROFILES overrides the location, an empty value disables them.
+std::string platformBundledProfilesPath();
 
 // Expands environment references in a path the user wrote in the config file,
 // so e.g. `log_file=%TEMP%\bdex-fg.log` resolves to a real path instead of

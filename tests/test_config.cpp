@@ -87,6 +87,24 @@ TEST(config_rejects_garbage) {
     CHECK(c.multiplier == 2 && !c.enabled);
 }
 
+TEST(config_bundled_profiles_are_game_only) {
+    const std::string path = test::tmpPath("bdex_test_profiles.conf");
+    {
+        std::ofstream f(path);
+        f << "multiplier = 4\n"            // before any section: ignored when bundled
+          << "[*]\nmultiplier = 4\nenabled = 1\n"  // global: ignored when bundled
+          << "[mygame]\nenabled = 1\npaused = 1\nmultiplier = 3\nmode = interpolate\n";
+    }
+    Config c;
+    c.loadFile(path, "/games/mygame.exe", true);
+    CHECK(c.multiplier == 3);            // the game's own setting applies
+    CHECK(!c.enabled && !c.paused);      // but a profile never turns the layer on or pauses it
+    Config other;
+    other.loadFile(path, "/games/othergame.exe", true);
+    CHECK(other.multiplier == 2);        // neither the loose line nor [*] applied
+    remove(path.c_str());
+}
+
 TEST(config_file_and_env_priority) {
     const std::string path = test::tmpPath("bdex_test_config.conf");
     {

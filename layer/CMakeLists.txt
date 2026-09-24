@@ -102,6 +102,8 @@ if(NOT WIN32)
   install(TARGETS bdex_framegen LIBRARY DESTINATION ${BDEX_LIBDIR})
   install(FILES "${CMAKE_CURRENT_BINARY_DIR}/install/${BDEX_LAYER_NAME}.json"
           DESTINATION share/vulkan/implicit_layer.d)
+  # Shipped per-game profiles, found from the library (lib/../share/...).
+  install(FILES profiles.conf DESTINATION share/bdex-framegen)
 else()
   install(TARGETS bdex_framegen RUNTIME DESTINATION ${BDEX_LIBDIR})
 endif()
