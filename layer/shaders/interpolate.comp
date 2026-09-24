@@ -57,6 +57,7 @@ layout(push_constant) uniform PC {
     float staticGuard;       // 0 keeps the historical path; see staticness()
     float extrapHold;        // extrapolation: keep inconsistent pixels in place (1 = historical)
     int splat;               // extrapolation: take the source from the forward-splat map where one landed
+    int pixelVectors;        // interpolation: per-pixel choice among the neighbouring blocks' vectors
 } pc;
 
 vec2 fwdAt(vec2 p) { return texture(flowFwd, p * pc.flowInvSize).xy * pc.flowScale; }
@@ -165,6 +166,33 @@ void main() {
     vec4 cb = texture(curTex, pb / fsize);
     vec4 cb2 = texture(prevTex, (pb + B) / fsize);
     float eb = luma(abs(cb.rgb - cb2.rgb));
+
+    if (pc.pixelVectors != 0) {
+        // At an object boundary the bilinear flow lookup blends two motions
+        // into a vector that is wrong for both. Try the unblended vectors of
+        // the four flow texels around the source position and keep, per
+        // pixel, the trajectory whose two endpoints agree best.
+        ivec2 fts = textureSize(flowFwd, 0);
+        ivec2 f0 = ivec2(floor(pf * pc.flowInvSize * vec2(fts) - 0.5));
+        for (int k = 0; k < 4; ++k) {
+            ivec2 ft = clamp(f0 + ivec2(k & 1, k >> 1), ivec2(0), fts - 1);
+            vec2 Fk = texelFetch(flowFwd, ft, 0).xy * pc.flowScale;
+            vec2 pk = q - t * Fk;
+            vec4 a = texture(prevTex, pk / fsize), b = texture(curTex, (pk + Fk) / fsize);
+            float e = luma(abs(a.rgb - b.rgb));
+            if (e < ef) { ef = e; F = Fk; pf = pk; cf = a; cf2 = b; }
+        }
+        ivec2 bts = textureSize(flowBwd, 0);
+        ivec2 b0 = ivec2(floor(pb * pc.flowInvSize * vec2(bts) - 0.5));
+        for (int k = 0; k < 4; ++k) {
+            ivec2 bt = clamp(b0 + ivec2(k & 1, k >> 1), ivec2(0), bts - 1);
+            vec2 Bk = texelFetch(flowBwd, bt, 0).xy * pc.flowScale;
+            vec2 pk = q - (1.0 - t) * Bk;
+            vec4 a = texture(curTex, pk / fsize), b = texture(prevTex, (pk + Bk) / fsize);
+            float e = luma(abs(a.rgb - b.rgb));
+            if (e < eb) { eb = e; B = Bk; pb = pk; cb = a; cb2 = b; }
+        }
+    }
 
     // Each trajectory carries a sample from both frames: the forward one from
     // prev at pf and from cur at pf+F, the backward one from cur at pb and from

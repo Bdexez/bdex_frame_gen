@@ -62,6 +62,7 @@ TEST(config_apply_values) {
     CHECK(c.apply("extrapolate_hold", "1") && c.extrapolateHold == 1.0f);
     CHECK(c.apply("zero_bias_contrast", "0.05") && c.zeroBiasContrast == 0.05f);
     CHECK(c.apply("subpixel", "1") && c.subpixel);
+    CHECK(c.apply("pixel_vectors", "1") && c.pixelVectors);
     CHECK(c.apply("extrapolate_splat", "1") && c.extrapolateSplat);
     CHECK(c.apply("STATIC_GUARD", "3") && c.staticGuard == 1.0f);   // clamped
 }
