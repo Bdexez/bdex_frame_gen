@@ -134,6 +134,7 @@ shared float sCost2[MAXCAND + 1];      // full per-candidate cost
 shared float rpix[2][NROT][NT];        // per-pixel costs of the rotated re-evaluation
 shared float rsum[2][NROT];            // block sums of rpix
 shared ivec2 sBase;
+shared int   sStatic;                  // static-block early-out (see main)
 shared float sGrad[NT];                // per-pixel gradient magnitude (contrast-relative zero bias)
 shared vec2  refC[RB * RB];            // chroma of the reference block (chroma re-ranking)
 shared vec2  tgtC[REG * REG];          // chroma of the staged target region
@@ -192,6 +193,30 @@ void main() {
         refBlk[i] = loadRef(origin - 1 + o);
     }
     barrier();
+
+    // Static block: predicted at zero and identical in both frames, 1-pixel
+    // border included (which covers the gradient and census terms). The
+    // zero-motion candidate then costs exactly 0 and, with a positive
+    // smoothness penalty, every other candidate costs more: it is the unique
+    // winner of every selection path (tree, census, and the rotation
+    // re-ranking needs a cost above 0.02), so the search can be skipped with
+    // a bit-identical result. Much of a game frame is static (HUD, menus,
+    // scenery), and this is most of the matcher's time there. Not with the
+    // chroma re-ranking, which may move a block whose luma is unchanged.
+    if (sBase == ivec2(0) && pc.smoothness > 0.0 && pc.chromaWeight == 0.0) {  // uniform
+        if (tid == 0) sStatic = 1;
+        barrier();
+        for (int i = tid; i < RB * RB; i += NT)
+            if (refBlk[i] != loadTgt(origin - 1 + ivec2(i % RB, i / RB))) sStatic = 0;
+        barrier();
+        if (sStatic != 0) {
+            if (tid == 0) {
+                imageStore(flowOut, blk, vec4(0.0));
+                imageStore(costOut, blk, vec4(0.0));
+            }
+            return;
+        }
+    }
 
     ivec2 base = sBase;
     float zb = pc.zeroBias;
@@ -436,7 +461,10 @@ void main() {
         ivec2 dd[2];
         dd[0] = outDisp;
         dd[1] = secondIdx >= 0 ? DISPOF(secondIdx) : ivec2(0);
-        int nj = (secondIdx >= 0 && dd[1] != dd[0]) ? 2 : 1;
+        // The zero-motion slot (ncand) lies outside the staged tile when the
+        // window does not contain zero: it cannot be re-evaluated from the
+        // tile (reading it there went out of bounds: undefined results).
+        int nj = (secondIdx >= 0 && secondIdx < ncand && dd[1] != dd[0]) ? 2 : 1;
         int px = tid & (BS - 1), py = tid >> 3;
         float rv = refBlk[(py + 1) * RB + (px + 1)];
         vec2 q = vec2(px, py) - 3.5;
@@ -446,8 +474,10 @@ void main() {
                 float th = radians(kRotAngle[k % ROT_A]);
                 vec2 p = (sc == 1.0 && th == 0.0) ? q
                         : sc * vec2(cos(th) * q.x - sin(th) * q.y, sin(th) * q.x + cos(th) * q.y);
-                // Sample position in staged-tile pixels: anchor at origin+base-R-anc.
-                vec2 pos = vec2(R + anc) + vec2(dd[j]) + 3.5 + p;
+                // Sample position in staged-tile pixels: anchor at origin+base-R-anc,
+                // so the displacement is taken relative to base (dd is absolute;
+                // using it as is read outside the tile whenever base != 0).
+                vec2 pos = vec2(R + anc) + vec2(dd[j] - base) + 3.5 + p;
                 float tv;
                 if (sc == 1.0 && th == 0.0) {
                     // Identity transform: integer sampling, exactly the first
