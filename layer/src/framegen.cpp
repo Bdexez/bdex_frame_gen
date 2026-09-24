@@ -481,8 +481,18 @@ void FrameGen::recordDump(VkCommandBuffer cmd, uint32_t which, uint32_t cur) {
     vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, nullptr, 0, nullptr);
 }
 
+// IEEE half -> float (for dumping RGBA16F swapchains).
+static float halfToFloat(uint16_t h) {
+    const uint32_t sign = (h >> 15) & 1u, exp = (h >> 10) & 0x1fu, mant = h & 0x3ffu;
+    float v;
+    if (exp == 0) v = std::ldexp(float(mant), -24);
+    else if (exp == 31) v = mant ? NAN : INFINITY;
+    else v = std::ldexp(float(mant | 0x400u), int(exp) - 25);
+    return sign ? -v : v;
+}
+
 bool FrameGen::writeDump(const std::string& path, uint32_t which) {
-    if (!dumpMapped_[which] || enc_.is64) return false;
+    if (!dumpMapped_[which]) return false;
     if (which < outputs_ && costMapped_) BDEX_DBG("%s: mean matching cost %.4f", path.c_str(), *static_cast<const float*>(costMapped_));
     const uint32_t enc = enc_.encoding & 0xffu;
     FILE* f = fopen(path.c_str(), "wb");
@@ -492,8 +502,19 @@ bool FrameGen::writeDump(const std::string& path, uint32_t which) {
     const uint32_t* px = static_cast<const uint32_t*>(dumpMapped_[which]);
     for (uint32_t y = 0; y < displayExtent_.height; ++y) {
         for (uint32_t x = 0; x < displayExtent_.width; ++x) {
-            uint32_t v = px[y * displayExtent_.width + x];
             uint8_t r, g, b;
+            if (enc_.is64) {
+                // RGBA16F: values as stored (linear, scRGB above 1 clipped).
+                const uint16_t* h = reinterpret_cast<const uint16_t*>(px) + (size_t(y) * displayExtent_.width + x) * 4;
+                auto q = [](uint16_t c) {
+                    float f = halfToFloat(c);
+                    return uint8_t(std::lround(std::clamp(std::isfinite(f) ? f : 0.f, 0.f, 1.f) * 255.f));
+                };
+                r = q(h[0]); g = q(h[1]); b = q(h[2]);
+                row[x * 3] = r; row[x * 3 + 1] = g; row[x * 3 + 2] = b;
+                continue;
+            }
+            uint32_t v = px[y * displayExtent_.width + x];
             if (enc == ENC_BGRA8) { b = v & 0xff; g = (v >> 8) & 0xff; r = (v >> 16) & 0xff; }
             else if (enc == ENC_RGBA8) { r = v & 0xff; g = (v >> 8) & 0xff; b = (v >> 16) & 0xff; }
             else if (enc == ENC_A2B10G10R10) { r = (v & 1023) >> 2; g = ((v >> 10) & 1023) >> 2; b = ((v >> 20) & 1023) >> 2; }

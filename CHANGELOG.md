@@ -30,6 +30,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-24)
 
+- `bdex_offline --format rgba8|bgra8|srgb|rgb10|rgba16f` and
+  `--render-scale S`, and the `formats` ctest: every output encoding and the
+  upscaling path are checked headless (BGRA8 byte-identical to RGBA8, 10-bit
+  and FP16 within quantisation, sRGB within 0.15 dB against the ground truth,
+  upscaled output within 1.5 dB of native). Frame dumps now also decode
+  RGBA16F swapchains.
 - `packaging/arch/PKGBUILD` (`bdex-framegen-git`, installs to `/usr`), and a
   Windows section in the README presenting both Windows products.
 

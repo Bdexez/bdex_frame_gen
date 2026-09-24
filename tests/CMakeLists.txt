@@ -28,6 +28,9 @@ if(Python3_Interpreter_FOUND)
       # Quality regression on the synthetic corpus (+ $BDEX_CORPUS_DIR), headless.
       add_test(NAME corpus COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_corpus.py" "${CMAKE_BINARY_DIR}")
       set_tests_properties(corpus PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)
+      # Every output encoding (8/10-bit, sRGB, FP16) and the upscaling path.
+      add_test(NAME formats COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_formats.py" "${CMAKE_BINARY_DIR}")
+      set_tests_properties(formats PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
     endif()
   endif()
 endif()
