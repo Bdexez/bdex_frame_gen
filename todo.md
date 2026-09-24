@@ -61,9 +61,16 @@ Outils : `tools/run_eval.sh` (démo, en ligne) et `tools/eval_sequence.py`
 
 ## Évaluation
 
-- [ ] **Corpus de séquences de vrais jeux dans la CI** (Kenshi, un FPS, un jeu
-  chargé en HUD), en assets de release, rejoué par `bdex_offline` sur
-  lavapipe à chaque push.
+- [~] **Corpus dans la CI** — infrastructure faite : `tools/make_corpus.py`
+  (séquences synthétiques déterministes : HUD, panoramique doux, sous-pixel,
+  fondu) et le test ctest `corpus` (sans écran, ~13 s), qui compare défaut et
+  options candidates, en interpolation et extrapolation, à
+  `tests/corpus_reference.json` (tolérance 1 dB / 0,01 SSIM ; références
+  mesurées sur Vega 8, à confirmer sur lavapipe au premier run CI).
+  Reste : **ajouter de vraies séquences de jeux** (Kenshi, un FPS, un jeu
+  chargé en HUD) via `BDEX_CORPUS_DIR`, stockées en assets de release.
+  Noté : sur `subpixel`, les options candidates perdent 1,2 dB (51,9 → 50,7,
+  invisible) — à comprendre.
 - [x] **Métriques perceptives** — fait : `eval_sequence.py` rapporte le SSIM
   (luma, fenêtres 8×8) et un scintillement (variation de l'erreur entre
   frames générées successives), plus `--json`. Ex. démo rapide :

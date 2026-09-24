@@ -76,7 +76,11 @@ VK_IMPLICIT_LAYER_PATH=$PWD/build/layer BDEX_FG=1 ./build/demo/bdex_demo --fps 3
   ground truth. The report gives whole-frame, moving-region and moving-edge
   PSNR, SSIM, a flicker score (how much the error changes between successive
   generated frames), and what plain frame repetition (`dup`) and a
-  cross-fade (`blend`) score on the same frames. Dumping slows the game down, which only makes
+  cross-fade (`blend`) score on the same frames. `ctest -R corpus` replays a synthetic corpus
+  (`tools/make_corpus.py`) plus any sequence directories under
+  `$BDEX_CORPUS_DIR` against `tests/corpus_reference.json`; after an intended
+  quality change, refresh it with `python3 tests/test_corpus.py build --update`
+  and commit the diff with the numbers. Dumping slows the game down, which only makes
   the motion between frames larger; move the camera while recording.
 - For any change affecting performance, attach a statistics line with
   `BDEX_FG_PROFILE=1` before and after.
