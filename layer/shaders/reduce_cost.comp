@@ -1,25 +1,57 @@
 #version 450
 // Averages the per-block matching cost of the finest level into a single
-// value used by the interpolation pass to detect scene cuts.
+// value used by the interpolation pass to detect scene cuts. With
+// scene_cut_local, workgroups 1..tiles^2 also average one tile each of a
+// tiles x tiles grid, so a cut confined to part of the screen (a menu
+// opening, a picture-in-picture switching) is detected where it happens and
+// a large moving object does not push the whole frame into the fallback.
 layout(local_size_x = 256) in;
 
 layout(binding = 0, r32f) uniform readonly image2D costImg;
-layout(std430, binding = 1) writeonly buffer Out { float meanCost; } outBuf;
+// The head of the frame state (frame_state.comp): meanCost and tileCost.
+layout(std430, binding = 1) writeonly buffer Out {
+    float meanCost;
+    uint head[11];
+    float tileCost[64];
+} outBuf;
 
-layout(push_constant) uniform PC { ivec2 size; } pc;
+layout(push_constant) uniform PC {
+    ivec2 size;
+    int tiles;   // 0: global mean only; else the side of the tile grid (<= 8)
+} pc;
 
 shared float sSum[256];
 
 void main() {
     uint tid = gl_LocalInvocationID.x;
-    int n = pc.size.x * pc.size.y;
+    uint wg = gl_WorkGroupID.x;
+    if (wg == 0u) {
+        int n = pc.size.x * pc.size.y;
+        float sum = 0.0;
+        for (int i = int(tid); i < n; i += 256) sum += imageLoad(costImg, ivec2(i % pc.size.x, i / pc.size.x)).r;
+        sSum[tid] = sum;
+        barrier();
+        for (uint s = 128u; s > 0u; s >>= 1u) {
+            if (tid < s) sSum[tid] += sSum[tid + s];
+            barrier();
+        }
+        if (tid == 0u) outBuf.meanCost = sSum[0] / float(max(n, 1));
+        return;
+    }
+    int k = int(wg) - 1;
+    if (pc.tiles <= 0 || k >= pc.tiles * pc.tiles) return;  // uniform per workgroup
+    ivec2 tile = ivec2(k % pc.tiles, k / pc.tiles);
+    ivec2 lo = tile * pc.size / pc.tiles;
+    ivec2 hi = min(max((tile + 1) * pc.size / pc.tiles, lo + 1), pc.size);
+    ivec2 ext = hi - lo;
+    int n = ext.x * ext.y;
     float sum = 0.0;
-    for (int i = int(tid); i < n; i += 256) sum += imageLoad(costImg, ivec2(i % pc.size.x, i / pc.size.x)).r;
+    for (int i = int(tid); i < n; i += 256) sum += imageLoad(costImg, lo + ivec2(i % ext.x, i / ext.x)).r;
     sSum[tid] = sum;
     barrier();
     for (uint s = 128u; s > 0u; s >>= 1u) {
         if (tid < s) sSum[tid] += sSum[tid + s];
         barrier();
     }
-    if (tid == 0u) outBuf.meanCost = sSum[0] / float(max(n, 1));
+    if (tid == 0u) outBuf.tileCost[k] = sSum[0] / float(max(n, 1));
 }

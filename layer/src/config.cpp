@@ -158,6 +158,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "log_file")                    { logFile = platformExpandPath(value); return true; }
     if (key == "scene_cut_low")               return parseFloat(value, sceneCutLow, 0.f, 1.f);
     if (key == "scene_cut_high")              return parseFloat(value, sceneCutHigh, 0.f, 1.f);
+    if (key == "scene_cut_local")             return parseBool(value, sceneCutLocal);
     if (key == "smoothness")                  return parseFloat(value, smoothness, 0.f, 1.f);
     if (key == "zero_bias")                   return parseFloat(value, zeroBias, 0.f, 1.f);
     if (key == "zero_bias_contrast")          return parseFloat(value, zeroBiasContrast, 0.f, 1.f);
@@ -305,7 +306,7 @@ void Config::applyLive(const Config& n) {
     rotWeight = n.rotWeight; temporalPrediction = n.temporalPrediction; subpixel = n.subpixel;
     pixelVectors = n.pixelVectors; occlusionStrength = n.occlusionStrength; staticGuard = n.staticGuard;
     extrapolateHold = n.extrapolateHold; flowIterations = n.flowIterations; refineBias = n.refineBias;
-    sceneCutLow = n.sceneCutLow; sceneCutHigh = n.sceneCutHigh;
+    sceneCutLow = n.sceneCutLow; sceneCutHigh = n.sceneCutHigh; sceneCutLocal = n.sceneCutLocal;
     fpsLimit = n.fpsLimit; targetFps = n.targetFps;
     frameTiming = n.frameTiming;  // dedup sizes the output stage (extrapolation): restart
     if (sharpness > 0.f && n.sharpness > 0.f) sharpness = n.sharpness;  // 0 <-> >0 changes the passes
@@ -359,6 +360,7 @@ std::string Config::describe() const {
     if (subpixel) o << " subpixel=1";
     if (staticGuard > 0.f) o << " static_guard=" << staticGuard;
     if (frameTiming) o << " frame_timing=1";
+    if (sceneCutLocal) o << " scene_cut_local=1";
     if (dedup) o << " dedup=1";
     if (antiCheatDisabled) o << " [disabled: anti-cheat detected]";
     return o.str();

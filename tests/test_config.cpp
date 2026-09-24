@@ -79,6 +79,7 @@ TEST(config_apply_values) {
     CHECK(!c.frameTiming && !c.dedup);   // opt-in
     CHECK(c.apply("frame_timing", "1") && c.frameTiming);
     CHECK(c.apply("DEDUP", "on") && c.dedup);
+    CHECK(!c.sceneCutLocal && c.apply("scene_cut_local", "1") && c.sceneCutLocal);
     {
         Config live, fresh;
         fresh.frameTiming = true; fresh.dedup = true;

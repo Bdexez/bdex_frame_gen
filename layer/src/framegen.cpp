@@ -15,8 +15,9 @@ namespace {
 struct DownsamplePC { int32_t size[2]; int32_t fromColor; int32_t transfer; };
 struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; float gradWeight; float censusWeight; float censusMargin; float rotWeight; int32_t temporal; float zeroBiasContrast; };
 struct SizePC { int32_t size[2]; };
+struct ReducePC { int32_t size[2]; int32_t tiles; };
 struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; int32_t subpixel; };
-struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; float occlusionStrength; float staticGuard; float extrapHold; int32_t splat; int32_t pixelVectors; int32_t transfer; int32_t timing; };
+struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; float occlusionStrength; float staticGuard; float extrapHold; int32_t splat; int32_t pixelVectors; int32_t transfer; int32_t timing; int32_t localCut; };
 struct UpscalePC { int32_t outSize[2]; int32_t srcSize[2]; uint32_t encoding; int32_t filter; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; };
 struct SplatPC { int32_t size[2]; float s; float flowScale; float flowInvSize[2]; int32_t timing; };
 struct FrameStatePC { int32_t size[2]; int32_t mode; int32_t multiplier; float sinceLastMs; float intervalMs; int32_t flags; int32_t gateCount; uint32_t dupMaxPixels; };
@@ -24,7 +25,7 @@ struct CasPC { int32_t size[2]; uint32_t encoding; float sharpness; };
 
 constexpr uint32_t kBlockSize = 8;
 constexpr uint32_t kFineBlock = 4;
-constexpr uint32_t kPushSize = 96;  // <= 128, the guaranteed minimum of maxPushConstantsSize
+constexpr uint32_t kPushSize = 128;  // the guaranteed minimum of maxPushConstantsSize
 static_assert(sizeof(InterpPC) <= kPushSize && sizeof(MatchPC) <= kPushSize);
 
 // Frame state buffer layout (the State block of frame_state.comp; the
@@ -35,6 +36,7 @@ constexpr VkDeviceSize kStateHead = 48;          // meanCost .. t[4], read back 
 constexpr VkDeviceSize kStateGateFull = 304;     // uvec4 per gated dispatch
 constexpr VkDeviceSize kStateGateActive = 688;   // VkDispatchIndirectCommand per gated dispatch
 constexpr uint32_t kGateEntries = 24;
+constexpr uint32_t kCutTiles = 8;  // scene_cut_local grid (tileCost[64] in the state)
 static_assert(kStateGateActive + kGateEntries * 12 <= kStateSize);
 enum { kStateReset = 1, kStateDedup = 2, kStateExtrap = 4 };
 
@@ -238,7 +240,7 @@ void FrameGen::createResources() {
             gate(divUp(lv.blocks.width, 16), divUp(lv.blocks.height, 16), false);
             gate(divUp(lv.fine.width, 16), divUp(lv.fine.height, 16), false);
         }
-        gateReduce_ = gate(1, 1, false);
+        gateReduce_ = gate(1 + kCutTiles * kCutTiles, 1, false);  // global + local tiles (idle when off)
         gateDupReal_ = gate(divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), true);
         if (gateFull_.size() / 4 > kGateEntries) throw VkError(VK_ERROR_INITIALIZATION_FAILED, "too many gated dispatches");
         // The splat key packs the source index in 23 bits (4K fits).
@@ -782,10 +784,11 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
 
     const Level& fine = levels_v_[0];
     vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, reduce_.pipeline);
-    SizePC rpc{{(int32_t)fine.blocks.width, (int32_t)fine.blocks.height}};
+    const uint32_t tiles = cfg.sceneCutLocal ? kCutTiles : 0;
+    ReducePC rpc{{(int32_t)fine.blocks.width, (int32_t)fine.blocks.height}, (int32_t)tiles};
     vt.CmdPushConstants(cmd, reduce_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(rpc), &rpc);
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, reduce_.layout, 0, 1, &dsReduce_, 0, nullptr);
-    dispatchGated(cmd, gateReduce_, 1, 1);
+    dispatchGated(cmd, gateReduce_, 1 + tiles * tiles, 1);
     memoryBarrier(cmd);
     flowValid_ = true;  // from now on the flow images hold a real previous flow
 }
@@ -865,7 +868,7 @@ void FrameGen::recordSynthesis(VkCommandBuffer cmd, VkDescriptorSet set, float t
                 {1.f / (fine.fine.width * blk * flowScale_ * sx),
                  1.f / (fine.fine.height * blk * flowScale_ * sy)},
                 cfg.flowIterations, hudMode_, hudGame_, hudOut_, hudLow1_, hudLow01_, cfg.occlusionStrength, cfg.staticGuard, cfg.extrapolateHold, splat ? 1 : 0, cfg.pixelVectors ? 1 : 0, enc_.transfer,
-                timing};
+                timing, cfg.sceneCutLocal ? (int32_t)kCutTiles : 0};
     vt.CmdPushConstants(cmd, interp_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, interp_.layout, 0, 1, &set, 0, nullptr);
     dispatch();
