@@ -15,11 +15,12 @@ if ! vulkaninfo 2>/dev/null | grep -q VK_LAYER_KHRONOS_validation; then
   echo "VK_LAYER_KHRONOS_validation not installed, skipping"; exit 77
 fi
 LOG="$(mktemp)"
-trap 'rm -f "$LOG"' EXIT
-unset VK_ADD_IMPLICIT_LAYER_PATH
+. "$(dirname "$0")/../tools/layer_env.sh"
+bdex_use_layer "$LAYER_DIR"
+trap 'rm -rf "$LOG" "$BDEX_LAYER_XDG"' EXIT
 status=0
 for mode in interpolate extrapolate; do
-  VK_IMPLICIT_LAYER_PATH="$LAYER_DIR" VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation \
+  VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation \
   VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true BDEX_FG=1 BDEX_FG_CONFIG=/dev/null BDEX_FG_LOG=1 \
   BDEX_FG_MODE=$mode BDEX_FG_MULTIPLIER=3 BDEX_FG_RENDER_SCALE=0.75 BDEX_FG_SHARPNESS=0.5 BDEX_FG_HUD=2 \
   BDEX_FG_ZERO_BIAS_CONTRAST=0.1 BDEX_FG_SUBPIXEL=1 BDEX_FG_PIXEL_VECTORS=1 BDEX_FG_EXTRAPOLATE_SPLAT=1 \

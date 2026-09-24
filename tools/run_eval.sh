@@ -15,10 +15,13 @@ if [ "$FRAMES" -lt 2 ]; then echo "frames must be an integer >= 2" >&2; exit 2; 
 BUILD="$(cd "$BUILD" && pwd)"
 OUT="${BDEX_EVAL_DIR:-/tmp/bdex-eval}"
 # Test exactly this build even if an older implicit layer is installed.
-unset VK_ADD_IMPLICIT_LAYER_PATH
+# shellcheck source=layer_env.sh
+. "$(dirname "$0")/layer_env.sh"
+bdex_use_layer "$BUILD/layer"
+trap 'rm -rf "$BDEX_LAYER_XDG"' EXIT
 rm -rf "$OUT/gt" "$OUT/test"
 mkdir -p "$OUT/gt" "$OUT/test"
-export VK_IMPLICIT_LAYER_PATH="$BUILD/layer" BDEX_FG=1 BDEX_FG_LOG=0 BDEX_FG_HUD=0 BDEX_FG_RENDER_SCALE=1
+export BDEX_FG=1 BDEX_FG_LOG=0 BDEX_FG_HUD=0 BDEX_FG_RENDER_SCALE=1
 # Do not inherit a game profile or global experimental knobs from the user's
 # config file. Explicit BDEX_FG_* environment overrides remain available for
 # A/B experiments (including a caller-set preset).

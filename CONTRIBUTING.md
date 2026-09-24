@@ -51,6 +51,9 @@ VK_IMPLICIT_LAYER_PATH=$PWD/build/layer BDEX_FG=1 ./build/demo/bdex_demo --fps 3
 
 ### Before opening a pull request
 
+- `tools/ci/run.sh` (and `tools/ci/run.sh asan`, `tsan`) replays the Linux
+  CI in Docker with the runner's Vulkan loader, when a change touches the CI,
+  the tests or how they find the layer.
 - `ctest` passes (unit tests, evaluator checks, headless engine test, frame-generation and acquire-timeout GPU tests).
 - The layer stays clean under the Khronos validation layer, synchronization
   validation included (`ctest -R validation` checks both modes with every
