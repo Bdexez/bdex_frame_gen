@@ -24,7 +24,8 @@ Outils : `tools/run_eval.sh` (démo, en ligne) et `tools/eval_sequence.py`
   puis `tools/eval_sequence.py /tmp/kenshi --variant ZERO_BIAS_CONTRAST=0.1
   --variant PIXEL_VECTORS=1 --variant STATIC_GUARD=1`, ou `tools/tune.py` sur
   plusieurs séquences ; les ajouter au corpus via `BDEX_CORPUS_DIR`.
-- [ ] Vérifier la CI Linux sur GitHub (dépôt privé, non visible sans compte).
+- [x] CI Linux verte sur GitHub (confirmé le 2026-09-24, après le passage au
+  chargement du layer par `XDG_DATA_HOME`). Rejouable localement : `tools/ci/run.sh`.
 - [ ] Supprimer la branche locale `backup/pre-rebase` si tout est bon.
 - [ ] Tags de release orphelins et sortie de la 0.4.0 (voir « Packaging »).
 
