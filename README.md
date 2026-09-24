@@ -247,6 +247,12 @@ Every option can be set through `BDEX_FG_<KEY>` environment variables or in
 `~/.config/bdex-framegen.conf` (`key = value`, one per line; the environment
 takes precedence).
 
+Per-game profiles verified by the project ship in
+`<prefix>/share/bdex-framegen/profiles.conf` (next to the DLL on Windows) and
+are applied before your file, which overrides them. They only tune a named
+game: they never enable the layer or pause it (`BDEX_FG_PROFILES=` disables
+them).
+
 | Key | Default | Description |
 |---|:---:|---|
 | `BDEX_FG` | – | `1` enables the layer, `0` disables it |

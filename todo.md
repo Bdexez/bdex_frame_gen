@@ -137,8 +137,11 @@ Outils : `tools/run_eval.sh` (démo, en ligne) et `tools/eval_sequence.py`
 - [x] **Rapport de diagnostic** — fait : `bdex-framegen --report [FICHIER]`
   (système, session, GPU/pilote, chargement du layer, manifestes, variables
   d'environnement utiles, config, fin du log).
-- [ ] **Profils par jeu fournis** : réglages éprouvés et liste anti-cheat
-  maintenue.
+- [x] **Profils par jeu fournis** — mécanisme fait : `layer/profiles.conf`
+  installé et chargé avant le fichier utilisateur (jamais `enabled`/`paused`,
+  jamais `[*]`). Une entrée vérifiée : Kenshi en interpolation. Liste
+  anti-cheat : + EasyAntiCheat_EOS, GameMon64, PunkBuster. **À enrichir avec
+  chaque jeu que tu valides.**
 - [ ] **Packaging et versions** : AUR ou Flatpak pour la GUI, releases
   versionnées (toujours 0.3.0), section Windows dans le README.
 - [ ] **Valider upscaling, HDR et 10 bits** sur de vrais écrans.

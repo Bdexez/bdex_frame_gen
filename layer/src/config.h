@@ -84,7 +84,9 @@ struct Config {
     // called `name` (case-insensitive, `.exe` optional); `[*]` or no section
     // applies to every process. Sections are applied in file order, so a
     // game section placed after the global options overrides them.
-    void loadFile(const std::string& path, const std::string& processName);
+    // `bundled`: a shipped profiles file — only named-game sections, never
+    // `enabled` / `paused` (see platformBundledProfilesPath).
+    void loadFile(const std::string& path, const std::string& processName, bool bundled = false);
     void loadEnv();
 
     // Named presets applied before the other options: "quality",
