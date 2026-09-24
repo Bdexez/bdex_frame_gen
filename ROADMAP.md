@@ -207,6 +207,18 @@ a Windows machine.
   repetition (normal), 19.74 vs 19.24 (fast), against 31.53 / 23.54 dB for
   interpolation. This matches the Kenshi feedback (artefacts very visible in
   extrapolation) and makes the extrapolation synthesis the next target.
+- **`zero_bias` is the fast-motion culprit (2026-09-24).** Its displacement
+  penalty is absolute, not relative to the block's contrast, so on smooth or
+  low-contrast content the free zero-motion candidate beats the true motion
+  and the synthesis cross-fades. A 32 px/pair pan of a fractal texture scores
+  28.5 dB by default and 46.2 dB with `zero_bias=0`; on the demo (online
+  harness, 40 frames) `--speed 2` goes 23.26 → 24.01 dB (rotating edges
+  +2.8 dB) for −0.10 dB at normal speed. Smoothness is not the issue (±0.0).
+  Candidate default change — pending a check on recorded game sequences for
+  shimmering on static low-contrast content (what the bias protects).
+- `temporal_prediction` (opt-in): the coarsest level searches around the
+  previous pair's motion. With `zero_bias=0` it follows a 64 px/pair pan
+  (23.5 → 36.0 dB); alone it cannot bootstrap (+0.3 dB).
 - `static_guard` (opt-in): per-pixel "unchanged in both frames → keep the
   current frame", interpolation only. HUD-over-pan scene +0.98 dB (minimap
   +4.4 dB), demo +0.01, fast −0.20 dB (a small object crossing a pixel between

@@ -40,6 +40,22 @@
 // the content (low SAD, i.e. static / small motion) skip the re-ranking, and
 // with rotWeight = 0 the pass is bit-for-bit identical to plain matching.
 //
+// Temporal prediction (when temporal != 0): the coarsest level has no coarser
+// prediction and searches +-R around zero, which caps the motion the pyramid
+// can follow. With temporal on, it searches around a constant-velocity
+// prediction from the previous frame pair (Z, A) instead (the explicit
+// zero-motion candidate is still evaluated), so a sustained fast pan is
+// followed after a frame or two even beyond that range. The source is the
+// previous *backward* flow A->Z, indexed by positions in A — the current
+// reference frame — so no motion compensation is needed: forward A->B is
+// predicted as -bwd(p) (temporal = 1); backward B->A at a position q of B
+// follows the object back into A first: bwd(q + bwd(q)) (temporal = 2).
+// Measured variants that lost: last frame's vector at the same block (the
+// object has moved: -0.4 dB fast); an extra candidate at every level (more
+// ambiguity: -0.1..-0.5 dB fast). A strong zero_bias defeats it, since the
+// first steps away from zero are what it builds on. temporal = 0 leaves the
+// pass bit-for-bit unchanged.
+//
 // Output flow is the displacement (in pixels of this level) that maps a
 // position in the reference image to the matching position in the target.
 #include "common.glsl"
@@ -66,6 +82,7 @@ layout(binding = 1, LUMA_FMT) uniform readonly image2D tgtImg;
 layout(binding = 2) uniform sampler2D coarseFlow;
 layout(binding = 3, rg32f) uniform writeonly image2D flowOut;
 layout(binding = 4, r32f) uniform writeonly image2D costOut;
+layout(binding = 5) uniform sampler2D prevFlow;   // previous pair's final backward flow at this level (temporal prediction)
 
 layout(push_constant) uniform PC {
     ivec2 size;        // level resolution
@@ -78,6 +95,7 @@ layout(push_constant) uniform PC {
     float censusWeight;// weight of the census re-ranking term (0 = off)
     float censusMargin;// relative cost margin that makes a match ambiguous
     float rotWeight;   // rotation/scale re-ranking of ambiguous winners (0 = off)
+    int temporal;      // temporal prediction at the coarsest level: 0 off, 1 forward pass, 2 backward pass
 } pc;
 
 shared float refBlk[RB * RB];
@@ -129,6 +147,11 @@ void main() {
         if (pc.hasCoarse != 0) {
             vec2 uv = (vec2(blk) + 0.5) / vec2(pc.blocks);
             pred = texture(coarseFlow, uv).xy * 2.0;
+        }
+        if (pc.temporal != 0 && pc.hasCoarse == 0) {
+            vec2 p = (vec2(blk) + 0.5) * float(BS);  // block centre, level pixels
+            vec2 b = texture(prevFlow, p / vec2(pc.size)).xy;
+            pred = pc.temporal == 1 ? -b : texture(prevFlow, (p + b) / vec2(pc.size)).xy;
         }
         sBase = ivec2(round(pred));
     }

@@ -13,7 +13,7 @@ namespace bdex {
 namespace {
 
 struct DownsamplePC { int32_t size[2]; int32_t fromColor; int32_t srgbSource; };
-struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; float gradWeight; float censusWeight; float censusMargin; float rotWeight; };
+struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; float gradWeight; float censusWeight; float censusMargin; float rotWeight; int32_t temporal; };
 struct SizePC { int32_t size[2]; };
 struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; };
 struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; float occlusionStrength; float staticGuard; };
@@ -128,11 +128,11 @@ void FrameGen::createPipelines() {
     if (outputs_ > 0) {
         if (lumaFormat_ == VK_FORMAT_R16_SFLOAT) {
             downsample_ = makePass(downsample_comp_f16, downsample_comp_f16_size, {CIS, SI});
-            blockMatch_ = makePass(block_match_comp_f16, block_match_comp_f16_size, {SI, SI, CIS, SI, SI});
+            blockMatch_ = makePass(block_match_comp_f16, block_match_comp_f16_size, {SI, SI, CIS, SI, SI, CIS});
             refine_ = makePass(flow_refine_comp_f16, flow_refine_comp_f16_size, {SI, SI, SI, SI, SI});
         } else {
             downsample_ = makePass(downsample_comp_f32, downsample_comp_f32_size, {CIS, SI});
-            blockMatch_ = makePass(block_match_comp_f32, block_match_comp_f32_size, {SI, SI, CIS, SI, SI});
+            blockMatch_ = makePass(block_match_comp_f32, block_match_comp_f32_size, {SI, SI, CIS, SI, SI, CIS});
             refine_ = makePass(flow_refine_comp_f32, flow_refine_comp_f32_size, {SI, SI, SI, SI, SI});
         }
         smooth_ = makePass(flow_smooth_comp, flow_smooth_comp_size, {SI, SI});
@@ -286,7 +286,9 @@ void FrameGen::createDescriptors() {
     const uint32_t up = packReal_ ? N : 0;        // one upscale/copy set per source
     const uint32_t cas = sharpen_ ? O + 1 : 0;    // one CAS set per generated output, plus the real frame
     const uint32_t nSets = gen * (2 * N + 2 * L + 4 * L + 2 * L + 4 * L + 1 + nInterp) + up + cas;
-    const uint32_t nCIS = gen * (2 * N + 2 * L + 4 * L + 4 * nInterp) + up + cas;
+    // Block-match sets (2 parities x 2 directions x L) hold two samplers each:
+    // the coarse prediction and the previous backward flow (temporal prediction).
+    const uint32_t nCIS = gen * (2 * N + 2 * L + 4 * L * 2 + 4 * nInterp) + up + cas;
     const uint32_t nSI = gen * (2 * N + 2 * L + 4 * L * 4 + 2 * L * 2 + 4 * L * 5 + 1 + nInterp) + up + cas;
     const uint32_t nSB = gen * (1 + nInterp);
     std::vector<VkDescriptorPoolSize> sizes;
@@ -347,6 +349,9 @@ void FrameGen::createDescriptors() {
                 writeImage(s, 2, CIS, (l + 1 < L ? levels_v_[l + 1].flowFine[dir] : lv.flowFine[dir]).view);
                 writeImage(s, 3, SI, lv.flowRaw[dir].view);
                 writeImage(s, 4, SI, lv.cost[dir].view);
+                // The previous pair's final backward flow (indexed by positions in
+                // the current reference frame), read before this frame overwrites it.
+                writeImage(s, 5, CIS, lv.flowFine[1].view);
                 dsMatch_[parity][dir].push_back(s);
 
                 VkDescriptorSet rs = allocSet(refine_.setLayout);
@@ -545,9 +550,11 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
         MatchPC pc{{(int32_t)lv.size.width, (int32_t)lv.size.height},
                    {(int32_t)lv.blocks.width, (int32_t)lv.blocks.height},
                    l + 1 < levels_ ? cfg.searchFine : cfg.searchRadius, l + 1 < levels_ ? 1 : 0, cfg.smoothness, cfg.zeroBias,
-                   cfg.gradWeight, cfg.censusWeight, cfg.censusMargin, cfg.rotWeight};
-        vt.CmdPushConstants(cmd, blockMatch_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+                   cfg.gradWeight, cfg.censusWeight, cfg.censusMargin, cfg.rotWeight, 0};
+        const bool temporal = cfg.temporalPrediction && flowValid_;
         for (uint32_t dir = 0; dir < 2; ++dir) {
+            pc.temporal = temporal ? static_cast<int32_t>(dir + 1) : 0;
+            vt.CmdPushConstants(cmd, blockMatch_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
             vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, blockMatch_.layout, 0, 1, &dsMatch_[parity][dir][l], 0, nullptr);
             vt.CmdDispatch(cmd, lv.blocks.width, lv.blocks.height, 1);
         }
@@ -583,6 +590,7 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, reduce_.layout, 0, 1, &dsReduce_, 0, nullptr);
     vt.CmdDispatch(cmd, 1, 1, 1);
     memoryBarrier(cmd);
+    flowValid_ = true;  // from now on the flow images hold a real previous flow
 }
 
 void FrameGen::copyToPresent(VkCommandBuffer cmd, VkImage src, VkImageLayout srcLayout, VkAccessFlags srcAccess,

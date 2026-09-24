@@ -25,6 +25,25 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   see-through HUDs (a glyph's neighbours move); conditioning on warp
   consistency removed most of the HUD gain; in extrapolation the guard costs
   0.5–0.8 dB on the demo, so it is interpolation-only.
+- `temporal_prediction` (opt-in, default 0 = bit-for-bit): the coarsest
+  block-matching level searches around a constant-velocity prediction from
+  the previous frame pair (minus its backward flow, which is indexed by the
+  current reference frame) instead of around zero. Offline, fractal pan at
+  64 px per input pair: 23.51 dB → 23.82 alone, **35.95 with `zero_bias=0`**;
+  demo ±0.0, fast +0.07. An extra candidate at every level instead lost
+  0.1–0.5 dB on fast motion.
+
+### Measured (2026-09-24)
+
+- **`zero_bias` is what breaks fast motion on low-contrast content.** Its
+  per-pixel displacement penalty does not scale with the block's contrast, so
+  on smooth textures the costless zero-motion candidate wins and the frame
+  cross-fades (ghosting). Pure pan at 32 px per pair on a fractal texture:
+  28.48 dB default → 46.21 dB with `zero_bias=0` (only 46% of the blocks got
+  the right motion by default). Demo, online `run_eval.sh` 40 frames:
+  normal 29.48 → 29.38 dB, **`--speed 2` 23.26 → 24.01 dB** (rotating edges
+  18.61 → 21.41 dB); offline: normal −0.13, fast +0.89, HUD scene +0.09.
+  Not changed by default yet (it moves the byte-for-byte CI reference).
 
 ### Improved (2026-09-24)
 
