@@ -28,8 +28,10 @@ def evaluate(build, frames_dir, extra_env=None):
     env = dict(os.environ, **(extra_env or {}))
     out = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, text=True, env=env).stdout
     print(out)
-    row = out.splitlines()[1].split()
-    return float(row[1]), float(row[4]), int(row[6])  # psnr, dup, frames
+    lines = out.splitlines()
+    col = {name: i for i, name in enumerate(lines[0].split())}
+    row = lines[1].split()
+    return float(row[col["psnr"]]), float(row[col["dup"]]), int(row[col["frames"]])
 
 
 def main():
