@@ -226,6 +226,10 @@ a Windows machine.
   block's contrast. Online: normal +0.02 dB, fast +0.48 dB (rotating edges
   +2.7 dB); smooth pan +17 dB. Non-negative in both regimes — best candidate
   for a default change (pending real game sequences).
+- Zero-mean SAD for fades (2026-09-24, not kept): helps a fade only together
+  with `zero_bias_contrast` (+9.1 dB on a −4 %/frame fade) and loses
+  0.2–1.25 dB everywhere else, flicker included. Needs gating on a detected
+  global brightness change, plus gain compensation in the synthesis.
 - `temporal_prediction` (opt-in): the coarsest level searches around the
   previous pair's motion. With `zero_bias=0` it follows a 64 px/pair pan
   (23.5 → 36.0 dB); alone it cannot bootstrap (+0.3 dB).

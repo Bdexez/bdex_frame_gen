@@ -32,8 +32,15 @@ Outils : `tools/run_eval.sh` (démo, en ligne) et `tools/eval_sequence.py`
   sur fenêtre 8×8 au niveau fin. Normal +0,08, rapide +0,06 ; avec
   `zero_bias_contrast=0.1` : +0,10 / +0,54 dB. Coût GPU non mesurable sur
   Vega 8 (bruit).
-- [ ] **Fondus et changements d'éclairage** : SAD centré (moyenne du bloc
-  retirée) pour ne plus casser l'appariement sur un flash ou un fondu.
+- [ ] **Fondus et changements d'éclairage** — essayé, non retenu (2026-09-24) :
+  SAD centré (moyenne retirée) dans le matcher. Seul : −1,7 dB démo, −9,7
+  panoramique sous-pixel (la moyenne est discriminante, et les SAD plus petits
+  laissent la pénalité absolue dominer). Avec `zero_bias_contrast=0.1` :
+  fondu (−4 %/frame) **+9,1 dB**, mais démo −0,4, rapide −0,2, panoramique
+  rapide −1,25, scintillement ±12 % −0,5. Reste à faire : ne l'activer que sur
+  détection d'un changement global de luminosité (moyennes de luma des deux
+  frames au niveau grossier), et compenser le gain côté synthèse (sur le
+  scintillement, même le fondu simple bat la synthèse : 27,1 vs 26,2 dB).
 - [ ] **Détection du HUD sur plusieurs frames** : masque d'immobilité accumulé
   sur ~10 frames, pour distinguer un glyphe fixe d'un petit objet rapide
   (indiscernables avec deux frames). Version aboutie de `static_guard`.
