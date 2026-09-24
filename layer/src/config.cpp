@@ -169,6 +169,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "temporal_prediction")          return parseBool(value, temporalPrediction);
     if (key == "extrapolate_splat")           return parseBool(value, extrapolateSplat);
     if (key == "extrapolate_hold")            return parseFloat(value, extrapolateHold, 0.f, 1.f);
+    if (key == "paused" || key == "pause")    return parseBool(value, paused);
     if (key == "target_fps")                  return parseFloat(value, targetFps, 0.f, 1000.f);
     if (key == "fps_limit" || key == "fps_cap") return parseFloat(value, fpsLimit, 0.f, 1000.f);
     if (key == "pixel_vectors")               return parseBool(value, pixelVectors);
@@ -278,10 +279,30 @@ Config Config::load(const std::string& extraProcess) {
     return loadWithDefaults(Config{}, extraProcess);
 }
 
+std::string Config::filePath() {
+    if (const char* p = getenv("BDEX_FG_CONFIG")) return p;
+    return platformConfigPath();
+}
+
+void Config::applyLive(const Config& n) {
+    // Only settings read by the presenting thread while recording a frame
+    // (push constants and per-frame decisions): anything that sizes
+    // resources (multiplier, render scale, levels, flow scale, HUD, formats)
+    // or that the presentation worker reads (pacing, present mode) needs a
+    // restart. Environment overrides still win, since `n` was loaded with them.
+    paused = n.paused;
+    smoothness = n.smoothness; zeroBias = n.zeroBias; zeroBiasContrast = n.zeroBiasContrast;
+    gradWeight = n.gradWeight; censusWeight = n.censusWeight; censusMargin = n.censusMargin;
+    rotWeight = n.rotWeight; temporalPrediction = n.temporalPrediction; subpixel = n.subpixel;
+    pixelVectors = n.pixelVectors; occlusionStrength = n.occlusionStrength; staticGuard = n.staticGuard;
+    extrapolateHold = n.extrapolateHold; flowIterations = n.flowIterations; refineBias = n.refineBias;
+    sceneCutLow = n.sceneCutLow; sceneCutHigh = n.sceneCutHigh;
+    fpsLimit = n.fpsLimit; targetFps = n.targetFps;
+    if (sharpness > 0.f && n.sharpness > 0.f) sharpness = n.sharpness;  // 0 <-> >0 changes the passes
+}
+
 Config Config::loadWithDefaults(Config c, const std::string& extraProcess) {
-    std::string path;
-    if (const char* p = getenv("BDEX_FG_CONFIG")) path = p;
-    else path = platformConfigPath();
+    const std::string path = filePath();
     if (!path.empty()) c.loadFile(path, extraProcess);
     c.loadEnv();
     // Multiplayer anti-cheat present: stay a pass-through for this process,

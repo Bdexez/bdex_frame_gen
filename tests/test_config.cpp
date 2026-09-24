@@ -65,6 +65,14 @@ TEST(config_apply_values) {
     CHECK(c.apply("pixel_vectors", "1") && c.pixelVectors);
     CHECK(c.apply("fps_limit", "60") && c.fpsLimit == 60.f);
     CHECK(c.apply("target_fps", "144") && c.targetFps == 144.f);
+    CHECK(c.apply("paused", "1") && c.paused);
+    {
+        Config live, fresh;
+        fresh.zeroBias = 0.01f; fresh.multiplier = 4; fresh.paused = true; fresh.renderScale = 0.5f;
+        live.applyLive(fresh);
+        CHECK(live.zeroBias == 0.01f && live.paused);           // live settings follow
+        CHECK(live.multiplier == 2 && live.renderScale == 1.f); // resource-sizing ones do not
+    }
     CHECK(c.apply("FPS_LIMIT", "5000") && c.fpsLimit == 1000.f);   // clamped
     CHECK(c.apply("extrapolate_splat", "1") && c.extrapolateSplat);
     CHECK(c.apply("STATIC_GUARD", "3") && c.staticGuard == 1.0f);   // clamped

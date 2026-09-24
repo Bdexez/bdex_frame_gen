@@ -58,6 +58,7 @@ struct Config {
     bool  temporalPrediction = false; // coarsest matching level searches around the previous frame pair's motion instead of zero, so sustained fast pans are followed beyond the pyramid's range (opt-in; off = bit-for-bit)
     bool  extrapolateSplat = false; // extrapolation: forward-splat the current frame, backward warp only where nothing lands (opt-in)
     float extrapolateHold = 0.0f; // extrapolation: keep pixels with inconsistent motion in place (1 = pre-0.4 behaviour, shows double images; 0 = follow the warp)
+    bool  paused        = false;  // live toggle: present only the real frames (reloaded while running; see tools/bdex-framegen --toggle)
     float targetFps     = 0.0f;   // dynamic multiplier: aim at this output rate (the refresh rate), up to `multiplier` (0 = fixed multiplier)
     float fpsLimit      = 0.0f;   // cap the game's frame rate (0 = off); pick a divisor of the refresh rate
     bool  pixelVectors  = false;  // interpolation: per-pixel choice among neighbouring blocks' vectors (opt-in)
@@ -103,6 +104,9 @@ struct Config {
     // though it is not the current process. Empty (the default) = current
     // process only, the layer's case.
     static Config load(const std::string& extraProcess = "");
+    static std::string filePath();  // BDEX_FG_CONFIG, else the platform's config file
+    // Copies the settings that can change while a game runs (see config.cpp).
+    void applyLive(const Config& fresh);
     // Same, starting from product defaults instead of Config{} (the capture
     // app defaults to extrapolation, still overridable by the file and env).
     static Config loadWithDefaults(Config defaults, const std::string& extraProcess = "");

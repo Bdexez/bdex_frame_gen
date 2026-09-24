@@ -30,6 +30,16 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-24)
 
+- **Live configuration and an on/off toggle on Linux.** Running games check
+  the config file every ~0.5 s and reload the settings that can change on the
+  fly (flow/synthesis knobs, scene-cut thresholds, `fps_limit`, `target_fps`,
+  sharpness between non-zero values) plus the new `paused` key, which
+  presents only the real frames. `bdex-framegen --toggle` flips `paused` in
+  the `[*]` section: bound to a desktop shortcut (e.g. a Hyprland `bind`), it
+  is the Linux counterpart of the capture app's hotkey. Measured on the demo:
+  x2 → x1 within 0.6 s of the toggle, and back. Settings that size resources
+  still need a restart; environment variables keep priority.
+
 - `target_fps`: dynamic multiplier. The frames presented per game frame
   follow target_fps × the game's frame interval, capped at `multiplier`
   (the output stage is sized for it), with a ±0.15 hysteresis around the

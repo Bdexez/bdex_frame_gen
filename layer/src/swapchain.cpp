@@ -542,6 +542,7 @@ void VirtualSwapchain::updateHudLows(double dtMs) {
 // 0.15, so a game hovering on a boundary does not flip every frame.
 int VirtualSwapchain::chooseMultiplier() {
     const int maxMult = std::max(1, dev_.config.multiplier);
+    if (dev_.config.paused) return 1;
     if (dev_.config.targetFps <= 0.f) return maxMult;
     const double ratio = dev_.config.targetFps * frameIntervalMs_ / 1000.0;
     if (dynMult_ == 0) dynMult_ = std::clamp(static_cast<int>(ratio + 0.5), 1, maxMult);
@@ -571,6 +572,7 @@ void VirtualSwapchain::limitFrameRate() {
 }
 
 VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& info, bool consumeWaitSemaphores) {
+    dev_.pollConfig();
     if (dev_.config.fpsLimit > 0.f) limitFrameRate();  // before mutex_: never block acquire while sleeping
     std::lock_guard<std::mutex> lock(mutex_);
     const auto t0 = clock::now();
