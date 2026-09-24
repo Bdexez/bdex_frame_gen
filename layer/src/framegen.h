@@ -64,10 +64,10 @@ public:
     // Debug frame dumping: records a copy of the image that was just written
     // to `dst` (the generated output or the current history) into a staging
     // buffer; writeDump() decodes it to a PPM file once the GPU is done.
-    // `which`: 0 = first generated output, 1 = source `cur` (the real frame,
-    // which must be between recordAcquireSources and recordReleaseSources).
+    // `which`: 0..outputs_-1 = generated outputs, outputs_ = real frame.
     void recordDump(VkCommandBuffer cmd, uint32_t which, uint32_t cur);
     bool writeDump(const std::string& path, uint32_t which);
+    uint32_t outputCount() const { return outputs_; }
 
     int levels() const { return levels_; }
 
@@ -137,14 +137,14 @@ private:
     AllocatedImage sharpReal_;           // linear rgba16f pre-sharpen real frame; only when sharpen_
     uint32_t outputs_ = 0;
     AllocatedBuffer costBuf_;
-    AllocatedBuffer dumpBuf_[2];
+    std::vector<AllocatedBuffer> dumpBuf_;
     VkQueryPool queryPool_ = VK_NULL_HANDLE;
     static constexpr uint32_t kProfileSlots = 12;  // application slots + worker slots
     double profileMs_[StageCount]{};
     uint32_t profileFrames_[StageCount]{};
     bool profileWritten_[kProfileSlots][StageCount + 1]{};
     float timestampPeriodNs_ = 1.f;
-    void* dumpMapped_[2]{};
+    std::vector<void*> dumpMapped_;
     AllocatedBuffer costReadback_;
     void* costMapped_ = nullptr;
     VkSampler sampler_ = VK_NULL_HANDLE;

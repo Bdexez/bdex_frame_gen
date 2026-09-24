@@ -44,6 +44,8 @@ FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, Vk
                                       VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT);
     enc_ = encodingForFormat(format);
     if (!enc_.supported) throw VkError(VK_ERROR_FORMAT_NOT_SUPPORTED, "swapchain format not supported by frame generation");
+    dumpBuf_.resize(outputs_ + 1);
+    dumpMapped_.resize(outputs_ + 1, nullptr);
     for (VkImage img : sources) sources_.push_back({img, VK_NULL_HANDLE});
     if (outputs_ == 0 && !packReal_) return;  // pass-through: only recordCopySource is used
     try {
@@ -418,7 +420,7 @@ void FrameGen::destroyAll() {
     dev_.destroyBuffer(costBuf_);
     if (queryPool_) vt.DestroyQueryPool(d, queryPool_, nullptr);
     queryPool_ = VK_NULL_HANDLE;
-    for (int i = 0; i < 2; ++i) {
+    for (size_t i = 0; i < dumpBuf_.size(); ++i) {
         if (dumpMapped_[i]) vt.UnmapMemory(d, dumpBuf_[i].memory);
         dumpMapped_[i] = nullptr;
         dev_.destroyBuffer(dumpBuf_[i]);
@@ -430,7 +432,7 @@ void FrameGen::destroyAll() {
 
 void FrameGen::recordDump(VkCommandBuffer cmd, uint32_t which, uint32_t cur) {
     auto& vt = dev_.vt;
-    // Everything dumped is at display size: out_[0] and the upscaled real frame
+    // Everything dumped is at display size: every generated output and the upscaled real frame
     // (outReal_); the source is only dumped directly when not upscaling.
     const VkDeviceSize bytes = VkDeviceSize(displayExtent_.width) * displayExtent_.height * (enc_.is64 ? 8 : 4);
     if (!dumpBuf_[which].buffer) {
@@ -450,7 +452,7 @@ void FrameGen::recordDump(VkCommandBuffer cmd, uint32_t which, uint32_t cur) {
     region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     region.imageExtent = {displayExtent_.width, displayExtent_.height, 1};
     // Output, upscaled-real and history images all live in GENERAL layout.
-    VkImage dumpSrc = which == 0 ? out_[0].image : (packReal_ ? outReal_.image : sources_[cur].image);
+    VkImage dumpSrc = which < outputs_ ? out_[which].image : (packReal_ ? outReal_.image : sources_[cur].image);
     vt.CmdCopyImageToBuffer(cmd, dumpSrc, VK_IMAGE_LAYOUT_GENERAL, dumpBuf_[which].buffer, 1, &region);
     VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -460,7 +462,7 @@ void FrameGen::recordDump(VkCommandBuffer cmd, uint32_t which, uint32_t cur) {
 
 bool FrameGen::writeDump(const std::string& path, uint32_t which) {
     if (!dumpMapped_[which] || enc_.is64) return false;
-    if (which == 0 && costMapped_) BDEX_DBG("%s: mean matching cost %.4f", path.c_str(), *static_cast<const float*>(costMapped_));
+    if (which < outputs_ && costMapped_) BDEX_DBG("%s: mean matching cost %.4f", path.c_str(), *static_cast<const float*>(costMapped_));
     const uint32_t enc = enc_.encoding & 0xffu;
     FILE* f = fopen(path.c_str(), "wb");
     if (!f) return false;
@@ -499,7 +501,8 @@ void FrameGen::recordAcquireSources(VkCommandBuffer cmd, int prev, int cur) {
     uint32_t n = 0;
     for (int idx : {prev, cur}) {
         if (idx < 0) continue;
-        b[n++] = imageBarrier(sources_[idx].image, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_SHADER_READ_BIT,
+        b[n++] = imageBarrier(sources_[idx].image, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT,
+                              VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT,
                               VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_GENERAL);
     }
     dev_.vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,

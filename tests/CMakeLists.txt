@@ -6,6 +6,14 @@ else()
   target_compile_options(bdex_tests PRIVATE -Wall -Wextra)
 endif()
 add_test(NAME unit COMMAND bdex_tests)
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+  execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import numpy, PIL"
+                  RESULT_VARIABLE BDEX_EVAL_PYTHON_DEPS)
+  if(BDEX_EVAL_PYTHON_DEPS EQUAL 0)
+    add_test(NAME eval_quality COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_eval_quality.py")
+  endif()
+endif()
 
 # End-to-end: runs the demo through the layer and checks the output frame
 # rate is doubled. Needs a display; the script skips itself otherwise.

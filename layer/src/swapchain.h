@@ -94,7 +94,7 @@ private:
     void destroyAll();
     FrameSlot& nextSlot(std::vector<FrameSlot>& slots, uint32_t& cursor);
     VkResult consumeSemaphores(const VkSemaphore* sems, uint32_t count);
-    void dumpFrame(FrameSlot& slot, bool generated, float t);
+    void dumpFrame(FrameSlot& slot, bool generated, float t, uint32_t output = 0);
 
     // Worker thread.
     void workerLoop();

@@ -41,7 +41,7 @@ VirtualSwapchain::VirtualSwapchain(DeviceData& dev, const VkSwapchainCreateInfoK
         throw;
     }
     statsStart_ = clock::now();
-    dumping_ = (generating_ || (fg_ && fg_->packReal())) && !dev_.config.dumpDir.empty();
+    dumping_ = !dev_.config.dumpDir.empty();
     static uint32_t nextDumpId = 0;
     dumpId_ = nextDumpId++;
     BDEX_INFO("swapchain %ux%u format %d: %zu virtual images, %zu real images, present mode %s, generation %s",
@@ -490,14 +490,14 @@ VkResult VirtualSwapchain::consumeSemaphores(const VkSemaphore* sems, uint32_t c
     return dev_.submit(si, VK_NULL_HANDLE);
 }
 
-void VirtualSwapchain::dumpFrame(FrameSlot& slot, bool generated, float t) {
+void VirtualSwapchain::dumpFrame(FrameSlot& slot, bool generated, float t, uint32_t output) {
     if (dumpCount_ >= dev_.config.dumpFrames) { dumping_ = false; return; }
     dev_.vt.WaitForFences(dev_.device, 1, &slot.fence, VK_TRUE, UINT64_MAX);
     char name[96];
     snprintf(name, sizeof(name), "/sc%u_%ux%u_%04d_%s_t%.2f.ppm", dumpId_, extent_.width, extent_.height, dumpCount_,
              generated ? "gen" : "real", t);
     const std::string path = dev_.config.dumpDir + name;
-    if (fg_->writeDump(path, generated ? 0 : 1)) BDEX_DBG("dumped %s", path.c_str());
+    if (fg_->writeDump(path, generated ? output : fg_->outputCount())) BDEX_DBG("dumped %s", path.c_str());
     else BDEX_WARN("could not write %s", path.c_str());
     ++dumpCount_;
 }
@@ -613,15 +613,22 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         // (for upscaling, or so the HUD can be drawn on it).
         if (fg_->packReal()) fg_->recordUpscaleReal(slot.cmd, imageIndex);
         if (dumping_) {
-            if (interpolate) fg_->recordDump(slot.cmd, 0, imageIndex);
-            fg_->recordDump(slot.cmd, 1, imageIndex);
+            if (interpolate)
+                for (int i = 0; i < mult - 1; ++i) fg_->recordDump(slot.cmd, static_cast<uint32_t>(i), imageIndex);
+            fg_->recordDump(slot.cmd, fg_->outputCount(), imageIndex);
         }
         fg_->recordReleaseSources(slot.cmd, prev, static_cast<int>(imageIndex));
     } else if (fg_->packReal()) {
         // No frame generation: still process the one real frame (upscale / HUD).
         fg_->recordAcquireSources(slot.cmd, -1, static_cast<int>(imageIndex));
         fg_->recordUpscaleReal(slot.cmd, imageIndex);
-        if (dumping_) fg_->recordDump(slot.cmd, 1, imageIndex);
+        if (dumping_) fg_->recordDump(slot.cmd, fg_->outputCount(), imageIndex);
+        fg_->recordReleaseSources(slot.cmd, -1, static_cast<int>(imageIndex));
+    } else if (dumping_) {
+        // Ground-truth runs use multiplier=1: copy the unmodified source into
+        // the dump buffer while the image is temporarily in GENERAL layout.
+        fg_->recordAcquireSources(slot.cmd, -1, static_cast<int>(imageIndex));
+        fg_->recordDump(slot.cmd, fg_->outputCount(), imageIndex);
         fg_->recordReleaseSources(slot.cmd, -1, static_cast<int>(imageIndex));
     }
     // Pass-through: an empty submission still consumes the application's
@@ -657,9 +664,13 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         // Written in presentation order.
         if (dev_.config.extrapolate) {
             dumpFrame(slot, false, 1.f);
-            if (interpolate) dumpFrame(slot, true, 1.f + 1.f / mult);
+            if (interpolate)
+                for (int i = 1; i < mult; ++i)
+                    dumpFrame(slot, true, 1.f + float(i) / mult, static_cast<uint32_t>(i - 1));
         } else {
-            if (interpolate) dumpFrame(slot, true, 1.f / mult);
+            if (interpolate)
+                for (int i = 1; i < mult; ++i)
+                    dumpFrame(slot, true, float(i) / mult, static_cast<uint32_t>(i - 1));
             dumpFrame(slot, false, 1.f);
         }
     }
