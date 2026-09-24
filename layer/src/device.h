@@ -4,6 +4,7 @@
 #include "vk_util.h"
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -95,6 +96,13 @@ struct DeviceData {
     // Before the first virtual swapchain, fall back to an application queue
     // if the preferred compute queue cannot present to this surface.
     bool ensurePresentQueue(VkSurfaceKHR surface);
+
+    // Live configuration: every ~0.5 s the presenting thread checks the config
+    // file's modification time and applies Config::applyLive on a change.
+    void pollConfig();
+    std::mutex configMutex;
+    std::chrono::steady_clock::time_point configChecked{};
+    int64_t configStamp = -1;  // mtime of the file last seen, -1 = none yet, -2 = missing
 
     // Allocates a primary command buffer from cmdPool with a valid dispatch pointer.
     VkResult allocateCommandBuffer(VkCommandBuffer* cmd);

@@ -128,8 +128,12 @@ Outils : `tools/run_eval.sh` (démo, en ligne) et `tools/eval_sequence.py`
 
 ## Produit
 
-- [ ] **Rechargement de la config à chaud** (surveillance du fichier) :
-  changements de la GUI GTK appliqués en direct, raccourci on/off sous Linux.
+- [x] **Rechargement de la config à chaud** — fait : le layer relit le fichier
+  (≤ 0,5 s) et applique les réglages modifiables en cours de partie ; clé
+  `paused` + `bdex-framegen --toggle` (raccourci on/off à lier dans le
+  bureau). Mesuré : ×2 → ×1 en 0,6 s, et retour. Limite : lu depuis le
+  thread de présentation, sans verrou côté lecture (jeux à plusieurs threads
+  de présentation simultanés : non couvert).
 - [ ] **Rapport de diagnostic en une commande** (`bdex-framegen --report`) :
   logs, config, GPU, pilote, jeu.
 - [ ] **Profils par jeu fournis** : réglages éprouvés et liste anti-cheat

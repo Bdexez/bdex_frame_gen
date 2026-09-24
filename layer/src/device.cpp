@@ -2,6 +2,8 @@
 #include "log.h"
 #include "vk_util.h"
 
+#include <filesystem>
+
 namespace bdex {
 
 std::mutex& DeviceData::queueMutex(VkQueue q) {
@@ -154,6 +156,28 @@ void DeviceData::destroyBuffer(AllocatedBuffer& buf) {
     if (buf.buffer) vt.DestroyBuffer(device, buf.buffer, nullptr);
     if (buf.memory) vt.FreeMemory(device, buf.memory, nullptr);
     buf = AllocatedBuffer{};
+}
+
+void DeviceData::pollConfig() {
+    std::lock_guard<std::mutex> lock(configMutex);
+    const auto now = std::chrono::steady_clock::now();
+    if (now - configChecked < std::chrono::milliseconds(500)) return;
+    configChecked = now;
+    int64_t stamp = -2;
+    std::error_code ec;
+    const std::string path = Config::filePath();
+    if (!path.empty()) {
+        const auto t = std::filesystem::last_write_time(path, ec);
+        if (!ec) stamp = static_cast<int64_t>(t.time_since_epoch().count());
+    }
+    if (configStamp == -1 || stamp == configStamp) { configStamp = stamp; return; }
+    configStamp = stamp;
+    Config fresh = Config::load();
+    fresh.autoConfigure(props, memProps);
+    const bool wasPaused = config.paused;
+    config.applyLive(fresh);
+    BDEX_INFO("config file changed: live settings reloaded%s", config.paused != wasPaused
+                  ? (config.paused ? " (frame generation paused)" : " (frame generation resumed)") : "");
 }
 
 VkResult DeviceData::allocateCommandBuffer(VkCommandBuffer* cmd) {
