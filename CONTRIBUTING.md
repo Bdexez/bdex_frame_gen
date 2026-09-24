@@ -49,7 +49,7 @@ VK_IMPLICIT_LAYER_PATH=$PWD/build/layer BDEX_FG=1 ./build/demo/bdex_demo --fps 3
 
 ### Before opening a pull request
 
-- `ctest` passes (unit tests, evaluator checks, frame-generation and acquire-timeout GPU tests).
+- `ctest` passes (unit tests, evaluator checks, headless engine test, frame-generation and acquire-timeout GPU tests).
 - The layer stays clean under the Khronos validation layer, synchronization
   validation included:
   ```sh
@@ -64,6 +64,19 @@ VK_IMPLICIT_LAYER_PATH=$PWD/build/layer BDEX_FG=1 ./build/demo/bdex_demo --fps 3
   also run with `BDEX_FG_MULTIPLIER=3` and `4`. A PSNR improvement on the demo
   is not absolute proof, but a regression is a good signal. The runner ignores
   the local config file; set experimental options with `BDEX_FG_*` variables.
+- The demo is one scene. For quality changes, also replay recorded game
+  sequences offline (no window, no compositor, identical inputs for every
+  variant). Record the real frames of a game through the layer, then score
+  the defaults against your option on those frames:
+  ```sh
+  BDEX_FG=1 BDEX_FG_MULTIPLIER=1 BDEX_FG_DUMP=/tmp/seq BDEX_FG_DUMP_FRAMES=240 %command%   # Steam launch options
+  tools/eval_sequence.py /tmp/seq --variant OCCLUSION_STRENGTH=1 [--multiplier 3] [--exclude x0,y0,x1,y1]
+  ```
+  Every `multiplier`-th frame is an input and the ones in between are the
+  ground truth. The report gives whole-frame, moving-region and moving-edge
+  PSNR, and what plain frame repetition (`dup`) and a cross-fade (`blend`)
+  score on the same frames. Dumping slows the game down, which only makes
+  the motion between frames larger; move the camera while recording.
 - For any change affecting performance, attach a statistics line with
   `BDEX_FG_PROFILE=1` before and after.
 - One PR = one topic. Commit messages are written in the imperative, with a

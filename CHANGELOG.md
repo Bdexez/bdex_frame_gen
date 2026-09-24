@@ -6,6 +6,18 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added (2026-09-24)
+
+- `bdex_offline` + `tools/eval_sequence.py`: offline quality evaluation on
+  any recorded frame sequence (a game dumped through the layer with
+  `BDEX_FG_MULTIPLIER=1`). The unchanged engine runs headless (no window, no
+  compositor-dependent size); every `multiplier`-th frame is an input, the
+  others are the ground truth. Reports whole-frame / moving-region /
+  moving-edge PSNR next to frame repetition and cross-fade baselines, and
+  A/B-compares `--variant` options on identical inputs. On the demo it
+  reproduces the layer's online frames exactly (outside the frame counter).
+  New `offline` ctest (synthetic panning sequence, no display needed).
+
 ### Improved (2026-09-24)
 
 - Windows capture now applies its extrapolation default before config/env and
