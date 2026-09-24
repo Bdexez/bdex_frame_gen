@@ -16,8 +16,10 @@ Runtime container. Open an issue with:
    ```
    The first lines show the configuration, the GPU, the queue in use and the
    swapchain format; that is often enough to understand what is going on.
-2. **Your environment**: distribution, GPU and driver (`vulkaninfo --summary`),
-   compositor (Wayland/X11), Vulkan loader version.
+2. **Your environment**: `bdex-framegen --report` writes system, session,
+   GPU/driver, installed manifests, relevant environment variables, the
+   config file and the end of the log into `bdex-framegen-report.txt` —
+   attach it (read it first for anything private).
 3. **The game** and how it is launched (native, DXVK, VKD3D-Proton, Proton
    version), including the launch options.
 4. **The symptom**: no effect, crash, black screen, artefacts, stutter…

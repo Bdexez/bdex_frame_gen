@@ -23,10 +23,49 @@
 #       --check            report whether the layer is found by the Vulkan loader
 #       --toggle           pause / resume frame generation in running games (live,
 #                          through the config file; bind it to a desktop shortcut)
+#       --report [FILE]    write a diagnostic report for bug reports (default:
+#                          ./bdex-framegen-report.txt)
 #   -h, --help
 set -euo pipefail
 
-usage() { sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; }
+
+# Everything a bug report needs, in one file to attach to an issue.
+report() {
+  out="${1:-bdex-framegen-report.txt}"
+  cfg="${BDEX_FG_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/bdex-framegen.conf}"
+  {
+    echo "== bdex-framegen diagnostic report, $(date -u '+%Y-%m-%d %H:%M UTC')"
+    echo; echo "== system"
+    uname -srm
+    grep -h '^PRETTY_NAME' /etc/os-release 2>/dev/null || true
+    echo "session: ${XDG_SESSION_TYPE:-?}  desktop: ${XDG_CURRENT_DESKTOP:-?}  WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-}  DISPLAY=${DISPLAY:-}"
+    echo; echo "== layer"
+    if command -v vulkaninfo >/dev/null; then
+      BDEX_FG=1 BDEX_FG_LOG=2 BDEX_FG_STATS=0 vulkaninfo --summary 2>&1 |
+        grep -E "bdex-fg|VK_LAYER_BDEX|deviceName|driverName|driverInfo|apiVersion|deviceType" | head -40
+    else
+      echo "vulkaninfo not found (install vulkan-tools)"
+    fi
+    echo; echo "== installed manifests"
+    for d in /usr/share/vulkan/implicit_layer.d /etc/vulkan/implicit_layer.d \
+             "${XDG_DATA_HOME:-$HOME/.local/share}/vulkan/implicit_layer.d"; do
+      ls -l "$d"/*BDEX* 2>/dev/null || true
+    done
+    echo; echo "== environment"
+    env | grep -E '^(BDEX_FG|VK_|PROTON_|DXVK_|VKD3D_|MESA_|RADV_|__GL)' | sort || true
+    echo; echo "== config file ($cfg)"
+    if [ -f "$cfg" ]; then cat "$cfg"; else echo "(none)"; fi
+    log="$(grep -hE '^\s*log_file\s*=' "$cfg" 2>/dev/null | tail -1 | cut -d= -f2- | xargs || true)"
+    log="${BDEX_FG_LOG_FILE:-$log}"
+    if [ -n "$log" ]; then
+      log="${log/#\~/$HOME}"
+      echo; echo "== last 200 lines of $log"
+      tail -n 200 "$log" 2>/dev/null || echo "(unreadable)"
+    fi
+  } > "$out"
+  echo "report written to $out — attach it to the issue (check it for anything private first)"
+}
 
 # Flips `paused` in the global [*] section of the config file. Running games
 # pick the change up within ~0.5 s (the layer reloads live settings when the
@@ -77,6 +116,7 @@ env_vars=(BDEX_FG=1)
 while [ $# -gt 0 ]; do
   case "$1" in
     --toggle)          toggle; exit 0 ;;
+    --report)          report "${2:-}"; exit 0 ;;
     -m|--multiplier)   env_vars+=("BDEX_FG_MULTIPLIER=$2"); shift 2 ;;
     -x|--extrapolate)  env_vars+=("BDEX_FG_MODE=extrapolate"); shift ;;
     -P|--preset)       env_vars+=("BDEX_FG_PRESET=$2"); shift 2 ;;
