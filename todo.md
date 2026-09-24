@@ -41,9 +41,14 @@ Outils : `tools/run_eval.sh` (démo, en ligne) et `tools/eval_sequence.py`
   détection d'un changement global de luminosité (moyennes de luma des deux
   frames au niveau grossier), et compenser le gain côté synthèse (sur le
   scintillement, même le fondu simple bat la synthèse : 27,1 vs 26,2 dB).
-- [ ] **Détection du HUD sur plusieurs frames** : masque d'immobilité accumulé
-  sur ~10 frames, pour distinguer un glyphe fixe d'un petit objet rapide
-  (indiscernables avec deux frames). Version aboutie de `static_guard`.
+- [~] **Détection du HUD** — amélioré (2026-09-24) : `static_guard` ne
+  s'applique plus que si le flow *au pixel même* indique du mouvement (un
+  glyphe fixe dans un contenu qui bouge), avec un seuil d'immobilité 8× plus
+  strict. HUD +0,95 dB, démo +0,04, rapide −0,13 (contre −0,20), panoramique
+  sous-pixel −2,6 (contre −7,7 avec l'ancien seuil). Reste : la perte sur les
+  arêtes en mouvement rapide (−0,22). L'historique sur N frames ne
+  discrimine pas : le fond sous un petit objet qui passe est lui aussi
+  immobile depuis longtemps.
 - [ ] **Warp « en avant » pour l'extrapolation** : projeter chaque pixel vers
   sa position future, puis remplir les trous avec le fond, au lieu d'étirer
   les zones découvertes.

@@ -39,6 +39,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   see-through HUDs (a glyph's neighbours move); conditioning on warp
   consistency removed most of the HUD gain; in extrapolation the guard costs
   0.5–0.8 dB on the demo, so it is interpolation-only.
+- `static_guard` now requires the flow at the pixel itself to indicate motion
+  (a static pixel inside moving content is an overlay; a static background
+  pixel that a small object crosses has zero flow there), with an 8× stricter
+  "unchanged" threshold. Offline: HUD scene +0.95 dB, demo +0.04 (was +0.01),
+  fast −0.13 (was −0.20), sub-pixel smooth pan −2.6 dB (−7.7 with the old
+  threshold).
 - `zero_bias_contrast` (opt-in, default 0 = bit-for-bit): scales the zero
   bias by min(1, E / zero_bias_contrast), E the block's mean luma gradient.
   At 0.1, online `run_eval.sh` (40 frames, Vega 8): normal 29.48 → 29.50 dB,
