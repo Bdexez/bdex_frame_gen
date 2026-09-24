@@ -54,6 +54,7 @@ struct Config {
     float gradWeight    = 0.0f;   // weight of the gradient-constancy matching term (0 = plain luma SAD; ~1 sharpens fast motion at some cost to static fidelity)
     float censusWeight  = 0.0f;   // weight of the census re-ranking term: when the block matcher is ambiguous (runner-up within census_margin of the winner), near-winners are re-ranked on census Hamming distance (0 = off, bit-for-bit)
     float censusMargin  = 0.05f;  // relative cost margin that makes a match ambiguous (triggers the census re-ranking)
+    float chromaWeight  = 0.0f;   // chroma re-ranking of the block matcher: candidates luma cannot tell apart are re-ranked on Cb/Cr SAD (0 = off, bit-for-bit; enabling it builds a chroma pyramid, read at start-up)
     float rotWeight     = 0.0f;   // rotation/scale re-ranking of ambiguous winners: the top-2 displacements are re-evaluated under local rotations and scales (0 = off, bit-for-bit; 1 = on)
     float occlusionStrength = 0.0f; // opt-in flow confidence and reduced cross-fade fallback (0 = historical synthesis)
     bool  temporalPrediction = false; // coarsest matching level searches around the previous frame pair's motion instead of zero, so sustained fast pans are followed beyond the pyramid's range (opt-in; off = bit-for-bit)

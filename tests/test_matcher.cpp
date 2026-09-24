@@ -28,6 +28,7 @@ constexpr int BS = 8, NT = 64;
 struct MatchPC {
     int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias;
     float gradWeight; float censusWeight; float censusMargin; float rotWeight; int32_t temporal; float zeroBiasContrast;
+    float chromaWeight;
 };
 
 struct Image {
@@ -183,11 +184,11 @@ int main() {
 
     // Pipeline for block_match (f32), bindings as in FrameGen::createPipelines.
     const VkDescriptorType SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    const VkDescriptorType types[6] = {SI, SI, CIS, SI, SI, CIS};
-    VkDescriptorSetLayoutBinding b[6];
-    for (uint32_t i = 0; i < 6; ++i) b[i] = {i, types[i], 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+    const VkDescriptorType types[8] = {SI, SI, CIS, SI, SI, CIS, CIS, CIS};
+    VkDescriptorSetLayoutBinding b[8];
+    for (uint32_t i = 0; i < 8; ++i) b[i] = {i, types[i], 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
     VkDescriptorSetLayoutCreateInfo dl{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    dl.bindingCount = 6;
+    dl.bindingCount = 8;
     dl.pBindings = b;
     VkDescriptorSetLayout setLayout;
     check(vkCreateDescriptorSetLayout(device, &dl, nullptr, &setLayout), "set layout");
@@ -210,7 +211,7 @@ int main() {
     VkPipeline pipeline;
     check(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &cpi, nullptr, &pipeline), "pipeline");
 
-    VkDescriptorPoolSize ps[2] = {{SI, 4}, {CIS, 2}};
+    VkDescriptorPoolSize ps[2] = {{SI, 4}, {CIS, 4}};
     VkDescriptorPoolCreateInfo dpi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     dpi.maxSets = 1;
     dpi.poolSizeCount = 2;
@@ -226,10 +227,12 @@ int main() {
     VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     VkSampler sampler;
     check(vkCreateSampler(device, &sci, nullptr, &sampler), "sampler");
-    const VkImageView views[6] = {imRef.view, imTgt.view, imCoarse.view, imFlow.view, imCost.view, imCoarse.view};
-    VkDescriptorImageInfo ii[6];
-    VkWriteDescriptorSet w[6];
-    for (uint32_t i = 0; i < 6; ++i) {
+    // Bindings 5-7 (previous flow, chroma) are unused at the default weights.
+    const VkImageView views[8] = {imRef.view, imTgt.view, imCoarse.view, imFlow.view, imCost.view,
+                                  imCoarse.view, imCoarse.view, imCoarse.view};
+    VkDescriptorImageInfo ii[8];
+    VkWriteDescriptorSet w[8];
+    for (uint32_t i = 0; i < 8; ++i) {
         ii[i] = {sampler, views[i], VK_IMAGE_LAYOUT_GENERAL};
         w[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
         w[i].dstSet = set;
@@ -238,9 +241,9 @@ int main() {
         w[i].descriptorType = types[i];
         w[i].pImageInfo = &ii[i];
     }
-    vkUpdateDescriptorSets(device, 6, w, 0, nullptr);
+    vkUpdateDescriptorSets(device, 8, w, 0, nullptr);
 
-    MatchPC pc{{W, H}, {bw, bh}, R, 0, 0.f, 0.f, 0.f, 0.f, 0.05f, 0.f, 0, 0.f};
+    MatchPC pc{{W, H}, {bw, bh}, R, 0, 0.f, 0.f, 0.f, 0.f, 0.05f, 0.f, 0, 0.f, 0.f};
     dev.immediate([&](VkCommandBuffer cmd) {
         std::vector<VkImageMemoryBarrier> bars;
         for (const AllocatedImage* im : {&imRef, &imTgt, &imCoarse, &imFlow, &imCost})

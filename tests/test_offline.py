@@ -5,7 +5,8 @@ than repeating the nearest input frame. On an irregular "game" — uneven frame
 times (--jitter), or every image presented twice (--dup 2) — frame_timing and
 dedup must beat the fixed timing, in both modes; and on a menu opening over
 part of the screen, scene_cut_local must beat the frame-wide scene-cut test;
-on a swinging camera, extrapolate_accel must beat constant velocity.
+on a swinging camera, extrapolate_accel must beat constant velocity; on
+colours of equal brightness, chroma_weight must beat luma-only matching.
 Usage: test_offline.py <build dir>"""
 import os
 import subprocess
@@ -76,6 +77,10 @@ def main():
         base, accel = evaluate(build, d / "swing", {"BDEX_FG_MODE": "extrapolate"}, ["--variant", "EXTRAPOLATE_ACCEL=1"])
         if not accel > base + 0.5:
             print(f"swing: extrapolate_accel {accel:.2f} dB does not beat constant velocity {base:.2f} dB")
+            return 1
+        base, chroma = evaluate(build, d / "chroma", {"BDEX_FG_MODE": "interpolate"}, ["--variant", "CHROMA_WEIGHT=1"])
+        if not chroma > base + 3.0:
+            print(f"chroma: chroma_weight {chroma:.2f} dB does not beat luma-only matching {base:.2f} dB")
             return 1
     return 0
 

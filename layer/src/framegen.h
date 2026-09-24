@@ -110,6 +110,7 @@ private:
         VkExtent2D size{};    // luma resolution
         VkExtent2D blocks{};  // flow resolution
         AllocatedImage pyr[2];
+        AllocatedImage chroma[2];  // Cb/Cr pyramid (chroma_weight), per parity; empty when off
         VkExtent2D fine{};    // refined flow resolution
         bool refined = false; // flowFine is a distinct, refined image (else it aliases flow)
         AllocatedImage flowRaw[2];  // [0] forward, [1] backward
@@ -177,7 +178,11 @@ private:
     VkSampler sampler_ = VK_NULL_HANDLE;
     VkDescriptorPool pool_ = VK_NULL_HANDLE;
 
-    Pass downsample_, blockMatch_, smooth_, refine_, reduce_, interp_, upscale_, cas_, splat_, frameState_;
+    Pass downsample_, blockMatch_, smooth_, refine_, reduce_, interp_, upscale_, cas_, splat_, frameState_, downChroma_;
+    bool chroma_ = false;                         // chroma pyramid built (chroma_weight > 0 at creation)
+    AllocatedImage chromaDummy_;                  // bound to the matcher's chroma slots when chroma_ is off
+    std::vector<VkDescriptorSet> dsChromaSrc_[2]; // [parity] per source (level 0)
+    std::vector<VkDescriptorSet> dsChroma_[2];    // [parity] per level > 0
 
     // Per-frame state (frame_state.comp), see recordFrameState.
     void dispatchGated(VkCommandBuffer cmd, uint32_t entry, uint32_t x, uint32_t y);

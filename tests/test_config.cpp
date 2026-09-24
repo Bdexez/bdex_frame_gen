@@ -81,6 +81,7 @@ TEST(config_apply_values) {
     CHECK(c.apply("DEDUP", "on") && c.dedup);
     CHECK(!c.sceneCutLocal && c.apply("scene_cut_local", "1") && c.sceneCutLocal);
     CHECK(c.apply("extrapolate_accel", "0.5") && c.extrapolateAccel == 0.5f);
+    CHECK(c.apply("chroma_weight", "1") && c.chromaWeight == 1.f);
     CHECK(c.apply("EXTRAPOLATE_ACCEL", "3") && c.extrapolateAccel == 1.f);   // clamped
     {
         Config live, fresh;

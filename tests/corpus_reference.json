@@ -1,4 +1,20 @@
 {
+ "chroma/extrapolate/candidate": {
+  "psnr": 19.47,
+  "ssim": 0.9896
+ },
+ "chroma/extrapolate/default": {
+  "psnr": 19.37,
+  "ssim": 0.9901
+ },
+ "chroma/interpolate/candidate": {
+  "psnr": 22.47,
+  "ssim": 0.9917
+ },
+ "chroma/interpolate/default": {
+  "psnr": 22.27,
+  "ssim": 0.9912
+ },
  "fade/extrapolate/candidate": {
   "psnr": 29.92,
   "ssim": 0.8483
