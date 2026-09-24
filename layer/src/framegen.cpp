@@ -13,7 +13,7 @@ namespace bdex {
 namespace {
 
 struct DownsamplePC { int32_t size[2]; int32_t fromColor; int32_t srgbSource; };
-struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; float gradWeight; float censusWeight; float censusMargin; float rotWeight; int32_t temporal; };
+struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; float gradWeight; float censusWeight; float censusMargin; float rotWeight; int32_t temporal; float zeroBiasContrast; };
 struct SizePC { int32_t size[2]; };
 struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; };
 struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; float occlusionStrength; float staticGuard; float extrapHold; };
@@ -23,7 +23,7 @@ struct CasPC { int32_t size[2]; uint32_t encoding; float sharpness; };
 constexpr uint32_t kBlockSize = 8;
 constexpr uint32_t kFineBlock = 4;
 constexpr uint32_t kPushSize = 80;
-static_assert(sizeof(InterpPC) <= kPushSize);
+static_assert(sizeof(InterpPC) <= kPushSize && sizeof(MatchPC) <= kPushSize);
 
 uint32_t divUp(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
 
@@ -550,7 +550,7 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
         MatchPC pc{{(int32_t)lv.size.width, (int32_t)lv.size.height},
                    {(int32_t)lv.blocks.width, (int32_t)lv.blocks.height},
                    l + 1 < levels_ ? cfg.searchFine : cfg.searchRadius, l + 1 < levels_ ? 1 : 0, cfg.smoothness, cfg.zeroBias,
-                   cfg.gradWeight, cfg.censusWeight, cfg.censusMargin, cfg.rotWeight, 0};
+                   cfg.gradWeight, cfg.censusWeight, cfg.censusMargin, cfg.rotWeight, 0, cfg.zeroBiasContrast};
         const bool temporal = cfg.temporalPrediction && flowValid_;
         for (uint32_t dir = 0; dir < 2; ++dir) {
             pc.temporal = temporal ? static_cast<int32_t>(dir + 1) : 0;

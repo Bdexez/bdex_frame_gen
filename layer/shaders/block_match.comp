@@ -56,6 +56,15 @@
 // first steps away from zero are what it builds on. temporal = 0 leaves the
 // pass bit-for-bit unchanged.
 //
+// Contrast-relative zero bias (when zeroBiasContrast > 0): the zero bias is an
+// absolute cost per pixel of displacement, while the SAD gap between the true
+// motion and "no motion" shrinks with the block's contrast. On smooth or
+// low-contrast content the free zero-motion candidate then wins and the frame
+// cross-fades (a 32 px/pair pan of a smooth texture: 28.5 dB, 46.2 dB without
+// the bias). The bias is scaled by min(1, E / zeroBiasContrast), E being the
+// block's mean luma gradient: textured static content (HUDs) keeps the full
+// protection, smooth content loses it.
+//
 // Output flow is the displacement (in pixels of this level) that maps a
 // position in the reference image to the matching position in the target.
 #include "common.glsl"
@@ -96,6 +105,7 @@ layout(push_constant) uniform PC {
     float censusMargin;// relative cost margin that makes a match ambiguous
     float rotWeight;   // rotation/scale re-ranking of ambiguous winners (0 = off)
     int temporal;      // temporal prediction at the coarsest level: 0 off, 1 forward pass, 2 backward pass
+    float zeroBiasContrast; // gradient energy at which the zero bias is fully applied (0 = absolute bias)
 } pc;
 
 shared float refBlk[RB * RB];
@@ -109,6 +119,7 @@ shared float sCost2[MAXCAND + 1];      // full per-candidate cost
 shared float rpix[2][NROT][NT];        // per-pixel costs of the rotated re-evaluation
 shared float rsum[2][NROT];            // block sums of rpix
 shared ivec2 sBase;
+shared float sGrad[NT];                // per-pixel gradient magnitude (contrast-relative zero bias)
 
 // Neighbour order for the 8-bit census (3x3 minus the centre).
 const ivec2 kCenOff[8] = ivec2[8](ivec2(-1, -1), ivec2(0, -1), ivec2(1, -1), ivec2(-1, 0),
@@ -163,6 +174,16 @@ void main() {
     barrier();
 
     ivec2 base = sBase;
+    float zb = pc.zeroBias;
+    if (pc.zeroBiasContrast > 0.0) {  // uniform branch (push constant)
+        int px = tid & (BS - 1), py = tid / BS;
+        int ri = (py + 1) * RB + (px + 1);
+        sGrad[tid] = 0.5 * (abs(refBlk[ri + 1] - refBlk[ri - 1]) + abs(refBlk[ri + RB] - refBlk[ri - RB]));
+        barrier();
+        float e = 0.0;
+        for (int i = 0; i < NT; ++i) e += sGrad[i];
+        zb *= min(1.0, e * (1.0 / float(NT)) / pc.zeroBiasContrast);
+    }
     // Target region staged with a border (1 px normally, ROTANC when the
     // rotation re-ranking samples rotated positions), top-left at
     // origin+base-R-anc.
@@ -252,7 +273,7 @@ void main() {
         if (c < ncand) {
             ivec2 d = ivec2(c % W, c / W);
             vec2 disp = vec2(base + d - R);
-            sCost2[c] = sad + pc.smoothness * length(vec2(d - R)) + pc.zeroBias * length(disp);
+            sCost2[c] = sad + pc.smoothness * length(vec2(d - R)) + zb * length(disp);
         } else {
             sCost2[c] = sad;
         }

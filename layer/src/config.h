@@ -49,6 +49,7 @@ struct Config {
     float sceneCutHigh  = 0.09f;  // ... and above which the generated frame is a plain duplicate
     float smoothness    = 0.004f; // penalty per pixel of deviation from the coarse prediction
     float zeroBias      = 0.002f; // bias toward zero motion (helps static HUDs)
+    float zeroBiasContrast = 0.0f; // mean luma gradient at which zero_bias fully applies; lower-contrast blocks get proportionally less (0 = absolute bias, bit-for-bit)
     float gradWeight    = 0.0f;   // weight of the gradient-constancy matching term (0 = plain luma SAD; ~1 sharpens fast motion at some cost to static fidelity)
     float censusWeight  = 0.0f;   // weight of the census re-ranking term: when the block matcher is ambiguous (runner-up within census_margin of the winner), near-winners are re-ranked on census Hamming distance (0 = off, bit-for-bit)
     float censusMargin  = 0.05f;  // relative cost margin that makes a match ambiguous (triggers the census re-ranking)

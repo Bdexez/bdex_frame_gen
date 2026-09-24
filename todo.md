@@ -6,7 +6,8 @@ Outils : `tools/run_eval.sh` (démo, en ligne) et `tools/eval_sequence.py`
 
 ## Décisions en attente
 
-- [ ] **Défaut de `zero_bias`** : passer à 0, au moins pour l'extrapolation et
+- [ ] **Défaut de `zero_bias`** : activer `zero_bias_contrast=0.1` par défaut
+  (non négatif partout, cf. plus bas) plutôt que passer `zero_bias` à 0, au moins pour l'extrapolation et
   l'app de capture ? Mesuré : rapide +0,75 dB (arêtes en rotation +2,8),
   normal −0,10 ; en extrapolation, gain sur toutes les scènes testées.
   Attention : déplace la référence bit à bit de la CI, et le launcher Windows
@@ -21,7 +22,10 @@ Outils : `tools/run_eval.sh` (démo, en ligne) et `tools/eval_sequence.py`
 
 ## Qualité de l'image
 
-- [ ] **`zero_bias` proportionnel au contraste** du bloc (gradient moyen déjà
+- [x] **`zero_bias` proportionnel au contraste** — fait : `zero_bias_contrast`
+  (opt-in). À 0,1 : normal +0,02 dB, rapide +0,48 (rotation +2,7), panoramique
+  doux +17 dB. Meilleur candidat pour le défaut (remplace la question
+  `zero_bias=0`). du bloc (gradient moyen déjà
   en mémoire partagée), plutôt qu'une pénalité fixe : garder la stabilité des
   HUD texturés sans fondu fantôme sur les contenus doux.
 - [ ] **Flow sous-pixel** : les déplacements sont entiers et calculés à

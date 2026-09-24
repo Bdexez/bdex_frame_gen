@@ -222,6 +222,10 @@ a Windows machine.
   +2.8 dB) for −0.10 dB at normal speed. Smoothness is not the issue (±0.0).
   Candidate default change — pending a check on recorded game sequences for
   shimmering on static low-contrast content (what the bias protects).
+- `zero_bias_contrast=0.1` (opt-in, 2026-09-24): the bias scaled by the
+  block's contrast. Online: normal +0.02 dB, fast +0.48 dB (rotating edges
+  +2.7 dB); smooth pan +17 dB. Non-negative in both regimes — best candidate
+  for a default change (pending real game sequences).
 - `temporal_prediction` (opt-in): the coarsest level searches around the
   previous pair's motion. With `zero_bias=0` it follows a 64 px/pair pan
   (23.5 → 36.0 dB); alone it cannot bootstrap (+0.3 dB).
