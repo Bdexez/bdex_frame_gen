@@ -16,15 +16,27 @@ struct DownsamplePC { int32_t size[2]; int32_t fromColor; int32_t transfer; };
 struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; float gradWeight; float censusWeight; float censusMargin; float rotWeight; int32_t temporal; float zeroBiasContrast; };
 struct SizePC { int32_t size[2]; };
 struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; int32_t subpixel; };
-struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; float occlusionStrength; float staticGuard; float extrapHold; int32_t splat; int32_t pixelVectors; int32_t transfer; };
+struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; float occlusionStrength; float staticGuard; float extrapHold; int32_t splat; int32_t pixelVectors; int32_t transfer; int32_t timing; };
 struct UpscalePC { int32_t outSize[2]; int32_t srcSize[2]; uint32_t encoding; int32_t filter; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; };
-struct SplatPC { int32_t size[2]; float s; float flowScale; float flowInvSize[2]; };
+struct SplatPC { int32_t size[2]; float s; float flowScale; float flowInvSize[2]; int32_t timing; };
+struct FrameStatePC { int32_t size[2]; int32_t mode; int32_t multiplier; float sinceLastMs; float intervalMs; int32_t flags; int32_t gateCount; uint32_t dupMaxPixels; };
 struct CasPC { int32_t size[2]; uint32_t encoding; float sharpness; };
 
 constexpr uint32_t kBlockSize = 8;
 constexpr uint32_t kFineBlock = 4;
 constexpr uint32_t kPushSize = 96;  // <= 128, the guaranteed minimum of maxPushConstantsSize
 static_assert(sizeof(InterpPC) <= kPushSize && sizeof(MatchPC) <= kPushSize);
+
+// Frame state buffer layout (the State block of frame_state.comp; the
+// synthesis shaders read its head).
+constexpr VkDeviceSize kStateSize = 1024;
+constexpr VkDeviceSize kStateDiffCount = 8;
+constexpr VkDeviceSize kStateHead = 48;          // meanCost .. t[4], read back for the tools
+constexpr VkDeviceSize kStateGateFull = 304;     // uvec4 per gated dispatch
+constexpr VkDeviceSize kStateGateActive = 688;   // VkDispatchIndirectCommand per gated dispatch
+constexpr uint32_t kGateEntries = 24;
+static_assert(kStateGateActive + kGateEntries * 12 <= kStateSize);
+enum { kStateReset = 1, kStateDedup = 2, kStateExtrap = 4 };
 
 uint32_t divUp(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
 
@@ -35,9 +47,12 @@ FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, Vk
     : dev_(dev), format_(format), extent_(renderExtent), displayExtent_(displayExtent), outputs_(outputs) {
     upscaling_ = displayExtent_.width != extent_.width || displayExtent_.height != extent_.height;
     hudMode_ = dev.config.overlayMode;
-    // The real frame is resampled into an internal packed image when upscaling
-    // or when the HUD must be drawn on it (otherwise it is copied straight).
-    packReal_ = upscaling_ || hudMode_ > 0;
+    dedup_ = outputs_ > 0 && dev.config.dedup;
+    dupReal_ = dedup_ && dev.config.extrapolate;
+    // The real frame is resampled into an internal packed image when upscaling,
+    // when the HUD must be drawn on it, or when a repeated frame may have to
+    // be replaced by an extrapolated one (otherwise it is copied straight).
+    packReal_ = upscaling_ || hudMode_ > 0 || dupReal_;
     // The CAS pass needs a linear rgba16f intermediate it can both write and
     // sample with filtering; skip sharpening if the driver cannot provide it.
     sharpen_ = upscaling_ && dev.config.sharpness > 0.f &&
@@ -143,7 +158,8 @@ void FrameGen::createPipelines() {
         if (sharpen_)       interp_ = makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SI});
         else if (enc_.is64) interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB, SI});
         else                interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB, SI});
-        splat_ = makePass(splat_comp, splat_comp_size, {CIS, CIS, SI});
+        splat_ = makePass(splat_comp, splat_comp_size, {CIS, CIS, SI, SB});
+        frameState_ = makePass(frame_state_comp, frame_state_comp_size, {CIS, CIS, SB});
     }
     if (packReal_) {
         if (sharpen_)       upscale_ = makePass(upscale_comp_sharp, upscale_comp_sharp_size, {CIS, SI});
@@ -205,7 +221,26 @@ void FrameGen::createResources() {
         sharpReal_ = dev_.createImage(VK_FORMAT_R16G16B16A16_SFLOAT, displayExtent_, sharpUsage, true);
     }
     if (outputs_ > 0) {
-        costBuf_ = dev_.createBuffer(16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        stateBuf_ = dev_.createBuffer(kStateSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                                      VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
+        stateReadback_ = dev_.createBuffer(kStateHead, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
+        VK_CHECK(dev_.vt.MapMemory(dev_.device, stateReadback_.memory, 0, VK_WHOLE_SIZE, 0, &stateMapped_));
+        // The dispatches the state pass may gate, in a fixed order: per flow
+        // level l, block matching (3l), smoothing (3l+1) and refinement
+        // (3l+2); then the scene-cut reduction; then the extrapolated
+        // replacement of a repeated real frame, which runs only on repeats.
+        auto gate = [&](uint32_t x, uint32_t y, bool onDuplicates) {
+            gateFull_.insert(gateFull_.end(), {x, y, 1u, onDuplicates ? 1u : 0u});
+            return static_cast<uint32_t>(gateFull_.size() / 4 - 1);
+        };
+        for (const Level& lv : levels_v_) {
+            gate(lv.blocks.width, lv.blocks.height, false);
+            gate(divUp(lv.blocks.width, 16), divUp(lv.blocks.height, 16), false);
+            gate(divUp(lv.fine.width, 16), divUp(lv.fine.height, 16), false);
+        }
+        gateReduce_ = gate(1, 1, false);
+        gateDupReal_ = gate(divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), true);
+        if (gateFull_.size() / 4 > kGateEntries) throw VkError(VK_ERROR_INITIALIZATION_FAILED, "too many gated dispatches");
         // The splat key packs the source index in 23 bits (4K fits).
         splatting_ = cfg.extrapolate && cfg.extrapolateSplat &&
                      uint64_t(displayExtent_.width) * displayExtent_.height <= (1ull << 23);
@@ -250,7 +285,15 @@ void FrameGen::createResources() {
         dev_.vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
                                    nullptr, static_cast<uint32_t>(barriers.size()), barriers.data());
-        if (costBuf_.buffer) dev_.vt.CmdFillBuffer(cmd, costBuf_.buffer, 0, VK_WHOLE_SIZE, 0);
+        if (stateBuf_.buffer) {
+            dev_.vt.CmdFillBuffer(cmd, stateBuf_.buffer, 0, VK_WHOLE_SIZE, 0);
+            VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            mb.srcAccessMask = mb.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            dev_.vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &mb, 0,
+                                       nullptr, 0, nullptr);
+            dev_.vt.CmdUpdateBuffer(cmd, stateBuf_.buffer, kStateGateFull, gateFull_.size() * sizeof(uint32_t),
+                                    gateFull_.data());
+        }
     });
 }
 
@@ -294,12 +337,13 @@ void FrameGen::createDescriptors() {
     const uint32_t gen = O > 0 ? 1 : 0;           // generation descriptor sets exist only with outputs
     const uint32_t up = packReal_ ? N : 0;        // one upscale/copy set per source
     const uint32_t cas = sharpen_ ? O + 1 : 0;    // one CAS set per generated output, plus the real frame
-    const uint32_t nSets = gen * (2 * N + 2 * L + 4 * L + 2 * L + 4 * L + 1 + nInterp + 1) + up + cas;  // + splat
+    const uint32_t nReal = dupReal_ ? N * N : 0;  // extrapolated replacements of repeated real frames
+    const uint32_t nSets = gen * (2 * N + 2 * L + 4 * L + 2 * L + 4 * L + 1 + nInterp + 1 + 1) + nReal + up + cas;  // + splat, state
     // Block-match sets (2 parities x 2 directions x L) hold two samplers each:
     // the coarse prediction and the previous backward flow (temporal prediction).
-    const uint32_t nCIS = gen * (2 * N + 2 * L + 4 * L * 2 + 4 * nInterp + 2) + up + cas;  // + splat flows
-    const uint32_t nSI = gen * (2 * N + 2 * L + 4 * L * 4 + 2 * L * 2 + 4 * L * 5 + 1 + nInterp * 2 + 1) + up + cas;  // interp + splat map
-    const uint32_t nSB = gen * (1 + nInterp);
+    const uint32_t nCIS = gen * (2 * N + 2 * L + 4 * L * 2 + 4 * nInterp + 2 + 2) + 4 * nReal + up + cas;  // + splat flows, state lumas
+    const uint32_t nSI = gen * (2 * N + 2 * L + 4 * L * 4 + 2 * L * 2 + 4 * L * 5 + 1 + nInterp * 2 + 1) + 2 * nReal + up + cas;  // interp + splat map
+    const uint32_t nSB = gen * (1 + nInterp + 1 + 1) + nReal;  // reduce, interp, splat, state
     std::vector<VkDescriptorPoolSize> sizes;
     if (nCIS) sizes.push_back({VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nCIS});
     if (nSI) sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nSI});
@@ -383,11 +427,16 @@ void FrameGen::createDescriptors() {
     }
     dsReduce_ = allocSet(reduce_.setLayout);
     writeImage(dsReduce_, 0, SI, levels_v_[0].cost[0].view);
-    writeBuffer(dsReduce_, 1, costBuf_.buffer);
+    writeBuffer(dsReduce_, 1, stateBuf_.buffer);
     dsSplat_ = allocSet(splat_.setLayout);
     writeImage(dsSplat_, 0, CIS, levels_v_[0].flowFine[0].view);
     writeImage(dsSplat_, 1, CIS, levels_v_[0].flowFine[1].view);
     writeImage(dsSplat_, 2, SI, splatMap_.view);
+    writeBuffer(dsSplat_, 3, stateBuf_.buffer);
+    dsState_ = allocSet(frameState_.setLayout);
+    writeImage(dsState_, 0, CIS, levels_v_[0].pyr[0].view);
+    writeImage(dsState_, 1, CIS, levels_v_[0].pyr[1].view);
+    writeBuffer(dsState_, 2, stateBuf_.buffer);
 
     for (uint32_t prev = 0; prev < N; ++prev) {
         for (uint32_t cur = 0; cur < N; ++cur) {
@@ -398,9 +447,20 @@ void FrameGen::createDescriptors() {
                 writeImage(s, 2, CIS, levels_v_[0].flowFine[0].view);
                 writeImage(s, 3, CIS, levels_v_[0].flowFine[1].view);
                 writeImage(s, 4, SI, (sharpen_ ? sharp_[o] : out_[o]).view);
-                writeBuffer(s, 5, costBuf_.buffer);
+                writeBuffer(s, 5, stateBuf_.buffer);
                 writeImage(s, 6, SI, splatMap_.view);
                 dsInterp_.push_back(s);
+            }
+            if (dupReal_) {
+                VkDescriptorSet s = allocSet(interp_.setLayout);
+                writeImage(s, 0, CIS, sources_[prev].view);
+                writeImage(s, 1, CIS, sources_[cur].view);
+                writeImage(s, 2, CIS, levels_v_[0].flowFine[0].view);
+                writeImage(s, 3, CIS, levels_v_[0].flowFine[1].view);
+                writeImage(s, 4, SI, (sharpen_ ? sharpReal_ : outReal_).view);
+                writeBuffer(s, 5, stateBuf_.buffer);
+                writeImage(s, 6, SI, splatMap_.view);
+                dsInterpReal_.push_back(s);
             }
         }
     }
@@ -411,7 +471,7 @@ void FrameGen::destroyAll() {
     VkDevice d = dev_.device;
     if (pool_) vt.DestroyDescriptorPool(d, pool_, nullptr);
     pool_ = VK_NULL_HANDLE;
-    for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_, &splat_}) {
+    for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_, &splat_, &frameState_}) {
         if (p->pipeline) vt.DestroyPipeline(d, p->pipeline, nullptr);
         if (p->layout) vt.DestroyPipelineLayout(d, p->layout, nullptr);
         if (p->setLayout) vt.DestroyDescriptorSetLayout(d, p->setLayout, nullptr);
@@ -438,7 +498,10 @@ void FrameGen::destroyAll() {
     for (auto& s : sharp_) dev_.destroyImage(s);
     sharp_.clear();
     if (sharpReal_.image) dev_.destroyImage(sharpReal_);
-    dev_.destroyBuffer(costBuf_);
+    dev_.destroyBuffer(stateBuf_);
+    if (stateMapped_) vt.UnmapMemory(d, stateReadback_.memory);
+    stateMapped_ = nullptr;
+    dev_.destroyBuffer(stateReadback_);
     if (queryPool_) vt.DestroyQueryPool(d, queryPool_, nullptr);
     queryPool_ = VK_NULL_HANDLE;
     for (size_t i = 0; i < dumpBuf_.size(); ++i) {
@@ -467,7 +530,7 @@ void FrameGen::recordDump(VkCommandBuffer cmd, uint32_t which, uint32_t cur) {
     memoryBarrier(cmd);
     if (which < outputs_) {
         VkBufferCopy bc{0, 0, 16};
-        vt.CmdCopyBuffer(cmd, costBuf_.buffer, costReadback_.buffer, 1, &bc);
+        vt.CmdCopyBuffer(cmd, stateBuf_.buffer, costReadback_.buffer, 1, &bc);
     }
     VkBufferImageCopy region{};
     region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
@@ -589,6 +652,11 @@ void FrameGen::recordReleaseSources(VkCommandBuffer cmd, int prev, int cur) {
 
 void FrameGen::recordAnalysis(VkCommandBuffer cmd, uint32_t parity, uint32_t cur) {
     auto& vt = dev_.vt;
+    // A new frame: the per-frame state of the previous one no longer applies.
+    flowLastFrame_ = flowThisFrame_;
+    flowThisFrame_ = false;
+    timingActive_ = false;
+    gate_ = false;
     vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, downsample_.pipeline);
     for (int l = 0; l < levels_; ++l) {
         const Level& lv = levels_v_[l];
@@ -601,9 +669,78 @@ void FrameGen::recordAnalysis(VkCommandBuffer cmd, uint32_t parity, uint32_t cur
     }
 }
 
+// Compute and indirect-argument reads of the state pass's results.
+void FrameGen::stateBarrier(VkCommandBuffer cmd) {
+    VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT |
+                       VK_ACCESS_TRANSFER_READ_BIT;
+    dev_.vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                               VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT |
+                                   VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               0, 1, &mb, 0, nullptr, 0, nullptr);
+}
+
+// A dispatch the state pass may cancel (entry of gateFull_): indirect when
+// gating is on this frame, otherwise the plain dispatch of the same size.
+void FrameGen::dispatchGated(VkCommandBuffer cmd, uint32_t entry, uint32_t x, uint32_t y) {
+    if (gate_) dev_.vt.CmdDispatchIndirect(cmd, stateBuf_.buffer, kStateGateActive + 12 * VkDeviceSize(entry));
+    else dev_.vt.CmdDispatch(cmd, x, y, 1);
+}
+
+void FrameGen::recordFrameState(VkCommandBuffer cmd, const FrameTiming& timing) {
+    timingActive_ = false;
+    gate_ = false;
+    if (outputs_ == 0 || (!dev_.config.frameTiming && !dedup_)) return;
+    auto& vt = dev_.vt;
+    const Level& l0 = levels_v_[0];
+    const bool reset = timing.reset || !(timing.sinceLastMs > 0.0);
+    // A repeat keeps the previous pair's flow: only possible if that flow
+    // was computed (not after a frame presented without generation).
+    const bool dedup = dedup_ && !reset && flowLastFrame_;
+    vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, frameState_.pipeline);
+    vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, frameState_.layout, 0, 1, &dsState_, 0, nullptr);
+    FrameStatePC pc{{(int32_t)l0.size.width, (int32_t)l0.size.height}, 0, timing.multiplier,
+                    float(timing.sinceLastMs), float(timing.intervalMs),
+                    (reset ? kStateReset : 0) | (dedup ? kStateDedup : 0) | (dev_.config.extrapolate ? kStateExtrap : 0),
+                    static_cast<int32_t>(gateFull_.size() / 4),
+                    // A few differing pixels (a blinking cursor, dithering) still count as a repeat.
+                    std::max(4u, l0.size.width * l0.size.height / 16384u)};
+    if (dedup) {
+        vt.CmdFillBuffer(cmd, stateBuf_.buffer, kStateDiffCount, 4, 0);
+        memoryBarrier(cmd);
+        vt.CmdPushConstants(cmd, frameState_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+        vt.CmdDispatch(cmd, divUp(l0.size.width, 16), divUp(l0.size.height, 16), 1);
+        memoryBarrier(cmd);
+    }
+    pc.mode = 1;
+    vt.CmdPushConstants(cmd, frameState_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+    vt.CmdDispatch(cmd, 1, 1, 1);
+    stateBarrier(cmd);
+    VkBufferCopy bc{0, 0, kStateHead};
+    vt.CmdCopyBuffer(cmd, stateBuf_.buffer, stateReadback_.buffer, 1, &bc);
+    VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, nullptr, 0, nullptr);
+    timingActive_ = true;
+    gate_ = dedup;
+}
+
+bool FrameGen::readState(State& out) const {
+    if (!stateMapped_) return false;
+    const auto* w = static_cast<const uint32_t*>(stateMapped_);
+    out.dup = w[1];
+    std::memcpy(&out.intervalMs, w + 5, 4);
+    out.repeats = w[6];
+    std::memcpy(out.t, w + 8, sizeof(out.t));
+    return true;
+}
+
 void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
     auto& vt = dev_.vt;
     const Config& cfg = dev_.config;
+    flowThisFrame_ = true;
     for (int l = levels_ - 1; l >= 0; --l) {
         const Level& lv = levels_v_[l];
         vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, blockMatch_.pipeline);
@@ -616,7 +753,7 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
             pc.temporal = temporal ? static_cast<int32_t>(dir + 1) : 0;
             vt.CmdPushConstants(cmd, blockMatch_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
             vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, blockMatch_.layout, 0, 1, &dsMatch_[parity][dir][l], 0, nullptr);
-            vt.CmdDispatch(cmd, lv.blocks.width, lv.blocks.height, 1);
+            dispatchGated(cmd, 3 * l, lv.blocks.width, lv.blocks.height);
         }
         memoryBarrier(cmd);
 
@@ -625,7 +762,7 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
         vt.CmdPushConstants(cmd, smooth_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(spc), &spc);
         for (uint32_t dir = 0; dir < 2; ++dir) {
             vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, smooth_.layout, 0, 1, &dsSmooth_[dir][l], 0, nullptr);
-            vt.CmdDispatch(cmd, divUp(lv.blocks.width, 16), divUp(lv.blocks.height, 16), 1);
+            dispatchGated(cmd, 3 * l + 1, divUp(lv.blocks.width, 16), divUp(lv.blocks.height, 16));
         }
         memoryBarrier(cmd);
 
@@ -638,7 +775,7 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
         vt.CmdPushConstants(cmd, refine_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(rpc), &rpc);
         for (uint32_t dir = 0; dir < 2; ++dir) {
             vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, refine_.layout, 0, 1, &dsRefine_[parity][dir][l], 0, nullptr);
-            vt.CmdDispatch(cmd, divUp(lv.fine.width, 16), divUp(lv.fine.height, 16), 1);
+            dispatchGated(cmd, 3 * l + 2, divUp(lv.fine.width, 16), divUp(lv.fine.height, 16));
         }
         memoryBarrier(cmd);
     }
@@ -648,7 +785,7 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
     SizePC rpc{{(int32_t)fine.blocks.width, (int32_t)fine.blocks.height}};
     vt.CmdPushConstants(cmd, reduce_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(rpc), &rpc);
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, reduce_.layout, 0, 1, &dsReduce_, 0, nullptr);
-    vt.CmdDispatch(cmd, 1, 1, 1);
+    dispatchGated(cmd, gateReduce_, 1, 1);
     memoryBarrier(cmd);
     flowValid_ = true;  // from now on the flow images hold a real previous flow
 }
@@ -676,10 +813,26 @@ void FrameGen::copyToPresent(VkCommandBuffer cmd, VkImage src, VkImageLayout src
 }
 
 void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cur, float t, uint32_t output) {
+    const uint32_t N = static_cast<uint32_t>(sources_.size());
+    recordSynthesis(cmd, dsInterp_[(prev * N + cur) * outputs_ + output], t, timingActive_ ? int32_t(output) + 1 : 0,
+                    false);
+    if (sharpen_) recordCas(cmd, dsCas_[output]);  // sharp_[output] -> out_[output]
+}
+
+// One synthesis pass (plus the forward splat it may need) into the output
+// image of `set`. `timing` > 0 takes t from slot timing-1 of the state
+// buffer instead of `t` (which still tells extrapolation from interpolation).
+// `gated`: dispatched through the state pass's "only on duplicates" entry.
+void FrameGen::recordSynthesis(VkCommandBuffer cmd, VkDescriptorSet set, float t, int32_t timing, bool gated) {
     auto& vt = dev_.vt;
     const Config& cfg = dev_.config;
     const Level& fine = levels_v_[0];
     const bool splat = splatting_ && t > 1.f;
+    const uint32_t gx = divUp(displayExtent_.width, 16), gy = divUp(displayExtent_.height, 16);
+    auto dispatch = [&] {
+        if (gated) vt.CmdDispatchIndirect(cmd, stateBuf_.buffer, kStateGateActive + 12 * VkDeviceSize(gateDupReal_));
+        else vt.CmdDispatch(cmd, gx, gy, 1);
+    };
     if (splat) {
         // Forward-splat the current frame to time t (see splat.comp).
         const uint32_t blkS = fine.refined ? kFineBlock : kBlockSize;
@@ -692,10 +845,11 @@ void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cu
         memoryBarrier(cmd);
         vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, splat_.pipeline);
         SplatPC spc{{(int32_t)displayExtent_.width, (int32_t)displayExtent_.height}, t - 1.f, flowScale_ * sxS,
-                    {1.f / (fine.fine.width * blkS * flowScale_ * sxS), 1.f / (fine.fine.height * blkS * flowScale_ * syS)}};
+                    {1.f / (fine.fine.width * blkS * flowScale_ * sxS), 1.f / (fine.fine.height * blkS * flowScale_ * syS)},
+                    timing};
         vt.CmdPushConstants(cmd, splat_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(spc), &spc);
         vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, splat_.layout, 0, 1, &dsSplat_, 0, nullptr);
-        vt.CmdDispatch(cmd, divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), 1);
+        dispatch();
         memoryBarrier(cmd);
     }
     vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, interp_.pipeline);
@@ -710,22 +864,20 @@ void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cu
                 cfg.sceneCutLow, cfg.sceneCutHigh,
                 {1.f / (fine.fine.width * blk * flowScale_ * sx),
                  1.f / (fine.fine.height * blk * flowScale_ * sy)},
-                cfg.flowIterations, hudMode_, hudGame_, hudOut_, hudLow1_, hudLow01_, cfg.occlusionStrength, cfg.staticGuard, cfg.extrapolateHold, splat ? 1 : 0, cfg.pixelVectors ? 1 : 0, enc_.transfer};
+                cfg.flowIterations, hudMode_, hudGame_, hudOut_, hudLow1_, hudLow01_, cfg.occlusionStrength, cfg.staticGuard, cfg.extrapolateHold, splat ? 1 : 0, cfg.pixelVectors ? 1 : 0, enc_.transfer,
+                timing};
     vt.CmdPushConstants(cmd, interp_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
-    const uint32_t N = static_cast<uint32_t>(sources_.size());
-    vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, interp_.layout, 0, 1,
-                             &dsInterp_[(prev * N + cur) * outputs_ + output], 0, nullptr);
-    vt.CmdDispatch(cmd, divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), 1);
+    vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, interp_.layout, 0, 1, &set, 0, nullptr);
+    dispatch();
     // Make the previous output copy (worker submission) precede this overwrite.
     memoryBarrier(cmd);
-    if (sharpen_) recordCas(cmd, dsCas_[output]);  // sharp_[output] -> out_[output]
 }
 
 void FrameGen::recordCopyOutput(VkCommandBuffer cmd, uint32_t output, VkImage dst) {
     copyToPresent(cmd, out_[output].image, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, dst);
 }
 
-void FrameGen::recordUpscaleReal(VkCommandBuffer cmd, uint32_t cur) {
+void FrameGen::recordUpscaleReal(VkCommandBuffer cmd, uint32_t cur, int prev) {
     auto& vt = dev_.vt;
     vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, upscale_.pipeline);
     UpscalePC pc{{(int32_t)displayExtent_.width, (int32_t)displayExtent_.height},
@@ -737,6 +889,13 @@ void FrameGen::recordUpscaleReal(VkCommandBuffer cmd, uint32_t cur) {
     vt.CmdDispatch(cmd, divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), 1);
     // Order the CAS pass / the worker's copy after this write.
     memoryBarrier(cmd);
+    // dedup + extrapolation: a repeated frame shows the game's state from its
+    // first appearance; replace it with a frame extrapolated to now along
+    // the kept flow (state slot 3). Zero workgroups unless it is a repeat.
+    if (dupReal_ && timingActive_ && prev >= 0) {
+        const uint32_t N = static_cast<uint32_t>(sources_.size());
+        recordSynthesis(cmd, dsInterpReal_[uint32_t(prev) * N + cur], 1.5f, 4, true);
+    }
     if (sharpen_) recordCas(cmd, dsCasReal_);  // sharpReal_ -> outReal_
 }
 

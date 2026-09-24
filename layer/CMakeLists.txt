@@ -14,6 +14,7 @@ bdex_add_shaders(bdex_layer_shaders
     shaders/flow_refine.comp:f16:LUMA_FMT=r16f
     shaders/reduce_cost.comp
     shaders/splat.comp
+    shaders/frame_state.comp
     shaders/interpolate.comp:u32
     shaders/interpolate.comp:u64:OUT_64
     shaders/interpolate.comp:sharp:SHARP

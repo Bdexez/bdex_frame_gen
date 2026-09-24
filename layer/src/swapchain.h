@@ -153,6 +153,7 @@ private:
     clock::time_point limitNext_{};
     void limitFrameRate();
     double frameIntervalMs_ = 16.6;
+    uint32_t statsRepeats_ = 0;  // repeated-frame counter at the last statistics line (dedup)
     int dynMult_ = 0;               // target_fps: current dynamic multiplier (0 = not chosen yet)
     int chooseMultiplier();
 

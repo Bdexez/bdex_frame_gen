@@ -106,7 +106,12 @@ def masks(prev, cur, gt, exclude):
 def score(out_dir, exclude):
     rows = []
     prev_err = None
-    for line in (Path(out_dir) / "manifest.txt").read_text().splitlines():
+    lines = (Path(out_dir) / "manifest.txt").read_text().splitlines()
+    # With an irregular game (bdex_offline --jitter/--dup) real frames are
+    # scored too, and an exact one would count 99 dB: cap every frame at
+    # 60 dB so the mean still reflects the errors.
+    cap = 60.0 if any(not line.startswith("gen_") for line in lines) else None
+    for line in lines:
         gen_name, gt_path, t, prev_path, cur_path = line.split()
         t = float(t)
         gen, gt = load(Path(out_dir) / gen_name), load(gt_path)
@@ -122,9 +127,11 @@ def score(out_dir, exclude):
         err = luma(gen) - luma(gt)
         flicker = float(np.abs(err - prev_err)[valid].mean()) if prev_err is not None else None
         prev_err = err
-        rows.append((psnr(gen, gt, valid), psnr(gen, gt, motion), psnr(gen, gt, edges),
-                     psnr(dup, gt, valid), psnr(blend, gt, valid) if blend is not None else None,
-                     ssim(gen, gt, valid), flicker))
+        row = [psnr(gen, gt, valid), psnr(gen, gt, motion), psnr(gen, gt, edges),
+               psnr(dup, gt, valid), psnr(blend, gt, valid) if blend is not None else None]
+        if cap is not None:
+            row = [None if v is None else min(v, cap) for v in row]
+        rows.append((*row, ssim(gen, gt, valid), flicker))
     return rows
 
 
@@ -133,14 +140,14 @@ def mean(values):
     return float(np.mean(v)) if v else float("nan")
 
 
-def run(binary, frames, out_dir, multiplier, env_extra, max_inputs):
+def run(binary, frames, out_dir, multiplier, env_extra, max_inputs, extra_args=()):
     env = {k: v for k, v in os.environ.items()}
     env.setdefault("BDEX_FG_PRESET", "balanced")  # a fixed operating point, as run_eval.sh
     env.update(env_extra)
     cmd = [str(binary), str(frames), str(out_dir), "--multiplier", str(multiplier)]
     if max_inputs:
         cmd += ["--max-inputs", str(max_inputs)]
-    subprocess.run(cmd, check=True, env=env)
+    subprocess.run(cmd + list(extra_args), check=True, env=env)
 
 
 def main():
@@ -153,6 +160,9 @@ def main():
     ap.add_argument("--exclude", action="append", default=[],
                     help="x0,y0,x1,y1 rectangle left out of every metric (e.g. a frame counter)")
     ap.add_argument("--max-inputs", type=int, default=0, help="limit the number of input frames")
+    ap.add_argument("--offline-args", default="",
+                    help="extra bdex_offline arguments, e.g. \"--jitter 0.4 --spacing 4\" (an irregular game: "
+                         "every displayed frame, real ones included, is then scored)")
     ap.add_argument("--keep", help="keep the generated frames under this directory")
     ap.add_argument("--json", help="also write the per-variant means to this JSON file")
     args = ap.parse_args()
@@ -177,7 +187,7 @@ def main():
     results = []
     for i, (name, env) in enumerate(variants):
         out = base / f"v{i}"
-        run(binary, args.frames, out, args.multiplier, env, args.max_inputs)
+        run(binary, args.frames, out, args.multiplier, env, args.max_inputs, args.offline_args.split())
         rows = score(out, exclude)
         results.append((name, rows))
 

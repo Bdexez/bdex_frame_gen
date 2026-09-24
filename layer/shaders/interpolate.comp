@@ -23,7 +23,19 @@ layout(binding = 4, rg32ui) uniform writeonly uimage2D outImg;
 #else
 layout(binding = 4, r32ui) uniform writeonly uimage2D outImg;
 #endif
-layout(std430, binding = 5) readonly buffer Cost { float meanCost; } cost;
+// Frame state (frame_state.comp): scene-cut cost, and with frame_timing /
+// dedup the repeat flag and the content-time t of each output slot.
+layout(std430, binding = 5) readonly buffer Cost {
+    float meanCost;
+    uint dup;
+    uint diffCount;
+    float ageLast;
+    float agePrev;
+    float interval;
+    uint repeats;
+    uint pad1;
+    float t[4];
+} cost;
 layout(binding = 6, r32ui) uniform readonly uimage2D splatMap;  // forward-splat sources (extrapolation, see splat.comp)
 
 #define ENC_RGBA8      0u
@@ -59,6 +71,7 @@ layout(push_constant) uniform PC {
     int splat;               // extrapolation: take the source from the forward-splat map where one landed
     int pixelVectors;        // interpolation: per-pixel choice among the neighbouring blocks' vectors
     int transfer;            // TRANSFER_* of the sampled values (HDR: errors on a perceptual scale)
+    int timing;              // > 0: t is cost.t[timing - 1] (content time), pc.t only tells the mode
 } pc;
 
 // Photometric error between two samples, on the scale the thresholds below
@@ -121,13 +134,19 @@ void main() {
     vec2 fsize = vec2(pc.size);
     vec2 q = vec2(p) + 0.5;
     vec2 uv = q / fsize;
-    float t = pc.t;
+    float t = pc.timing > 0 ? cost.t[pc.timing - 1] : pc.t;
     vec4 cur = texture(curTex, uv);
     float cut = smoothstep(pc.cutLow, pc.cutHigh, cost.meanCost);
     vec4 c;
     vec2 F;
 
-    if (t > 1.0) {
+    if (pc.timing > 0 && cost.dup != 0u && pc.t <= 1.0) {
+        // dedup, interpolation: the game repeated its frame. The two images
+        // are identical and the flow is the previous pair's (kept for
+        // extrapolation), so warping would move the picture: show it as is.
+        c = cur;
+        F = vec2(0.0);
+    } else if (pc.t > 1.0) {
         // Extrapolation: the frame after `cur`, assuming the motion measured
         // between prev and cur continues. The pixel that lands on q moved
         // from p = q + s*B(p) (B is the cur->prev flow, i.e. minus the
@@ -250,7 +269,7 @@ void main() {
     // Interpolation only: an unchanged pixel says nothing about the frame
     // after cur, where the flow may bring an object in (measured: the guard
     // costs 0.5-0.8 dB on the demo in extrapolation).
-    if (pc.staticGuard > 0.0 && t <= 1.0) {
+    if (pc.staticGuard > 0.0 && pc.t <= 1.0) {
         // Only where the flow *at q itself* says the content there moves: a
         // static pixel inside moving content is an overlay (HUD glyph). A
         // static background pixel that a small object crosses between the

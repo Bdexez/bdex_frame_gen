@@ -522,8 +522,9 @@ int VkCtx::synthesize(const Capture::Frame& f, bool& consumed) {
 
     // Capture interval estimate (EMA) for the pacing and the HUD.
     const auto now = clock::now();
+    double dt = 0.0;
     if (lastArrival_.time_since_epoch().count() != 0) {
-        double dt = std::chrono::duration<double, std::milli>(now - lastArrival_).count();
+        dt = std::chrono::duration<double, std::milli>(now - lastArrival_).count();
         if (dt > 0.5 && dt < 500.0) intervalMs_ = intervalMs_ * 0.8 + dt * 0.2;
     }
     lastArrival_ = now;
@@ -578,6 +579,12 @@ int VkCtx::synthesize(const Capture::Frame& f, bool& consumed) {
     // predicted) frames, resample the real frame if upscaling / HUD.
     fg_->recordAcquireSources(cb, prev, static_cast<int>(cur));
     fg_->recordAnalysis(cb, parity_, cur);
+    FrameGen::FrameTiming timing;  // frame_timing / dedup (no-op otherwise)
+    timing.sinceLastMs = dt;
+    timing.intervalMs = intervalMs_;
+    timing.multiplier = interpolate ? mult : 1;
+    timing.reset = prev < 0 || !(dt > 0.5 && dt < 500.0);
+    fg_->recordFrameState(cb, timing);
     if (interpolate) {
         fg_->recordFlow(cb, parity_);
         const float base = cfg.extrapolate ? 1.f : 0.f;
@@ -586,7 +593,7 @@ int VkCtx::synthesize(const Capture::Frame& f, bool& consumed) {
                                    base + static_cast<float>(i) / static_cast<float>(mult),
                                    static_cast<uint32_t>(i - 1));
     }
-    if (fg_->packReal()) fg_->recordUpscaleReal(cb, cur);
+    if (fg_->packReal()) fg_->recordUpscaleReal(cb, cur, interpolate ? prev : -1);
     fg_->recordReleaseSources(cb, prev, static_cast<int>(cur));
     vkEndCommandBuffer(cb);
 

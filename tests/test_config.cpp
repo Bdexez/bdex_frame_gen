@@ -76,6 +76,15 @@ TEST(config_apply_values) {
     CHECK(c.apply("FPS_LIMIT", "5000") && c.fpsLimit == 1000.f);   // clamped
     CHECK(c.apply("extrapolate_splat", "1") && c.extrapolateSplat);
     CHECK(c.apply("STATIC_GUARD", "3") && c.staticGuard == 1.0f);   // clamped
+    CHECK(!c.frameTiming && !c.dedup);   // opt-in
+    CHECK(c.apply("frame_timing", "1") && c.frameTiming);
+    CHECK(c.apply("DEDUP", "on") && c.dedup);
+    {
+        Config live, fresh;
+        fresh.frameTiming = true; fresh.dedup = true;
+        live.applyLive(fresh);
+        CHECK(live.frameTiming && !live.dedup);   // dedup sizes the output stage
+    }
 }
 
 TEST(config_rejects_garbage) {

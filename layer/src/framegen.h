@@ -42,6 +42,27 @@ public:
     // Writes the frame at time t (0..1: between prev and cur; 1..2: after
     // cur) into the internal output image `output`.
     void recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cur, float t, uint32_t output);
+    // Timing of the real frame being recorded, for the per-frame state pass.
+    struct FrameTiming {
+        double sinceLastMs = 0.0;  // time since the previous real frame was presented
+        double intervalMs = 0.0;   // smoothed frame interval the pacing spreads the outputs over
+        int multiplier = 2;        // frames presented for this real frame
+        bool reset = false;        // no usable previous frame (first frame, history lost)
+    };
+    // Per-frame state pass (frame_state.comp): duplicate detection (dedup)
+    // and the content-time t of every output (frame_timing, dedup). Call it
+    // after recordAnalysis and before recordFlow; a no-op when neither
+    // option is set, and the outputs then use the fixed t they are given.
+    void recordFrameState(VkCommandBuffer cmd, const FrameTiming& timing);
+    // The state computed by the last recordFrameState, once its submission
+    // has completed. Returns false when no state pass was recorded.
+    struct State {
+        uint32_t dup = 0;     // the frame repeated the previous one
+        float t[4] = {};      // t of each output slot, [3] = the real frame's slot
+        float intervalMs = 0; // content interval used
+        uint32_t repeats = 0; // repeated frames detected since the output stage was built
+    };
+    bool readState(State& out) const;
     // Copies output image `output` into `dst` (UNDEFINED -> PRESENT_SRC).
     void recordCopyOutput(VkCommandBuffer cmd, uint32_t output, VkImage dst);
     // Copies source `src` (PRESENT_SRC) into `dst` (UNDEFINED -> PRESENT_SRC).
@@ -50,8 +71,10 @@ public:
     void recordCopySource(VkCommandBuffer cmd, uint32_t src, VkImage dst);
     // Upscales source `cur` (in GENERAL, i.e. between acquire/release) to the
     // display resolution, into the internal real-frame image. Only used when
-    // upscaling; recorded in the synthesis command buffer.
-    void recordUpscaleReal(VkCommandBuffer cmd, uint32_t cur);
+    // upscaling; recorded in the synthesis command buffer. With dedup in
+    // extrapolation, a repeated frame is replaced there by a frame
+    // extrapolated from `prev` (-1: no previous frame) and the kept flow.
+    void recordUpscaleReal(VkCommandBuffer cmd, uint32_t cur, int prev = -1);
 
     bool upscaling() const { return upscaling_; }
     // The real frame is produced into an internal packed image (for upscaling
@@ -101,6 +124,7 @@ private:
     };
 
     void recordCas(VkCommandBuffer cmd, VkDescriptorSet set);
+    void recordSynthesis(VkCommandBuffer cmd, VkDescriptorSet set, float t, int32_t timing, bool gated);
     void createPipelines();
     void createResources();
     void createDescriptors();
@@ -139,7 +163,7 @@ private:
     std::vector<AllocatedImage> sharp_;  // linear rgba16f pre-sharpen, per output; only when sharpen_
     AllocatedImage sharpReal_;           // linear rgba16f pre-sharpen real frame; only when sharpen_
     uint32_t outputs_ = 0;
-    AllocatedBuffer costBuf_;
+    AllocatedBuffer stateBuf_;  // frame state: scene-cut cost, content clock, t per output, gated dispatches
     std::vector<AllocatedBuffer> dumpBuf_;
     VkQueryPool queryPool_ = VK_NULL_HANDLE;
     static constexpr uint32_t kProfileSlots = 12;  // application slots + worker slots
@@ -153,7 +177,23 @@ private:
     VkSampler sampler_ = VK_NULL_HANDLE;
     VkDescriptorPool pool_ = VK_NULL_HANDLE;
 
-    Pass downsample_, blockMatch_, smooth_, refine_, reduce_, interp_, upscale_, cas_, splat_;
+    Pass downsample_, blockMatch_, smooth_, refine_, reduce_, interp_, upscale_, cas_, splat_, frameState_;
+
+    // Per-frame state (frame_state.comp), see recordFrameState.
+    void dispatchGated(VkCommandBuffer cmd, uint32_t entry, uint32_t x, uint32_t y);
+    void stateBarrier(VkCommandBuffer cmd);
+    bool dedup_ = false;          // duplicate detection (config at creation)
+    bool dupReal_ = false;        // extrapolated replacement of repeated real frames (dedup + extrapolation)
+    bool timingActive_ = false;   // this frame's outputs read their t from the state buffer
+    bool gate_ = false;           // this frame's flow dispatches are gated on the duplicate test
+    bool flowThisFrame_ = false;  // recordFlow ran for the frame being recorded
+    bool flowLastFrame_ = false;  // ... for the previous frame (its flow may be kept)
+    std::vector<uint32_t> gateFull_;  // 4 words per gated dispatch (x, y, z, only-on-duplicates)
+    uint32_t gateReduce_ = 0, gateDupReal_ = 0;  // entry indices (flow levels use 3l .. 3l+2)
+    AllocatedBuffer stateReadback_;
+    void* stateMapped_ = nullptr;
+    VkDescriptorSet dsState_ = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> dsInterpReal_;       // [prev * N + cur]: dupReal_ output (the real-frame image)
 
     // Descriptor sets, indexed [parity][level] etc.
     std::vector<VkDescriptorSet> dsDownSrc_[2];       // [parity] per source (level 0)
