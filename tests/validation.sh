@@ -25,7 +25,7 @@ status=0
 for run in interpolate extrapolate interpolate:state extrapolate:state; do
   mode=${run%%:*}
   if [ "$run" != "$mode" ]; then
-    state="BDEX_FG_FRAME_TIMING=1 BDEX_FG_DEDUP=1 BDEX_FG_SCENE_CUT_LOCAL=1"; demo_args="--repeat 2"
+    state="BDEX_FG_FRAME_TIMING=1 BDEX_FG_DEDUP=1 BDEX_FG_SCENE_CUT_LOCAL=1 BDEX_FG_EXTRAPOLATE_ACCEL=1"; demo_args="--repeat 2"
   else
     state=""; demo_args=""
   fi

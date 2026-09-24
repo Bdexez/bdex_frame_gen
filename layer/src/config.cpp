@@ -170,6 +170,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "temporal_prediction")          return parseBool(value, temporalPrediction);
     if (key == "extrapolate_splat")           return parseBool(value, extrapolateSplat);
     if (key == "extrapolate_hold")            return parseFloat(value, extrapolateHold, 0.f, 1.f);
+    if (key == "extrapolate_accel")           return parseFloat(value, extrapolateAccel, 0.f, 1.f);
     if (key == "frame_timing")                return parseBool(value, frameTiming);
     if (key == "dedup")                       return parseBool(value, dedup);
     if (key == "paused" || key == "pause")    return parseBool(value, paused);
@@ -305,7 +306,7 @@ void Config::applyLive(const Config& n) {
     gradWeight = n.gradWeight; censusWeight = n.censusWeight; censusMargin = n.censusMargin;
     rotWeight = n.rotWeight; temporalPrediction = n.temporalPrediction; subpixel = n.subpixel;
     pixelVectors = n.pixelVectors; occlusionStrength = n.occlusionStrength; staticGuard = n.staticGuard;
-    extrapolateHold = n.extrapolateHold; flowIterations = n.flowIterations; refineBias = n.refineBias;
+    extrapolateHold = n.extrapolateHold; extrapolateAccel = n.extrapolateAccel; flowIterations = n.flowIterations; refineBias = n.refineBias;
     sceneCutLow = n.sceneCutLow; sceneCutHigh = n.sceneCutHigh; sceneCutLocal = n.sceneCutLocal;
     fpsLimit = n.fpsLimit; targetFps = n.targetFps;
     frameTiming = n.frameTiming;  // dedup sizes the output stage (extrapolation): restart
@@ -354,6 +355,7 @@ std::string Config::describe() const {
     if (temporalPrediction) o << " temporal_prediction=1";
     if (extrapolateSplat) o << " extrapolate_splat=1";
     if (extrapolateHold > 0.f) o << " extrapolate_hold=" << extrapolateHold;
+    if (extrapolateAccel > 0.f) o << " extrapolate_accel=" << extrapolateAccel;
     if (targetFps > 0.f) o << " target_fps=" << targetFps;
     if (fpsLimit > 0.f) o << " fps_limit=" << fpsLimit;
     if (pixelVectors) o << " pixel_vectors=1";

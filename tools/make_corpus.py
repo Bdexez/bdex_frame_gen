@@ -8,6 +8,9 @@ Each sequence isolates one regime that the demo does not cover well:
             bias makes the matcher give up)
   subpixel  the same kind of texture panning 3.25 px/frame (sub-pixel motion)
   fade      a slow pan while the brightness fades out by 4 %/frame
+  swing     a textured camera swinging back and forth (sinusoidal pan, period
+            24 frames): the speed changes all the time, so extrapolating at
+            constant velocity overshoots and lags
   popup     the HUD scene's pan with an opaque menu panel (a quarter of the
             screen) opening and closing every 4 frames, between two inputs:
             a scene cut confined to part of the screen
@@ -75,6 +78,19 @@ def hud(out, w, h, n, seed):
         im.save(out / f"f{i:04d}.ppm")
 
 
+def swing(out, w, h, n, seed):
+    rng = np.random.default_rng(seed)
+    k = w / 640
+    amp = 60 * k
+    tex = fractal(rng, h + 8, w + int(2 * amp) + 16, scale(OCT, w / 960))
+    for i in range(n):
+        x = amp * np.sin(2 * np.pi * i / 24)  # sub-pixel positions: sampled from a 4x-finer shift
+        x0 = int(np.floor(x + amp)) + 4
+        f = (x + amp) + 4 - x0
+        crop = tex[:h, x0:x0 + w] * (1 - f) + tex[:h, x0 + 1:x0 + 1 + w] * f
+        Image.fromarray(crop.clip(0, 255).astype(np.uint8)).save(out / f"f{i:04d}.ppm")
+
+
 def popup(out, w, h, n, seed):
     rng = np.random.default_rng(seed)
     speed = max(1, round(9 * w / 640))
@@ -105,7 +121,8 @@ def main():
                        ("pan", lambda d: pan(d, w, h, n, max(2, round(16 * w / 960)), 11)),
                        ("subpixel", lambda d: subpixel(d, w, h, n, 13)),
                        ("fade", lambda d: pan(d, w, h, n, max(1, round(8 * w / 960)), 17, lambda i: 1.0 - 0.04 * i)),
-                       ("popup", lambda d: popup(d, w, h, n, 19))):
+                       ("popup", lambda d: popup(d, w, h, n, 19)),
+                       ("swing", lambda d: swing(d, w, h, n, 23))):
         d = root / name
         d.mkdir(parents=True, exist_ok=True)
         make(d)

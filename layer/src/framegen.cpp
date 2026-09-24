@@ -17,9 +17,9 @@ struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t has
 struct SizePC { int32_t size[2]; };
 struct ReducePC { int32_t size[2]; int32_t tiles; };
 struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; int32_t subpixel; };
-struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; float occlusionStrength; float staticGuard; float extrapHold; int32_t splat; int32_t pixelVectors; int32_t transfer; int32_t timing; int32_t localCut; };
+struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; float occlusionStrength; float staticGuard; float extrapHold; int32_t splat; int32_t pixelVectors; int32_t transfer; int32_t timing; int32_t localCut; float accel; };
 struct UpscalePC { int32_t outSize[2]; int32_t srcSize[2]; uint32_t encoding; int32_t filter; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; };
-struct SplatPC { int32_t size[2]; float s; float flowScale; float flowInvSize[2]; int32_t timing; };
+struct SplatPC { int32_t size[2]; float s; float flowScale; float flowInvSize[2]; int32_t timing; float accel; };
 struct FrameStatePC { int32_t size[2]; int32_t mode; int32_t multiplier; float sinceLastMs; float intervalMs; int32_t flags; int32_t gateCount; uint32_t dupMaxPixels; };
 struct CasPC { int32_t size[2]; uint32_t encoding; float sharpness; };
 
@@ -157,10 +157,10 @@ void FrameGen::createPipelines() {
         reduce_ = makePass(reduce_cost_comp, reduce_cost_comp_size, {SI, SB});
         // With sharpening, the interpolation writes a linear rgba16f image that
         // the CAS pass then sharpens and packs; otherwise it packs directly.
-        if (sharpen_)       interp_ = makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SI});
-        else if (enc_.is64) interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB, SI});
-        else                interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB, SI});
-        splat_ = makePass(splat_comp, splat_comp_size, {CIS, CIS, SI, SB});
+        if (sharpen_)       interp_ = makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS});
+        else if (enc_.is64) interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS});
+        else                interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS});
+        splat_ = makePass(splat_comp, splat_comp_size, {CIS, CIS, SI, SB, CIS});
         frameState_ = makePass(frame_state_comp, frame_state_comp_size, {CIS, CIS, SB});
     }
     if (packReal_) {
@@ -197,13 +197,16 @@ void FrameGen::createResources() {
         for (int p = 0; p < 2; ++p) lv.pyr[p] = dev_.createImage(lumaFormat_, lv.size, storageSampled, true);
         for (int d = 0; d < 2; ++d) {
             lv.flowRaw[d] = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, lv.blocks, storageSampled, true);
-            lv.flow[d] = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, lv.blocks, storageSampled, true);
+            // The finest backward flow is copied for extrapolate_accel
+            // (flowFine, which aliases flow when the level is not refined).
+            const VkImageUsageFlags flowUsage = storageSampled | (l == 0 ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0);
+            lv.flow[d] = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, lv.blocks, flowUsage, true);
             // Refinement runs on the finest level only unless refine_all is
             // set: coarser levels just predict the search centre, where the
             // smoothed flow is good enough.
             const bool refined = cfg.refine && (l == 0 || cfg.refineAll);
             lv.refined = refined;
-            if (refined) lv.flowFine[d] = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, lv.fine, storageSampled, true);
+            if (refined) lv.flowFine[d] = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, lv.fine, flowUsage, true);
             else { lv.flowFine[d] = lv.flow[d]; lv.fine = lv.blocks; }
             lv.cost[d] = dev_.createImage(VK_FORMAT_R32_SFLOAT, lv.blocks, storageSampled, true);
         }
@@ -248,6 +251,10 @@ void FrameGen::createResources() {
                      uint64_t(displayExtent_.width) * displayExtent_.height <= (1ull << 23);
         splatMap_ = dev_.createImage(VK_FORMAT_R32_UINT, splatting_ ? displayExtent_ : VkExtent2D{1, 1},
                                      VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, true);
+        // Small (finest flow resolution); created in either mode so that
+        // extrapolate_accel can be toggled live.
+        prevBwd_ = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, levels_v_[0].fine,
+                                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, true);
     }
 
     if (cfg.profile) {
@@ -281,6 +288,7 @@ void FrameGen::createResources() {
         }
         for (auto& o : out_) add(o);
         if (splatMap_.image) add(splatMap_);
+        if (prevBwd_.image) add(prevBwd_);
         if (packReal_) add(outReal_);
         for (auto& s : sharp_) add(s);
         if (sharpen_) add(sharpReal_);
@@ -343,7 +351,7 @@ void FrameGen::createDescriptors() {
     const uint32_t nSets = gen * (2 * N + 2 * L + 4 * L + 2 * L + 4 * L + 1 + nInterp + 1 + 1) + nReal + up + cas;  // + splat, state
     // Block-match sets (2 parities x 2 directions x L) hold two samplers each:
     // the coarse prediction and the previous backward flow (temporal prediction).
-    const uint32_t nCIS = gen * (2 * N + 2 * L + 4 * L * 2 + 4 * nInterp + 2 + 2) + 4 * nReal + up + cas;  // + splat flows, state lumas
+    const uint32_t nCIS = gen * (2 * N + 2 * L + 4 * L * 2 + 5 * nInterp + 3 + 2) + 5 * nReal + up + cas;  // + splat flows, state lumas
     const uint32_t nSI = gen * (2 * N + 2 * L + 4 * L * 4 + 2 * L * 2 + 4 * L * 5 + 1 + nInterp * 2 + 1) + 2 * nReal + up + cas;  // interp + splat map
     const uint32_t nSB = gen * (1 + nInterp + 1 + 1) + nReal;  // reduce, interp, splat, state
     std::vector<VkDescriptorPoolSize> sizes;
@@ -435,6 +443,7 @@ void FrameGen::createDescriptors() {
     writeImage(dsSplat_, 1, CIS, levels_v_[0].flowFine[1].view);
     writeImage(dsSplat_, 2, SI, splatMap_.view);
     writeBuffer(dsSplat_, 3, stateBuf_.buffer);
+    writeImage(dsSplat_, 4, CIS, prevBwd_.view);
     dsState_ = allocSet(frameState_.setLayout);
     writeImage(dsState_, 0, CIS, levels_v_[0].pyr[0].view);
     writeImage(dsState_, 1, CIS, levels_v_[0].pyr[1].view);
@@ -451,6 +460,7 @@ void FrameGen::createDescriptors() {
                 writeImage(s, 4, SI, (sharpen_ ? sharp_[o] : out_[o]).view);
                 writeBuffer(s, 5, stateBuf_.buffer);
                 writeImage(s, 6, SI, splatMap_.view);
+                writeImage(s, 7, CIS, prevBwd_.view);
                 dsInterp_.push_back(s);
             }
             if (dupReal_) {
@@ -462,6 +472,7 @@ void FrameGen::createDescriptors() {
                 writeImage(s, 4, SI, (sharpen_ ? sharpReal_ : outReal_).view);
                 writeBuffer(s, 5, stateBuf_.buffer);
                 writeImage(s, 6, SI, splatMap_.view);
+                writeImage(s, 7, CIS, prevBwd_.view);
                 dsInterpReal_.push_back(s);
             }
         }
@@ -496,6 +507,7 @@ void FrameGen::destroyAll() {
     for (auto& o : out_) dev_.destroyImage(o);
     out_.clear();
     if (splatMap_.image) dev_.destroyImage(splatMap_);
+    if (prevBwd_.image) dev_.destroyImage(prevBwd_);
     if (outReal_.image) dev_.destroyImage(outReal_);
     for (auto& s : sharp_) dev_.destroyImage(s);
     sharp_.clear();
@@ -743,6 +755,20 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
     auto& vt = dev_.vt;
     const Config& cfg = dev_.config;
     flowThisFrame_ = true;
+    // extrapolate_accel: keep the previous pair's finest backward flow before
+    // this frame overwrites it (on a repeat, dedup keeps the flow, so the
+    // copy equals it and the acceleration is zero).
+    accelThisFrame_ = 0.f;
+    if (cfg.extrapolate && cfg.extrapolateAccel > 0.f && flowLastFrame_) {
+        VkImageCopy region{};
+        region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.extent = {levels_v_[0].fine.width, levels_v_[0].fine.height, 1};
+        vt.CmdCopyImage(cmd, levels_v_[0].flowFine[1].image, VK_IMAGE_LAYOUT_GENERAL, prevBwd_.image,
+                        VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+        memoryBarrier(cmd);
+        accelThisFrame_ = cfg.extrapolateAccel;
+    }
     for (int l = levels_ - 1; l >= 0; --l) {
         const Level& lv = levels_v_[l];
         vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, blockMatch_.pipeline);
@@ -849,7 +875,7 @@ void FrameGen::recordSynthesis(VkCommandBuffer cmd, VkDescriptorSet set, float t
         vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, splat_.pipeline);
         SplatPC spc{{(int32_t)displayExtent_.width, (int32_t)displayExtent_.height}, t - 1.f, flowScale_ * sxS,
                     {1.f / (fine.fine.width * blkS * flowScale_ * sxS), 1.f / (fine.fine.height * blkS * flowScale_ * syS)},
-                    timing};
+                    timing, accelThisFrame_};
         vt.CmdPushConstants(cmd, splat_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(spc), &spc);
         vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, splat_.layout, 0, 1, &dsSplat_, 0, nullptr);
         dispatch();
@@ -868,7 +894,7 @@ void FrameGen::recordSynthesis(VkCommandBuffer cmd, VkDescriptorSet set, float t
                 {1.f / (fine.fine.width * blk * flowScale_ * sx),
                  1.f / (fine.fine.height * blk * flowScale_ * sy)},
                 cfg.flowIterations, hudMode_, hudGame_, hudOut_, hudLow1_, hudLow01_, cfg.occlusionStrength, cfg.staticGuard, cfg.extrapolateHold, splat ? 1 : 0, cfg.pixelVectors ? 1 : 0, enc_.transfer,
-                timing, cfg.sceneCutLocal ? (int32_t)kCutTiles : 0};
+                timing, cfg.sceneCutLocal ? (int32_t)kCutTiles : 0, t > 1.f ? accelThisFrame_ : 0.f};
     vt.CmdPushConstants(cmd, interp_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, interp_.layout, 0, 1, &set, 0, nullptr);
     dispatch();
