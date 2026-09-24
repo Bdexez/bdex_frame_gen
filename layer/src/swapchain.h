@@ -152,6 +152,8 @@ private:
     clock::time_point limitNext_{};
     void limitFrameRate();
     double frameIntervalMs_ = 16.6;
+    int dynMult_ = 0;               // target_fps: current dynamic multiplier (0 = not chosen yet)
+    int chooseMultiplier();
 
     // On-screen HUD: a rolling window of raw game frame intervals (ms) feeds the
     // 1% / 0.1% low figures; recomputed a few times a second while the HUD is on.

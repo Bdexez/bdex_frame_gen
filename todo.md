@@ -88,8 +88,10 @@ Outils : `tools/run_eval.sh` (démo, en ligne) et `tools/eval_sequence.py`
   45,0 fps pile sur la démo. Reste possible : une valeur `auto` (taux de
   rafraîchissement / multiplicateur), qui demande de connaître le
   rafraîchissement (`VK_GOOGLE_display_timing` / present timing).
-- [ ] **Multiplicateur dynamique** selon les fps réels : couper quand le jeu
-  tient déjà le rafraîchissement, passer de x2 à x3 quand il chute.
+- [x] **Multiplicateur dynamique** — fait : `target_fps` (GUI comprise).
+  Démo, cible 144, max ×4 : 30 fps → ×4, 50 → ×3, 72 → ×2, 150 → ×1.
+  Même limite que `fps_limit` : la cible est saisie à la main faute de
+  connaître le rafraîchissement.
 - [ ] **Pacing précis** via `VK_EXT_present_timing` ; prise en charge du VRR.
 - [ ] **Profilage par étape sur la RTX 3060 Ti** avant toute optimisation
   (barrières plus fines, recalcul du coût en série dans `block_match`).

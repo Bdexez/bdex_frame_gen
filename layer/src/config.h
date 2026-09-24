@@ -58,6 +58,7 @@ struct Config {
     bool  temporalPrediction = false; // coarsest matching level searches around the previous frame pair's motion instead of zero, so sustained fast pans are followed beyond the pyramid's range (opt-in; off = bit-for-bit)
     bool  extrapolateSplat = false; // extrapolation: forward-splat the current frame, backward warp only where nothing lands (opt-in)
     float extrapolateHold = 0.0f; // extrapolation: keep pixels with inconsistent motion in place (1 = pre-0.4 behaviour, shows double images; 0 = follow the warp)
+    float targetFps     = 0.0f;   // dynamic multiplier: aim at this output rate (the refresh rate), up to `multiplier` (0 = fixed multiplier)
     float fpsLimit      = 0.0f;   // cap the game's frame rate (0 = off); pick a divisor of the refresh rate
     bool  pixelVectors  = false;  // interpolation: per-pixel choice among neighbouring blocks' vectors (opt-in)
     bool  subpixel      = false;  // parabolic sub-pixel fit of the finest flow (opt-in; off = bit-for-bit)

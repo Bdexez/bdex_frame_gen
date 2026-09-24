@@ -64,6 +64,7 @@ TEST(config_apply_values) {
     CHECK(c.apply("subpixel", "1") && c.subpixel);
     CHECK(c.apply("pixel_vectors", "1") && c.pixelVectors);
     CHECK(c.apply("fps_limit", "60") && c.fpsLimit == 60.f);
+    CHECK(c.apply("target_fps", "144") && c.targetFps == 144.f);
     CHECK(c.apply("FPS_LIMIT", "5000") && c.fpsLimit == 1000.f);   // clamped
     CHECK(c.apply("extrapolate_splat", "1") && c.extrapolateSplat);
     CHECK(c.apply("STATIC_GUARD", "3") && c.staticGuard == 1.0f);   // clamped
