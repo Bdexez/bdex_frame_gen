@@ -49,9 +49,9 @@ Outils : `tools/run_eval.sh` (démo, en ligne) et `tools/eval_sequence.py`
   arêtes en mouvement rapide (−0,22). L'historique sur N frames ne
   discrimine pas : le fond sous un petit objet qui passe est lui aussi
   immobile depuis longtemps.
-- [ ] **Warp « en avant » pour l'extrapolation** : projeter chaque pixel vers
-  sa position future, puis remplir les trous avec le fond, au lieu d'étirer
-  les zones découvertes.
+- [x] **Warp « en avant » pour l'extrapolation** — fait : `extrapolate_splat`
+  (opt-in). En ligne : normal +1,08 dB, rapide +0,41, arêtes +1,56 ; x3 +1,05.
+  Coût : +0,8 ms GPU (Vega 8). Candidat pour le défaut en extrapolation.
 - [ ] **Deux hypothèses de mouvement par bloc**, choix pixel par pixel dans la
   synthèse, pour les frontières d'objets.
 

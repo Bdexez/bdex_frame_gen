@@ -16,8 +16,9 @@ struct DownsamplePC { int32_t size[2]; int32_t fromColor; int32_t srgbSource; };
 struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; float gradWeight; float censusWeight; float censusMargin; float rotWeight; int32_t temporal; float zeroBiasContrast; };
 struct SizePC { int32_t size[2]; };
 struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; int32_t subpixel; };
-struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; float occlusionStrength; float staticGuard; float extrapHold; };
+struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; float occlusionStrength; float staticGuard; float extrapHold; int32_t splat; };
 struct UpscalePC { int32_t outSize[2]; int32_t srcSize[2]; uint32_t encoding; int32_t filter; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; };
+struct SplatPC { int32_t size[2]; float s; float flowScale; float flowInvSize[2]; };
 struct CasPC { int32_t size[2]; uint32_t encoding; float sharpness; };
 
 constexpr uint32_t kBlockSize = 8;
@@ -139,9 +140,10 @@ void FrameGen::createPipelines() {
         reduce_ = makePass(reduce_cost_comp, reduce_cost_comp_size, {SI, SB});
         // With sharpening, the interpolation writes a linear rgba16f image that
         // the CAS pass then sharpens and packs; otherwise it packs directly.
-        if (sharpen_)       interp_ = makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB});
-        else if (enc_.is64) interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB});
-        else                interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB});
+        if (sharpen_)       interp_ = makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SI});
+        else if (enc_.is64) interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB, SI});
+        else                interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB, SI});
+        splat_ = makePass(splat_comp, splat_comp_size, {CIS, CIS, SI});
     }
     if (packReal_) {
         if (sharpen_)       upscale_ = makePass(upscale_comp_sharp, upscale_comp_sharp_size, {CIS, SI});
@@ -202,8 +204,14 @@ void FrameGen::createResources() {
             sharp_.push_back(dev_.createImage(VK_FORMAT_R16G16B16A16_SFLOAT, displayExtent_, sharpUsage, true));
         sharpReal_ = dev_.createImage(VK_FORMAT_R16G16B16A16_SFLOAT, displayExtent_, sharpUsage, true);
     }
-    if (outputs_ > 0)
+    if (outputs_ > 0) {
         costBuf_ = dev_.createBuffer(16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        // The splat key packs the source index in 23 bits (4K fits).
+        splatting_ = cfg.extrapolate && cfg.extrapolateSplat &&
+                     uint64_t(displayExtent_.width) * displayExtent_.height <= (1ull << 23);
+        splatMap_ = dev_.createImage(VK_FORMAT_R32_UINT, splatting_ ? displayExtent_ : VkExtent2D{1, 1},
+                                     VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, true);
+    }
 
     if (cfg.profile) {
         VkQueryPoolCreateInfo qi{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
@@ -235,6 +243,7 @@ void FrameGen::createResources() {
             for (auto& i : lv.cost) add(i);
         }
         for (auto& o : out_) add(o);
+        if (splatMap_.image) add(splatMap_);
         if (packReal_) add(outReal_);
         for (auto& s : sharp_) add(s);
         if (sharpen_) add(sharpReal_);
@@ -285,11 +294,11 @@ void FrameGen::createDescriptors() {
     const uint32_t gen = O > 0 ? 1 : 0;           // generation descriptor sets exist only with outputs
     const uint32_t up = packReal_ ? N : 0;        // one upscale/copy set per source
     const uint32_t cas = sharpen_ ? O + 1 : 0;    // one CAS set per generated output, plus the real frame
-    const uint32_t nSets = gen * (2 * N + 2 * L + 4 * L + 2 * L + 4 * L + 1 + nInterp) + up + cas;
+    const uint32_t nSets = gen * (2 * N + 2 * L + 4 * L + 2 * L + 4 * L + 1 + nInterp + 1) + up + cas;  // + splat
     // Block-match sets (2 parities x 2 directions x L) hold two samplers each:
     // the coarse prediction and the previous backward flow (temporal prediction).
-    const uint32_t nCIS = gen * (2 * N + 2 * L + 4 * L * 2 + 4 * nInterp) + up + cas;
-    const uint32_t nSI = gen * (2 * N + 2 * L + 4 * L * 4 + 2 * L * 2 + 4 * L * 5 + 1 + nInterp) + up + cas;
+    const uint32_t nCIS = gen * (2 * N + 2 * L + 4 * L * 2 + 4 * nInterp + 2) + up + cas;  // + splat flows
+    const uint32_t nSI = gen * (2 * N + 2 * L + 4 * L * 4 + 2 * L * 2 + 4 * L * 5 + 1 + nInterp * 2 + 1) + up + cas;  // interp + splat map
     const uint32_t nSB = gen * (1 + nInterp);
     std::vector<VkDescriptorPoolSize> sizes;
     if (nCIS) sizes.push_back({VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nCIS});
@@ -375,6 +384,10 @@ void FrameGen::createDescriptors() {
     dsReduce_ = allocSet(reduce_.setLayout);
     writeImage(dsReduce_, 0, SI, levels_v_[0].cost[0].view);
     writeBuffer(dsReduce_, 1, costBuf_.buffer);
+    dsSplat_ = allocSet(splat_.setLayout);
+    writeImage(dsSplat_, 0, CIS, levels_v_[0].flowFine[0].view);
+    writeImage(dsSplat_, 1, CIS, levels_v_[0].flowFine[1].view);
+    writeImage(dsSplat_, 2, SI, splatMap_.view);
 
     for (uint32_t prev = 0; prev < N; ++prev) {
         for (uint32_t cur = 0; cur < N; ++cur) {
@@ -386,6 +399,7 @@ void FrameGen::createDescriptors() {
                 writeImage(s, 3, CIS, levels_v_[0].flowFine[1].view);
                 writeImage(s, 4, SI, (sharpen_ ? sharp_[o] : out_[o]).view);
                 writeBuffer(s, 5, costBuf_.buffer);
+                writeImage(s, 6, SI, splatMap_.view);
                 dsInterp_.push_back(s);
             }
         }
@@ -397,7 +411,7 @@ void FrameGen::destroyAll() {
     VkDevice d = dev_.device;
     if (pool_) vt.DestroyDescriptorPool(d, pool_, nullptr);
     pool_ = VK_NULL_HANDLE;
-    for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_}) {
+    for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_, &splat_}) {
         if (p->pipeline) vt.DestroyPipeline(d, p->pipeline, nullptr);
         if (p->layout) vt.DestroyPipelineLayout(d, p->layout, nullptr);
         if (p->setLayout) vt.DestroyDescriptorSetLayout(d, p->setLayout, nullptr);
@@ -419,6 +433,7 @@ void FrameGen::destroyAll() {
     levels_v_.clear();
     for (auto& o : out_) dev_.destroyImage(o);
     out_.clear();
+    if (splatMap_.image) dev_.destroyImage(splatMap_);
     if (outReal_.image) dev_.destroyImage(outReal_);
     for (auto& s : sharp_) dev_.destroyImage(s);
     sharp_.clear();
@@ -618,8 +633,27 @@ void FrameGen::copyToPresent(VkCommandBuffer cmd, VkImage src, VkImageLayout src
 void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cur, float t, uint32_t output) {
     auto& vt = dev_.vt;
     const Config& cfg = dev_.config;
-    vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, interp_.pipeline);
     const Level& fine = levels_v_[0];
+    const bool splat = splatting_ && t > 1.f;
+    if (splat) {
+        // Forward-splat the current frame to time t (see splat.comp).
+        const uint32_t blkS = fine.refined ? kFineBlock : kBlockSize;
+        const float sxS = float(displayExtent_.width) / extent_.width;
+        const float syS = float(displayExtent_.height) / extent_.height;
+        VkClearColorValue none{};
+        none.uint32[0] = 0xFFFFFFFFu;
+        VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vt.CmdClearColorImage(cmd, splatMap_.image, VK_IMAGE_LAYOUT_GENERAL, &none, 1, &range);
+        memoryBarrier(cmd);
+        vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, splat_.pipeline);
+        SplatPC spc{{(int32_t)displayExtent_.width, (int32_t)displayExtent_.height}, t - 1.f, flowScale_ * sxS,
+                    {1.f / (fine.fine.width * blkS * flowScale_ * sxS), 1.f / (fine.fine.height * blkS * flowScale_ * syS)}};
+        vt.CmdPushConstants(cmd, splat_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(spc), &spc);
+        vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, splat_.layout, 0, 1, &dsSplat_, 0, nullptr);
+        vt.CmdDispatch(cmd, divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), 1);
+        memoryBarrier(cmd);
+    }
+    vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, interp_.pipeline);
     // Interpolation output is at display resolution; the flow (in render pixels)
     // and its coverage are scaled to display space, so the same shader also
     // upscales the generated frame when render != display.
@@ -631,7 +665,7 @@ void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cu
                 cfg.sceneCutLow, cfg.sceneCutHigh,
                 {1.f / (fine.fine.width * blk * flowScale_ * sx),
                  1.f / (fine.fine.height * blk * flowScale_ * sy)},
-                cfg.flowIterations, hudMode_, hudGame_, hudOut_, hudLow1_, hudLow01_, cfg.occlusionStrength, cfg.staticGuard, cfg.extrapolateHold};
+                cfg.flowIterations, hudMode_, hudGame_, hudOut_, hudLow1_, hudLow01_, cfg.occlusionStrength, cfg.staticGuard, cfg.extrapolateHold, splat ? 1 : 0};
     vt.CmdPushConstants(cmd, interp_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
     const uint32_t N = static_cast<uint32_t>(sources_.size());
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, interp_.layout, 0, 1,
