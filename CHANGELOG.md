@@ -6,6 +6,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed (2026-09-24)
+
+- **Crash when a game exits under native Wayland** without destroying its
+  device: the layer's global instance/device tables were torn down by static
+  destructors at process exit, destroying the virtual swapchains after the
+  Wayland connection was gone (segfault in `wl_proxy_marshal` from
+  `vkDestroySwapchainKHR`). The tables are now intentionally never destroyed.
+
 ### Changed (2026-09-24)
 
 - **Extrapolation no longer ghosts.** Where the forward/backward flow was

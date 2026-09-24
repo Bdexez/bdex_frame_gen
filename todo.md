@@ -118,9 +118,13 @@ Outils : `tools/run_eval.sh` (démo, en ligne) et `tools/eval_sequence.py`
   compare chaque bloc à un modèle C++ de la sélection historique. Vérifié :
   la sélection séquentielle de `0549e44` réintroduite → 32 écarts sur 128
   blocs ; shader actuel → 0.
-- [ ] **Repli en pass-through sur exception** dans `FrameGen` : une erreur du
-  layer ne doit jamais faire planter le jeu (cf. le segfault causé par le
-  pool de descripteurs pendant le développement de `temporal_prediction`).
+- [x] **Repli en pass-through sur exception** — vérifié : un échec de
+  `FrameGen` (pool de descripteurs sous-dimensionné, reproduit exprès) donne
+  bien un swapchain en pass-through. Le segfault observé venait d'ailleurs,
+  et c'était un vrai bug, corrigé : un jeu qui quitte sans détruire son
+  device faisait détruire les swapchains virtuels par les destructeurs
+  statiques, après la fermeture de la connexion Wayland → crash à la sortie
+  (`wl_proxy_marshal` depuis `vkDestroySwapchainKHR`).
 
 ## Produit
 

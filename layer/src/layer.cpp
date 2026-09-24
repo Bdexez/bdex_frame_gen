@@ -25,8 +25,15 @@ namespace bdex {
 namespace {
 
 std::mutex g_mapMutex;
-std::unordered_map<void*, std::unique_ptr<InstanceData>> g_instances;
-std::unordered_map<void*, std::unique_ptr<DeviceData>> g_devices;
+// Deliberately never destroyed: many games exit without destroying their
+// device or swapchains, and tearing these down from static destructors would
+// call into the driver after the window system is gone (a segfault at exit
+// under native Wayland, in wl_proxy_marshal from vkDestroySwapchainKHR). The
+// process is ending anyway; the OS reclaims everything.
+std::unordered_map<void*, std::unique_ptr<InstanceData>>& g_instances =
+    *new std::unordered_map<void*, std::unique_ptr<InstanceData>>();
+std::unordered_map<void*, std::unique_ptr<DeviceData>>& g_devices =
+    *new std::unordered_map<void*, std::unique_ptr<DeviceData>>();
 std::once_flag g_logInit;
 
 const VkLayerProperties g_layerProps = {
