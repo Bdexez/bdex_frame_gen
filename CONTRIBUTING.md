@@ -51,12 +51,13 @@ VK_IMPLICIT_LAYER_PATH=$PWD/build/layer BDEX_FG=1 ./build/demo/bdex_demo --fps 3
 
 - `ctest` passes (unit tests, evaluator checks, headless engine test, frame-generation and acquire-timeout GPU tests).
 - The layer stays clean under the Khronos validation layer, synchronization
-  validation included:
+  validation included (`ctest -R validation` checks both modes with every
+  optional pass enabled; by hand:
   ```sh
   VK_LOADER_LAYERS_ENABLE='*validation' BDEX_FG=1 build/demo/bdex_demo --fps 30 --frames 90
   ```
-  (to enable synchronization validation, see `khronos_validation.validate_sync`
-  in a `vk_layer_settings.txt` file).
+  with `VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true` for synchronization
+  validation).
 - For any change to the shaders or the interpolation, attach the before/after
   numbers from `tools/run_eval.sh build 40`, as well as
   `BDEX_EVAL_ARGS="--speed 2.5" tools/run_eval.sh build 40` for fast motion.

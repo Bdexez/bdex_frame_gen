@@ -29,6 +29,9 @@ if(TARGET bdex_demo)
   add_test(NAME integration
            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/integration.sh" "$<TARGET_FILE:bdex_demo>" "${CMAKE_BINARY_DIR}/layer")
   set_tests_properties(integration PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+  add_test(NAME validation
+           COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/validation.sh" "$<TARGET_FILE:bdex_demo>" "${CMAKE_BINARY_DIR}/layer")
+  set_tests_properties(validation PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
   if(NOT WIN32)
     add_executable(bdex_acquire_test test_acquire.cpp)
     target_link_libraries(bdex_acquire_test PRIVATE Vulkan::Vulkan PkgConfig::GLFW3)
