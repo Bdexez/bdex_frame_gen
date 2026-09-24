@@ -37,6 +37,7 @@ add_library(bdex_core STATIC
   src/config.cpp
   src/log.cpp
   src/format.cpp
+  src/present_slice.cpp
   src/platform.cpp
   src/vk_util.cpp
 )
