@@ -30,6 +30,9 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-24)
 
+- `packaging/arch/PKGBUILD` (`bdex-framegen-git`, installs to `/usr`), and a
+  Windows section in the README presenting both Windows products.
+
 - **Shipped per-game profiles** (`layer/profiles.conf`, installed to
   `share/bdex-framegen/`, next to the DLL/exe in the Windows zip), loaded
   before the user's file. They only apply to named games and can never enable
