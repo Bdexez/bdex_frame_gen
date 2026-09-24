@@ -15,7 +15,7 @@ namespace {
 struct DownsamplePC { int32_t size[2]; int32_t fromColor; int32_t srgbSource; };
 struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; float gradWeight; float censusWeight; float censusMargin; float rotWeight; int32_t temporal; float zeroBiasContrast; };
 struct SizePC { int32_t size[2]; };
-struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; };
+struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; int32_t subpixel; };
 struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; float occlusionStrength; float staticGuard; float extrapHold; };
 struct UpscalePC { int32_t outSize[2]; int32_t srcSize[2]; uint32_t encoding; int32_t filter; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; };
 struct CasPC { int32_t size[2]; uint32_t encoding; float sharpness; };
@@ -574,7 +574,7 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
         RefinePC rpc{{(int32_t)lv.size.width, (int32_t)lv.size.height},
                      {(int32_t)lv.blocks.width, (int32_t)lv.blocks.height},
                      {(int32_t)lv.fine.width, (int32_t)lv.fine.height},
-                     (int32_t)kBlockSize, (int32_t)kFineBlock, cfg.refineBias};
+                     (int32_t)kBlockSize, (int32_t)kFineBlock, cfg.refineBias, cfg.subpixel && l == 0 ? 1 : 0};
         vt.CmdPushConstants(cmd, refine_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(rpc), &rpc);
         for (uint32_t dir = 0; dir < 2; ++dir) {
             vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, refine_.layout, 0, 1, &dsRefine_[parity][dir][l], 0, nullptr);

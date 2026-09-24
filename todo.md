@@ -28,10 +28,10 @@ Outils : `tools/run_eval.sh` (démo, en ligne) et `tools/eval_sequence.py`
   `zero_bias=0`). du bloc (gradient moyen déjà
   en mémoire partagée), plutôt qu'une pénalité fixe : garder la stabilité des
   HUD texturés sans fondu fantôme sur les contenus doux.
-- [ ] **Flow sous-pixel** : les déplacements sont entiers et calculés à
-  demi-résolution en `balanced`, donc arrondis à 2 px à l'écran. Refaire
-  l'essai parabolique (−0,1 dB à l'époque) maintenant que l'effet de
-  `zero_bias` est connu.
+- [x] **Flow sous-pixel** — fait : `subpixel` (opt-in), ajustement parabolique
+  sur fenêtre 8×8 au niveau fin. Normal +0,08, rapide +0,06 ; avec
+  `zero_bias_contrast=0.1` : +0,10 / +0,54 dB. Coût GPU non mesurable sur
+  Vega 8 (bruit).
 - [ ] **Fondus et changements d'éclairage** : SAD centré (moyenne du bloc
   retirée) pour ne plus casser l'appariement sur un flash ou un fondu.
 - [ ] **Détection du HUD sur plusieurs frames** : masque d'immobilité accumulé
