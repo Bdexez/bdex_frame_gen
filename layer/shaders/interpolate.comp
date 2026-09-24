@@ -53,6 +53,7 @@ layout(push_constant) uniform PC {
     int hudLow1;       // 1% low fps
     int hudLow01;      // 0.1% low fps
     float occlusionStrength; // 0 keeps the historical interpolation path
+    float staticGuard;       // 0 keeps the historical path; see staticness()
 } pc;
 
 vec2 fwdAt(vec2 p) { return texture(flowFwd, p * pc.flowInvSize).xy * pc.flowScale; }
@@ -86,6 +87,21 @@ void store(ivec2 p, vec4 c) {
 #endif
 }
 #endif
+
+// 1 where the pixel is identical in both frames. The flow is per block, so a
+// static pixel (a HUD glyph, a minimap outline) inside a block that moves is
+// otherwise warped along with it and smears. The test is per pixel on
+// purpose: HUDs are see-through, so a glyph's neighbours usually move (a 3x3
+// test never fires on them). Known cost: a small object crossing a pixel
+// between the two frames leaves it unchanged in both and is dropped there at
+// intermediate t; with two frames that case is locally indistinguishable
+// from a static glyph over moving content.
+float staticness(vec2 uv) {
+    ivec2 srcSize = textureSize(curTex, 0);  // render size (differs when upscaling)
+    ivec2 sp = min(ivec2(uv * vec2(srcSize)), srcSize - 1);
+    float d = luma(abs(texelFetch(prevTex, sp, 0).rgb - texelFetch(curTex, sp, 0).rgb));
+    return 1.0 - smoothstep(0.004, 0.02, d);
+}
 
 void main() {
     ivec2 p = ivec2(gl_GlobalInvocationID.xy);
@@ -176,6 +192,10 @@ void main() {
     c = mix(c, mix(texture(prevTex, uv), cur, t), bad);
     }
 
+    // Interpolation only: an unchanged pixel says nothing about the frame
+    // after cur, where the flow may bring an object in (measured: the guard
+    // costs 0.5-0.8 dB on the demo in extrapolation).
+    if (pc.staticGuard > 0.0 && t <= 1.0) c = mix(c, cur, pc.staticGuard * staticness(uv));
     c = mix(c, cur, cut);
 
     if (pc.debugMode == DBG_FLOW) {
