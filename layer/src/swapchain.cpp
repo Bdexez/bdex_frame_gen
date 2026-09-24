@@ -278,25 +278,13 @@ void VirtualSwapchain::createVirtualImages(const VkSwapchainCreateInfoKHR& appIn
     std::sort(families.begin(), families.end());
     families.erase(std::unique(families.begin(), families.end()), families.end());
 
-    // Surfaces may advertise usage bits that regular images of this format do
-    // not support (e.g. STORAGE on sRGB); keep only what the format allows.
-    VkFormatProperties fp{};
-    dev_.inst->vt.GetPhysicalDeviceFormatProperties(dev_.physDev, format_, &fp);
-    const VkFormatFeatureFlags feats = fp.optimalTilingFeatures;
+    // The application must receive images with every usage it requested.
+    // A surface can support usages that an ordinary image of this format
+    // cannot; in that case createImage fails and CreateSwapchainKHR falls
+    // back to the driver's swapchain instead of silently changing the contract.
     VkImageUsageFlags usage = appInfo.imageUsage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     if (forGeneration || upscaling_ || dev_.config.overlayMode > 0)
         usage |= VK_IMAGE_USAGE_SAMPLED_BIT;  // the upscale/HUD pass samples the source
-    auto dropUnless = [&](VkImageUsageFlags bit, VkFormatFeatureFlags feature) {
-        if ((usage & bit) && !(feats & feature)) usage &= ~bit;
-    };
-    dropUnless(VK_IMAGE_USAGE_SAMPLED_BIT, VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
-    dropUnless(VK_IMAGE_USAGE_STORAGE_BIT, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT);
-    dropUnless(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT);
-    dropUnless(VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT, VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT);
-    dropUnless(VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_FORMAT_FEATURE_TRANSFER_DST_BIT);
-    if (usage & ~(appInfo.imageUsage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT))
-        BDEX_WARN("dropped unsupported usage bits 0x%x from the swapchain images",
-                  appInfo.imageUsage & ~usage);
 
     virtualImages_.resize(count);
     for (auto& vi : virtualImages_) {

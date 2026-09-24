@@ -449,6 +449,30 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device, const VkSwapc
         BDEX_WARN("swapchain format %d not supported: passing through", static_cast<int>(pCreateInfo->imageFormat));
         virtualise = false;
     }
+    if (virtualise && !(pCreateInfo->flags & VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR)) {
+        // Check the usages promised to the application before creating our
+        // real swapchain. A surface's supportedUsageFlags need not be valid
+        // for ordinary images of the same format. If they are not, leave the
+        // original swapchain path intact (including oldSwapchain handling).
+        // Mutable-format lists need the full vkCreateImage pNext query, so
+        // those rely on createVirtualImages' actual creation/fallback below.
+        VkImageFormatProperties props{};
+        VkResult support = dev->inst->vt.GetPhysicalDeviceImageFormatProperties(
+            dev->physDev, pCreateInfo->imageFormat, VK_IMAGE_TYPE_2D,
+            VK_IMAGE_TILING_OPTIMAL, pCreateInfo->imageUsage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+            0, &props);
+        if (support != VK_SUCCESS || pCreateInfo->imageExtent.width > props.maxExtent.width ||
+            pCreateInfo->imageExtent.height > props.maxExtent.height ||
+            !(props.sampleCounts & VK_SAMPLE_COUNT_1_BIT)) {
+            BDEX_WARN("swapchain image usage 0x%x cannot be preserved in virtual images: passing through",
+                      pCreateInfo->imageUsage);
+            virtualise = false;
+        }
+    }
+    if (virtualise && !dev->ensurePresentQueue(pCreateInfo->surface)) {
+        BDEX_WARN("no compute queue can present to this surface: passing through");
+        virtualise = false;
+    }
     if (pCreateInfo->oldSwapchain) {
         if (VirtualSwapchain* old = dev->findSwapchain(pCreateInfo->oldSwapchain)) old->retire();
     }
