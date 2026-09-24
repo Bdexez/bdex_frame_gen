@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -78,7 +79,9 @@ struct Capture::Impl {
     uint32_t nextSlot = 0;
     uint32_t generation = 0;
 
-    HANDLE frameEvent = nullptr;  // set by the FrameArrived delegate
+    // The delegate owns a copy, so an already-running callback cannot touch
+    // Capture/Impl or signal an event that stop() has closed.
+    std::shared_ptr<void> frameEvent;
     HANDLE dataEvent = nullptr;   // a frame is queued for the main thread
     HANDLE quitEvent = nullptr;   // manual-reset
     HANDLE thread = nullptr;
@@ -201,7 +204,7 @@ struct Capture::Impl {
 // Thread entry (a static member: Impl is private to Capture).
 DWORD WINAPI Capture::Impl::threadMain(void* p) {
     auto* s = static_cast<Capture::Impl*>(p);
-    HANDLE waits[2] = {s->frameEvent, s->quitEvent};
+    HANDLE waits[2] = {s->frameEvent.get(), s->quitEvent};
     try {
         for (;;) {
             DWORD r = WaitForMultipleObjects(2, waits, FALSE, 100);
@@ -243,9 +246,13 @@ bool Capture::start(HWND target, const LUID* luid) {
         // from the thread pool. Re-entering with the same mode is a no-op.
         winrt::init_apartment(winrt::apartment_type::multi_threaded);
 
-        impl_->frameEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        HANDLE frameEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        if (!frameEvent) winrt::check_hresult(HRESULT_FROM_WIN32(GetLastError()));
+        impl_->frameEvent.reset(frameEvent, [](void* handle) { CloseHandle(handle); });
         impl_->dataEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        if (!impl_->dataEvent) winrt::check_hresult(HRESULT_FROM_WIN32(GetLastError()));
         impl_->quitEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (!impl_->quitEvent) winrt::check_hresult(HRESULT_FROM_WIN32(GetLastError()));
 
         // The D3D11 device goes on the same adapter as the Vulkan device so
         // the shared textures never cross GPUs (laptops: Intel + NVIDIA).
@@ -287,8 +294,9 @@ bool Capture::start(HWND target, const LUID* luid) {
         impl_->poolSize = size;
         impl_->pool = wgc::Direct3D11CaptureFramePool::CreateFreeThreaded(
             impl_->winrtDevice, wgdx::DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size);
+        auto wake = impl_->frameEvent;
         impl_->arrived = impl_->pool.FrameArrived(
-            winrt::auto_revoke, [this](auto&&, auto&&) { SetEvent(impl_->frameEvent); });
+            winrt::auto_revoke, [wake](auto&&, auto&&) { SetEvent(wake.get()); });
 
         impl_->session = impl_->pool.CreateCaptureSession(impl_->item);
         // Both are newer than WGC itself (10 2004 / 11): on older builds the
@@ -332,7 +340,7 @@ void Capture::stop() {
     for (auto& g : impl_->graves)
         for (auto& s : g.slots) s.close();
     for (auto& s : impl_->ring) s.close();
-    if (impl_->frameEvent) CloseHandle(impl_->frameEvent);
+    impl_->frameEvent.reset();
     if (impl_->dataEvent) CloseHandle(impl_->dataEvent);
     if (impl_->quitEvent) CloseHandle(impl_->quitEvent);
     delete impl_;
