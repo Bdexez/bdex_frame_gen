@@ -43,6 +43,12 @@
 // position i (1..multiplier-1), plus manifest.txt with one line per generated
 // frame: "<generated file> <ground-truth file> <t> <previous input> <current input>".
 // --verbose prints the engine's per-frame state (repeat flag, t of each slot).
+// --bench N repeats the flow N times per input, back to back (with
+// temporal_prediction or accel the repetitions differ slightly).
+// BDEX_FG_PROFILE=1 prints the mean GPU time per stage (analysis, flow,
+// synthesis) of a fixed workload: a reproducible benchmark across GPUs,
+// unlike a live game whose GPU clocks follow its load (still +-15 % from
+// run to run: compare medians of a few runs).
 #include "config.h"
 #include "device.h"
 #include "framegen.h"
@@ -199,6 +205,7 @@ int main(int argc, char** argv) {
     double jitter = 0.0, spacing = 0.0;
     uint64_t seed = 1;
     bool verbose = false, steadyContent = false;
+    int benchReps = 1;
     std::string fmtName = "rgba8", csName = "srgb";
     float renderScale = 1.f;
     for (int i = 3; i < argc; ++i) {
@@ -216,6 +223,7 @@ int main(int argc, char** argv) {
         else if (a == "--seed" && i + 1 < argc) seed = strtoull(argv[++i], nullptr, 10);
         else if (a == "--verbose") verbose = true;
         else if (a == "--steady-content") steadyContent = true;
+        else if (a == "--bench" && i + 1 < argc) benchReps = std::max(1, atoi(argv[++i]));
         else { fprintf(stderr, "unknown argument %s\n", a.c_str()); return 2; }
     }
     if (mult < 2 || mult > 4) die("--multiplier must be 2, 3 or 4");
@@ -461,22 +469,29 @@ int main(int argc, char** argv) {
                                      nullptr, 0, nullptr, 1, &b);
 
                 // The same sequence as VirtualSwapchain::present.
+                fg.profileBegin(cmd, 0);
                 fg.recordAcquireSources(cmd, prev, cur);
                 fg.recordAnalysis(cmd, parity, static_cast<uint32_t>(cur));
                 fg.recordFrameState(cmd, timing);
+                fg.profileMark(cmd, 0, FrameGen::StageAnalysis);
                 if (generate) {
-                    fg.recordFlow(cmd, parity);
+                    // --bench: the same flow computed back to back keeps the GPU
+                    // at full clock; the last repetition is the one used.
+                    for (int r = 0; r < benchReps; ++r) fg.recordFlow(cmd, parity);
+                    fg.profileMark(cmd, 0, FrameGen::StageFlow);
                     const float base = extrap ? 1.f : 0.f;
-                    for (int i = 1; i < mult; ++i) {
+                    for (int i = 1; i < mult; ++i)
                         fg.recordInterpolate(cmd, static_cast<uint32_t>(prev), static_cast<uint32_t>(cur),
                                              base + float(i) / mult, static_cast<uint32_t>(i - 1));
+                    fg.profileMark(cmd, 0, FrameGen::StageInterp);
+                    for (int i = 1; i < mult; ++i)
                         fg.recordDump(cmd, static_cast<uint32_t>(i - 1), static_cast<uint32_t>(cur));
-                    }
                 }
                 if (fg.packReal()) fg.recordUpscaleReal(cmd, static_cast<uint32_t>(cur), generate ? prev : -1);
                 if (dumpReal) fg.recordDump(cmd, fg.outputCount(), static_cast<uint32_t>(cur));
                 fg.recordReleaseSources(cmd, prev, cur);
             });
+            fg.profileCollect(0);
             if (generate) {
                 // What the player should see on each displayed frame: the
                 // layer's pacing (swapchain.cpp) spreads the frames of a
@@ -532,6 +547,9 @@ int main(int argc, char** argv) {
             prev = cur;
             parity ^= 1;
         }
+        if (dev.config.profile)
+            fprintf(stderr, "bdex_offline: gpu ms per input%s%s\n", fg.profileReport().c_str() + 9,
+                    benchReps > 1 ? " (flow: all --bench repetitions)" : "");
         vkDeviceWaitIdle(device);
         vkUnmapMemory(device, staging.memory);
         dev.destroyBuffer(staging);
