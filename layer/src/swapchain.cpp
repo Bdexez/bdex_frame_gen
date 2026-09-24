@@ -534,7 +534,28 @@ void VirtualSwapchain::updateHudLows(double dtMs) {
     hudLow01_ = lowFps(0.999);
 }
 
+// Frame-rate limiter (fps_limit), like DXVK_FRAME_RATE: the application's
+// present blocks until its next slot, which paces the game itself. Frame
+// generation works best from an even base rate at a divisor of the refresh
+// rate (60 -> 120, 72 -> 144). Sleeps until ~1.5 ms before the deadline, then
+// spins briefly for precision; after a late frame the schedule restarts from
+// now instead of letting the game burst to catch up.
+void VirtualSwapchain::limitFrameRate() {
+    std::lock_guard<std::mutex> lk(limitMutex_);
+    const auto interval = std::chrono::duration_cast<clock::duration>(
+        std::chrono::duration<double>(1.0 / dev_.config.fpsLimit));
+    auto now = clock::now();
+    if (limitNext_ > now) {
+        const auto coarse = limitNext_ - std::chrono::microseconds(1500);
+        if (coarse > now) std::this_thread::sleep_until(coarse);
+        while ((now = clock::now()) < limitNext_) std::this_thread::yield();
+    }
+    limitNext_ = (limitNext_ == clock::time_point{} || now - limitNext_ > interval) ? now + interval
+                                                                                  : limitNext_ + interval;
+}
+
 VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& info, bool consumeWaitSemaphores) {
+    if (dev_.config.fpsLimit > 0.f) limitFrameRate();  // before mutex_: never block acquire while sleeping
     std::lock_guard<std::mutex> lock(mutex_);
     const auto t0 = clock::now();
     const VkSemaphore* appWaits = consumeWaitSemaphores ? info.pWaitSemaphores : nullptr;

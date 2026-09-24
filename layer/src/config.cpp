@@ -169,6 +169,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "temporal_prediction")          return parseBool(value, temporalPrediction);
     if (key == "extrapolate_splat")           return parseBool(value, extrapolateSplat);
     if (key == "extrapolate_hold")            return parseFloat(value, extrapolateHold, 0.f, 1.f);
+    if (key == "fps_limit" || key == "fps_cap") return parseFloat(value, fpsLimit, 0.f, 1000.f);
     if (key == "pixel_vectors")               return parseBool(value, pixelVectors);
     if (key == "subpixel")                    return parseBool(value, subpixel);
     if (key == "static_guard")                return parseFloat(value, staticGuard, 0.f, 1.f);
@@ -318,6 +319,7 @@ std::string Config::describe() const {
     if (temporalPrediction) o << " temporal_prediction=1";
     if (extrapolateSplat) o << " extrapolate_splat=1";
     if (extrapolateHold > 0.f) o << " extrapolate_hold=" << extrapolateHold;
+    if (fpsLimit > 0.f) o << " fps_limit=" << fpsLimit;
     if (pixelVectors) o << " pixel_vectors=1";
     if (subpixel) o << " subpixel=1";
     if (staticGuard > 0.f) o << " static_guard=" << staticGuard;

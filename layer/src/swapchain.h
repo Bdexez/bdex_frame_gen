@@ -146,6 +146,11 @@ private:
     VkResult pendingResult_ = VK_SUCCESS;  // surfaced to the application on its next call
 
     clock::time_point lastAppPresent_{};
+    // fps_limit: next allowed application present (only the presenting
+    // thread touches it, before mutex_ is taken, under limitMutex_).
+    std::mutex limitMutex_;
+    clock::time_point limitNext_{};
+    void limitFrameRate();
     double frameIntervalMs_ = 16.6;
 
     // On-screen HUD: a rolling window of raw game frame intervals (ms) feeds the
