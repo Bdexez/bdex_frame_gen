@@ -164,6 +164,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "census_weight")               return parseFloat(value, censusWeight, 0.f, 8.f);
     if (key == "census_margin")               return parseFloat(value, censusMargin, 0.f, 1.f);
     if (key == "rot_weight")                  return parseFloat(value, rotWeight, 0.f, 1.f);
+    if (key == "occlusion_strength")           return parseFloat(value, occlusionStrength, 0.f, 1.f);
     if (key == "refine")                      return parseBool(value, refine);
     if (key == "refine_all")                  return parseBool(value, refineAll);
     if (key == "flow_iterations")             return parseInt(value, flowIterations, 0, 3);
@@ -305,6 +306,7 @@ std::string Config::describe() const {
     if (gradWeight > 0.f) o << " grad_weight=" << gradWeight;
     if (censusWeight > 0.f) o << " census_weight=" << censusWeight << " census_margin=" << censusMargin;
     if (rotWeight > 0.f) o << " rot_weight=" << rotWeight;
+    if (occlusionStrength > 0.f) o << " occlusion_strength=" << occlusionStrength;
     if (antiCheatDisabled) o << " [disabled: anti-cheat detected]";
     return o.str();
 }

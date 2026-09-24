@@ -16,13 +16,14 @@ struct DownsamplePC { int32_t size[2]; int32_t fromColor; int32_t srgbSource; };
 struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; float gradWeight; float censusWeight; float censusMargin; float rotWeight; };
 struct SizePC { int32_t size[2]; };
 struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; };
-struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; };
+struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; float occlusionStrength; };
 struct UpscalePC { int32_t outSize[2]; int32_t srcSize[2]; uint32_t encoding; int32_t filter; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; };
 struct CasPC { int32_t size[2]; uint32_t encoding; float sharpness; };
 
 constexpr uint32_t kBlockSize = 8;
 constexpr uint32_t kFineBlock = 4;
-constexpr uint32_t kPushSize = 64;
+constexpr uint32_t kPushSize = 80;
+static_assert(sizeof(InterpPC) <= kPushSize);
 
 uint32_t divUp(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
 
@@ -439,12 +440,12 @@ void FrameGen::recordDump(VkCommandBuffer cmd, uint32_t which, uint32_t cur) {
         dumpBuf_[which] = dev_.createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
         VK_CHECK(vt.MapMemory(dev_.device, dumpBuf_[which].memory, 0, VK_WHOLE_SIZE, 0, &dumpMapped_[which]));
     }
-    if (!costReadback_.buffer) {
+    if (outputs_ > 0 && !costReadback_.buffer) {
         costReadback_ = dev_.createBuffer(16, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
         VK_CHECK(vt.MapMemory(dev_.device, costReadback_.memory, 0, VK_WHOLE_SIZE, 0, &costMapped_));
     }
     memoryBarrier(cmd);
-    if (which == 0) {
+    if (which < outputs_) {
         VkBufferCopy bc{0, 0, 16};
         vt.CmdCopyBuffer(cmd, costBuf_.buffer, costReadback_.buffer, 1, &bc);
     }
@@ -622,7 +623,7 @@ void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cu
                 cfg.sceneCutLow, cfg.sceneCutHigh,
                 {1.f / (fine.fine.width * blk * flowScale_ * sx),
                  1.f / (fine.fine.height * blk * flowScale_ * sy)},
-                cfg.flowIterations, hudMode_, hudGame_, hudOut_, hudLow1_, hudLow01_};
+                cfg.flowIterations, hudMode_, hudGame_, hudOut_, hudLow1_, hudLow01_, cfg.occlusionStrength};
     vt.CmdPushConstants(cmd, interp_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
     const uint32_t N = static_cast<uint32_t>(sources_.size());
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, interp_.layout, 0, 1,
