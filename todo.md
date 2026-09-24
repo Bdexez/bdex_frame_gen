@@ -134,8 +134,9 @@ Outils : `tools/run_eval.sh` (démo, en ligne) et `tools/eval_sequence.py`
   bureau). Mesuré : ×2 → ×1 en 0,6 s, et retour. Limite : lu depuis le
   thread de présentation, sans verrou côté lecture (jeux à plusieurs threads
   de présentation simultanés : non couvert).
-- [ ] **Rapport de diagnostic en une commande** (`bdex-framegen --report`) :
-  logs, config, GPU, pilote, jeu.
+- [x] **Rapport de diagnostic** — fait : `bdex-framegen --report [FICHIER]`
+  (système, session, GPU/pilote, chargement du layer, manifestes, variables
+  d'environnement utiles, config, fin du log).
 - [ ] **Profils par jeu fournis** : réglages éprouvés et liste anti-cheat
   maintenue.
 - [ ] **Packaging et versions** : AUR ou Flatpak pour la GUI, releases
