@@ -76,6 +76,9 @@ cmake -S . -B build && cmake --build build -j$(nproc)   # Linux
 ctest --test-dir build --output-on-failure              # unit + éval + intégration GPU
 tests/integration.sh build/demo/bdex_demo build/layer   # e2e GPU (X11/Wayland)
 tools/run_eval.sh                                       # éval qualité (PSNR)
+tools/make_corpus.py DIR                                # corpus synthétique (HUD, panoramique doux, sous-pixel, fondu)
+tools/tune.py SEQ...                                    # réglage automatique (descente par coordonnées)
+bdex-framegen --toggle | --report                       # pause à chaud (raccourci) | rapport de diagnostic
 tools/eval_sequence.py <dir_ppm> --variant KEY=VAL     # éval hors ligne (bdex_offline, sans fenêtre) sur séquence enregistrée
 ```
 
@@ -94,7 +97,9 @@ la prédiction du niveau coarse, `flow_smooth`, `flow_refine` 4×4) →
 `interpolate` (warp bidirectionnel des deux frames + blend le long des
 trajectoires, t=0.5 ; référence en cut) ou `extrapolate` (prédit la frame
 suivante, ~0 ms de hold) → `upscale` (bilinear / Catmull-Rom / Lanczos-2, si
-`render_scale < 1`) → `cas` (sharpening) → HUD fps. Pacing par sommeil quand le
+`render_scale < 1`) → `cas` (sharpening) → HUD fps. En extrapolation avec
+`extrapolate_splat`, une passe `splat` projette d'abord les pixels vers leur
+position future (carte `r32ui`, `atomicMin` priorité|index). Pacing par sommeil quand le
 present mode n'est pas FIFO ; `PRESENT_MODE=auto` transforme la demande FIFO du
 jeu en mailbox.
 
@@ -206,6 +211,29 @@ réintroduire) :
   On peut toujours tout lancer à la main (cf. §4). Le seuil PSNR (28,0/23,0)
   est calibré au chiffre lavapipe réel, qui colle au GPU à ~0,04 dB — toute
   régression matcher le fait chuter.
+
+### Session 2026-09-24 — outils, tests et options ajoutés
+
+- **Éval hors ligne** : `bdex_offline` (moteur sans fenêtre sur séquence PPM,
+  `--format`, `--render-scale`) + `eval_sequence.py` (PSNR global/mouvement/
+  arêtes, SSIM, scintillement, références répétition/fondu, `--variant`,
+  `--json`). Reproduit exactement les frames du layer en ligne.
+- **Tests ctest** : `matcher` (vrai shader vs modèle C++ du départage ; attrape
+  0549e44), `offline`, `corpus` (références `tests/corpus_reference.json`,
+  `--update` après un changement voulu), `formats`, `validation` (Khronos +
+  sync), plus le job CI `sanitizers` (ASan+UBSan, TSan).
+- **Options opt-in (défaut 0 = bit à bit)** : `zero_bias_contrast`,
+  `subpixel`, `pixel_vectors`, `static_guard` (gardé par le flow au pixel),
+  `temporal_prediction`, `extrapolate_splat` ; **défaut changé** :
+  l'extrapolation suit le warp partout (`extrapolate_hold=1` = ancien).
+  Produit : `fps_limit`, `target_fps` (multiplicateur dynamique), `paused` +
+  rechargement à chaud de la config, profils fournis `layer/profiles.conf`.
+- **Push constants** : plage de 96 octets (`kPushSize`), `static_assert` sur
+  `InterpPC`/`MatchPC`. Tout nouveau binding compte dans `createDescriptors`
+  (le pool sous-dimensionné donne VK_ERROR_OUT_OF_POOL_MEMORY → pass-through).
+- **Bug corrigé** : tables globales jamais détruites (crash à la sortie des
+  jeux sous Wayland quand le device n'est pas détruit).
+- **Tags** : v0.2.0+ ne sont plus ancêtres de `main` (réécriture d'historique).
 
 ## 10. Décisions & mesures clés (retenir les chiffres)
 

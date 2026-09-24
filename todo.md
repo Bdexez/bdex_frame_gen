@@ -4,21 +4,29 @@
 Outils : `tools/run_eval.sh` (démo, en ligne) et `tools/eval_sequence.py`
 (séquences enregistrées, hors ligne, A/B avec `--variant`).
 
-## Décisions en attente
+## Décisions en attente (et ce qui demande ton matériel)
 
-- [ ] **Défaut de `zero_bias`** : activer `zero_bias_contrast=0.1` par défaut
-  (non négatif partout, cf. plus bas) plutôt que passer `zero_bias` à 0, au moins pour l'extrapolation et
-  l'app de capture ? Mesuré : rapide +0,75 dB (arêtes en rotation +2,8),
-  normal −0,10 ; en extrapolation, gain sur toutes les scènes testées.
-  Attention : déplace la référence bit à bit de la CI, et le launcher Windows
-  et la GUI GTK éditent ce réglage.
+- [ ] **Options à passer par défaut ?** Toutes mesurées non négatives (ou
+  presque) sur la démo en ligne et le corpus hors ligne :
+  - `zero_bias_contrast=0.1` : normal +0,02, rapide +0,48 dB (rotation +2,7) ;
+  - `pixel_vectors=1` : normal +0,39, rapide +0,57, rotation jusqu'à +4,7 dB ;
+    coût synthèse ×2 (+1,4 ms Vega 8) ;
+  - `subpixel=1` : +0,08 / +0,06 ; les trois ensemble : rapide +1,07 dB ;
+  - `extrapolate_splat=1` (extrapolation) : normal +1,08, rapide +0,41 ;
+    +0,8 ms.
+  Changer un défaut d'interpolation déplace la référence bit à bit de la CI
+  (`check_matcher_invariant.py`, f2cec5f) : à mettre à jour délibérément.
+  Le launcher Windows et la GUI GTK éditent `zero_bias`.
 - [ ] **Enregistrer une séquence Kenshi** (caméra en mouvement, HUD visible)
   pour trancher `zero_bias`, `static_guard` et `temporal_prediction` sur du
   vrai contenu :
   `BDEX_FG=1 BDEX_FG_MULTIPLIER=1 BDEX_FG_DUMP=/tmp/kenshi BDEX_FG_DUMP_FRAMES=240 %command%`
-  puis `tools/eval_sequence.py /tmp/kenshi --variant ZERO_BIAS=0 --variant STATIC_GUARD=1`
+  puis `tools/eval_sequence.py /tmp/kenshi --variant ZERO_BIAS_CONTRAST=0.1
+  --variant PIXEL_VECTORS=1 --variant STATIC_GUARD=1`, ou `tools/tune.py` sur
+  plusieurs séquences ; les ajouter au corpus via `BDEX_CORPUS_DIR`.
 - [ ] Vérifier la CI Linux sur GitHub (dépôt privé, non visible sans compte).
 - [ ] Supprimer la branche locale `backup/pre-rebase` si tout est bon.
+- [ ] Tags de release orphelins et sortie de la 0.4.0 (voir « Packaging »).
 
 ## Qualité de l'image
 
