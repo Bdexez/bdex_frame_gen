@@ -20,8 +20,11 @@ checklist in `windows-port.md` §3. Please report what happens.
 2. Double-click `bdex_capture.exe` (or run it with no arguments): a
    **launcher window** opens — pick the game's window in the list, set the
    options (generation on/off, ×2/×3/×4, extrapolation/interpolation, quality
-   preset, overlay size, upscale filter and sharpness, vsync, fps counter)
-   and press **Démarrer**. The choices are saved to
+   preset, overlay size, upscale filter and sharpness, vsync, fps counter,
+   and in the right-hand **Options avancées** column every other engine
+   option: motion quality — contrast-relative stability (0.1 recommended),
+   object edges, sub-pixel motion, splatted extrapolation — the experimental
+   ones, the flow structure and the debug view) and press **Démarrer**. The choices are saved to
    `%APPDATA%\bdex-framegen\bdex-framegen.conf` (the same keys as the Linux
    control panel); when the capture stops (Ctrl+Alt+Q, game closed) the
    launcher reopens.

@@ -30,6 +30,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-24)
 
+- **The Windows launcher gains an "Options avancées" column** with every
+  engine option that applies to the capture app (motion quality,
+  experimental, flow structure, debug view), table-driven, saved like the
+  other settings (only non-default values; per-game profiles included).
+  Checked with a MinGW build under Wine; the MSVC build comes from CI.
 - **The control panel exposes every layer option.** Its advanced section is
   now six collapsible groups — Cadence, Motion quality, Experimental, Flow
   structure, Diagnostic, Compatibility — with switches, lists and text fields
