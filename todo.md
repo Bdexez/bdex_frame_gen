@@ -29,6 +29,24 @@ Outils : `tools/run_eval.sh` (démo, en ligne) et `tools/eval_sequence.py`
 - [ ] Supprimer la branche locale `backup/pre-rebase` si tout est bon.
 - [ ] Tags de release orphelins et sortie de la 0.4.0 (voir « Packaging »).
 
+## Fait le 2026-09-24 (suite) — à valider en jeu
+
+Tout est opt-in et mesuré (voir CHANGELOG) ; candidats au défaut après
+essai sur de vrais jeux :
+- [ ] `chroma_weight=1` (+12 dB isoluminant, +11 dB panoramique coloré ;
+  −1,2 dB sur les rayures qui défilent de la démo) ;
+- [ ] `dedup=1` (+0,9 à +7 dB sur contenu répété, identique sinon ; à
+  vérifier sur une cinématique à 30 i/s et un émulateur) ;
+- [ ] `scene_cut_local=1` (+1 dB sur un menu, neutre ailleurs) ;
+- [ ] `frame_timing` : gagnant sur un jeu à pas variable, −0,6 dB au pire sur
+  pas fixe — à trancher par jeu (profil) ;
+- [ ] `extrapolate_accel` (extrapolation) : caméra qui accélère +1 à +2,7 dB ;
+- [ ] `gpu_budget=0.25` sur l'iGPU Vega 8 : vérifier que la génération ne
+  fait plus chuter les fps du jeu ;
+- [ ] HDR réel (scRGB / HDR10) sur un jeu ; gamescope + un émulateur.
+- Mode capture Windows : `frame_timing`/`dedup` branchés (non compilé
+  localement, la CI le vérifiera au prochain push).
+
 ## Qualité de l'image
 
 - [x] **`zero_bias` proportionnel au contraste** — fait : `zero_bias_contrast`

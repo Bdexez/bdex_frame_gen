@@ -97,7 +97,9 @@ la prédiction du niveau coarse, `flow_smooth`, `flow_refine` 4×4) →
 `interpolate` (warp bidirectionnel des deux frames + blend le long des
 trajectoires, t=0.5 ; référence en cut) ou `extrapolate` (prédit la frame
 suivante, ~0 ms de hold) → `upscale` (bilinear / Catmull-Rom / Lanczos-2, si
-`render_scale < 1`) → `cas` (sharpening) → HUD fps. En extrapolation avec
+`render_scale < 1`) → `cas` (sharpening) → HUD fps. Entre l'analyse et le flow, la passe d'état
+`frame_state` (seulement avec `frame_timing` / `dedup`) calcule t et
+les répétitions sur GPU. En extrapolation avec
 `extrapolate_splat`, une passe `splat` projette d'abord les pixels vers leur
 position future (carte `r32ui`, `atomicMin` priorité|index). Pacing par sommeil quand le
 present mode n'est pas FIFO ; `PRESENT_MODE=auto` transforme la demande FIFO du
@@ -234,6 +236,50 @@ réintroduire) :
 - **Bug corrigé** : tables globales jamais détruites (crash à la sortie des
   jeux sous Wayland quand le device n'est pas détruit).
 - **Tags** : v0.2.0+ ne sont plus ancêtres de `main` (réécriture d'historique).
+
+### Session 2026-09-24 (suite) — huit axes implémentés
+
+Tous opt-in (défaut = bit à bit, vérifié sur tout le corpus, formats et
+x2/x3/x4), sauf le correctif HDR (les chemins SDR restent identiques).
+- **HDR** : `encodingForFormat(format, colorSpace)` → `transfer`
+  (`TRANSFER_PERCEPTUAL/LINEAR/SCRGB/PQ`) ; scRGB et PQ ramenés en lumière
+  linéaire relative au blanc SDR (203 nits) puis `sqrt`, comme le sRGB
+  décodé. Une échelle PQ a été mesurée et rejetée (−3 à −10 dB).
+  `bdex_offline --colorspace scrgb|hdr10`.
+- **Tampon d'état GPU** (`stateBuf_`, `frame_state.comp`, disposition
+  `kState*` dans framegen.cpp) : horloge de contenu, `t` par sortie, drapeau
+  de répétition, arguments de dispatch indirect. **Aucune relecture CPU avant
+  la présentation.** `frame_timing` (t au temps réel), `dedup` (répétitions :
+  passes de flow annulées par `vkCmdDispatchIndirect` à 0 groupe, sortie
+  réelle remplacée par une extrapolation via `recordUpscaleReal(cur, prev)`,
+  qui force `packReal_`). Les formules de t retombent exactement sur i/m à
+  cadence régulière (écrites « i/m + correction »).
+- **`scene_cut_local`** : grille 8×8 dans `reduce_cost` (groupes 1..64).
+- **`extrapolate_accel`** : copie du flow arrière fin précédent (`prevBwd_`,
+  usage TRANSFER_SRC sur le flow du niveau 0) ; estimateur moyenné 3×3
+  bilatéral, porte de cohérence, trajectoire entière dans l'image. Chaque
+  garde a été mesuré (sans eux : jusqu'à −0,9 dB sur mouvement constant).
+- **`chroma_weight`** : pyramide Cb/Cr (`downsample_chroma.comp`), bindings
+  6/7 du matcher. Le gagnant historique (réduction en arbre, §6) reste le
+  tenant. Perte connue : les rayures quasi isoluminantes qui défilent plus
+  vite que leur période (boîte hachurée de la démo, −1,2 dB).
+- **`gpu_budget`** : gouverneur `budget.{h,cpp}` (testé), niveaux 1–2 =
+  surcharges (`FrameGen::effectiveConfig`), 3–4 = reconstruction avec
+  `flowScaleFactor`.
+- **GL / gamescope** : `--gl` force aussi le fournisseur Mesa (sinon le GL
+  NVIDIA garde le jeu, hors de portée, sans erreur) ; profil fourni
+  `[gamescope] hide_present_ext = 0` (backend SDL requis).
+- **Outils** : `bdex_offline --jitter/--dup/--spacing/--steady-content/
+  --verbose` (chaque frame affichée notée contre ce que le joueur devrait
+  voir, modèle de pacing de swapchain.cpp), `eval_sequence.py
+  --offline-args` (PSNR plafonné à 60 dB quand les réelles sont notées),
+  corpus + `popup`, `swing`, `chroma` ; démo `--repeat N` ; `validation.sh`
+  couvre toutes les options (et l'échelle complète du budget).
+- `kPushSize` passe à 128 octets (minimum garanti).
+- `run_eval.sh` échoue parfois (« 0 comparable ») quand le compositeur
+  impose une autre taille de fenêtre : relancer. Les démos rejouées hors
+  ligne (copier `~/.cache/bdex-eval/gt/*real*` en `fNNNN.ppm`) sont plus
+  rapides et reproductibles pour itérer.
 
 ### CI Linux — pièges (2026-09-24)
 
