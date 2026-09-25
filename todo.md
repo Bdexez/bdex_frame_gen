@@ -55,6 +55,8 @@ essai sur de vrais jeux :
   `target_fps = auto`.
 - [ ] Capture Windows en HDR sur un écran HDR (log `colour: HDR`).
 - [ ] CI Windows après push : `capture.cpp` (WinRT) n'a pas été compilé ici.
+- [ ] `async_compute=1` sur le Vega 8 (AMD, moteurs compute en parallèle) :
+  comparer les fps du jeu et `PROFILE=1` avec/sans ; perte mesurée sur NVIDIA.
 
 ## Qualité de l'image
 

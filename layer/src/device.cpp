@@ -88,6 +88,10 @@ AllocatedImage DeviceData::createImage(VkFormat format, VkExtent2D extent, VkIma
     ci.tiling = VK_IMAGE_TILING_OPTIMAL;
     ci.usage = usage;
     ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    // The layer's internal images are used by both of its queues under
+    // async_compute: share them between the two families.
+    const std::vector<uint32_t> ours = layerFamilies();
+    if (!sharingFamilies && ours.size() > 1) sharingFamilies = &ours;
     if (sharingFamilies && sharingFamilies->size() > 1) {
         ci.sharingMode = VK_SHARING_MODE_CONCURRENT;
         ci.queueFamilyIndexCount = static_cast<uint32_t>(sharingFamilies->size());
@@ -134,6 +138,12 @@ AllocatedBuffer DeviceData::createBuffer(VkDeviceSize size, VkBufferUsageFlags u
     ci.size = size;
     ci.usage = usage;
     ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    const std::vector<uint32_t> ours = layerFamilies();  // see createImage
+    if (ours.size() > 1) {
+        ci.sharingMode = VK_SHARING_MODE_CONCURRENT;
+        ci.queueFamilyIndexCount = static_cast<uint32_t>(ours.size());
+        ci.pQueueFamilyIndices = ours.data();
+    }
     try {
         VK_CHECK(vt.CreateBuffer(device, &ci, nullptr, &buf.buffer));
         VkMemoryRequirements req{};

@@ -156,6 +156,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     }
     if (key == "pacing")                      return parseBool(value, pacing);
     if (key == "present_feedback")            return parseBool(value, presentFeedback);
+    if (key == "async_compute")               return parseBool(value, asyncCompute);
     if (key == "capture_hdr") {
         if (lower(value) == "auto") { captureHdr = -1; return true; }
         bool b;

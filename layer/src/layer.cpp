@@ -340,6 +340,39 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
     }
     if (chosen >= 0) data->queueFamily = static_cast<uint32_t>(chosen);
 
+    // async_compute: the synthesis goes to a queue of a compute-only family
+    // (hardware that runs it alongside the game's graphics work), the copies
+    // and presents stay on the queue chosen above. Only with a spare queue in
+    // such a family, and a different family from the main queue.
+    if (chosen >= 0 && data->config.asyncCompute) {
+        for (uint32_t f = 0; f < nf; ++f) {
+            const VkQueueFlags fl = data->families[f].queueFlags;
+            if (int(f) == chosen || !(fl & VK_QUEUE_COMPUTE_BIT) || (fl & VK_QUEUE_GRAPHICS_BIT)) continue;
+            if (requested[f] >= data->families[f].queueCount) continue;
+            data->computeFamily = f;
+            data->computeIndex = requested[f];
+            bool found = false;
+            for (auto& q : qcis) {
+                if (q.queueFamilyIndex != f || found) continue;
+                found = true;
+                prioStorage.emplace_back(q.pQueuePriorities, q.pQueuePriorities + q.queueCount);
+                prioStorage.back().push_back(1.0f);
+                q.queueCount += 1;
+                q.pQueuePriorities = prioStorage.back().data();
+            }
+            if (!found) {
+                prioStorage.emplace_back(1, 1.0f);
+                VkDeviceQueueCreateInfo q{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+                q.queueFamilyIndex = f;
+                q.queueCount = 1;
+                q.pQueuePriorities = prioStorage.back().data();
+                qcis.push_back(q);
+            }
+            data->asyncCompute = true;
+            break;
+        }
+    }
+
     VkDeviceCreateInfo ci = *pCreateInfo;
     ci.queueCreateInfoCount = static_cast<uint32_t>(qcis.size());
     ci.pQueueCreateInfos = qcis.data();
@@ -417,7 +450,15 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
         pi.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
         pi.queueFamilyIndex = data->queueFamily;
         if (data->vt.CreateCommandPool(*pDevice, &pi, nullptr, &data->cmdPool) == VK_SUCCESS) data->layerUsable = true;
+        if (data->asyncCompute) {
+            data->vt.GetDeviceQueue(*pDevice, data->computeFamily, data->computeIndex, &data->computeQueue);
+            if (data->computeQueue) adoptDispatch(data->computeQueue, *pDevice);
+            else data->asyncCompute = false;
+        }
     }
+    if (data->asyncCompute)
+        BDEX_INFO("async compute: synthesis on queue family %u, presentation on family %u", data->computeFamily,
+                  data->queueFamily);
     if (data->config.enabled || data->config.antiCheatDisabled) {
         StatusEntry e;
         e.kind = "device";

@@ -37,11 +37,13 @@ VirtualSwapchain::VirtualSwapchain(DeviceData& dev, const VkSwapchainCreateInfoK
         createVirtualImages(appInfo, wantGeneration);
         VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
         pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        pci.queueFamilyIndex = dev_.queueFamily;
+        // The synthesis runs on the async compute family when there is one.
+        pci.queueFamilyIndex = dev_.asyncCompute ? dev_.computeFamily : dev_.queueFamily;
         VK_CHECK(dev_.vt.CreateCommandPool(dev_.device, &pci, nullptr, &appPool_));
+        pci.queueFamilyIndex = dev_.queueFamily;
         VK_CHECK(dev_.vt.CreateCommandPool(dev_.device, &pci, nullptr, &workerPool_));
-        createSlots(slots_, kAppSlots, false, appPool_);
-        createSlots(workerSlots_, kWorkerSlots, true, workerPool_);
+        createSlots(slots_, kAppSlots, false, appPool_, dev_.asyncCompute, false);
+        createSlots(workerSlots_, kWorkerSlots, true, workerPool_, false, dev_.asyncCompute);
         generating_ = wantGeneration;
         fg_ = makeFrameGen(generating_);
         worker_ = std::thread([this] { workerLoop(); });
@@ -235,10 +237,7 @@ void VirtualSwapchain::followSurface() {
         std::unique_lock<std::mutex> wlock(workerMutex_);
         waitWorkerIdle(wlock);
     }
-    {
-        std::lock_guard<std::mutex> qlock(dev_.queueMutex(dev_.queue));
-        dev_.vt.QueueWaitIdle(dev_.queue);
-    }
+    waitQueuesIdle();
     // The feedback thread must not wait on the swapchain being replaced.
     struct FeedbackPause {
         VirtualSwapchain& s;
@@ -320,7 +319,8 @@ void VirtualSwapchain::createVirtualImages(const VkSwapchainCreateInfoKHR& appIn
     std::vector<uint32_t> families = dev_.appFamilies;
     if (appInfo.imageSharingMode == VK_SHARING_MODE_CONCURRENT)
         families.assign(appInfo.pQueueFamilyIndices, appInfo.pQueueFamilyIndices + appInfo.queueFamilyIndexCount);
-    if (std::find(families.begin(), families.end(), dev_.queueFamily) == families.end()) families.push_back(dev_.queueFamily);
+    for (uint32_t f : dev_.layerFamilies())
+        if (std::find(families.begin(), families.end(), f) == families.end()) families.push_back(f);
     std::sort(families.begin(), families.end());
     families.erase(std::unique(families.begin(), families.end()), families.end());
 
@@ -338,17 +338,37 @@ void VirtualSwapchain::createVirtualImages(const VkSwapchainCreateInfoKHR& appIn
     }
 }
 
-void VirtualSwapchain::createSlots(std::vector<FrameSlot>& slots, uint32_t count, bool withSemaphore, VkCommandPool pool) {
+void VirtualSwapchain::createSlots(std::vector<FrameSlot>& slots, uint32_t count, bool withSemaphore, VkCommandPool pool,
+                                   bool asyncSynthesis, bool asyncCopy) {
     slots.resize(count);
+    VkSemaphoreCreateInfo si{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     for (auto& s : slots) {
         VK_CHECK(dev_.allocateCommandBuffer(&s.cmd, pool));
         VkFenceCreateInfo fi{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
         VK_CHECK(dev_.vt.CreateFence(dev_.device, &fi, nullptr, &s.fence));
-        if (withSemaphore) {
-            VkSemaphoreCreateInfo si{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-            VK_CHECK(dev_.vt.CreateSemaphore(dev_.device, &si, nullptr, &s.acquireSem));
+        if (withSemaphore) VK_CHECK(dev_.vt.CreateSemaphore(dev_.device, &si, nullptr, &s.acquireSem));
+        if (asyncSynthesis) {
+            for (auto& sem : s.synthDone) VK_CHECK(dev_.vt.CreateSemaphore(dev_.device, &si, nullptr, &sem));
+            VK_CHECK(dev_.vt.CreateSemaphore(dev_.device, &si, nullptr, &s.realIn));
+            VK_CHECK(dev_.vt.CreateSemaphore(dev_.device, &si, nullptr, &s.synthIn));
         }
+        if (asyncCopy) VK_CHECK(dev_.vt.CreateSemaphore(dev_.device, &si, nullptr, &s.copyDone));
     }
+}
+
+// Every queue the layer submits to (the async compute one too) is idle:
+// before resources the GPU may still use are destroyed or rebuilt.
+void VirtualSwapchain::waitQueuesIdle() {
+    for (VkQueue q : {dev_.queue, dev_.asyncCompute ? dev_.computeQueue : VkQueue(VK_NULL_HANDLE)}) {
+        if (!q) continue;
+        std::lock_guard<std::mutex> qlock(dev_.queueMutex(q));
+        dev_.vt.QueueWaitIdle(q);
+    }
+}
+
+VkResult VirtualSwapchain::submitOn(VkQueue queue, const VkSubmitInfo& si, VkFence fence) {
+    std::lock_guard<std::mutex> qlock(dev_.queueMutex(queue));
+    return dev_.vt.QueueSubmit(queue, 1, &si, fence);
 }
 
 void VirtualSwapchain::destroySlots(std::vector<FrameSlot>& slots, VkCommandPool pool) {
@@ -356,7 +376,9 @@ void VirtualSwapchain::destroySlots(std::vector<FrameSlot>& slots, VkCommandPool
         if (s.submitted) dev_.vt.WaitForFences(dev_.device, 1, &s.fence, VK_TRUE, UINT64_MAX);
         if (s.cmd && pool) dev_.vt.FreeCommandBuffers(dev_.device, pool, 1, &s.cmd);
         if (s.fence) dev_.vt.DestroyFence(dev_.device, s.fence, nullptr);
-        if (s.acquireSem) dev_.vt.DestroySemaphore(dev_.device, s.acquireSem, nullptr);
+        for (VkSemaphore sem : {s.acquireSem, s.realIn, s.synthIn, s.copyDone, s.synthDone[0], s.synthDone[1],
+                                s.synthDone[2], s.synthDone[3]})
+            if (sem) dev_.vt.DestroySemaphore(dev_.device, sem, nullptr);
     }
     slots.clear();
 }
@@ -383,8 +405,7 @@ void VirtualSwapchain::waitIdle() {
         if (s.submitted) dev_.vt.WaitForFences(dev_.device, 1, &s.fence, VK_TRUE, UINT64_MAX);
     for (auto& s : workerSlots_)
         if (s.submitted) dev_.vt.WaitForFences(dev_.device, 1, &s.fence, VK_TRUE, UINT64_MAX);
-    std::lock_guard<std::mutex> qlock(dev_.queueMutex(dev_.queue));
-    dev_.vt.QueueWaitIdle(dev_.queue);
+    waitQueuesIdle();
 }
 
 void VirtualSwapchain::retire() {
@@ -415,6 +436,10 @@ void VirtualSwapchain::destroyAll() {
         workerCv_.notify_all();
         worker_.join();
     }
+    // Both queues idle before any slot's semaphores go: unfenced batches (the
+    // semaphore-consuming ones) and the async compute queue may still refer
+    // to them.
+    waitQueuesIdle();
     destroySlots(slots_, appPool_);
     destroySlots(workerSlots_, workerPool_);
     if (appPool_) dev_.vt.DestroyCommandPool(d, appPool_, nullptr);
@@ -655,10 +680,7 @@ void VirtualSwapchain::applyGpuBudget() {
             std::unique_lock<std::mutex> wlock(workerMutex_);
             waitWorkerIdle(wlock);
         }
-        {
-            std::lock_guard<std::mutex> qlock(dev_.queueMutex(dev_.queue));
-            dev_.vt.QueueWaitIdle(dev_.queue);
-        }
+        waitQueuesIdle();
         const int oldFactor = flowScaleFactor_;
         flowScaleFactor_ = factor;
         bool generating = generating_;
@@ -831,7 +853,38 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     si.pWaitDstStageMask = stages.data();
     si.commandBufferCount = deferSynthesis ? 0 : 1;
     si.pCommandBuffers = &slot.cmd;
-    VkResult r = dev_.submit(si, deferSynthesis ? VK_NULL_HANDLE : slot.fence);
+    VkResult r;
+    std::vector<VkSemaphore> copyWaits;
+    if (dev_.asyncCompute) {
+        // Two queues: nothing is ordered by queue order any more. The copies
+        // of the previous jobs must be done before this synthesis rewrites
+        // what they read, and each of this job's presents waits the
+        // synthesis (or, deferred, the game) through its own semaphore.
+        {
+            std::lock_guard<std::mutex> wlock(workerMutex_);
+            copyWaits.swap(pendingCopyDone_);
+        }
+        const int frames = interpolate ? mult : 1;
+        if (deferSynthesis) {
+            VkSemaphore outs[2] = {slot.realIn, slot.synthIn};
+            si.signalSemaphoreCount = 2;
+            si.pSignalSemaphores = outs;
+            r = submitOn(dev_.queue, si, VK_NULL_HANDLE);
+        } else {
+            std::vector<VkSemaphore> waits(appWaits, appWaits + appWaitCount);
+            waits.insert(waits.end(), copyWaits.begin(), copyWaits.end());
+            std::vector<VkPipelineStageFlags> waitStages(waits.size(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+            si.waitSemaphoreCount = static_cast<uint32_t>(waits.size());
+            si.pWaitSemaphores = waits.data();
+            si.pWaitDstStageMask = waitStages.data();
+            si.signalSemaphoreCount = static_cast<uint32_t>(frames);
+            si.pSignalSemaphores = slot.synthDone;
+            r = submitOn(dev_.computeQueue, si, slot.fence);
+            copyWaits.clear();
+        }
+    } else {
+        r = dev_.submit(si, deferSynthesis ? VK_NULL_HANDLE : slot.fence);
+    }
     if (r < 0) {
         BDEX_ERR("synthesis submission failed: %s", vkResultName(r));
         consumeSemaphores(appWaits, appWaitCount);
@@ -878,6 +931,10 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     job.intervalMs = frameIntervalMs_;
     job.pacing = cfg_.pacing;
     if (deferSynthesis) job.synthSlot = static_cast<int>(slotIdx);
+    if (dev_.asyncCompute) {
+        job.asyncSlot = static_cast<int>(slotIdx);
+        job.synthWaits = std::move(copyWaits);  // deferred: the synthesis the worker submits waits them
+    }
     if (info.swapchainCount == 1) {
         if (auto* pid = findChain<VkPresentIdKHR>(info.pNext, VK_STRUCTURE_TYPE_PRESENT_ID_KHR))
             if (pid->pPresentIds) job.presentId = pid->pPresentIds[0];
@@ -993,8 +1050,25 @@ void VirtualSwapchain::runJob(const Job& job) {
         }
         idleCv_.notify_all();
     };
+    // async_compute: every semaphore a present would have waited must be
+    // waited even when that present is skipped or fails before its copy is
+    // submitted, or it stays signalled into its next use.
+    std::vector<bool> copied(static_cast<size_t>(job.frames), false);
+    auto consumeUnused = [&] {
+        if (job.asyncSlot < 0) return;
+        const FrameSlot& synth = slots_[static_cast<size_t>(job.asyncSlot)];
+        std::vector<VkSemaphore> left;
+        for (int k = 0; k < job.frames; ++k) {
+            if (copied[size_t(k)]) continue;
+            const bool realK = job.realFirst ? k == 0 : k == job.frames - 1;
+            left.push_back((job.synthSlot >= 0 && realK) ? synth.realIn : synth.synthDone[k]);
+        }
+        if (!left.empty()) consumeSemaphores(left.data(), static_cast<uint32_t>(left.size()));
+    };
     for (int i = 0; i < job.frames; ++i) {
+        lastCopySubmitted_ = false;
         VkResult r = presentOne(job, i, i == job.frames - 1 ? &markSubmitted : nullptr);
+        copied[size_t(i)] = lastCopySubmitted_;
         // After the real frame (index 0 of a deferred job), whatever its
         // outcome: the slot's fence must signal for the application thread.
         if (i == 0 && job.synthSlot >= 0) {
@@ -1006,6 +1080,7 @@ void VirtualSwapchain::runJob(const Job& job) {
             break;
         }
         if (r < 0) {
+            consumeUnused();
             markSubmitted();
             // A genuine out-of-date on the real swapchain means the window
             // changed (e.g. a resize). On Wayland, drop the reduced-extent flag
@@ -1032,6 +1107,7 @@ void VirtualSwapchain::runJob(const Job& job) {
         if (r == VK_SUBOPTIMAL_KHR) surfaceChanged_.store(true, std::memory_order_relaxed);
         statsOutFrames_.fetch_add(1, std::memory_order_relaxed);
     }
+    consumeUnused();
     markSubmitted();
 }
 
@@ -1139,17 +1215,40 @@ VkResult VirtualSwapchain::submitDeferredSynthesis(const Job& job) {
     VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     si.commandBufferCount = 1;
     si.pCommandBuffers = &s.cmd;
-    std::lock_guard<std::mutex> qlock(dev_.queueMutex(dev_.queue));
-    VkResult r = dev_.vt.QueueSubmit(dev_.queue, 1, &si, s.fence);
+    // async_compute: after the game (synthIn) and the copies still reading
+    // the outputs; signals the generated frames' presents (synthDone[1..]).
+    std::vector<VkSemaphore> waits;
+    std::vector<VkPipelineStageFlags> stages;
+    VkQueue queue = dev_.queue;
+    if (job.asyncSlot >= 0) {
+        queue = dev_.computeQueue;
+        waits.push_back(s.synthIn);
+        waits.insert(waits.end(), job.synthWaits.begin(), job.synthWaits.end());
+        {
+            std::lock_guard<std::mutex> wlock(workerMutex_);  // this job's real copy
+            waits.insert(waits.end(), pendingCopyDone_.begin(), pendingCopyDone_.end());
+            pendingCopyDone_.clear();
+        }
+        stages.assign(waits.size(), VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+        si.waitSemaphoreCount = static_cast<uint32_t>(waits.size());
+        si.pWaitSemaphores = waits.data();
+        si.pWaitDstStageMask = stages.data();
+        si.signalSemaphoreCount = static_cast<uint32_t>(job.frames - 1);
+        si.pSignalSemaphores = s.synthDone + 1;
+    }
+    std::lock_guard<std::mutex> qlock(dev_.queueMutex(queue));
+    VkResult r = dev_.vt.QueueSubmit(queue, 1, &si, s.fence);
     if (r < 0) {
         BDEX_ERR("synthesis submission failed: %s", vkResultName(r));
-        // Still signal the fence (an empty batch) so nothing waits on it forever.
-        VkSubmitInfo empty{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-        dev_.vt.QueueSubmit(dev_.queue, 1, &empty, s.fence);
+        // Still signal the fence (and the semaphores the presents wait) so
+        // nothing waits forever; the waits above are consumed too.
+        VkSubmitInfo empty = si;
+        empty.commandBufferCount = 0;
+        dev_.vt.QueueSubmit(queue, 1, &empty, s.fence);
     }
     if (job.presentFence) {
         VkSubmitInfo fs{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-        dev_.vt.QueueSubmit(dev_.queue, 1, &fs, job.presentFence);
+        dev_.vt.QueueSubmit(queue, 1, &fs, job.presentFence);
     }
     return r;
 }
@@ -1209,15 +1308,25 @@ VkResult VirtualSwapchain::presentOne(const Job& job, int index, const std::func
 
     // The copy reads images written by the synthesis submission, which
     // precedes it on the same queue: queue order is the only dependency.
-    VkPipelineStageFlags stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    // (async_compute: two queues, so the synthesis — or, for a deferred
+    // job's real frame, the game — is waited through a semaphore, and the
+    // copy signals when it is done reading for the next synthesis.)
+    VkPipelineStageFlags stages[2] = {VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT};
+    VkSemaphore waits[2] = {slot.acquireSem, VK_NULL_HANDLE};
+    VkSemaphore signals[2] = {realImages_[ri].readySem, slot.copyDone};
+    const bool async = job.asyncSlot >= 0;
+    if (async) {
+        const FrameSlot& synth = slots_[static_cast<size_t>(job.asyncSlot)];
+        waits[1] = (job.synthSlot >= 0 && real) ? synth.realIn : synth.synthDone[index];
+    }
     VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-    si.waitSemaphoreCount = 1;
-    si.pWaitSemaphores = &slot.acquireSem;
-    si.pWaitDstStageMask = &stage;
+    si.waitSemaphoreCount = async ? 2 : 1;
+    si.pWaitSemaphores = waits;
+    si.pWaitDstStageMask = stages;
     si.commandBufferCount = 1;
     si.pCommandBuffers = &slot.cmd;
-    si.signalSemaphoreCount = 1;
-    si.pSignalSemaphores = &realImages_[ri].readySem;
+    si.signalSemaphoreCount = async ? 2 : 1;
+    si.pSignalSemaphores = signals;
 
     VkPresentIdKHR presentId{VK_STRUCTURE_TYPE_PRESENT_ID_KHR};
     VkSwapchainPresentModeInfoEXT presentMode{VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODE_INFO_EXT};
@@ -1259,6 +1368,11 @@ VkResult VirtualSwapchain::presentOne(const Job& job, int index, const std::func
     std::lock_guard<std::mutex> qlock(dev_.queueMutex(dev_.queue));
     r = dev_.vt.QueueSubmit(dev_.queue, 1, &si, slot.fence);
     if (r < 0) return r;
+    lastCopySubmitted_ = true;
+    if (async) {
+        std::lock_guard<std::mutex> wlock(workerMutex_);
+        pendingCopyDone_.push_back(slot.copyDone);
+    }
     // Signal the application's present fence after the copy (queue-ordered): its
     // virtual image is then free to reuse, so its next frame can proceed. A
     // deferred synthesis still reads it: submitDeferredSynthesis signals then.

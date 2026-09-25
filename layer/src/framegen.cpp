@@ -267,7 +267,8 @@ void FrameGen::createResources() {
         if (!chroma_) chromaDummy_ = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, {1, 1}, VK_IMAGE_USAGE_SAMPLED_BIT, true);
     }
 
-    if (cfg.profile || cfg.gpuBudget > 0.f) {
+    // (Offline and capture tools fill no queue families: assume timestamps.)
+    if ((cfg.profile || cfg.gpuBudget > 0.f) && (dev_.families.empty() || dev_.timestampsUsable())) {
         VkQueryPoolCreateInfo qi{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
         qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
         qi.queryCount = kProfileSlots * (StageCount + 1);

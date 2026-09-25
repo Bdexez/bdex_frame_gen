@@ -25,11 +25,15 @@ status=0
 # extrapolated real frame) runs too. "direct": extrapolation with the real
 # frame copied straight (no upscaling / HUD), the path where the worker
 # submits the synthesis after the real frame.
-for run in interpolate extrapolate interpolate:state extrapolate:state extrapolate:direct; do
+# "async": the synthesis on a compute-only queue family (async_compute),
+# where the device has one — its cross-queue semaphores under sync validation.
+for run in interpolate extrapolate interpolate:state extrapolate:state extrapolate:direct interpolate:async extrapolate:async; do
   mode=${run%%:*}
   output="BDEX_FG_RENDER_SCALE=0.75 BDEX_FG_SHARPNESS=0.5 BDEX_FG_HUD=2"
   if [ "$run" = extrapolate:direct ]; then
     state=""; demo_args="--frames 90 --duration 40"; output="BDEX_FG_HUD=0"
+  elif [ "${run#*:}" = async ]; then
+    state="BDEX_FG_ASYNC_COMPUTE=1 BDEX_FG_DEDUP=1"; demo_args="--repeat 2 --frames 90 --duration 40"; output="BDEX_FG_HUD=0"
   elif [ "$run" != "$mode" ]; then
     # A tiny gpu_budget walks the whole quality ladder within the run,
     # output-stage rebuild included (level 3) unless the flow is at 1/4.
@@ -50,7 +54,7 @@ for run in interpolate extrapolate interpolate:state extrapolate:state extrapola
   if [ "$n" -gt 0 ]; then grep -E "VUID-|SYNC-" "$LOG" | head -20; status=1; fi
   if [ "$rc" -ne 0 ]; then tail -20 "$LOG"; status=1; fi
   # The rebuild levels exist only if the flow is not already at 1/4.
-  if [ -n "$state" ] && ! grep -qE "quality level 2 -> 3|level 1 -> 2 \(flow 1/4\)" "$LOG"; then
+  if [ -n "$state" ] && [ "${run#*:}" = state ] && ! grep -qE "quality level 2 -> 3|level 1 -> 2 \(flow 1/4\)" "$LOG"; then
     echo "$run: the GPU budget did not walk the quality ladder"; grep "gpu budget" "$LOG"; status=1
   fi
 done
