@@ -86,11 +86,15 @@ SECTIONS = [
     ("cadence", "Cadence", "Limite de FPS, multiplicateur automatique, régularité", False, [
         spin("fps_limit", "Limite d'images du jeu",
              "Plafonne les FPS du jeu (0 = aucune). Une base stable qui divise le taux de rafraîchissement "
-             "(60 → 120 Hz, 72 → 144 Hz) donne la génération la plus régulière.", 0, 360, 1, 0, 0),
+             "(60 → 120 Hz, 72 → 144 Hz) donne la génération la plus régulière. −1 = auto : rafraîchissement "
+             "mesuré ÷ multiplicateur (écrans à fréquence fixe).", -1, 360, 1, 0, 0),
         spin("target_fps", "Multiplicateur automatique — cible",
              "Taux de rafraîchissement visé (ex. 144) : le multiplicateur s'adapte aux FPS du jeu "
              "(72 → ×2, 50 → ×3, ×1 quand le jeu atteint la cible), sans dépasser le multiplicateur choisi. "
-             "0 = multiplicateur fixe.", 0, 360, 1, 0, 0),
+             "0 = multiplicateur fixe ; −1 = auto (rafraîchissement mesuré).", -1, 360, 1, 0, 0),
+        switch("present_feedback", "Mesure de l'affichage réel",
+               "Mesure quand chaque image s'affiche vraiment (si le pilote le permet) : rafraîchissement, "
+               "images écrasées, cadence calée sur l'écran.", True),
         switch("frame_timing", "Suivre le temps réel des images",
                "Place chaque image générée selon l'instant réel des images du jeu plutôt qu'à intervalle "
                "fixe : moins de saccades quand le temps d'image varie. Peut coûter un peu sur les jeux à "
@@ -221,6 +225,8 @@ def _parse_option(o, raw):
         return o["default"]
     raw = raw.strip()
     if o["kind"] == "spin":
+        if raw.lower() == "auto" and o["lower"] < 0:
+            return _fmt_num(-1, o["digits"])  # "auto", shown as -1
         try:
             v = min(o["upper"], max(o["lower"], float(raw)))
         except ValueError:
@@ -708,7 +714,7 @@ class Window(Adw.ApplicationWindow):
                 value = self.opt.values[o["key"]]
                 if o["kind"] == "spin":
                     adj = Gtk.Adjustment(lower=o["lower"], upper=o["upper"], step_increment=o["step"],
-                                         page_increment=o["step"] * 10, value=float(value))
+                                         page_increment=o["step"] * 10, value=-1.0 if value == "auto" else float(value))
                     row = Adw.SpinRow(title=o["title"], subtitle=o["sub"], adjustment=adj, digits=o["digits"])
                     row.connect("notify::value", self.on_change)
                 elif o["kind"] == "switch":
@@ -745,7 +751,8 @@ class Window(Adw.ApplicationWindow):
         o.paused = self.pause_row.get_active()
         for key, (spec, row) in self.opt_rows.items():
             if spec["kind"] == "spin":
-                o.values[key] = _fmt_num(row.get_value(), spec["digits"])
+                v = row.get_value()
+                o.values[key] = "auto" if spec["lower"] < 0 and v < 0 else _fmt_num(v, spec["digits"])
             elif spec["kind"] == "switch":
                 o.values[key] = "1" if row.get_active() else "0"
             elif spec["kind"] == "choice":

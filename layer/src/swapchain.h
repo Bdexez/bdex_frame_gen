@@ -1,6 +1,7 @@
 #pragma once
 #include "device.h"
 #include "budget.h"
+#include "display_clock.h"
 #include "framegen.h"
 
 #include <atomic>
@@ -109,6 +110,35 @@ private:
     void runJob(const Job& job);
     VkResult presentOne(const Job& job, int index, const std::function<void()>* onSubmitted);
     VkResult submitDeferredSynthesis(const Job& job);
+
+    // Present feedback (DeviceData::presentFeedback): every present of the
+    // real swapchain carries an id; a thread waits for each with
+    // vkWaitForPresentKHR and records when it was displayed, which teaches
+    // displayClock_ the refresh grid. Paused while the real swapchain is
+    // re-created, stopped before it is destroyed.
+    void feedbackLoop();
+    void pauseFeedback();
+    void resumeFeedback();
+    double displayHz();                 // measured refresh rate, 0 if unknown (VRR, no feedback)
+    bool displayGrid(double& lastMs, double& periodMs);  // the refresh grid, if known
+    static double msOf(clock::time_point t) {
+        return std::chrono::duration<double, std::milli>(t.time_since_epoch()).count();
+    }
+    std::atomic<bool> feedback_{false};
+    uint64_t presentCounter_ = 0;       // worker thread (reset while it is idle)
+    std::thread fbThread_;
+    std::mutex fbMutex_;
+    std::condition_variable fbCv_;      // id queued / stop
+    std::condition_variable fbIdleCv_;  // the thread left vkWaitForPresentKHR
+    std::deque<uint64_t> fbPending_;
+    bool fbStop_ = false, fbBusy_ = false;
+    std::atomic<bool> fbPaused_{false};
+    bool fbEverDisplayed_ = false;
+    int fbTimeouts_ = 0;
+    DisplayClock displayClock_;         // fbMutex_
+    double fbLastMs_ = 0.0;             // fbMutex_: last completion
+    uint64_t fbReplaced_ = 0;           // fbMutex_: frames replaced before being displayed (mailbox)
+    uint64_t statsReplaced_ = 0;
     void waitWorkerSubmitted(std::unique_lock<std::mutex>& lock);
     void waitWorkerIdle(std::unique_lock<std::mutex>& lock);
 

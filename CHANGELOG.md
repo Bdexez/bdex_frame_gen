@@ -6,6 +6,30 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added (2026-09-25)
+
+- **Present feedback: the layer measures when frames are really
+  displayed.** Where the device supports `VK_KHR_present_id` and
+  `VK_KHR_present_wait` (still hidden from the game), the layer enables them
+  for itself (device creation retried without them if it fails), tags every
+  present of its real swapchain and waits for each on a thread (paused
+  while the swapchain is re-created, stopped before it is destroyed).
+  `DisplayClock` (unit-tested) learns the refresh grid from the display
+  times — the largest period every interval is a multiple of, within a
+  tolerance that shrinks with the period — and stays invalid on
+  variable-refresh displays or compositors without a grid (the case of the
+  development machine, Hyprland, where nothing changes). With a grid: the
+  pacing presents each frame 0.3 refresh ahead of the refresh it should
+  show on; the per-frame state pass gets each frame's predicted display
+  time, so generated frames show the content of their real display moment
+  (on by default; content timing still follows `frame_timing`/`dedup`);
+  `target_fps = auto` and `fps_limit = auto` use the measured rate; the
+  statistics report the refresh rate and frames replaced before display.
+  Offline (`bdex_offline --refresh HZ [--refresh-known]` simulates a
+  fixed-refresh display): 60 fps game at x2 on 144 Hz +2.1 to +3.1 dB, on
+  100 Hz +10 to +11 dB, on 75 Hz +15 dB; byte-identical without a grid.
+  The GTK panel shows `auto` as −1 and gains the switch.
+
 ### Changed (2026-09-25)
 
 - **`chroma_weight` refuses aliases that break the motion's course.** A
