@@ -121,7 +121,13 @@ voit le moteur qu'à travers `FgContext`. Ajout = le fichier, une ligne dans
 il note le flux avant qu'on le réécrive), la source dans
 `BDEX_ENGINE_SOURCES` (`layer/CMakeLists.txt`, liste unique pour la couche,
 `bdex_offline` et `bdex_capture`), l'option dans le registre de `config.cpp`.
-Migrées : `flow_temporal`, `online_tune`, `upscale_temporal` ; nouvelle :
+Migrées : `flow_temporal`, `online_tune`, `upscale_temporal`,
+`extrapolate_accel`, `extrapolate_splat` (hook `beforeSynthesis` →
+`SynthesisInputs`, carte via `setSplatMap`), le HUD fps (`hud_overlay.comp`,
+hook `afterOutput`, dessiné sur l'image finale — donc plus accentué par
+CAS). `dedup` reste dans `FrameGen` : c'est le contrôle du pipeline (passes
+de flux annulées en dispatch indirect, tampon d'état partagé avec
+`frame_timing`), pas une passe ajoutée. Nouvelle :
 `subpixel_lk` (Lucas-Kanade), `hud_mask` (masque appris : n'apprend que
 sous mouvement de caméra — 25 % des pixels changés ; à 1 %, la démo à
 caméra fixe perdait 0,3 dB en extrapolation). La synthèse a un binding 8
@@ -137,9 +143,7 @@ dénominateur plancher 0,05, et un gain de prédiction ≥ 0,05 passe outre
 (caméra qui accélère). Redémarrage sur changement durable de mouvement ×3
 ou de luminosité ±0,2 (`OnlineTune::observe`). Mesure clé : en interpolation le sous-pixel
 (LK ou parabolique) ne paie qu'avec `synth_bicubic` — c'est le bilinéaire
-de la synthèse qui floute, pas la précision du vecteur. Restent dans
-`FrameGen` (liées au shader de synthèse lui-même) : `extrapolate_splat`,
-`extrapolate_accel`, `dedup`, le HUD.
+de la synthèse qui floute, pas la précision du vecteur. 
 
 ## 6. Le block matcher — le cœur, ses invariants et ses pièges
 

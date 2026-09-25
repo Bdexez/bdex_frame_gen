@@ -15,6 +15,7 @@
 // its option in the registry of config.cpp.
 #include "config.h"
 #include "device.h"
+#include "format.h"
 
 #include <vulkan/vulkan.h>
 
@@ -23,6 +24,17 @@
 #include <vector>
 
 namespace bdex {
+
+// What the passes contribute to a synthesis (beforeSynthesis).
+struct SynthesisInputs {
+    bool splat = false;  // the splat map holds this synthesis's forward splat
+    float accel = 0.f;   // extrapolation: weight of the acceleration term
+};
+
+// The fps HUD's figures (FrameGen::setHud).
+struct FgHud {
+    int mode = 0, game = 0, out = 0, low1 = 0, low01 = 0, latency = -1;
+};
 
 // A compute pipeline with its one descriptor set layout.
 struct FgPipeline {
@@ -87,6 +99,18 @@ public:
     // every synthesis keeps pixels at or above hud_mask's threshold as they
     // are (a 1x1 zero image until a pass provides one).
     virtual void setStaticMask(VkImageView view) = 0;
+    // The forward-splat map (r32ui, display size) every synthesis reads when
+    // SynthesisInputs::splat is set (a 1x1 image until a pass provides one).
+    virtual void setSplatMap(VkImageView view) = 0;
+    // A dispatch over the display in 16x16 groups — or, `gated`, through the
+    // frame state's "only on repeated frames" entry (dedup's replacement).
+    virtual void dispatchSynthesisSize(VkCommandBuffer cmd, bool gated) = 0;
+
+    // The finished output images (swapchain storage encoding): generated
+    // output `output`, or the real frame's for -1 (when it is packed).
+    virtual VkImageView outputView(int output) const = 0;
+    virtual OutputEncoding outputEncoding() const = 0;
+    virtual FgHud hud() const = 0;
 
     // Syntheses of a pass's own (online_tune's probe): the synthesis shader
     // writing linear rgba16f whatever the swapchain format, its descriptor
@@ -132,11 +156,19 @@ public:
     virtual bool realOutput(FgContext&, VkCommandBuffer, uint32_t /*cur*/, VkDescriptorSet& /*set*/, VkExtent2D& /*src*/) {
         return false;
     }
+    // An output image is finished (upscaled, sharpened): generated output
+    // `output`, or -1 for the real frame. Overlays go here (the fps HUD).
+    virtual void afterOutput(FgContext&, VkCommandBuffer, int /*output*/) {}
+    // Just before each synthesis at time t (extrapolation: t > 1; `timing`
+    // and `gated` as the synthesis's): record work it needs and set its inputs.
+    virtual void beforeSynthesis(FgContext&, VkCommandBuffer, float /*t*/, int32_t /*timing*/, bool /*gated*/,
+                                 const Config&, SynthesisInputs&) {}
 };
 
 // The optional passes this configuration enables, in hook order
-// (passes/registry.cpp). `outputs`: generated frames per real frame.
+// (passes/registry.cpp). `outputs`: generated frames per real frame;
+// `display`: the presented size.
 std::vector<std::unique_ptr<FgPass>> createOptionalPasses(const Config& cfg, DeviceData& dev, uint32_t outputs,
-                                                          bool upscaling);
+                                                          bool upscaling, VkExtent2D display);
 
 } // namespace bdex

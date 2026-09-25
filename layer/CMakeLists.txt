@@ -31,6 +31,8 @@ bdex_add_shaders(bdex_layer_shaders
     shaders/upscale.comp:sharp:SHARP
     shaders/cas.comp:u32
     shaders/cas.comp:u64:OUT_64
+    shaders/hud_overlay.comp:u32
+    shaders/hud_overlay.comp:u64:OUT_64
   DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/common.glsl"
 )
 
@@ -78,6 +80,9 @@ set(BDEX_ENGINE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/temporal_upscale.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/subpixel_lk.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/hud_mask.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/extrapolate_accel.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/extrapolate_splat.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/fps_hud.cpp
 )
 set(BDEX_ENGINE_SOURCES ${BDEX_ENGINE_SOURCES} PARENT_SCOPE)
 

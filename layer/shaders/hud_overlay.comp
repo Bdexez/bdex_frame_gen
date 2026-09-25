@@ -1,0 +1,62 @@
+#version 450
+// The fps HUD (hud / overlay option), drawn over a finished output image —
+// a generated frame or the real one, after upscaling and sharpening — in the
+// swapchain's storage encoding (same packing as upscale.comp). Only the HUD
+// box is dispatched.
+#include "common.glsl"
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+#ifdef OUT_64
+layout(binding = 0, rg32ui) uniform writeonly uimage2D outImg;
+#else
+layout(binding = 0, r32ui) uniform writeonly uimage2D outImg;
+#endif
+
+#define ENC_RGBA8       0u
+#define ENC_BGRA8       1u
+#define ENC_A2B10G10R10 2u
+#define ENC_A2R10G10B10 3u
+#define ENC_RGBA16F     4u
+#define ENC_SRGB_FLAG   0x100u
+
+layout(push_constant) uniform PC {
+    ivec2 size;       // output size
+    uint encoding;
+    int hudMode;      // detail level (1..5)
+    int hudGame;
+    int hudOut;
+    int hudLow1;
+    int hudLow01;
+    int hudLatency;
+} pc;
+
+void store(ivec2 p, vec4 c) {
+    uint enc = pc.encoding & 0xffu;
+    if ((pc.encoding & ENC_SRGB_FLAG) != 0u) c.rgb = linearToSrgb(c.rgb);
+    c = clamp(c, 0.0, enc == ENC_RGBA16F ? 65504.0 : 1.0);
+#ifdef OUT_64
+    imageStore(outImg, p, uvec4(packHalf2x16(c.rg), packHalf2x16(c.ba), 0u, 0u));
+#else
+    uint packed;
+    if (enc == ENC_BGRA8) {
+        packed = packUnorm4x8(c.bgra);
+    } else if (enc == ENC_A2B10G10R10) {
+        uvec4 q = uvec4(round(c * vec4(1023.0, 1023.0, 1023.0, 3.0)));
+        packed = q.r | (q.g << 10) | (q.b << 20) | (q.a << 30);
+    } else if (enc == ENC_A2R10G10B10) {
+        uvec4 q = uvec4(round(c * vec4(1023.0, 1023.0, 1023.0, 3.0)));
+        packed = q.b | (q.g << 10) | (q.r << 20) | (q.a << 30);
+    } else {
+        packed = packUnorm4x8(c);
+    }
+    imageStore(outImg, p, uvec4(packed, 0u, 0u, 0u));
+#endif
+}
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, pc.size))) return;
+    vec3 hc;
+    if (hudPixel(p, pc.hudMode, pc.hudGame, pc.hudOut, pc.hudLow1, pc.hudLow01, pc.hudLatency, hc)) store(p, vec4(hc, 1.0));
+}
