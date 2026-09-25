@@ -26,6 +26,7 @@
 // or past the current one (1 + s). With a steady frame rate and no
 // duplicates this is exactly the fixed i/m.
 //
+// A repeat may also be partial: see `partial` below (HUD over a slower world).
 // Duplicates also gate the flow passes: a repeated image carries no motion,
 // so the flow of the previous distinct pair is kept (its dispatches get zero
 // workgroups through the indirect arguments written here) and extrapolation
@@ -51,6 +52,8 @@ layout(std430, binding = 2) buffer State {
     float tileCost[64];
     uvec4 gateFull[24];     // dispatch size, w = 1: runs only on duplicates
     uint gateActive[72];    // VkDispatchIndirectCommand per entry
+    uint tileDiff[64];      // mode 0: differing level-0 pixels per tile of an 8x8 grid
+    uint prevChangedTiles;  // tiles that changed in the previous frame
 } st;
 
 layout(push_constant) uniform PC {
@@ -69,24 +72,45 @@ layout(push_constant) uniform PC {
 #define FLAG_EXTRAP 4  // extrapolation display model
 
 shared uint sCount;
+shared uint sTile[64];
 
 void main() {
     if (pc.mode == 0) {
         if (gl_LocalInvocationIndex == 0u) sCount = 0u;
+        if (gl_LocalInvocationIndex < 64u) sTile[gl_LocalInvocationIndex] = 0u;
         barrier();
         ivec2 p = ivec2(gl_GlobalInvocationID.xy);
         if (all(lessThan(p, pc.size))) {
             float d = abs(texelFetch(lumaA, p, 0).r - texelFetch(lumaB, p, 0).r);
-            if (d > 1.0 / 512.0) atomicAdd(sCount, 1u);
+            if (d > 1.0 / 512.0) {
+                atomicAdd(sCount, 1u);
+                ivec2 tile = min(p * 8 / pc.size, ivec2(7));
+                atomicAdd(sTile[tile.y * 8 + tile.x], 1u);
+            }
         }
         barrier();
         if (gl_LocalInvocationIndex == 0u && sCount > 0u) atomicAdd(st.diffCount, sCount);
+        if (gl_LocalInvocationIndex < 64u && sTile[gl_LocalInvocationIndex] > 0u)
+            atomicAdd(st.tileDiff[gl_LocalInvocationIndex], sTile[gl_LocalInvocationIndex]);
         return;
     }
     if (gl_LocalInvocationIndex != 0u) return;
 
     bool reset = (pc.flags & FLAG_RESET) != 0;
-    bool dup = !reset && (pc.flags & FLAG_DEDUP) != 0 && st.diffCount <= pc.dupMaxPixels;
+    bool dedup = !reset && (pc.flags & FLAG_DEDUP) != 0;
+    // Partial repeats: a game whose world runs at half the present rate
+    // under a HUD or cursor updated every present (30 fps world, 60 fps
+    // HUD) never repeats the whole image. It shows as a present where only
+    // a few tiles changed right after one where most did — while a static
+    // scene with a small moving object changes the same few tiles every
+    // present, and is not a repeat.
+    uint tilePixels = uint(max(pc.size.x / 8, 1) * max(pc.size.y / 8, 1));
+    uint changedTiles = 0u;
+    for (int i = 0; i < 64; ++i)
+        if (st.tileDiff[i] > max(4u, tilePixels / 2048u)) ++changedTiles;
+    bool partial = changedTiles <= 7u && st.prevChangedTiles >= 32u;
+    bool dup = dedup && (st.diffCount <= pc.dupMaxPixels || partial);
+    st.prevChangedTiles = dedup ? changedTiles : 0u;
     float I = max(pc.intervalMs, 0.5);
     float ageLast = st.ageLast, agePrev = st.agePrev;
     if (reset) {

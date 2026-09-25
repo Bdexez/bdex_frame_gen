@@ -60,9 +60,13 @@ def main():
         d = Path(d)
         frames(d, n=61, speed=2)
         for mode in ("interpolate", "extrapolate"):
-            for offline, option in (("--jitter 0.4", "FRAME_TIMING=1"), ("--dup 2", "DEDUP=1")):
+            # --hud-counter: a HUD redrawn on every present over the repeating
+            # world (the repeat is then partial, detected per tile).
+            for offline, option in (("--jitter 0.4", "FRAME_TIMING=1"), ("--dup 2", "DEDUP=1"),
+                                    ("--dup 2 --hud-counter", "DEDUP=1")):
                 base, opt = evaluate(build, d, {"BDEX_FG_MODE": mode},
-                                     ["--offline-args", offline, "--variant", option])
+                                     ["--offline-args", offline, "--variant", option,
+                                      "--exclude", "8,8,72,24"])
                 if not opt > base + 0.3:
                     print(f"{mode} {offline}: {option} {opt:.2f} dB does not beat the fixed timing {base:.2f} dB")
                     return 1
