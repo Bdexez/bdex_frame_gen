@@ -65,6 +65,16 @@
 // block's mean luma gradient: textured static content (HUDs) keeps the full
 // protection, smooth content loses it.
 //
+// Chroma re-ranking (when chromaWeight > 0): luma alone cannot see an edge
+// between two colours of the same brightness (red on green, a coloured
+// light on a grey wall): every candidate scores the same luma SAD there and
+// the zero-motion candidate wins, so the content cross-fades instead of
+// moving. The candidates whose luma SAD is within an absolute gate of the
+// best one are re-ranked on cost + chromaWeight x chroma SAD (Cb/Cr pyramid,
+// downsample_chroma.comp); a block whose luma discriminates keeps its luma
+// choice unless chroma separates near-equals. Applied after the census
+// re-ranking. chromaWeight = 0 leaves the pass bit-for-bit unchanged.
+//
 // Output flow is the displacement (in pixels of this level) that maps a
 // position in the reference image to the matching position in the target.
 #include "common.glsl"
@@ -92,6 +102,8 @@ layout(binding = 2) uniform sampler2D coarseFlow;
 layout(binding = 3, rg32f) uniform writeonly image2D flowOut;
 layout(binding = 4, r32f) uniform writeonly image2D costOut;
 layout(binding = 5) uniform sampler2D prevFlow;   // previous pair's final backward flow at this level (temporal prediction)
+layout(binding = 6) uniform sampler2D refChroma;  // Cb/Cr of the reference and target frames at this level (chroma re-ranking)
+layout(binding = 7) uniform sampler2D tgtChroma;
 
 layout(push_constant) uniform PC {
     ivec2 size;        // level resolution
@@ -106,7 +118,10 @@ layout(push_constant) uniform PC {
     float rotWeight;   // rotation/scale re-ranking of ambiguous winners (0 = off)
     int temporal;      // temporal prediction at the coarsest level: 0 off, 1 forward pass, 2 backward pass
     float zeroBiasContrast; // gradient energy at which the zero bias is fully applied (0 = absolute bias)
+    float chromaWeight;     // weight of the chroma SAD in the chroma re-ranking (0 = off)
 } pc;
+
+#define CHROMA_GATE 0.01   // luma SAD (mean per pixel) within which candidates are re-ranked on chroma
 
 shared float refBlk[RB * RB];
 shared float tgt[REG * REG];
@@ -120,6 +135,11 @@ shared float rpix[2][NROT][NT];        // per-pixel costs of the rotated re-eval
 shared float rsum[2][NROT];            // block sums of rpix
 shared ivec2 sBase;
 shared float sGrad[NT];                // per-pixel gradient magnitude (contrast-relative zero bias)
+shared vec2  refC[RB * RB];            // chroma of the reference block (chroma re-ranking)
+shared vec2  tgtC[REG * REG];          // chroma of the staged target region
+shared float qcsad[4][MAXCAND];        // per-quadrant chroma SADs
+shared float sSad[MAXCAND + 1];        // luma SAD per candidate (no penalties)
+shared float sCsad[MAXCAND + 1];       // chroma SAD per candidate
 
 // Neighbour order for the 8-bit census (3x3 minus the centre).
 const ivec2 kCenOff[8] = ivec2[8](ivec2(-1, -1), ivec2(0, -1), ivec2(1, -1), ivec2(-1, 0),
@@ -175,6 +195,21 @@ void main() {
 
     ivec2 base = sBase;
     float zb = pc.zeroBias;
+    // Chroma re-ranking only where luma carries little structure: on
+    // textured luma (a periodic pattern above all) chroma ties just as badly
+    // and its noise then outweighs the smoothness penalty that picks the
+    // right alias (measured: -2.3 dB on the demo's striped box without this).
+    float chromaW = 0.0;
+    if (pc.chromaWeight > 0.0) {  // uniform branch (push constant)
+        int px = tid & (BS - 1), py = tid / BS;
+        int ri = (py + 1) * RB + (px + 1);
+        sGrad[tid] = 0.5 * (abs(refBlk[ri + 1] - refBlk[ri - 1]) + abs(refBlk[ri + RB] - refBlk[ri - RB]));
+        barrier();
+        float e = 0.0;
+        for (int i = 0; i < NT; ++i) e += sGrad[i];
+        chromaW = pc.chromaWeight * (1.0 - smoothstep(0.01, 0.03, e * (1.0 / float(NT))));
+        barrier();
+    }
     if (pc.zeroBiasContrast > 0.0) {  // uniform branch (push constant)
         int px = tid & (BS - 1), py = tid / BS;
         int ri = (py + 1) * RB + (px + 1);
@@ -191,6 +226,13 @@ void main() {
     for (int i = tid; i < regG * regG; i += NT) {
         ivec2 o = ivec2(i % regG, i / regG);
         tgt[i] = loadTgt(regOrigin + o);
+    }
+    bool chromaOn = pc.chromaWeight > 0.0;
+    if (chromaOn) {  // uniform branch (push constant)
+        for (int i = tid; i < RB * RB; i += NT)
+            refC[i] = texelFetch(refChroma, clamp(origin - 1 + ivec2(i % RB, i / RB), ivec2(0), pc.size - 1), 0).rg;
+        for (int i = tid; i < regG * regG; i += NT)
+            tgtC[i] = texelFetch(tgtChroma, clamp(regOrigin + ivec2(i % regG, i / regG), ivec2(0), pc.size - 1), 0).rg;
     }
     barrier();
 
@@ -264,6 +306,21 @@ void main() {
         }
         qsad[quad][c] = sad;
     }
+    if (chromaOn) {
+        for (int c = qtid; c < total; c += 16) {
+            float cs = 0.0;
+            for (int y = 0; y < 4; ++y)
+                for (int x = 0; x < 4; ++x) {
+                    ivec2 o = qo + ivec2(x, y);
+                    vec2 rc = refC[(o.y + 1) * RB + (o.x + 1)];
+                    vec2 tc;
+                    if (c < ncand) tc = tgtC[(c / W + o.y + anc) * regG + (c % W + o.x + anc)];
+                    else tc = texelFetch(tgtChroma, clamp(origin + o, ivec2(0), pc.size - 1), 0).rg;
+                    cs += abs(rc.x - tc.x) + abs(rc.y - tc.y);
+                }
+            qcsad[quad][c] = cs;
+        }
+    }
     barrier();
 
     // Full per-candidate costs (luma SAD + penalties). Slot ncand holds the
@@ -276,6 +333,10 @@ void main() {
             sCost2[c] = sad + pc.smoothness * length(vec2(d - R)) + zb * length(disp);
         } else {
             sCost2[c] = sad;
+        }
+        if (chromaOn) {
+            sSad[c] = sad;
+            sCsad[c] = (qcsad[0][c] + qcsad[1][c] + qcsad[2][c] + qcsad[3][c]) * (1.0 / float(NT));
         }
     }
     barrier();
@@ -339,6 +400,26 @@ void main() {
             barrier();
         }
         bestIdx = sIdx[0];
+    }
+    if (chromaOn && chromaW > 0.0) {
+        // Chroma re-ranking among the candidates luma cannot tell apart. The
+        // winner selected above stays the incumbent and only a strictly
+        // better combined cost replaces it: flat areas are full of exact
+        // ties, and a scan's "first index wins" there is the tie-breaking
+        // that broke 0549e44 (AGENTS.md §6) — measured -1.7 dB on the demo.
+        float minSad = 1e30;
+        for (int c = 0; c < total; ++c) minSad = min(minSad, sSad[c]);
+        // A challenger must beat the incumbent clearly: halve its chroma
+        // mismatch (an isoluminant edge seen as "no motion" leaves a large
+        // one that the true displacement removes), not just shave noise.
+        int bi = bestIdx;
+        float bc = sCost2[bi] + chromaW * (0.5 * sCsad[bi] - 0.002);
+        for (int c = 0; c < total; ++c) {
+            if (sSad[c] > minSad + CHROMA_GATE) continue;
+            float cc = sCost2[c] + chromaW * sCsad[c];
+            if (cc < bc) { bc = cc; bi = c; }
+        }
+        bestIdx = bi;
     }
     // Final output displacement of the winner (the census=0 tree reduction or
     // the census>0 rerank set bestIdx above); the rotation re-ranking may

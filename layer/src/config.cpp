@@ -166,6 +166,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "census_weight")               return parseFloat(value, censusWeight, 0.f, 8.f);
     if (key == "census_margin")               return parseFloat(value, censusMargin, 0.f, 1.f);
     if (key == "rot_weight")                  return parseFloat(value, rotWeight, 0.f, 1.f);
+    if (key == "chroma_weight")               return parseFloat(value, chromaWeight, 0.f, 8.f);
     if (key == "occlusion_strength")           return parseFloat(value, occlusionStrength, 0.f, 1.f);
     if (key == "temporal_prediction")          return parseBool(value, temporalPrediction);
     if (key == "extrapolate_splat")           return parseBool(value, extrapolateSplat);
@@ -311,6 +312,7 @@ void Config::applyLive(const Config& n) {
     fpsLimit = n.fpsLimit; targetFps = n.targetFps;
     frameTiming = n.frameTiming;  // dedup sizes the output stage (extrapolation): restart
     if (sharpness > 0.f && n.sharpness > 0.f) sharpness = n.sharpness;  // 0 <-> >0 changes the passes
+    if (chromaWeight > 0.f && n.chromaWeight > 0.f) chromaWeight = n.chromaWeight;  // likewise (chroma pyramid)
 }
 
 Config Config::loadWithDefaults(Config c, const std::string& extraProcess) {
@@ -350,6 +352,7 @@ std::string Config::describe() const {
     if (gradWeight > 0.f) o << " grad_weight=" << gradWeight;
     if (censusWeight > 0.f) o << " census_weight=" << censusWeight << " census_margin=" << censusMargin;
     if (rotWeight > 0.f) o << " rot_weight=" << rotWeight;
+    if (chromaWeight > 0.f) o << " chroma_weight=" << chromaWeight;
     if (occlusionStrength > 0.f) o << " occlusion_strength=" << occlusionStrength;
     if (zeroBiasContrast > 0.f) o << " zero_bias_contrast=" << zeroBiasContrast;
     if (temporalPrediction) o << " temporal_prediction=1";

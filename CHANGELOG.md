@@ -44,6 +44,22 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-24)
 
+- **`chroma_weight` (opt-in): the block matcher sees colour.** Matching ran
+  on luma only, so an edge between two colours of equal brightness was
+  invisible and those areas cross-faded. A Cb/Cr pyramid
+  (`downsample_chroma.comp`) is built next to the luma one; where a block's
+  luma is low-contrast, the candidates whose luma SAD is within 0.01 of the
+  best are re-ranked on cost + weight × chroma SAD, and a challenger must
+  halve the incumbent's chroma mismatch. Every guard was measured on the
+  demo (−2.3 dB without them, all from its hatched box): the incumbent is
+  the historical tree-reduction winner (§6 tie-breaking), textured luma is
+  left alone, and small chroma differences do not switch. New corpus
+  sequence `chroma` (isoluminant blobs): interpolation +12.6 dB,
+  extrapolation +8.9; smooth colourful pan +11.8 / +8.8; swing +4.4 / +2.3;
+  HUD, popup and sub-pixel neutral to +0.2. Remaining loss: nearly
+  isoluminant stripes scrolling faster than their period (the demo's hatched
+  box) lock onto an alias, −1.2 dB on the demo (+0.07 without that box).
+  Default 0 is byte-identical (matcher test and identity checks).
 - **`extrapolate_accel` (opt-in): second-order extrapolation.** Extrapolation
   assumed constant velocity, so a camera that speeds up, slows down or turns
   around overshoots and lags. The previous pair's finest backward flow is

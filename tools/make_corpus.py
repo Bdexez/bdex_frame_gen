@@ -11,6 +11,9 @@ Each sequence isolates one regime that the demo does not cover well:
   swing     a textured camera swinging back and forth (sinusoidal pan, period
             24 frames): the speed changes all the time, so extrapolating at
             constant velocity overshoots and lags
+  chroma    colour blobs of (nearly) equal brightness panning 6 px/frame, with
+            a faint luma texture: the edges exist only in chroma, where a
+            luma-only matcher sees nothing moving
   popup     the HUD scene's pan with an opaque menu panel (a quarter of the
             screen) opening and closing every 4 frames, between two inputs:
             a scene cut confined to part of the screen
@@ -91,6 +94,26 @@ def swing(out, w, h, n, seed):
         Image.fromarray(crop.clip(0, 255).astype(np.uint8)).save(out / f"f{i:04d}.ppm")
 
 
+def chroma(out, w, h, n, seed):
+    rng = np.random.default_rng(seed)
+    speed = max(1, round(6 * w / 480))
+    k = w / 960
+    # Hue from a smooth field, quantised into flat blobs with sharp edges.
+    hue = fractal(rng, h + 8, w + n * speed + 8, scale([(96, 1.0), (32, 0.5)], k), channels=1)[..., 0] / 255
+    hue = np.floor(hue * 6) / 6
+    faint = fractal(rng, h + 8, w + n * speed + 8, scale([(10, 1.0), (3, 0.5)], k), channels=1)[..., 0] / 255
+    # Isoluminant colours (BT.601 luma ~0.5) around the hue circle.
+    ang = 2 * np.pi * hue
+    cb, cr = 0.22 * np.cos(ang), 0.22 * np.sin(ang)
+    y = 0.5 + 0.015 * (faint - 0.5)
+    r = y + 1.402 * cr
+    g = y - 0.344136 * cb - 0.714136 * cr
+    b = y + 1.772 * cb
+    rgb = (np.stack([r, g, b], 2).clip(0, 1) * 255)
+    for i in range(n):
+        Image.fromarray(rgb[:h, i * speed:i * speed + w].astype(np.uint8)).save(out / f"f{i:04d}.ppm")
+
+
 def popup(out, w, h, n, seed):
     rng = np.random.default_rng(seed)
     speed = max(1, round(9 * w / 640))
@@ -122,6 +145,7 @@ def main():
                        ("subpixel", lambda d: subpixel(d, w, h, n, 13)),
                        ("fade", lambda d: pan(d, w, h, n, max(1, round(8 * w / 960)), 17, lambda i: 1.0 - 0.04 * i)),
                        ("popup", lambda d: popup(d, w, h, n, 19)),
+                       ("chroma", lambda d: chroma(d, w, h, n, 29)),
                        ("swing", lambda d: swing(d, w, h, n, 23))):
         d = root / name
         d.mkdir(parents=True, exist_ok=True)

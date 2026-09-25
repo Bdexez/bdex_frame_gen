@@ -1,0 +1,36 @@
+#version 450
+// Chroma pyramid for the block matcher's chroma re-ranking (chroma_weight):
+// the same levels as the luma pyramid (downsample.comp), holding the two
+// colour-difference channels (Cb, Cr, BT.601 scale) of the perceptually
+// encoded colour. Level 0 reads the colour history image (fromColor=1);
+// deeper levels box-filter the previous chroma level.
+#include "common.glsl"
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0) uniform sampler2D srcTex;
+layout(binding = 1, rg32f) uniform writeonly image2D dstImg;
+
+layout(push_constant) uniform PC {
+    ivec2 dstSize;
+    int fromColor;
+    int transfer;  // TRANSFER_*, as for the luma pyramid
+} pc;
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, pc.dstSize))) return;
+    vec2 uv = (vec2(p) + 0.5) / vec2(pc.dstSize);
+    vec2 c;
+    if (pc.fromColor != 0) {
+        vec3 rgb = texture(srcTex, uv).rgb;
+        // Same perceptual scale as the luma the costs are tuned on.
+        if (pc.transfer == TRANSFER_LINEAR) rgb = sqrt(max(rgb, vec3(0.0)));
+        else if (pc.transfer >= TRANSFER_SCRGB) rgb = hdrToMatch(rgb, pc.transfer);
+        float y = luma(rgb);
+        c = vec2(0.564 * (rgb.b - y), 0.713 * (rgb.r - y));
+    } else {
+        c = texture(srcTex, uv).rg;
+    }
+    imageStore(dstImg, p, vec4(c, 0.0, 0.0));
+}

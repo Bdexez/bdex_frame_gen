@@ -13,7 +13,7 @@ namespace bdex {
 namespace {
 
 struct DownsamplePC { int32_t size[2]; int32_t fromColor; int32_t transfer; };
-struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; float gradWeight; float censusWeight; float censusMargin; float rotWeight; int32_t temporal; float zeroBiasContrast; };
+struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; float gradWeight; float censusWeight; float censusMargin; float rotWeight; int32_t temporal; float zeroBiasContrast; float chromaWeight; };
 struct SizePC { int32_t size[2]; };
 struct ReducePC { int32_t size[2]; int32_t tiles; };
 struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; int32_t subpixel; };
@@ -50,6 +50,7 @@ FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, Vk
     upscaling_ = displayExtent_.width != extent_.width || displayExtent_.height != extent_.height;
     hudMode_ = dev.config.overlayMode;
     dedup_ = outputs_ > 0 && dev.config.dedup;
+    chroma_ = outputs_ > 0 && dev.config.chromaWeight > 0.f;
     dupReal_ = dedup_ && dev.config.extrapolate;
     // The real frame is resampled into an internal packed image when upscaling,
     // when the HUD must be drawn on it, or when a repeated frame may have to
@@ -146,11 +147,11 @@ void FrameGen::createPipelines() {
     if (outputs_ > 0) {
         if (lumaFormat_ == VK_FORMAT_R16_SFLOAT) {
             downsample_ = makePass(downsample_comp_f16, downsample_comp_f16_size, {CIS, SI});
-            blockMatch_ = makePass(block_match_comp_f16, block_match_comp_f16_size, {SI, SI, CIS, SI, SI, CIS});
+            blockMatch_ = makePass(block_match_comp_f16, block_match_comp_f16_size, {SI, SI, CIS, SI, SI, CIS, CIS, CIS});
             refine_ = makePass(flow_refine_comp_f16, flow_refine_comp_f16_size, {SI, SI, SI, SI, SI});
         } else {
             downsample_ = makePass(downsample_comp_f32, downsample_comp_f32_size, {CIS, SI});
-            blockMatch_ = makePass(block_match_comp_f32, block_match_comp_f32_size, {SI, SI, CIS, SI, SI, CIS});
+            blockMatch_ = makePass(block_match_comp_f32, block_match_comp_f32_size, {SI, SI, CIS, SI, SI, CIS, CIS, CIS});
             refine_ = makePass(flow_refine_comp_f32, flow_refine_comp_f32_size, {SI, SI, SI, SI, SI});
         }
         smooth_ = makePass(flow_smooth_comp, flow_smooth_comp_size, {SI, SI});
@@ -162,6 +163,7 @@ void FrameGen::createPipelines() {
         else                interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS});
         splat_ = makePass(splat_comp, splat_comp_size, {CIS, CIS, SI, SB, CIS});
         frameState_ = makePass(frame_state_comp, frame_state_comp_size, {CIS, CIS, SB});
+        if (chroma_) downChroma_ = makePass(downsample_chroma_comp, downsample_chroma_comp_size, {CIS, SI});
     }
     if (packReal_) {
         if (sharpen_)       upscale_ = makePass(upscale_comp_sharp, upscale_comp_sharp_size, {CIS, SI});
@@ -195,6 +197,8 @@ void FrameGen::createResources() {
         lv.fine = {divUp(size.width, kFineBlock), divUp(size.height, kFineBlock)};
         if (l > 0 && (lv.blocks.width < 2 || lv.blocks.height < 2)) break;
         for (int p = 0; p < 2; ++p) lv.pyr[p] = dev_.createImage(lumaFormat_, lv.size, storageSampled, true);
+        if (chroma_)
+            for (int p = 0; p < 2; ++p) lv.chroma[p] = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, lv.size, storageSampled, true);
         for (int d = 0; d < 2; ++d) {
             lv.flowRaw[d] = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, lv.blocks, storageSampled, true);
             // The finest backward flow is copied for extrapolate_accel
@@ -255,6 +259,7 @@ void FrameGen::createResources() {
         // extrapolate_accel can be toggled live.
         prevBwd_ = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, levels_v_[0].fine,
                                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, true);
+        if (!chroma_) chromaDummy_ = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, {1, 1}, VK_IMAGE_USAGE_SAMPLED_BIT, true);
     }
 
     if (cfg.profile) {
@@ -281,6 +286,7 @@ void FrameGen::createResources() {
         };
         for (auto& lv : levels_v_) {
             for (auto& i : lv.pyr) add(i);
+            if (chroma_) for (auto& i : lv.chroma) add(i);
             for (auto& i : lv.flowRaw) add(i);
             for (auto& i : lv.flow) add(i);
             if (lv.refined) for (auto& i : lv.flowFine) add(i);
@@ -289,6 +295,7 @@ void FrameGen::createResources() {
         for (auto& o : out_) add(o);
         if (splatMap_.image) add(splatMap_);
         if (prevBwd_.image) add(prevBwd_);
+        if (chromaDummy_.image) add(chromaDummy_);
         if (packReal_) add(outReal_);
         for (auto& s : sharp_) add(s);
         if (sharpen_) add(sharpReal_);
@@ -348,11 +355,13 @@ void FrameGen::createDescriptors() {
     const uint32_t up = packReal_ ? N : 0;        // one upscale/copy set per source
     const uint32_t cas = sharpen_ ? O + 1 : 0;    // one CAS set per generated output, plus the real frame
     const uint32_t nReal = dupReal_ ? N * N : 0;  // extrapolated replacements of repeated real frames
-    const uint32_t nSets = gen * (2 * N + 2 * L + 4 * L + 2 * L + 4 * L + 1 + nInterp + 1 + 1) + nReal + up + cas;  // + splat, state
+    const uint32_t nChroma = chroma_ ? 2 * N + 2 * L : 0;  // chroma pyramid sets (like the luma ones)
+    const uint32_t nSets = gen * (2 * N + 2 * L + 4 * L + 2 * L + 4 * L + 1 + nInterp + 1 + 1) + nReal + nChroma + up + cas;  // + splat, state
     // Block-match sets (2 parities x 2 directions x L) hold two samplers each:
     // the coarse prediction and the previous backward flow (temporal prediction).
-    const uint32_t nCIS = gen * (2 * N + 2 * L + 4 * L * 2 + 5 * nInterp + 3 + 2) + 5 * nReal + up + cas;  // + splat flows, state lumas
-    const uint32_t nSI = gen * (2 * N + 2 * L + 4 * L * 4 + 2 * L * 2 + 4 * L * 5 + 1 + nInterp * 2 + 1) + 2 * nReal + up + cas;  // interp + splat map
+    // Block-match sets also hold the two chroma samplers (a dummy when off).
+    const uint32_t nCIS = gen * (2 * N + 2 * L + 4 * L * 4 + 5 * nInterp + 3 + 2) + 5 * nReal + nChroma + up + cas;  // + splat flows, state lumas
+    const uint32_t nSI = gen * (2 * N + 2 * L + 4 * L * 4 + 2 * L * 2 + 4 * L * 5 + 1 + nInterp * 2 + 1) + 2 * nReal + nChroma + up + cas;  // interp + splat map
     const uint32_t nSB = gen * (1 + nInterp + 1 + 1) + nReal;  // reduce, interp, splat, state
     std::vector<VkDescriptorPoolSize> sizes;
     if (nCIS) sizes.push_back({VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nCIS});
@@ -401,6 +410,20 @@ void FrameGen::createDescriptors() {
             writeImage(s, 1, SI, levels_v_[l].pyr[parity].view);
             dsDown_[parity].push_back(s);
         }
+        if (chroma_) {
+            for (uint32_t n = 0; n < N; ++n) {
+                VkDescriptorSet s = allocSet(downChroma_.setLayout);
+                writeImage(s, 0, CIS, sources_[n].view);
+                writeImage(s, 1, SI, levels_v_[0].chroma[parity].view);
+                dsChromaSrc_[parity].push_back(s);
+            }
+            for (uint32_t l = 0; l < L; ++l) {
+                VkDescriptorSet s = allocSet(downChroma_.setLayout);
+                writeImage(s, 0, CIS, (l == 0 ? levels_v_[0] : levels_v_[l - 1]).chroma[parity].view);  // level 0 unused
+                writeImage(s, 1, SI, levels_v_[l].chroma[parity].view);
+                dsChroma_[parity].push_back(s);
+            }
+        }
         const uint32_t cur = parity, prev = 1 - parity;
         for (uint32_t dir = 0; dir < 2; ++dir) {
             for (uint32_t l = 0; l < L; ++l) {
@@ -415,6 +438,8 @@ void FrameGen::createDescriptors() {
                 // The previous pair's final backward flow (indexed by positions in
                 // the current reference frame), read before this frame overwrites it.
                 writeImage(s, 5, CIS, lv.flowFine[1].view);
+                writeImage(s, 6, CIS, chroma_ ? lv.chroma[dir == 0 ? prev : cur].view : chromaDummy_.view);
+                writeImage(s, 7, CIS, chroma_ ? lv.chroma[dir == 0 ? cur : prev].view : chromaDummy_.view);
                 dsMatch_[parity][dir].push_back(s);
 
                 VkDescriptorSet rs = allocSet(refine_.setLayout);
@@ -484,7 +509,7 @@ void FrameGen::destroyAll() {
     VkDevice d = dev_.device;
     if (pool_) vt.DestroyDescriptorPool(d, pool_, nullptr);
     pool_ = VK_NULL_HANDLE;
-    for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_, &splat_, &frameState_}) {
+    for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_, &splat_, &frameState_, &downChroma_}) {
         if (p->pipeline) vt.DestroyPipeline(d, p->pipeline, nullptr);
         if (p->layout) vt.DestroyPipelineLayout(d, p->layout, nullptr);
         if (p->setLayout) vt.DestroyDescriptorSetLayout(d, p->setLayout, nullptr);
@@ -498,6 +523,7 @@ void FrameGen::destroyAll() {
     }
     for (auto& lv : levels_v_) {
         for (auto& i : lv.pyr) dev_.destroyImage(i);
+        for (auto& i : lv.chroma) if (i.image) dev_.destroyImage(i);
         for (auto& i : lv.flowRaw) dev_.destroyImage(i);
         for (auto& i : lv.flow) dev_.destroyImage(i);
         if (lv.refined) for (auto& i : lv.flowFine) dev_.destroyImage(i);
@@ -508,6 +534,7 @@ void FrameGen::destroyAll() {
     out_.clear();
     if (splatMap_.image) dev_.destroyImage(splatMap_);
     if (prevBwd_.image) dev_.destroyImage(prevBwd_);
+    if (chromaDummy_.image) dev_.destroyImage(chromaDummy_);
     if (outReal_.image) dev_.destroyImage(outReal_);
     for (auto& s : sharp_) dev_.destroyImage(s);
     sharp_.clear();
@@ -681,6 +708,18 @@ void FrameGen::recordAnalysis(VkCommandBuffer cmd, uint32_t parity, uint32_t cur
         vt.CmdDispatch(cmd, divUp(lv.size.width, 16), divUp(lv.size.height, 16), 1);
         memoryBarrier(cmd);
     }
+    if (chroma_) {
+        vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, downChroma_.pipeline);
+        for (int l = 0; l < levels_; ++l) {
+            const Level& lv = levels_v_[l];
+            DownsamplePC pc{{(int32_t)lv.size.width, (int32_t)lv.size.height}, l == 0 ? 1 : 0, enc_.transfer};
+            vt.CmdPushConstants(cmd, downChroma_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+            const VkDescriptorSet* set = l == 0 ? &dsChromaSrc_[parity][cur] : &dsChroma_[parity][l];
+            vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, downChroma_.layout, 0, 1, set, 0, nullptr);
+            vt.CmdDispatch(cmd, divUp(lv.size.width, 16), divUp(lv.size.height, 16), 1);
+            memoryBarrier(cmd);
+        }
+    }
 }
 
 // Compute and indirect-argument reads of the state pass's results.
@@ -775,7 +814,8 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
         MatchPC pc{{(int32_t)lv.size.width, (int32_t)lv.size.height},
                    {(int32_t)lv.blocks.width, (int32_t)lv.blocks.height},
                    l + 1 < levels_ ? cfg.searchFine : cfg.searchRadius, l + 1 < levels_ ? 1 : 0, cfg.smoothness, cfg.zeroBias,
-                   cfg.gradWeight, cfg.censusWeight, cfg.censusMargin, cfg.rotWeight, 0, cfg.zeroBiasContrast};
+                   cfg.gradWeight, cfg.censusWeight, cfg.censusMargin, cfg.rotWeight, 0, cfg.zeroBiasContrast,
+                   chroma_ ? cfg.chromaWeight : 0.f};
         const bool temporal = cfg.temporalPrediction && flowValid_;
         for (uint32_t dir = 0; dir < 2; ++dir) {
             pc.temporal = temporal ? static_cast<int32_t>(dir + 1) : 0;
