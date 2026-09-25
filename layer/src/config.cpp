@@ -252,6 +252,37 @@ const TunePair kTunePairs[] = {
     {"subpixel+synth_bicubic", "1+1", true, 15},
 };
 
+std::string Config::canonicalKey(const std::string& key) {
+    if (const OptionDef* d = findOption(key)) return d->key;
+    for (const auto& [k, a] : kCustomKeys)
+        if (key == k || (a && key == a)) return k;
+    return "";
+}
+
+std::vector<Config::OptionInfo> Config::optionInfo() {
+    const Config defaults;
+    auto num = [](double v) {
+        char buf[32];
+        snprintf(buf, sizeof buf, "%g", v);
+        return std::string(buf);
+    };
+    std::vector<OptionInfo> out;
+    for (const auto& d : registry()) {
+        OptionInfo i;
+        i.key = d.key;
+        i.live = (d.flags & kLive) != 0;
+        i.lo = d.lo;
+        i.hi = d.hi;
+        switch (d.kind) {
+        case Kind::Bool:  i.kind = "bool"; i.lo = 0; i.hi = 1; i.def = defaults.*(d.b) ? "1" : "0"; break;
+        case Kind::Int:   i.kind = "int"; i.def = std::to_string(defaults.*(d.i)); break;
+        case Kind::Float: i.kind = "float"; i.def = num(defaults.*(d.f)); break;
+        }
+        out.push_back(i);
+    }
+    return out;
+}
+
 std::vector<Config::TuneCandidate> Config::tuneCandidates() const {
     std::vector<const OptionDef*> defs;
     for (const auto& d : registry()) {

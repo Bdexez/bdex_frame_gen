@@ -221,6 +221,16 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed (2026-09-25)
 
+- **One description of the option controls for both UIs.**
+  `layer/options_ui.conf` holds the sections, labels, help texts and UI
+  ranges; kinds, registry ranges and defaults come from the option
+  registry (`Config::optionInfo`). The GTK panel builds its sections from
+  `options_ui.json` (generated at build time by `tools/options/bdex_options`,
+  which fails on an unknown key, and installed next to the panel); the
+  Windows launcher embeds the `.conf` and builds its option column from it,
+  its window sized to the content. Both used to keep hand-written lists.
+  The GTK panel's option list is unchanged (checked against the old one),
+  except the updated `online_tune` help.
 - **The last optional features moved into passes**: `extrapolate_accel`,
   `extrapolate_splat` (a `beforeSynthesis` hook fills `SynthesisInputs`; the
   splat map is bound through `FgContext::setSplatMap`) and the fps HUD (now
@@ -324,6 +334,8 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed (2026-09-25)
 
+- GTK panel: option texts are escaped before display — a help text with
+  "< 1" (`upscale_temporal`) was taken for Pango markup and not shown.
 - MSVC warnings cleared (all from the CI logs): `_CRT_SECURE_NO_WARNINGS`
   for the standard `getenv`/`fopen` calls, explicit narrowing in the PPM
   dump, `_environ` no longer redeclared (inconsistent linkage),

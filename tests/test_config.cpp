@@ -316,3 +316,18 @@ TEST(config_apply_live_follows_the_registry) {
     CHECK(c.zeroBiasContrast == 0.2f && c.frameTiming && c.fpsLimit == 50.f);
     CHECK(c.levels != 6 && !c.dedup);
 }
+
+TEST(config_option_info) {
+    bool seenSmooth = false, seenRefine = false;
+    for (const auto& i : Config::optionInfo()) {
+        if (i.key == "smoothness") {
+            seenSmooth = true;
+            CHECK(i.kind == "float" && i.def == "0.004" && i.live && i.hi == 1.0);
+        }
+        if (i.key == "refine") {
+            seenRefine = true;
+            CHECK(i.kind == "bool" && i.def == "1" && !i.live);
+        }
+    }
+    CHECK(seenSmooth && seenRefine);
+}

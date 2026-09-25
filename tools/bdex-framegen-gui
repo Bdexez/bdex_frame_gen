@@ -15,6 +15,7 @@ effect the next time a game starts.
 Depends only on Python 3 and PyGObject with GTK 4 and libadwaita (packages
 python-gobject, gtk4, libadwaita on most distributions).
 """
+import json
 import os
 import shlex
 import subprocess
@@ -82,168 +83,58 @@ def _fmt_num(value, digits):
     return s or "0"
 
 
-SECTIONS = [
-    ("cadence", "Cadence", "Limite de FPS, multiplicateur automatique, régularité", False, [
-        spin("fps_limit", "Limite d'images du jeu",
-             "Plafonne les FPS du jeu (0 = aucune). Une base stable qui divise le taux de rafraîchissement "
-             "(60 → 120 Hz, 72 → 144 Hz) donne la génération la plus régulière. −1 = auto : rafraîchissement "
-             "mesuré ÷ multiplicateur (écrans à fréquence fixe).", -1, 360, 1, 0, 0),
-        spin("target_fps", "Multiplicateur automatique — cible",
-             "Taux de rafraîchissement visé (ex. 144) : le multiplicateur s'adapte aux FPS du jeu "
-             "(72 → ×2, 50 → ×3, ×1 quand le jeu atteint la cible), sans dépasser le multiplicateur choisi. "
-             "0 = multiplicateur fixe ; −1 = auto (rafraîchissement mesuré).", -1, 360, 1, 0, 0),
-        switch("present_feedback", "Mesure de l'affichage réel",
-               "Mesure quand chaque image s'affiche vraiment (si le pilote le permet) : rafraîchissement, "
-               "images écrasées, cadence calée sur l'écran.", True),
-        switch("frame_timing", "Suivre le temps réel des images",
-               "Place chaque image générée selon l'instant réel des images du jeu plutôt qu'à intervalle "
-               "fixe : moins de saccades quand le temps d'image varie. Peut coûter un peu sur les jeux à "
-               "pas de simulation fixe."),
-        switch("dedup", "Détecter les images répétées",
-               "Repère les images que le jeu présente deux fois (cinématiques à 30 i/s, émulateurs) : garde "
-               "le mouvement précédent et ne fige plus l'image. Pris en compte au lancement du jeu."),
-        spin("gpu_budget", "Budget GPU de la génération",
-             "Part du temps d'image du jeu que la génération peut prendre (0,25 = un quart) ; au-delà la "
-             "qualité baisse par paliers, puis remonte. 0 = désactivé.", 0.0, 1.0, 0.05, 2, 0.0),
-        switch("pacing", "Espacement régulier des images",
-               "Répartit les images générées dans l'intervalle du jeu (hors vsync FIFO).", True),
-        switch("sync_present", "Présentation synchrone (compatibilité)",
-               "Bloque le jeu jusqu'à l'affichage de chaque image. Pour certains jeux Direct3D 12 "
-               "(VKD3D-Proton) qui se figent ; ajoute de la latence."),
-    ]),
-    ("motion", "Qualité du mouvement", "Stabilité, contours, sous-pixel, coupures de scène…", True, [
-        switch("online_tune", "Réglage automatique par jeu",
-               "Pendant les premières secondes de jeu, essaie les options de mouvement ci-dessous (stabilité "
-               "adaptée au contraste, prédiction temporelle, sous-pixel en extrapolation, stabilisation "
-               "temporelle) en les comparant sur le jeu lui-même, garde celles qui prédisent mieux l'image "
-               "suivante, et s'en souvient pour ce jeu. Les options réglées à la main ne sont pas touchées. "
-               "Pris en compte au lancement du jeu."),
-        spin("zero_bias_contrast", "Stabilité adaptée au contraste",
-             "Rend la stabilité de l'image fixe relative au contraste : supprime les fondus fantômes sur les "
-             "décors doux en mouvement rapide, sans déstabiliser le HUD. 0 = désactivé ; recommandé 0,1.",
-             0.0, 0.5, 0.01, 2, 0.0),
-        switch("pixel_vectors", "Contours d'objets",
-               "Choisit le mouvement pixel par pixel aux frontières d'objets : moins de bavures, "
-               "synthèse ~2× plus coûteuse."),
-        switch("subpixel", "Mouvement sous-pixel", "Affine le mouvement au-delà du pixel entier."),
-        switch("reveal_fill", "Extrapolation : zones révélées",
-               "Là où un objet en mouvement découvre le décor, prend le fond plutôt que l'objet (celui des "
-               "deux candidats qui bouge le moins). Gagne sur la plupart des scènes, perd un peu sur la démo."),
-        spin("hud_mask", "Masque de HUD appris",
-             "Apprend, pendant les mouvements de caméra, les pixels qui ne changent jamais (HUD, mini-carte, "
-             "réticule) et les garde tels quels dans les images générées. Nombre d'images stables requis ; "
-             "24 conseillé, 0 = désactivé. Activation prise en compte au lancement du jeu.", 0, 200, 1, 0, 0),
-        spin("subpixel_lk", "Sous-pixel précis (Lucas-Kanade)",
-             "Affine chaque vecteur par Lucas-Kanade (nombre d'itérations, 2 conseillé) ; ~0,1 ms. En "
-             "interpolation, à combiner avec l'échantillonnage bicubique. 0 = désactivé.", 0, 4, 1, 0, 0),
-        switch("synth_bicubic", "Échantillonnage bicubique",
-               "La synthèse lit les images en Catmull-Rom au lieu de bilinéaire : garde le détail quand le "
-               "mouvement tombe entre deux pixels (à combiner avec le sous-pixel). ~0,6 ms."),
-        spin("grad_weight", "Netteté du mouvement rapide",
-             "Cale le suivi sur les contours plutôt que la seule luminosité : réduit le déchirement "
-             "en mouvement rapide, au prix d'un peu de fidélité sur l'image fixe. 0 = désactivé ; essayer 1.",
-             0.0, 3.0, 0.1, 1, 0.0),
-        spin("smoothness", "Lissage du mouvement",
-             "Régularise le champ de mouvement (pénalise les écarts entre blocs voisins). Défaut 0,004.",
-             0.0, 0.03, 0.001, 3, 0.004),
-        spin("zero_bias", "Stabilité de l'image fixe",
-             "Favorise l'absence de mouvement pour garder le HUD parfaitement stable. Défaut 0,002.",
-             0.0, 0.02, 0.001, 3, 0.002),
-        spin("search_fine", "Précision de recherche",
-             "Rayon de recherche fin autour de la prédiction (plus haut = mouvements plus fins, plus coûteux). "
-             "Défaut 2.", 1, 4, 1, 0, 2),
-        spin("flow_iterations", "Itérations de synthèse",
-             "Raffinements de la recherche du mouvement lors de l'interpolation. Défaut 1.", 0, 3, 1, 0, 1),
-        spin("chroma_weight", "Couleur dans la recherche du mouvement",
-             "Voit les contours entre couleurs de même luminosité (rouge sur vert…), qui sinon se fondent. "
-             "0 = désactivé ; essayer 1. Pris en compte au lancement du jeu.", 0.0, 8.0, 0.5, 1, 0.0),
-        switch("scene_cut_local", "Coupure de scène par zone",
-               "Décide le repli sur l'image réelle zone par zone : un menu qui s'ouvre sur une partie de "
-               "l'écran n'est plus déformé."),
-        spin("scene_cut_low", "Coupure de scène — début du fondu",
-             "Coût de mouvement moyen au-delà duquel on commence à fondre vers l'image réelle. Défaut 0,05.",
-             0.0, 0.30, 0.01, 2, 0.05),
-        spin("scene_cut_high", "Coupure de scène — image réelle",
-             "Coût au-delà duquel l'image générée est remplacée par une vraie image dupliquée. Défaut 0,09.",
-             0.0, 0.50, 0.01, 2, 0.09),
-    ]),
-    ("experimental", "Expérimental", "Options en cours d'évaluation", True, [
-        spin("upscale_temporal", "Upscaling temporel",
-             "Avec une échelle de rendu < 1 et la génération active : les images générées sont calculées à "
-             "partir des images réelles déjà upscalées (plus nettes), et l'upscale accumule un peu l'image "
-             "précédente le long du mouvement. 0 = désactivé ; 0,05 conseillé (au-delà de 0,1 l'accumulation "
-             "floute, faute de jitter du jeu). Pris en compte au lancement du jeu.", 0.0, 0.95, 0.05, 2, 0.0),
-        switch("extrapolate_splat", "Extrapolation par projection",
-               "En mode extrapolation : projette les pixels vers leur position future (moins d'images "
-               "doubles et de bavures), ~0,8 ms de plus."),
-        spin("static_guard", "Protection du HUD statique",
-             "Garde tels quels les pixels identiques dans les deux images quand le mouvement autour "
-             "bouge (glyphes du HUD). Peut effacer de petits objets très rapides. 0 = désactivé.",
-             0.0, 1.0, 0.1, 1, 0.0),
-        switch("temporal_prediction", "Prédiction temporelle",
-               "Cherche le mouvement autour de celui de l'image précédente : suit les panoramiques très "
-               "rapides (surtout avec « Stabilité adaptée au contraste »)."),
-        spin("occlusion_strength", "Gestion des occlusions",
-             "Confiance aller/retour du mouvement dans la synthèse. 0 = désactivé.", 0.0, 1.0, 0.1, 1, 0.0),
-        spin("rot_weight", "Rotation / zoom",
-             "Réévalue les correspondances ambiguës sous rotation et mise à l'échelle. 0 = désactivé, 1 = activé.",
-             0.0, 1.0, 1.0, 0, 0.0),
-        spin("census_weight", "Recherche par structure (census)",
-             "Départage les correspondances ambiguës par la structure locale. 0 = désactivé.",
-             0.0, 8.0, 0.1, 1, 0.0),
-        spin("census_margin", "Seuil d'ambiguïté (census)",
-             "Écart relatif en dessous duquel une correspondance est jugée ambiguë. Défaut 0,05.",
-             0.0, 1.0, 0.01, 2, 0.05),
-        spin("extrapolate_accel", "Extrapolation : accélération",
-             "Prédit des trajectoires courbes (caméra qui accélère, freine ou se retourne) au lieu d'une "
-             "vitesse constante. 0 = désactivé, 1 = plein effet.", 0.0, 1.0, 0.1, 1, 0.0),
-        spin("flow_temporal", "Stabilisation temporelle du mouvement",
-             "Garde le mouvement de la paire précédente là où il explique aussi bien la nouvelle paire "
-             "(zones plates, textures répétées) : moins de scintillement. 0 = désactivé, 1 = conseillé.",
-             0.0, 1.0, 0.1, 1, 0.0),
-        spin("extrapolate_hold", "Extrapolation : figer les pixels incertains",
-             "1 = ancien comportement (images doubles). 0 = suivre le mouvement partout.",
-             0.0, 1.0, 0.1, 1, 0.0),
-    ]),
-    ("flow", "Structure du flux", "Résolution et pyramide du calcul du mouvement — désactive l'auto-réglage", True, [
-        choice("flow_scale", "Résolution du flux",
-               "Diviseur de résolution du calcul du mouvement ; « Auto » vise ~0,5 Mpixel.",
-               [("Auto", "auto"), ("Pleine (1)", "1"), ("Moitié (2)", "2"), ("Quart (4)", "4")], "auto"),
-        spin("levels", "Niveaux de pyramide", "Plus de niveaux = mouvements plus amples suivis. Défaut 4.",
-             1, 6, 1, 0, 4),
-        spin("search_radius", "Rayon de recherche grossier",
-             "Rayon de recherche au niveau le plus grossier. Défaut 4.", 1, 4, 1, 0, 4),
-        switch("refine", "Raffinement 4×4", "Meilleurs contours du mouvement ; coûte du temps GPU.", True),
-        switch("refine_all", "Raffiner tous les niveaux",
-               "Désactivé : seulement le plus fin (moins cher, ~2 dB moins bon).", True),
-        spin("refine_bias", "Préférence pour le mouvement du bloc",
-             "Bonus pour garder le mouvement propre d'un bloc lors du raffinement. Défaut 0,5.",
-             0.0, 5.0, 0.1, 1, 0.5),
-    ]),
-    ("diagnostic", "Diagnostic", "Journal, statistiques, profilage, captures d'images", False, [
-        choice("debug", "Mode de débogage",
-               "Flux : colore le mouvement estimé. Écran partagé : moitié générée / moitié réelle. "
-               "Transparent : aucune génération (isole un problème).",
-               [("Aucun", "none"), ("Flux", "flow"), ("Écran partagé", "split"), ("Transparent", "passthrough")],
-               "none"),
-        choice("log", "Verbosité du journal", "",
-               [("Silencieux (0)", "0"), ("Avertissements (1)", "1"), ("Infos (2)", "2"), ("Débogage (3)", "3")],
-               "1"),
-        text("log_file", "Fichier journal", "Chemin du fichier de log (vide = sortie standard). ~ accepté."),
-        switch("stats", "Statistiques de FPS dans le journal", "", True),
-        spin("stats_interval", "Intervalle des statistiques (s)", "", 0.5, 60.0, 0.5, 1, 5.0),
-        switch("profile", "Profilage GPU", "Temps GPU par étape, avec les statistiques."),
-        text("dump", "Dossier de capture d'images",
-             "Écrit les images présentées en PPM dans ce dossier (vide = désactivé). À éviter dans /tmp."),
-        spin("dump_frames", "Nombre d'images capturées", "", 1, 100000, 1, 0, 24),
-    ]),
-    ("compat", "Compatibilité", "Réglages de secours pour les jeux récalcitrants", False, [
-        switch("hide_present_ext", "Masquer les extensions de présentation",
-               "Cache swapchain_maintenance1 / present_id au jeu (nécessaire pour VKD3D-Proton).", True),
-        switch("shared_queue", "File GPU partagée avec le jeu",
-               "Force le layer à partager la file du jeu (test / pilotes sans file libre)."),
-    ]),
-]
+# The option sections are described once, in layer/options_ui.conf (labels,
+# help, UI ranges), completed from the engine's option registry (kinds,
+# defaults) by bdex_options at build time into options_ui.json — installed
+# next to this panel, or found in the build tree when run from the sources.
+def _m(text):
+    """Plain text for an Adwaita row (its title and subtitle are Pango markup:
+    "< 1" in a help text made the whole text vanish)."""
+    return GLib.markup_escape_text(text)
+
+
+def options_ui_path():
+    here = os.path.dirname(os.path.realpath(__file__))
+    for p in (os.environ.get("BDEX_FG_OPTIONS_UI"),
+              os.path.join(here, "..", "share", "bdex-framegen", "options_ui.json"),
+              os.path.join(here, "..", "build", "options_ui.json")):
+        if p and os.path.isfile(p):
+            return p
+    return None
+
+
+def load_sections():
+    """[(id, title, subtitle, expanded, [option dict, ...])] for the panel."""
+    path = options_ui_path()
+    if not path:
+        sys.stderr.write("bdex-framegen-gui: options_ui.json not found (build the project, or set "
+                         "BDEX_FG_OPTIONS_UI); the advanced options are not shown\n")
+        return []
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    sections = []
+    for sec in data:
+        if not sec["gui"]:
+            continue
+        opts = []
+        for o in sec["options"]:
+            if not o["gui"]:
+                continue
+            k, key, label, sub = o["kind"], o["key"], o["label"], o["help"]
+            if k == "switch":
+                opts.append(switch(key, label, sub, o["default"] == "1"))
+            elif k == "spin":
+                opts.append(spin(key, label, sub, o["lo"], o["hi"], o["step"], o["digits"],
+                                 float(o["default"] or 0)))
+            elif k == "choice":
+                opts.append(choice(key, label, sub, [(lab, val) for val, lab in o["choices"]], o["default"]))
+            elif k == "text":
+                opts.append(text(key, label, sub))
+        sections.append((sec["id"], sec["title"], sec["subtitle"], sec["expanded"], opts))
+    return sections
+
+
+SECTIONS = load_sections()
 OPTIONS = [o for _, _, _, _, opts in SECTIONS for o in opts]
 
 
@@ -848,7 +739,7 @@ class Window(Adw.ApplicationWindow):
         self.opt_rows = {}
         self.section_rows = {}
         for sid, title, subtitle, needs_gen, opts in SECTIONS:
-            exp = Adw.ExpanderRow(title=title, subtitle=subtitle)
+            exp = Adw.ExpanderRow(title=_m(title), subtitle=_m(subtitle))
             g.add(exp)
             self.section_rows[sid] = (exp, needs_gen)
             for o in opts:
@@ -856,13 +747,13 @@ class Window(Adw.ApplicationWindow):
                 if o["kind"] == "spin":
                     adj = Gtk.Adjustment(lower=o["lower"], upper=o["upper"], step_increment=o["step"],
                                          page_increment=o["step"] * 10, value=-1.0 if value == "auto" else float(value))
-                    row = Adw.SpinRow(title=o["title"], subtitle=o["sub"], adjustment=adj, digits=o["digits"])
+                    row = Adw.SpinRow(title=_m(o["title"]), subtitle=_m(o["sub"]), adjustment=adj, digits=o["digits"])
                     row.connect("notify::value", self.on_change)
                 elif o["kind"] == "switch":
-                    row = Adw.SwitchRow(title=o["title"], subtitle=o["sub"], active=value == "1")
+                    row = Adw.SwitchRow(title=_m(o["title"]), subtitle=_m(o["sub"]), active=value == "1")
                     row.connect("notify::active", self.on_change)
                 elif o["kind"] == "choice":
-                    row = Adw.ComboRow(title=o["title"], subtitle=o["sub"],
+                    row = Adw.ComboRow(title=_m(o["title"]), subtitle=_m(o["sub"]),
                                        model=Gtk.StringList.new([c[0] for c in o["choices"]]))
                     row.set_selected(_combo_index(o["choices"], value))
                     row.connect("notify::selected", self.on_change)

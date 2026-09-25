@@ -44,6 +44,16 @@ else()
   set(BDEX_WARNINGS -Wall -Wextra -Wno-missing-field-initializers -fvisibility=hidden)
 endif()
 
+# layer/options_ui.conf as bytes, for the Windows launcher, which builds its
+# option column from it (the GTK panel gets tools/options' JSON). Hex bytes
+# rather than a string literal: MSVC limits literals to ~16 KB.
+file(READ "${CMAKE_SOURCE_DIR}/layer/options_ui.conf" BDEX_OPTIONS_UI_HEX HEX)
+string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," BDEX_OPTIONS_UI_BYTES "${BDEX_OPTIONS_UI_HEX}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/options_ui_conf.h"
+     "#pragma once\n// Generated from layer/options_ui.conf (layer/CMakeLists.txt).\n"
+     "static const unsigned char kOptionsUiConf[] = {${BDEX_OPTIONS_UI_BYTES}0x00};\n")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/layer/options_ui.conf")
+
 # Device-independent parts, shared with the unit tests.
 add_library(bdex_core STATIC
   src/config.cpp
@@ -55,6 +65,7 @@ add_library(bdex_core STATIC
   src/budget.cpp
   src/online_tune.cpp
   src/descriptor_planner.cpp
+  src/options_ui.cpp
   src/display_clock.cpp
   src/status.cpp
 )
