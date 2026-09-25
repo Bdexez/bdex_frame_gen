@@ -93,6 +93,8 @@ public:
     // mean luma (0..1). Returns true when it restarted the trial.
     bool observe(double motion, double brightness);
     int restarts() const;
+    // For the status: the decisions once done, else the option on trial.
+    std::string status() const;
     // Summary for the log, e.g. "zero_bias_contrast=0.1 kept (-4.2 %), subpixel=1 dropped (+0.3 %)".
     std::string summary() const;
 

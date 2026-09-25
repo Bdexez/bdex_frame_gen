@@ -190,6 +190,16 @@ bool OnlineTune::observe(double motion, double brightness) {
     return true;
 }
 
+std::string OnlineTune::status() const {
+    if (done()) return summary();
+    std::lock_guard<std::mutex> lock(mutex_);
+    size_t decided = 0;
+    for (bool d : decided_) decided += d;
+    if (current_ >= candidates_.size()) return "";
+    return "trying " + candidates_[current_].key + "=" + candidates_[current_].value + " (" +
+           std::to_string(decided) + " of " + std::to_string(candidates_.size()) + " decided)";
+}
+
 int OnlineTune::restarts() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return restarts_;

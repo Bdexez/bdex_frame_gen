@@ -1,4 +1,5 @@
 #include "swapchain.h"
+#include "online_tune.h"
 #include "status.h"
 #include "log.h"
 #include "vk_util.h"
@@ -84,6 +85,11 @@ void VirtualSwapchain::publishStatus(int multiplier) {
     e.width = displayExtent_.width;
     e.height = displayExtent_.height;
     e.device = dev_.props.deviceName;
+    if (fg_) e.passes = fg_->passNames();
+    {
+        std::lock_guard<std::mutex> lock(dev_.onlineTuneMutex);
+        if (dev_.onlineTune) e.tune = dev_.onlineTune->status();
+    }
     statusSet(statusKey(this), e);
 }
 

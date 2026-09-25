@@ -589,7 +589,17 @@ def describe_entry(e):
     except ValueError:
         pass
     prefix = "En pause — " if state == "paused" else ""
-    return prefix + " · ".join(parts)
+    lines = [prefix + " · ".join(parts)]
+    if e.get("passes"):
+        lines.append("Passes : " + e["passes"].replace(",", ", "))
+    if e.get("online_tune"):
+        tune = e["online_tune"]
+        if tune.startswith("trying "):
+            tune = "essai de " + tune[len("trying "):].replace(" decided)", " décidées)").replace(" of ", " sur ")
+        else:
+            tune = tune.replace(" kept", " gardée").replace(" dropped", " écartée").replace("flow change", "variation du flux")
+        lines.append("Réglage auto : " + tune)
+    return "\n".join(lines)
 
 
 class Window(Adw.ApplicationWindow):

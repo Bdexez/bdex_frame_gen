@@ -167,3 +167,10 @@ TEST(online_tune_restarts_at_most_once_per_cooldown) {
     for (int i = 0; i < 200; ++i) n += t.observe(i % 60 < 30 ? 0.12 : 0.02, 0.4);
     CHECK(n <= 1);
 }
+
+TEST(online_tune_status) {
+    OnlineTune t({{"a", "1"}, {"b", "2"}});
+    CHECK(t.status() == "trying a=1 (0 of 2 decided)");
+    t.deserialize("a 1 kept 0.05 0\nb 2 dropped -0.01 0\n");
+    CHECK(t.status() == "a=1 kept (-5.0 %), b=2 dropped (+1.0 %)");
+}

@@ -17,6 +17,8 @@ TEST(status_format_lists_every_entry) {
     sc.reason = "swapchain format 64 not supported";
     sc.width = 800;
     sc.height = 600;
+    sc.passes = "hud_mask,subpixel_lk";
+    sc.tune = "trying pixel_vectors=1 (2 of 5 decided)";
     m[1] = dev;
     m[2] = sc;
     const std::string s = statusFormat("game", 42, 1000, m);
@@ -25,6 +27,8 @@ TEST(status_format_lists_every_entry) {
     CHECK(s.find("[swapchain 2]\nstate=pass-through\nreason=swapchain format 64 not supported\n") != std::string::npos);
     CHECK(s.find("size=800x600\n") != std::string::npos);
     CHECK(s.find("latency_ms=-1.0\n") != std::string::npos);
+    CHECK(s.find("passes=hud_mask,subpixel_lk\n") != std::string::npos);
+    CHECK(s.find("online_tune=trying pixel_vectors=1 (2 of 5 decided)\n") != std::string::npos);
 }
 
 TEST(status_key_accepts_pointers_and_integers) {
