@@ -30,6 +30,7 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace bdex {
@@ -92,6 +93,8 @@ public:
     // Live status for the launcher's "En cours" view and bdex-framegen
     // tools (layer/src/status.h): `target` is the captured game.
     void publishStatus(const std::string& target, double captureFps, double outFps, double latencyMs);
+    // The status published last, in French, a line per point (the tray).
+    std::vector<std::string> statusLines() const;
 
     void setCapture(Capture* c) { cap_ = c; }
 
@@ -142,6 +145,7 @@ private:
     // FrameGen (and DeviceData's resource helpers) work unchanged.
     InstanceData layerInst_;
     DeviceData layerDev_;
+    std::string lastStatus_;  // the status file text of the last publishStatus
     std::unique_ptr<FrameGen> fg_;
     static constexpr uint32_t kHistory = 3;
     AllocatedImage history_[kHistory];
