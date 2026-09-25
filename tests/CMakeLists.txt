@@ -1,3 +1,4 @@
+find_package(Threads REQUIRED)
 add_executable(bdex_tests test_main.cpp test_config.cpp test_format.cpp test_present_slice.cpp test_budget.cpp test_display_clock.cpp)
 target_link_libraries(bdex_tests PRIVATE bdex_core)
 if(MSVC)
@@ -65,5 +66,15 @@ if(TARGET bdex_demo)
     add_test(NAME acquire_timeout COMMAND bdex_acquire_test)
     set_tests_properties(acquire_timeout PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30
       ENVIRONMENT "BDEX_FG=1;BDEX_FG_CONFIG=/dev/null;BDEX_FG_PRESET=performance;BDEX_FG_MULTIPLIER=2;BDEX_FG_LOG=2;VK_IMPLICIT_LAYER_PATH=${CMAKE_BINARY_DIR}/layer;XDG_DATA_HOME=${BDEX_TEST_XDG}")
+
+    # Two swapchains presented from two threads on two queues while the
+    # config file is rewritten (live reload): the settings race the TSan job
+    # would report. Skips without two queues in a present-capable family.
+    add_executable(bdex_multithread_test test_multithread.cpp)
+    target_link_libraries(bdex_multithread_test PRIVATE Vulkan::Vulkan PkgConfig::GLFW3 Threads::Threads)
+    target_compile_options(bdex_multithread_test PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
+    add_test(NAME multithread_config COMMAND bdex_multithread_test)
+    set_tests_properties(multithread_config PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60
+      ENVIRONMENT "BDEX_FG=1;BDEX_FG_PRESET=performance;VK_IMPLICIT_LAYER_PATH=${CMAKE_BINARY_DIR}/layer;XDG_DATA_HOME=${BDEX_TEST_XDG}")
   endif()
 endif()

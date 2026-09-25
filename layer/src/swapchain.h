@@ -87,6 +87,7 @@ private:
         // not wait for the analysis, flow and synthesis on the queue. -1 =
         // already submitted by the application thread.
         int synthSlot = -1;
+        bool pacing = true;          // the pacing setting, carried so the worker never reads the config
     };
 
     void createReal(const VkSwapchainCreateInfoKHR& appInfo);
@@ -98,8 +99,8 @@ private:
     void applyGpuBudget();  // gpu_budget: re-evaluates the quality level about once a second
     std::unique_ptr<FrameGen> makeFrameGen(bool& generating);
     void createVirtualImages(const VkSwapchainCreateInfoKHR& appInfo, bool forGeneration);
-    void createSlots(std::vector<FrameSlot>& slots, uint32_t count, bool withSemaphore);
-    void destroySlots(std::vector<FrameSlot>& slots);
+    void createSlots(std::vector<FrameSlot>& slots, uint32_t count, bool withSemaphore, VkCommandPool pool);
+    void destroySlots(std::vector<FrameSlot>& slots, VkCommandPool pool);
     void destroyAll();
     FrameSlot& nextSlot(std::vector<FrameSlot>& slots, uint32_t& cursor);
     VkResult consumeSemaphores(const VkSemaphore* sems, uint32_t count);
@@ -143,6 +144,11 @@ private:
     void waitWorkerIdle(std::unique_lock<std::mutex>& lock);
 
     DeviceData& dev_;
+    // This swapchain's settings: a snapshot of dev_.config refreshed at each
+    // present (DeviceData::snapshotConfig), so another thread's live reload
+    // never changes them mid-frame. The worker thread does not read it.
+    Config cfg_;
+    uint64_t cfgVersion_ = UINT64_MAX;
     std::mutex mutex_;   // application-side state (acquire / present)
     std::condition_variable acquireCv_;  // virtual image released by present or application
     VkSwapchainKHR real_ = VK_NULL_HANDLE;
@@ -162,6 +168,10 @@ private:
 
     std::vector<VirtualImage> virtualImages_;
     std::vector<RealImage> realImages_;
+    // Command pools are single-threaded: one for the application thread's
+    // slots, one for the worker's (both used to share the device's pool).
+    VkCommandPool appPool_ = VK_NULL_HANDLE;
+    VkCommandPool workerPool_ = VK_NULL_HANDLE;
     std::vector<FrameSlot> slots_;        // application thread: synthesis submissions
     std::vector<FrameSlot> workerSlots_;  // worker thread: copy + present submissions
     uint32_t slotCursor_ = 0;

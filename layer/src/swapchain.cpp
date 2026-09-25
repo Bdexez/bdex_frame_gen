@@ -25,16 +25,22 @@ bool presentModeSupported(DeviceData& dev, VkSurfaceKHR surface, VkPresentModeKH
 } // namespace
 
 VirtualSwapchain::VirtualSwapchain(DeviceData& dev, const VkSwapchainCreateInfoKHR& appInfo) : dev_(dev) {
+    dev_.snapshotConfig(cfg_, cfgVersion_);
     format_ = appInfo.imageFormat;
     colorSpace_ = appInfo.imageColorSpace;
     extent_ = appInfo.imageExtent;
     try {
         createReal(appInfo);
-        const bool wantGeneration = dev_.config.enabled && dev_.config.debug != Config::Debug::Passthrough &&
-                                    dev_.config.multiplier > 1 && !throwaway_;
+        const bool wantGeneration = cfg_.enabled && cfg_.debug != Config::Debug::Passthrough &&
+                                    cfg_.multiplier > 1 && !throwaway_;
         createVirtualImages(appInfo, wantGeneration);
-        createSlots(slots_, kAppSlots, false);
-        createSlots(workerSlots_, kWorkerSlots, true);
+        VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+        pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        pci.queueFamilyIndex = dev_.queueFamily;
+        VK_CHECK(dev_.vt.CreateCommandPool(dev_.device, &pci, nullptr, &appPool_));
+        VK_CHECK(dev_.vt.CreateCommandPool(dev_.device, &pci, nullptr, &workerPool_));
+        createSlots(slots_, kAppSlots, false, appPool_);
+        createSlots(workerSlots_, kWorkerSlots, true, workerPool_);
         generating_ = wantGeneration;
         fg_ = makeFrameGen(generating_);
         worker_ = std::thread([this] { workerLoop(); });
@@ -45,7 +51,7 @@ VirtualSwapchain::VirtualSwapchain(DeviceData& dev, const VkSwapchainCreateInfoK
         throw;
     }
     statsStart_ = clock::now();
-    dumping_ = !dev_.config.dumpDir.empty();
+    dumping_ = !cfg_.dumpDir.empty();
     static uint32_t nextDumpId = 0;
     dumpId_ = nextDumpId++;
     BDEX_INFO("swapchain %ux%u format %d: %zu virtual images, %zu real images, present mode %s, generation %s",
@@ -64,14 +70,14 @@ std::unique_ptr<FrameGen> VirtualSwapchain::makeFrameGen(bool& generating) {
     if (generating) {
         try {
             return std::make_unique<FrameGen>(dev_, format_, extent_, displayExtent_,
-                                              static_cast<uint32_t>(dev_.config.multiplier - 1), sources, colorSpace_,
-                                              flowScaleFactor_);
+                                              static_cast<uint32_t>(cfg_.multiplier - 1), sources, colorSpace_,
+                                              flowScaleFactor_, &cfg_);
         } catch (const VkError& e) {
             BDEX_WARN("frame generation unavailable for this swapchain (%s); passing frames through", e.what());
             generating = false;
         }
     }
-    return std::make_unique<FrameGen>(dev_, format_, extent_, displayExtent_, 0, sources, colorSpace_);
+    return std::make_unique<FrameGen>(dev_, format_, extent_, displayExtent_, 0, sources, colorSpace_, 1, &cfg_);
 }
 
 void VirtualSwapchain::createReal(const VkSwapchainCreateInfoKHR& appInfo) {
@@ -83,14 +89,14 @@ void VirtualSwapchain::createReal(const VkSwapchainCreateInfoKHR& appInfo) {
 
     // The pNext chain is forwarded unchanged (format lists, scaling, present
     // modes...): it describes the surface-side behaviour which stays the same.
-    if (dev_.config.presentMode >= 0 &&
+    if (cfg_.presentMode >= 0 &&
         findChain<VkBaseInStructure>(appInfo.pNext, VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODES_CREATE_INFO_EXT)) {
         BDEX_WARN("application declares its present modes (VK_EXT_swapchain_maintenance1); ignoring present_mode override");
-    } else if (dev_.config.presentMode >= 0) {
-        auto mode = static_cast<VkPresentModeKHR>(dev_.config.presentMode);
+    } else if (cfg_.presentMode >= 0) {
+        auto mode = static_cast<VkPresentModeKHR>(cfg_.presentMode);
         if (presentModeSupported(dev_, appInfo.surface, mode)) ci.presentMode = mode;
         else BDEX_WARN("present mode %s not supported by the surface, keeping %s", presentModeName(mode), presentModeName(appInfo.presentMode));
-    } else if (dev_.config.presentMode == -2 &&
+    } else if (cfg_.presentMode == -2 &&
                (ci.presentMode == VK_PRESENT_MODE_FIFO_KHR || ci.presentMode == VK_PRESENT_MODE_FIFO_RELAXED_KHR)) {
         // Never present the real swapchain in FIFO: our worker presents
         // asynchronously, and a FIFO present hard-hangs Direct3D translation
@@ -118,7 +124,7 @@ void VirtualSwapchain::createReal(const VkSwapchainCreateInfoKHR& appInfo) {
     surface_ = appInfo.surface;
     VkSurfaceCapabilitiesKHR caps{};
     if (dev_.inst->vt.GetPhysicalDeviceSurfaceCapabilitiesKHR(dev_.physDev, appInfo.surface, &caps) == VK_SUCCESS) {
-        const bool upscale = dev_.config.enabled && dev_.config.renderScale < 0.999f;
+        const bool upscale = cfg_.enabled && cfg_.renderScale < 0.999f;
         if (upscale && caps.currentExtent.width != UINT32_MAX &&
             (caps.currentExtent.width != extent_.width || caps.currentExtent.height != extent_.height)) {
             // X11 / XWayland: the caps hook already handed the app a reduced
@@ -146,7 +152,7 @@ void VirtualSwapchain::createReal(const VkSwapchainCreateInfoKHR& appInfo) {
         // We present `multiplier` frames per game frame: with too few images
         // the acquire of the real frame blocks behind the generated ones
         // still queued in the presentation engine, which delays it.
-        const uint32_t mult = static_cast<uint32_t>(std::max(1, dev_.config.multiplier));
+        const uint32_t mult = static_cast<uint32_t>(std::max(1, cfg_.multiplier));
         uint32_t want = std::max(appInfo.minImageCount, 2u + mult);
         if (caps.maxImageCount) want = std::min(want, caps.maxImageCount);
         ci.minImageCount = std::max(want, caps.minImageCount);
@@ -298,7 +304,7 @@ void VirtualSwapchain::createVirtualImages(const VkSwapchainCreateInfoKHR& appIn
     // cannot; in that case createImage fails and CreateSwapchainKHR falls
     // back to the driver's swapchain instead of silently changing the contract.
     VkImageUsageFlags usage = appInfo.imageUsage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-    if (forGeneration || upscaling_ || dev_.config.overlayMode > 0)
+    if (forGeneration || upscaling_ || cfg_.overlayMode > 0)
         usage |= VK_IMAGE_USAGE_SAMPLED_BIT;  // the upscale/HUD pass samples the source
 
     virtualImages_.resize(count);
@@ -307,10 +313,10 @@ void VirtualSwapchain::createVirtualImages(const VkSwapchainCreateInfoKHR& appIn
     }
 }
 
-void VirtualSwapchain::createSlots(std::vector<FrameSlot>& slots, uint32_t count, bool withSemaphore) {
+void VirtualSwapchain::createSlots(std::vector<FrameSlot>& slots, uint32_t count, bool withSemaphore, VkCommandPool pool) {
     slots.resize(count);
     for (auto& s : slots) {
-        VK_CHECK(dev_.allocateCommandBuffer(&s.cmd));
+        VK_CHECK(dev_.allocateCommandBuffer(&s.cmd, pool));
         VkFenceCreateInfo fi{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
         VK_CHECK(dev_.vt.CreateFence(dev_.device, &fi, nullptr, &s.fence));
         if (withSemaphore) {
@@ -320,10 +326,10 @@ void VirtualSwapchain::createSlots(std::vector<FrameSlot>& slots, uint32_t count
     }
 }
 
-void VirtualSwapchain::destroySlots(std::vector<FrameSlot>& slots) {
+void VirtualSwapchain::destroySlots(std::vector<FrameSlot>& slots, VkCommandPool pool) {
     for (auto& s : slots) {
         if (s.submitted) dev_.vt.WaitForFences(dev_.device, 1, &s.fence, VK_TRUE, UINT64_MAX);
-        if (s.cmd) dev_.vt.FreeCommandBuffers(dev_.device, dev_.cmdPool, 1, &s.cmd);
+        if (s.cmd && pool) dev_.vt.FreeCommandBuffers(dev_.device, pool, 1, &s.cmd);
         if (s.fence) dev_.vt.DestroyFence(dev_.device, s.fence, nullptr);
         if (s.acquireSem) dev_.vt.DestroySemaphore(dev_.device, s.acquireSem, nullptr);
     }
@@ -384,8 +390,11 @@ void VirtualSwapchain::destroyAll() {
         workerCv_.notify_all();
         worker_.join();
     }
-    destroySlots(slots_);
-    destroySlots(workerSlots_);
+    destroySlots(slots_, appPool_);
+    destroySlots(workerSlots_, workerPool_);
+    if (appPool_) dev_.vt.DestroyCommandPool(d, appPool_, nullptr);
+    if (workerPool_) dev_.vt.DestroyCommandPool(d, workerPool_, nullptr);
+    appPool_ = workerPool_ = VK_NULL_HANDLE;
     if (dev_.queue) {
         // Acquire semaphores signalled by a real acquire but never waited on
         // cannot be reclaimed without a queue wait.
@@ -512,12 +521,12 @@ VkResult VirtualSwapchain::consumeSemaphores(const VkSemaphore* sems, uint32_t c
 }
 
 void VirtualSwapchain::dumpFrame(FrameSlot& slot, bool generated, float t, uint32_t output) {
-    if (dumpCount_ >= dev_.config.dumpFrames) { dumping_ = false; return; }
+    if (dumpCount_ >= cfg_.dumpFrames) { dumping_ = false; return; }
     dev_.vt.WaitForFences(dev_.device, 1, &slot.fence, VK_TRUE, UINT64_MAX);
     char name[96];
     snprintf(name, sizeof(name), "/sc%u_%ux%u_%04d_%s_t%.2f.ppm", dumpId_, extent_.width, extent_.height, dumpCount_,
              generated ? "gen" : "real", t);
-    const std::string path = dev_.config.dumpDir + name;
+    const std::string path = cfg_.dumpDir + name;
     if (fg_->writeDump(path, generated ? output : fg_->outputCount())) BDEX_DBG("dumped %s", path.c_str());
     else BDEX_WARN("could not write %s", path.c_str());
     ++dumpCount_;
@@ -562,10 +571,10 @@ void VirtualSwapchain::updateHudLows(double dtMs) {
 // was sized for. A switch needs the ideal ratio to pass the halfway point by
 // 0.15, so a game hovering on a boundary does not flip every frame.
 int VirtualSwapchain::chooseMultiplier() {
-    const int maxMult = std::max(1, dev_.config.multiplier);
-    if (dev_.config.paused) return 1;
+    const int maxMult = std::max(1, cfg_.multiplier);
+    if (cfg_.paused) return 1;
     // auto: the measured refresh rate; unknown (no feedback, VRR): fixed.
-    const double target = dev_.config.targetFps < 0.f ? displayHz() : double(dev_.config.targetFps);
+    const double target = cfg_.targetFps < 0.f ? displayHz() : double(cfg_.targetFps);
     if (target <= 0.0) return maxMult;
     const double ratio = target * frameIntervalMs_ / 1000.0;
     if (dynMult_ == 0) dynMult_ = std::clamp(static_cast<int>(ratio + 0.5), 1, maxMult);
@@ -583,8 +592,8 @@ int VirtualSwapchain::chooseMultiplier() {
 void VirtualSwapchain::limitFrameRate() {
     // auto: the refresh rate divided by the multiplier (60 on 120 Hz at x2),
     // once the present feedback knows it; no cap until then.
-    const double fps = dev_.config.fpsLimit < 0.f ? displayHz() / std::max(1, dev_.config.multiplier)
-                                                  : double(dev_.config.fpsLimit);
+    const double fps = cfg_.fpsLimit < 0.f ? displayHz() / std::max(1, cfg_.multiplier)
+                                                  : double(cfg_.fpsLimit);
     if (fps <= 0.0) return;
     std::lock_guard<std::mutex> lk(limitMutex_);
     const auto interval = std::chrono::duration_cast<clock::duration>(
@@ -610,10 +619,10 @@ void VirtualSwapchain::applyGpuBudget() {
     if (now - budgetAt_ < std::chrono::seconds(1)) return;
     budgetAt_ = now;
     const double gpuMs = fg_->takeGpuMs();
-    const int base = dev_.config.flowScaleFor(extent_.width, extent_.height);
+    const int base = cfg_.flowScaleFor(extent_.width, extent_.height);
     const int maxLevel = 2 + (base <= 2 ? 1 : 0) + (base <= 1 ? 1 : 0);  // flow divisor up to 4
     const int before = budget_.level();
-    const int level = budget_.update(gpuMs, frameIntervalMs_, dev_.config.gpuBudget, maxLevel);
+    const int level = budget_.update(gpuMs, frameIntervalMs_, cfg_.gpuBudget, maxLevel);
     if (level == before) return;
     const int factor = level >= 4 ? 4 : level >= 3 ? 2 : 1;
     if (factor != flowScaleFactor_) {
@@ -640,12 +649,13 @@ void VirtualSwapchain::applyGpuBudget() {
     }
     fg_->setQualityLevel(level);
     BDEX_INFO("gpu budget: generation %.2f ms for a %.1f%% budget of %.1f ms: quality level %d -> %d (flow 1/%d)",
-              gpuMs, 100.0 * dev_.config.gpuBudget, frameIntervalMs_, before, level, fg_->flowScale());
+              gpuMs, 100.0 * cfg_.gpuBudget, frameIntervalMs_, before, level, fg_->flowScale());
 }
 
 VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& info, bool consumeWaitSemaphores) {
     dev_.pollConfig();
-    if (dev_.config.fpsLimit != 0.f) limitFrameRate();  // before mutex_: never block acquire while sleeping
+    dev_.snapshotConfig(cfg_, cfgVersion_);
+    if (cfg_.fpsLimit != 0.f) limitFrameRate();  // before mutex_: never block acquire while sleeping
     std::lock_guard<std::mutex> lock(mutex_);
     const auto t0 = clock::now();
     const VkSemaphore* appWaits = consumeWaitSemaphores ? info.pWaitSemaphores : nullptr;
@@ -660,7 +670,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     acquireCv_.notify_all();
 
     if (surfaceChanged_.exchange(false)) followSurface();
-    if (dev_.config.gpuBudget > 0.f && generating_) applyGpuBudget();
+    if (cfg_.gpuBudget > 0.f && generating_) applyGpuBudget();
 
     // The previous job must have been fully submitted by the worker before
     // we overwrite the images it copies from; this is also where FIFO
@@ -670,7 +680,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         std::unique_lock<std::mutex> wlock(workerMutex_);
         // Low-latency: do not let the game run ahead of the presentation
         // engine (with FIFO, queued frames are pure display latency).
-        if (dev_.config.lowLatency) waitWorkerIdle(wlock);
+        if (cfg_.lowLatency) waitWorkerIdle(wlock);
         else waitWorkerSubmitted(wlock);
         pending = pendingResult_;
         if (pending != VK_ERROR_OUT_OF_DATE_KHR) pendingResult_ = VK_SUCCESS;
@@ -694,7 +704,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     const bool interpolate = generating_ && haveHistory && mult > 1;
     historyLost_ = false;
     const int prev = prevIndex_;
-    if (dev_.config.overlayMode > 0) {
+    if (cfg_.overlayMode > 0) {
         if (dt > 0.5 && dt < 500.0) updateHudLows(dt);
         const int gfps = frameIntervalMs_ > 0.05 ? static_cast<int>(1000.0 / frameIntervalMs_ + 0.5) : 0;
         fg_->setHud(gfps, gfps * (interpolate ? mult : 1), hudLow1_, hudLow01_);
@@ -728,7 +738,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             for (int k = 0; k < mult && k < 4; ++k)
                 at[k] = (k == 0 ? land(now + 1.0) : land(now + frameIntervalMs_ * k / mult)) - now;
             timing.haveDisplay = true;
-            if (dev_.config.extrapolate) {  // real first, then outputs 1..m-1
+            if (cfg_.extrapolate) {  // real first, then outputs 1..m-1
                 timing.displayMs[3] = float(at[0]);
                 for (int i = 1; i < mult; ++i) timing.displayMs[i - 1] = float(at[i]);
             } else {                        // outputs first, the real frame last
@@ -743,7 +753,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             fg_->profileMark(slot.cmd, slotIdx, FrameGen::StageFlow);
             // Interpolation: frames between prev and cur (t in (0,1)).
             // Extrapolation: frames after cur (t in (1,2)), shown after it.
-            const float base = dev_.config.extrapolate ? 1.f : 0.f;
+            const float base = cfg_.extrapolate ? 1.f : 0.f;
             for (int i = 1; i < mult; ++i)
                 fg_->recordInterpolate(slot.cmd, static_cast<uint32_t>(prev), imageIndex, base + float(i) / mult, static_cast<uint32_t>(i - 1));
             fg_->profileMark(slot.cmd, slotIdx, FrameGen::StageInterp);
@@ -782,7 +792,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     // flow and synthesis (their GPU time is the latency saved). Here only the
     // game's semaphores are consumed, which orders the worker's copy after
     // its rendering. Not while dumping (dumpFrame waits on the slot at once).
-    const bool deferSynthesis = dev_.config.extrapolate && interpolate && !fg_->packReal() && !dumping_;
+    const bool deferSynthesis = cfg_.extrapolate && interpolate && !fg_->packReal() && !dumping_;
     std::vector<VkPipelineStageFlags> stages(appWaitCount, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
     VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     si.waitSemaphoreCount = appWaitCount;
@@ -813,7 +823,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     vi.held = true;
     if (dumping_) {
         // Written in presentation order.
-        if (dev_.config.extrapolate) {
+        if (cfg_.extrapolate) {
             dumpFrame(slot, false, 1.f);
             if (interpolate)
                 for (int i = 1; i < mult; ++i)
@@ -832,9 +842,10 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     job.source = imageIndex;
     job.frames = interpolate ? mult : 1;
     job.generated = interpolate;
-    job.realFirst = dev_.config.extrapolate;
+    job.realFirst = cfg_.extrapolate;
     job.start = t0;
     job.intervalMs = frameIntervalMs_;
+    job.pacing = cfg_.pacing;
     if (deferSynthesis) job.synthSlot = static_cast<int>(slotIdx);
     if (info.swapchainCount == 1) {
         if (auto* pid = findChain<VkPresentIdKHR>(info.pNext, VK_STRUCTURE_TYPE_PRESENT_ID_KHR))
@@ -859,7 +870,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     // (VKD3D-Proton) tie their frame pacing to a synchronous present and hang
     // otherwise. This serialises the worker with the game, so it is a
     // compatibility fallback, not the default.
-    if (dev_.config.syncPresent) {
+    if (cfg_.syncPresent) {
         std::unique_lock<std::mutex> wlock(workerMutex_);
         waitWorkerIdle(wlock);
     }
@@ -867,12 +878,12 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     prevIndex_ = static_cast<int>(imageIndex);
     parity_ ^= 1;
 
-    if (dev_.config.stats) {
+    if (cfg_.stats) {
         statsAppFrames_ += 1;
         statsCpuMs_ += std::chrono::duration<double, std::milli>(clock::now() - t0).count();
         const auto now = clock::now();
         const double elapsed = std::chrono::duration<double>(now - statsStart_).count();
-        if (elapsed >= dev_.config.statsInterval) {
+        if (elapsed >= cfg_.statsInterval) {
             const uint64_t out = statsOutFrames_.exchange(0);
             const uint64_t delayUs = statsRealDelayUs_.exchange(0);
             const uint64_t skipped = statsSkipped_.exchange(0);
@@ -893,7 +904,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             }
             // dedup: read without waiting (the counter is at most a few frames old).
             FrameGen::State st;
-            if (dev_.config.dedup && fg_->readState(st)) {
+            if (cfg_.dedup && fg_->readState(st)) {
                 snprintf(skip + len, sizeof(skip) - size_t(len), ", %u repeated frame(s)", st.repeats - statsRepeats_);
                 statsRepeats_ = st.repeats;
             }
@@ -1101,7 +1112,7 @@ VkResult VirtualSwapchain::presentOne(const Job& job, int index, const std::func
     // them evenly over the game's frame interval. A predicted frame is
     // obsolete as soon as the next real one has arrived: skip it instead of
     // delaying the real frame behind it.
-    if (index > 0 && dev_.config.pacing && presentMode_ != VK_PRESENT_MODE_FIFO_KHR &&
+    if (index > 0 && job.pacing && presentMode_ != VK_PRESENT_MODE_FIFO_KHR &&
         presentMode_ != VK_PRESENT_MODE_FIFO_RELAXED_KHR) {
         auto target = job.start + std::chrono::duration_cast<clock::duration>(
                                       std::chrono::duration<double, std::milli>(job.intervalMs * index / job.frames));

@@ -101,12 +101,21 @@ struct DeviceData {
     // Live configuration: every ~0.5 s the presenting thread checks the config
     // file's modification time and applies Config::applyLive on a change.
     void pollConfig();
+    // A consistent copy of `config` for a thread that must not read it while
+    // pollConfig (another presenting thread) rewrites its live settings:
+    // copies into `out` when `version` is behind, and updates `version`.
+    void snapshotConfig(Config& out, uint64_t& version);
+    uint64_t configVersion = 0;  // bumped by each live reload (configMutex)
     std::mutex configMutex;
     std::chrono::steady_clock::time_point configChecked{};
     int64_t configStamp = -1;  // mtime of the file last seen, -1 = none yet, -2 = missing
 
-    // Allocates a primary command buffer from cmdPool with a valid dispatch pointer.
-    VkResult allocateCommandBuffer(VkCommandBuffer* cmd);
+    // Allocates a primary command buffer from `pool` (default cmdPool) with a
+    // valid dispatch pointer. A command pool must not be used from two
+    // threads at once: cmdPool serves immediate() only (under cmdPoolMutex);
+    // each virtual swapchain records from pools of its own, one per thread.
+    VkResult allocateCommandBuffer(VkCommandBuffer* cmd, VkCommandPool pool = VK_NULL_HANDLE);
+    std::mutex cmdPoolMutex;
     // Submit a command buffer on the layer queue (takes the queue mutex).
     VkResult submit(const VkSubmitInfo& info, VkFence fence);
     // Run a one-shot command buffer synchronously.
@@ -122,6 +131,7 @@ namespace bdex {
 
 template <typename F>
 void DeviceData::immediate(F&& record) {
+    std::lock_guard<std::mutex> poolLock(cmdPoolMutex);  // two swapchains may build their stages at once
     VkCommandBuffer cmd = VK_NULL_HANDLE;
     VkFence fence = VK_NULL_HANDLE;
     VkResult r = allocateCommandBuffer(&cmd);
