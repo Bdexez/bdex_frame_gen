@@ -707,7 +707,9 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     if (cfg_.overlayMode > 0) {
         if (dt > 0.5 && dt < 500.0) updateHudLows(dt);
         const int gfps = frameIntervalMs_ > 0.05 ? static_cast<int>(1000.0 / frameIntervalMs_ + 0.5) : 0;
-        fg_->setHud(gfps, gfps * (interpolate ? mult : 1), hudLow1_, hudLow01_);
+        const double latency = displayLatencyMs();
+        fg_->setHud(gfps, gfps * (interpolate ? mult : 1), hudLow1_, hudLow01_,
+                    latency < 0.0 ? -1 : static_cast<int>(latency + 0.5));
     }
 
     // Synthesis: analyse the application's frame (in place, no copy) and
@@ -897,6 +899,13 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
                 const int k = hz > 0.0 ? snprintf(buf, sizeof buf, ", display %.1f Hz", hz)
                                        : snprintf(buf, sizeof buf, ", display without fixed refresh");
                 if (k > 0 && len + k < int(sizeof(skip))) { memcpy(skip + len, buf, size_t(k) + 1); len += k; }
+                if (fbLatencyCount_) {
+                    char lat[64];
+                    const int m = snprintf(lat, sizeof lat, ", present-to-screen %.1f ms", fbLatencySum_ / fbLatencyCount_);
+                    if (m > 0 && len + m < int(sizeof(skip))) { memcpy(skip + len, lat, size_t(m) + 1); len += m; }
+                    fbLatencySum_ = 0.0;
+                    fbLatencyCount_ = 0;
+                }
                 const uint64_t replaced = fbReplaced_ - statsReplaced_;
                 statsReplaced_ = fbReplaced_;
                 if (replaced) len += snprintf(skip + len, sizeof(skip) - size_t(len), ", %llu frame(s) replaced before display",
@@ -1007,12 +1016,12 @@ void VirtualSwapchain::runJob(const Job& job) {
 // before being shown (mailbox), and the display time belongs to this one.
 void VirtualSwapchain::feedbackLoop() {
     for (;;) {
-        uint64_t id;
+        FbEntry entry;
         {
             std::unique_lock<std::mutex> lock(fbMutex_);
             fbCv_.wait(lock, [this] { return fbStop_ || (!fbPaused_ && !fbPending_.empty()); });
             if (fbStop_) return;
-            id = fbPending_.front();
+            entry = fbPending_.front();
             fbPending_.pop_front();
             fbBusy_ = true;
         }
@@ -1020,7 +1029,7 @@ void VirtualSwapchain::feedbackLoop() {
         // Short waits so a pause (swapchain re-creation) is honoured quickly;
         // a frame not shown within ~0.5 s (minimised window) is given up.
         for (int k = 0; k < 25 && r == VK_TIMEOUT && !fbPaused_; ++k)
-            r = dev_.vt.WaitForPresentKHR(dev_.device, real_, id, 20'000'000ull);
+            r = dev_.vt.WaitForPresentKHR(dev_.device, real_, entry.id, 20'000'000ull);
         const double now = msOf(clock::now());
         bool quit = false;
         {
@@ -1028,6 +1037,15 @@ void VirtualSwapchain::feedbackLoop() {
             fbBusy_ = false;
             if (r >= 0 && r != VK_TIMEOUT) {
                 fbEverDisplayed_ = true;
+                // Latency the player sees: the game's present call to the
+                // moment its real frame is on screen (all queueing, the
+                // layer's hold and the compositor included).
+                const double latency = now - entry.presentMs;
+                if (entry.real && latency >= 0.0 && latency < 1000.0) {
+                    fbLatencyMs_ = fbLatencyMs_ < 0.0 ? latency : fbLatencyMs_ * 0.9 + latency * 0.1;
+                    fbLatencySum_ += latency;
+                    ++fbLatencyCount_;
+                }
                 if (fbLastMs_ > 0.0 && now - fbLastMs_ < 0.5) {
                     ++fbReplaced_;
                 } else {
@@ -1064,6 +1082,12 @@ void VirtualSwapchain::resumeFeedback() {
         presentCounter_ = 0;  // ids restart with the new swapchain (the worker is idle here)
     }
     fbCv_.notify_all();
+}
+
+double VirtualSwapchain::displayLatencyMs() {
+    if (!feedback_) return -1.0;
+    std::lock_guard<std::mutex> lock(fbMutex_);
+    return fbLatencyMs_;
 }
 
 double VirtualSwapchain::displayHz() {
@@ -1223,7 +1247,7 @@ VkResult VirtualSwapchain::presentOne(const Job& job, int index, const std::func
     if (feedbackId && r >= 0) {
         {
             std::lock_guard<std::mutex> lock(fbMutex_);
-            if (!fbPaused_) fbPending_.push_back(feedbackId);
+            if (!fbPaused_) fbPending_.push_back({feedbackId, msOf(job.start), real});
         }
         fbCv_.notify_one();
     }

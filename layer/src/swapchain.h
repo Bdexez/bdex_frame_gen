@@ -131,7 +131,16 @@ private:
     std::mutex fbMutex_;
     std::condition_variable fbCv_;      // id queued / stop
     std::condition_variable fbIdleCv_;  // the thread left vkWaitForPresentKHR
-    std::deque<uint64_t> fbPending_;
+    struct FbEntry {
+        uint64_t id;
+        double presentMs;  // the game's present call (msOf(job.start))
+        bool real;         // the real frame of that present (latency is measured on it)
+    };
+    std::deque<FbEntry> fbPending_;
+    double fbLatencyMs_ = -1.0;         // fbMutex_: smoothed present-to-screen latency of real frames
+    double fbLatencySum_ = 0.0;         // fbMutex_: statistics window
+    uint32_t fbLatencyCount_ = 0;
+    double displayLatencyMs();          // -1 when unknown
     bool fbStop_ = false, fbBusy_ = false;
     std::atomic<bool> fbPaused_{false};
     bool fbEverDisplayed_ = false;
