@@ -60,12 +60,22 @@ if(WIN32)
 endif()
 target_compile_options(bdex_core PRIVATE ${BDEX_WARNINGS})
 
+# The engine (FrameGen, its optional passes, the device helpers), built into
+# the layer, bdex_offline and bdex_capture from this one list.
+set(BDEX_ENGINE_SOURCES
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/device.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/framegen.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/framegen_output.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/registry.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/flow_temporal.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/online_tune.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/temporal_upscale.cpp
+)
+set(BDEX_ENGINE_SOURCES ${BDEX_ENGINE_SOURCES} PARENT_SCOPE)
+
 add_library(bdex_framegen SHARED
   src/layer.cpp
-  src/device.cpp
-  src/framegen.cpp
-  src/framegen_tune.cpp
-  src/framegen_output.cpp
+  ${BDEX_ENGINE_SOURCES}
   src/swapchain.cpp
 )
 add_dependencies(bdex_framegen bdex_layer_shaders)

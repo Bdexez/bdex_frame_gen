@@ -11,17 +11,12 @@
 
 namespace bdex {
 
-class OnlineTune;
-
 namespace fg {
 
 struct DownsamplePC { int32_t size[2]; int32_t fromColor; int32_t transfer; };
 struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; float gradWeight; float censusWeight; float censusMargin; float rotWeight; int32_t temporal; float zeroBiasContrast; float chromaWeight; int32_t chromaHistory; };
 struct SizePC { int32_t size[2]; };
 struct ReducePC { int32_t size[2]; int32_t tiles; };
-struct TemporalPC { int32_t size[2]; int32_t luma[2]; int32_t block; float strength; };
-struct TaaPC { int32_t outSize[2]; int32_t srcSize[2]; float flowInvSize[2]; float flowScale; float weight; float cutLow; float cutHigh; int32_t filterMode; int32_t hasHistory; int32_t useDup; };
-struct SelfEvalPC { int32_t size[2]; float flowExtent[2]; int32_t slot; int32_t step; };
 
 struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; int32_t subpixel; };
 struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; float occlusionStrength; float staticGuard; float extrapHold; int32_t splat; int32_t pixelVectors; int32_t transfer; int32_t timing; int32_t localCut; float accel; int32_t hudLatency; };
@@ -50,10 +45,6 @@ static_assert(kStateTileDiff + 65 * 4 <= kStateSize);
 enum { kStateReset = 1, kStateDedup = 2, kStateExtrap = 4, kStateDisplay = 8, kStateContent = 16 };
 
 inline uint32_t divUp(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
-
-// online_tune (framegen_tune.cpp): the per-game trial, with the decisions
-// cached for this game restored.
-std::shared_ptr<OnlineTune> createOnlineTune(const Config& cfg);
 
 } // namespace fg
 } // namespace bdex

@@ -1,6 +1,7 @@
 #pragma once
 #include "descriptor_planner.h"
 #include "device.h"
+#include "fg_pass.h"
 #include "format.h"
 
 #include <memory>
@@ -13,7 +14,7 @@ namespace bdex {
 // GPU side of the frame generation for one swapchain: history images, luma
 // pyramids, flow fields, the compute pipelines that produce them, and the
 // command recording that ties everything together.
-class FrameGen {
+class FrameGen : private FgContext {
 public:
     // `sources` are the images the application renders into (the virtual
     // swapchain images): they double as the frame history, so nothing is
@@ -88,7 +89,7 @@ public:
     // extrapolated from `prev` (-1: no previous frame) and the kept flow.
     void recordUpscaleReal(VkCommandBuffer cmd, uint32_t cur, int prev = -1);
 
-    bool upscaling() const { return upscaling_; }
+    bool upscaling() const override { return upscaling_; }
     // The real frame is produced into an internal packed image (for upscaling
     // or the HUD) rather than copied straight through.
     bool packReal() const { return packReal_; }
@@ -139,11 +140,7 @@ private:
         AllocatedImage flowFine[2]; // refined, consumed by the next level and the interpolation
         AllocatedImage cost[2];
     };
-    struct Pass {
-        VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
-        VkPipelineLayout layout = VK_NULL_HANDLE;
-        VkPipeline pipeline = VK_NULL_HANDLE;
-    };
+    using Pass = FgPipeline;
 
     void recordCas(VkCommandBuffer cmd, VkDescriptorSet set);
     void recordSynthesis(VkCommandBuffer cmd, VkDescriptorSet set, float t, int32_t timing, bool gated);
@@ -152,9 +149,9 @@ private:
     void createDescriptors();
     void destroyAll();
     Pass makePass(const uint32_t* spv, size_t spvSize, const std::vector<VkDescriptorType>& bindings);
-    VkDescriptorSet allocSet(VkDescriptorSetLayout layout);
-    void writeImage(VkDescriptorSet set, uint32_t binding, VkDescriptorType type, VkImageView view);
-    void writeBuffer(VkDescriptorSet set, uint32_t binding, VkBuffer buffer);
+    VkDescriptorSet allocSet(VkDescriptorSetLayout layout) override;
+    void writeImage(VkDescriptorSet set, uint32_t binding, VkDescriptorType type, VkImageView view) override;
+    void writeBuffer(VkDescriptorSet set, uint32_t binding, VkBuffer buffer) override;
     void memoryBarrier(VkCommandBuffer cmd);
     void copyToPresent(VkCommandBuffer cmd, VkImage src, VkImageLayout srcLayout, VkAccessFlags srcAccess,
                        VkPipelineStageFlags srcStage, VkImage dst);
@@ -197,7 +194,7 @@ private:
     uint32_t budgetFrames_ = 0;
     int qualityLevel_ = 0;
     int flowScaleFactor_ = 1;
-    Config effectiveConfig() const;  // dev_.config with the quality level's overrides
+    Config effectiveConfig() const override;  // the settings with the passes' and the quality level's overrides
     uint32_t profileFrames_[StageCount]{};
     bool profileWritten_[kProfileSlots][StageCount + 1]{};
     float timestampPeriodNs_ = 1.f;
@@ -208,43 +205,32 @@ private:
     std::vector<VkDescriptorPool> pools_;  // opened as allocSet needs them (see DescriptorPlanner)
     DescriptorPlanner planner_;
 
-    Pass downsample_, blockMatch_, smooth_, refine_, reduce_, interp_, upscale_, cas_, splat_, frameState_, downChroma_,
-        temporal_;
-    VkDescriptorSet dsTemporal_[2] = {};  // flow_temporal per parity: finest flows, prevBwd_, lumas
+    Pass downsample_, blockMatch_, smooth_, refine_, reduce_, interp_, upscale_, cas_, splat_, frameState_, downChroma_;
 
-    // online_tune (see online_tune.h): the self-evaluation of the previous
-    // flow is recorded into the command buffer's profile slot and read back
-    // when the slot is begun again (its previous submission has completed).
-    void recordSelfEval(VkCommandBuffer cmd, uint32_t parity);
-    void collectSelfEval(uint32_t slot);
-    void reportOnlineTune();
-    std::shared_ptr<class OnlineTune> tune_;  // dev_.onlineTune when online_tune is on
-    Pass selfEval_;
-    VkDescriptorSet dsEval_[2] = {};          // per parity: lumas of the pair, finest backward flow, counters
-    AllocatedBuffer evalBuf_;                 // host-visible: 4 words per profile slot
-    void* evalMapped_ = nullptr;
-    uint32_t evalSlot_ = kProfileSlots;       // slot of the command buffer being recorded
-    bool evalPending_[kProfileSlots]{};
-    uint32_t evalTag_[kProfileSlots]{};
-    uint32_t tuneTag_ = 0;                    // tag of the flow in the flow images
-    bool tuneTagValid_ = false;
-    std::vector<std::pair<std::string, std::string>> tuneOverrides_;  // this frame's trial settings
-
-    // upscale_temporal (upscale_temporal.comp): the real frame upscaled and
-    // accumulated along the flow into a display-size history (ping-pong),
-    // which the real frame's output and the generated frames then sample.
-    void recordTemporalUpscale(VkCommandBuffer cmd, uint32_t cur);
-    bool taa_ = false;
-    Pass taaPass_;
-    AllocatedImage taaHist_[2];
-    std::vector<VkDescriptorSet> dsTaa_;          // [source * 2 + h]: writes taaHist_[h]
-    VkDescriptorSet dsUpscaleTaa_[2] = {};        // the real frame's output from taaHist_[h]
-    std::vector<VkDescriptorSet> dsInterpTaa_;    // [h * outputs + output]: prev taaHist_[1-h], cur taaHist_[h]
-    uint64_t frame_ = 0;                          // bumped by recordAcquireSources
-    uint64_t flowFrame_ = ~0ull;                  // frame whose recordFlow ran
-    uint64_t taaFrame_ = ~0ull;                   // frame whose history was written
-    uint32_t taaH_ = 0;                           // history written last
-    bool taaPrevValid_ = false;                   // taaHist_[1 - taaH_] holds the previous frame
+    // Optional passes (fg_pass.h, passes/), in hook order, and what they see
+    // of the engine (FgContext).
+    std::vector<std::unique_ptr<FgPass>> passes_;
+    DeviceData& device() override { return dev_; }
+    const Config& baseConfig() const override { return *cfgp_; }
+    FgPipeline makePipeline(const uint32_t* spv, size_t spvSize, const std::vector<VkDescriptorType>& bindings) override {
+        return makePass(spv, spvSize, bindings);
+    }
+    void destroyPipeline(FgPipeline& p) override;
+    AllocatedImage createImage(VkFormat format, VkExtent2D extent, VkImageUsageFlags usage) override;
+    void barrier(VkCommandBuffer cmd) override { memoryBarrier(cmd); }
+    FgFineLevel fineLevel() const override;
+    VkImageView previousBackwardFlow() const override { return prevBwd_.view; }
+    VkBuffer stateBuffer() const override { return stateBuf_.buffer; }
+    uint32_t sourceCount() const override { return static_cast<uint32_t>(sources_.size()); }
+    VkImageView sourceView(uint32_t index) const override { return sources_[index].view; }
+    VkExtent2D renderExtent() const override { return extent_; }
+    VkExtent2D displayExtent() const override { return displayExtent_; }
+    uint32_t outputs() const override { return outputs_; }
+    float flowToRender() const override { return flowScale_; }
+    bool flowLastFrame() const override { return flowLastFrame_; }
+    bool repeatFlagValid() const override { return timingActive_ && dedup_; }
+    VkDescriptorSet synthesisSet(VkImageView prev, VkImageView cur, uint32_t output) override;
+    VkDescriptorSet realOutputSet(VkImageView src) override;
     bool chroma_ = false;                         // chroma pyramid built (chroma_weight > 0 at creation)
     AllocatedImage chromaDummy_;                  // bound to the matcher's chroma slots when chroma_ is off
     std::vector<VkDescriptorSet> dsChromaSrc_[2]; // [parity] per source (level 0)

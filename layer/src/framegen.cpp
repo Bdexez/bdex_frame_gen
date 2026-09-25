@@ -1,7 +1,6 @@
 #include "framegen.h"
 #include "framegen_internal.h"
 #include "log.h"
-#include "online_tune.h"
 #include "shaders.h"
 #include "vk_util.h"
 
@@ -26,24 +25,11 @@ FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, Vk
     dedup_ = outputs_ > 0 && (*cfgp_).dedup;
     chroma_ = outputs_ > 0 && (*cfgp_).chromaWeight > 0.f;
     dupReal_ = dedup_ && (*cfgp_).extrapolate;
-    if (outputs_ > 0 && (*cfgp_).onlineTune) {
-        std::lock_guard<std::mutex> lock(dev_.onlineTuneMutex);
-        if (!dev_.onlineTune) {
-            dev_.onlineTune = createOnlineTune(*cfgp_);
-            dev_.onlineTuneReported = dev_.onlineTune->decisions().size();  // cached ones were logged
-        }
-        tune_ = dev_.onlineTune;
-    }
     // The real frame is resampled into an internal packed image when upscaling,
     // when the HUD must be drawn on it, or when a repeated frame may have to
     // be replaced by an extrapolated one (otherwise it is copied straight).
     packReal_ = upscaling_ || hudMode_ > 0 || dupReal_;
-    // Temporal upscaling needs the flow (frame generation) and a filterable
-    // rgba16f history.
-    taa_ = upscaling_ && outputs_ > 0 && (*cfgp_).upscaleTemporal > 0.f &&
-           dev.formatSupports(VK_FORMAT_R16G16B16A16_SFLOAT,
-                              VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
-                                  VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT);
+    passes_ = createOptionalPasses(*cfgp_, dev, outputs_, upscaling_);
     // The CAS pass needs a linear rgba16f intermediate it can both write and
     // sample with filtering; skip sharpening if the driver cannot provide it.
     sharpen_ = upscaling_ && (*cfgp_).sharpness > 0.f &&
@@ -68,6 +54,7 @@ FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, Vk
         createPipelines();
         createResources();
         createDescriptors();
+        for (auto& p : passes_) p->create(*this);
     } catch (...) {
         destroyAll();
         throw;
@@ -153,9 +140,6 @@ void FrameGen::createPipelines() {
         splat_ = makePass(splat_comp, splat_comp_size, {CIS, CIS, SI, SB, CIS});
         frameState_ = makePass(frame_state_comp, frame_state_comp_size, {CIS, CIS, SB});
         if (chroma_) downChroma_ = makePass(downsample_chroma_comp, downsample_chroma_comp_size, {CIS, SI});
-        temporal_ = makePass(flow_temporal_comp, flow_temporal_comp_size, {SI, SI, CIS, CIS, CIS});
-        if (tune_) selfEval_ = makePass(self_eval_comp, self_eval_comp_size, {CIS, CIS, CIS, SB});
-        if (taa_) taaPass_ = makePass(upscale_temporal_comp, upscale_temporal_comp_size, {CIS, CIS, CIS, SI, SB, CIS});
     }
     if (packReal_) {
         if (sharpen_)       upscale_ = makePass(upscale_comp_sharp, upscale_comp_sharp_size, {CIS, SI});
@@ -221,17 +205,9 @@ void FrameGen::createResources() {
             sharp_.push_back(dev_.createImage(VK_FORMAT_R16G16B16A16_SFLOAT, displayExtent_, sharpUsage, true));
         sharpReal_ = dev_.createImage(VK_FORMAT_R16G16B16A16_SFLOAT, displayExtent_, sharpUsage, true);
     }
-    if (taa_)
-        for (auto& h : taaHist_)
-            h = dev_.createImage(VK_FORMAT_R16G16B16A16_SFLOAT, displayExtent_,
-                                 VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, true);
     if (outputs_ > 0) {
         stateBuf_ = dev_.createBuffer(kStateSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                                                       VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
-        if (tune_) {
-            evalBuf_ = dev_.createBuffer(kProfileSlots * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
-            VK_CHECK(dev_.vt.MapMemory(dev_.device, evalBuf_.memory, 0, VK_WHOLE_SIZE, 0, &evalMapped_));
-        }
         stateReadback_ = dev_.createBuffer(kStateHead, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
         VK_CHECK(dev_.vt.MapMemory(dev_.device, stateReadback_.memory, 0, VK_WHOLE_SIZE, 0, &stateMapped_));
         // The dispatches the state pass may gate, in a fixed order: per flow
@@ -300,7 +276,6 @@ void FrameGen::createResources() {
         if (packReal_) add(outReal_);
         for (auto& s : sharp_) add(s);
         if (sharpen_) add(sharpReal_);
-        if (taa_) for (auto& h : taaHist_) add(h);
         dev_.vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
                                    nullptr, static_cast<uint32_t>(barriers.size()), barriers.data());
@@ -374,36 +349,6 @@ void FrameGen::createDescriptors() {
             writeImage(s, 0, CIS, sources_[n].view);
             writeImage(s, 1, SI, (sharpen_ ? sharpReal_ : outReal_).view);
             dsUpscale_.push_back(s);
-        }
-    }
-    if (taa_) {
-        for (uint32_t n = 0; n < N; ++n)
-            for (uint32_t h = 0; h < 2; ++h) {
-                VkDescriptorSet s = allocSet(taaPass_.setLayout);
-                writeImage(s, 0, CIS, sources_[n].view);
-                writeImage(s, 1, CIS, taaHist_[1 - h].view);
-                writeImage(s, 2, CIS, levels_v_[0].flowFine[1].view);
-                writeImage(s, 3, SI, taaHist_[h].view);
-                writeBuffer(s, 4, stateBuf_.buffer);
-                writeImage(s, 5, CIS, levels_v_[0].flowFine[0].view);
-                dsTaa_.push_back(s);
-            }
-        for (uint32_t h = 0; h < 2; ++h) {
-            dsUpscaleTaa_[h] = allocSet(upscale_.setLayout);
-            writeImage(dsUpscaleTaa_[h], 0, CIS, taaHist_[h].view);
-            writeImage(dsUpscaleTaa_[h], 1, SI, (sharpen_ ? sharpReal_ : outReal_).view);
-            for (uint32_t o = 0; o < O; ++o) {
-                VkDescriptorSet s = allocSet(interp_.setLayout);
-                writeImage(s, 0, CIS, taaHist_[1 - h].view);
-                writeImage(s, 1, CIS, taaHist_[h].view);
-                writeImage(s, 2, CIS, levels_v_[0].flowFine[0].view);
-                writeImage(s, 3, CIS, levels_v_[0].flowFine[1].view);
-                writeImage(s, 4, SI, (sharpen_ ? sharp_[o] : out_[o]).view);
-                writeBuffer(s, 5, stateBuf_.buffer);
-                writeImage(s, 6, SI, splatMap_.view);
-                writeImage(s, 7, CIS, prevBwd_.view);
-                dsInterpTaa_.push_back(s);
-            }
         }
     }
     if (sharpen_) {
@@ -491,23 +436,6 @@ void FrameGen::createDescriptors() {
     writeImage(dsSplat_, 2, SI, splatMap_.view);
     writeBuffer(dsSplat_, 3, stateBuf_.buffer);
     writeImage(dsSplat_, 4, CIS, prevBwd_.view);
-    for (uint32_t parity = 0; parity < 2; ++parity) {
-        VkDescriptorSet& s = dsTemporal_[parity];
-        s = allocSet(temporal_.setLayout);
-        writeImage(s, 0, SI, levels_v_[0].flowFine[0].view);
-        writeImage(s, 1, SI, levels_v_[0].flowFine[1].view);
-        writeImage(s, 2, CIS, prevBwd_.view);
-        writeImage(s, 3, CIS, levels_v_[0].pyr[1 - parity].view);
-        writeImage(s, 4, CIS, levels_v_[0].pyr[parity].view);
-        if (tune_) {
-            VkDescriptorSet& e = dsEval_[parity];
-            e = allocSet(selfEval_.setLayout);
-            writeImage(e, 0, CIS, levels_v_[0].pyr[1 - parity].view);
-            writeImage(e, 1, CIS, levels_v_[0].pyr[parity].view);
-            writeImage(e, 2, CIS, levels_v_[0].flowFine[1].view);
-            writeBuffer(e, 3, evalBuf_.buffer);
-        }
-    }
     dsState_ = allocSet(frameState_.setLayout);
     writeImage(dsState_, 0, CIS, levels_v_[0].pyr[0].view);
     writeImage(dsState_, 1, CIS, levels_v_[0].pyr[1].view);
@@ -543,13 +471,70 @@ void FrameGen::createDescriptors() {
     }
 }
 
+// ------------------------------------------------ FgContext (optional passes)
+
+void FrameGen::destroyPipeline(FgPipeline& p) {
+    auto& vt = dev_.vt;
+    if (p.pipeline) vt.DestroyPipeline(dev_.device, p.pipeline, nullptr);
+    if (p.layout) vt.DestroyPipelineLayout(dev_.device, p.layout, nullptr);
+    if (p.setLayout) vt.DestroyDescriptorSetLayout(dev_.device, p.setLayout, nullptr);
+    p = FgPipeline{};
+}
+
+AllocatedImage FrameGen::createImage(VkFormat format, VkExtent2D extent, VkImageUsageFlags usage) {
+    AllocatedImage img = dev_.createImage(format, extent, usage, true);
+    dev_.immediate([&](VkCommandBuffer cmd) {
+        VkImageMemoryBarrier b = imageBarrier(img.image, 0, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+                                              VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+        dev_.vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                   VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr,
+                                   0, nullptr, 1, &b);
+    });
+    return img;
+}
+
+FgFineLevel FrameGen::fineLevel() const {
+    const Level& l0 = levels_v_[0];
+    FgFineLevel f;
+    f.luma = l0.size;
+    f.fine = l0.fine;
+    f.block = l0.refined ? kFineBlock : kBlockSize;
+    for (int i = 0; i < 2; ++i) {
+        f.pyr[i] = l0.pyr[i].view;
+        f.flow[i] = l0.flowFine[i].view;
+    }
+    return f;
+}
+
+VkDescriptorSet FrameGen::synthesisSet(VkImageView prev, VkImageView cur, uint32_t output) {
+    const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    VkDescriptorSet s = allocSet(interp_.setLayout);
+    writeImage(s, 0, CIS, prev);
+    writeImage(s, 1, CIS, cur);
+    writeImage(s, 2, CIS, levels_v_[0].flowFine[0].view);
+    writeImage(s, 3, CIS, levels_v_[0].flowFine[1].view);
+    writeImage(s, 4, SI, (sharpen_ ? sharp_[output] : out_[output]).view);
+    writeBuffer(s, 5, stateBuf_.buffer);
+    writeImage(s, 6, SI, splatMap_.view);
+    writeImage(s, 7, CIS, prevBwd_.view);
+    return s;
+}
+
+VkDescriptorSet FrameGen::realOutputSet(VkImageView src) {
+    VkDescriptorSet s = allocSet(upscale_.setLayout);
+    writeImage(s, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, src);
+    writeImage(s, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, (sharpen_ ? sharpReal_ : outReal_).view);
+    return s;
+}
+
 void FrameGen::destroyAll() {
     auto& vt = dev_.vt;
     VkDevice d = dev_.device;
+    for (auto& p : passes_) p->destroy(*this);  // (each copes with a partial create)
     for (VkDescriptorPool pool : pools_) vt.DestroyDescriptorPool(d, pool, nullptr);
     pools_.clear();
     planner_.reset();
-    for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_, &splat_, &frameState_, &downChroma_, &temporal_, &selfEval_, &taaPass_}) {
+    for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_, &splat_, &frameState_, &downChroma_}) {
         if (p->pipeline) vt.DestroyPipeline(d, p->pipeline, nullptr);
         if (p->layout) vt.DestroyPipelineLayout(d, p->layout, nullptr);
         if (p->setLayout) vt.DestroyDescriptorSetLayout(d, p->setLayout, nullptr);
@@ -580,11 +565,6 @@ void FrameGen::destroyAll() {
     sharp_.clear();
     if (sharpReal_.image) dev_.destroyImage(sharpReal_);
     dev_.destroyBuffer(stateBuf_);
-    for (auto& h : taaHist_)
-        if (h.image) dev_.destroyImage(h);
-    if (evalMapped_) vt.UnmapMemory(d, evalBuf_.memory);
-    evalMapped_ = nullptr;
-    dev_.destroyBuffer(evalBuf_);
     if (stateMapped_) vt.UnmapMemory(d, stateReadback_.memory);
     stateMapped_ = nullptr;
     dev_.destroyBuffer(stateReadback_);
@@ -716,7 +696,7 @@ void FrameGen::memoryBarrier(VkCommandBuffer cmd) {
 }
 
 void FrameGen::recordAcquireSources(VkCommandBuffer cmd, int prev, int cur) {
-    ++frame_;  // one call per recorded frame, generating or not
+    for (auto& p : passes_) p->frameBegin(*this);  // one call per recorded frame, generating or not
     VkImageMemoryBarrier b[2];
     uint32_t n = 0;
     for (int idx : {prev, cur}) {
@@ -770,6 +750,7 @@ void FrameGen::recordAnalysis(VkCommandBuffer cmd, uint32_t parity, uint32_t cur
             memoryBarrier(cmd);
         }
     }
+    for (auto& p : passes_) p->analysisDone(*this, cmd, parity);
 }
 
 // Compute and indirect-argument reads of the state pass's results.
@@ -846,23 +827,17 @@ bool FrameGen::readState(State& out) const {
 
 void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
     auto& vt = dev_.vt;
-    if (tune_) {
-        // Rate the flow still in the images (the previous pair's) on the
-        // frame that just arrived, then pick the settings of this one.
-        // (Nothing left to measure once every candidate is decided.)
-        if (flowLastFrame_ && tuneTagValid_ && !tune_->done()) recordSelfEval(cmd, parity);
-        tuneTag_ = tune_->nextFlow(tuneOverrides_);
-        tuneTagValid_ = true;
-    }
+    // The flow images still hold the previous pair's flow (online_tune rates it).
+    for (auto& p : passes_) p->flowBegin(*this, cmd, parity);
     const Config cfg = effectiveConfig();
     flowThisFrame_ = true;
-    flowFrame_ = frame_;
     // extrapolate_accel: keep the previous pair's finest backward flow before
     // this frame overwrites it (on a repeat, dedup keeps the flow, so the
     // copy equals it and the acceleration is zero).
     accelThisFrame_ = 0.f;
-    const bool temporalThisFrame = cfg.flowTemporal > 0.f && flowLastFrame_;
-    if (((cfg.extrapolate && cfg.extrapolateAccel > 0.f) || temporalThisFrame) && flowLastFrame_) {
+    bool keepPrevious = cfg.extrapolate && cfg.extrapolateAccel > 0.f;
+    for (auto& p : passes_) keepPrevious = keepPrevious || p->needsPreviousFlow(cfg);
+    if (keepPrevious && flowLastFrame_) {
         VkImageCopy region{};
         region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
@@ -914,17 +889,7 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
     }
 
     const Level& fine = levels_v_[0];
-    if (temporalThisFrame) {
-        // (On a repeat the flows are kept and prevBwd_ equals them: no-op.)
-        vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, temporal_.pipeline);
-        TemporalPC tpc{{(int32_t)fine.fine.width, (int32_t)fine.fine.height},
-                       {(int32_t)fine.size.width, (int32_t)fine.size.height},
-                       int32_t(fine.refined ? kFineBlock : kBlockSize), cfg.flowTemporal};
-        vt.CmdPushConstants(cmd, temporal_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(tpc), &tpc);
-        vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, temporal_.layout, 0, 1, &dsTemporal_[parity], 0, nullptr);
-        vt.CmdDispatch(cmd, divUp(fine.fine.width, 16), divUp(fine.fine.height, 16), 1);
-        memoryBarrier(cmd);
-    }
+    for (auto& p : passes_) p->fineFlow(*this, cmd, parity, cfg);
     vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, reduce_.pipeline);
     const uint32_t tiles = cfg.sceneCutLocal ? kCutTiles : 0;
     ReducePC rpc{{(int32_t)fine.blocks.width, (int32_t)fine.blocks.height}, (int32_t)tiles};
@@ -960,13 +925,8 @@ void FrameGen::copyToPresent(VkCommandBuffer cmd, VkImage src, VkImageLayout src
 void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cur, float t, uint32_t output) {
     const uint32_t N = static_cast<uint32_t>(sources_.size());
     VkDescriptorSet set = dsInterp_[(prev * N + cur) * outputs_ + output];
-    if (taa_) {
-        // Synthesise from the accumulated history of both frames, so the
-        // generated frames match the real ones (else they alternate between
-        // accumulated and plain upscale).
-        recordTemporalUpscale(cmd, cur);
-        if (taaPrevValid_) set = dsInterpTaa_[taaH_ * outputs_ + output];
-    }
+    for (auto& p : passes_)
+        if (VkDescriptorSet alt = p->synthesisInputs(*this, cmd, cur, output)) set = alt;
     recordSynthesis(cmd, set, t, timingActive_ ? int32_t(output) + 1 : 0, false);
     if (sharpen_) recordCas(cmd, dsCas_[output]);  // sharp_[output] -> out_[output]
 }
@@ -1062,11 +1022,8 @@ void FrameGen::recordCopySource(VkCommandBuffer cmd, uint32_t src, VkImage dst) 
 namespace bdex {
 
 void FrameGen::profileBegin(VkCommandBuffer cmd, uint32_t slot) {
-    // The slot's previous submission has completed: its self-evaluation can be read.
-    if (tune_) {
-        collectSelfEval(slot);
-        evalSlot_ = slot;
-    }
+    // The slot's previous submission has completed (online_tune reads back).
+    for (auto& p : passes_) p->slotBegin(*this, slot);
     if (!queryPool_ || slot >= kProfileSlots) return;
     const uint32_t base = slot * (StageCount + 1);
     dev_.vt.CmdResetQueryPool(cmd, queryPool_, base, StageCount + 1);
@@ -1115,7 +1072,7 @@ double FrameGen::takeGpuMs() {
 
 Config FrameGen::effectiveConfig() const {
     Config c = (*cfgp_);
-    for (const auto& kv : tuneOverrides_) c.apply(kv.first, kv.second);
+    for (const auto& p : passes_) p->overrideConfig(c);
     if (qualityLevel_ >= 1) {
         c.pixelVectors = false;
         c.subpixel = false;

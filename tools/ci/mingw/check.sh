@@ -14,7 +14,7 @@ mkdir -p /tmp/vkinc && ln -sf /usr/include/vulkan /usr/include/vk_video /tmp/vki
 # What the Windows CI builds (CMakeLists.txt): the layer and the unit tests
 # for both architectures (tests that open a GLFW window are Linux-only), the
 # capture app for x64 only; bdex_offline is not built on Windows.
-common=$(ls layer/src/*.cpp tests/test_*.cpp | xargs grep -L "GLFW/glfw3.h")
+common=$(ls layer/src/*.cpp layer/src/passes/*.cpp tests/test_*.cpp | xargs grep -L "GLFW/glfw3.h")
 status=0
 for cxx in x86_64-w64-mingw32-g++-posix i686-w64-mingw32-g++-posix; do
   files=$common

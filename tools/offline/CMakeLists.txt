@@ -2,10 +2,7 @@
 # window, surface or layer). Feeds tools/eval_sequence.py; see CONTRIBUTING.md.
 add_executable(bdex_offline
   bdex_offline.cpp
-  ../../layer/src/framegen.cpp
-  ../../layer/src/framegen_tune.cpp
-  ../../layer/src/framegen_output.cpp
-  ../../layer/src/device.cpp
+  ${BDEX_ENGINE_SOURCES}
 )
 add_dependencies(bdex_offline bdex_layer_shaders)
 target_include_directories(bdex_offline PRIVATE

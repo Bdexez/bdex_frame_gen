@@ -38,11 +38,11 @@ tous les shaders de `layer/shaders/`.
   `vkGetInstanceProcAddr`), `swapchain.cpp` (virtualisation des swapchains,
   pacing), `present_slice.{h,cpp}` (réindexation des tableaux `pNext` lors
   d'un present multi-swapchain), `framegen.cpp` (orchestration du pipeline ;
-  `framegen_tune.cpp` = auto-évaluation/`online_tune`, `framegen_output.cpp`
-  = étage de sortie de l'image réelle : upscale spatial/temporel, CAS ;
-  `framegen_internal.h` = push constants et disposition du tampon d'état,
-  privés à ces fichiers ; `descriptor_planner.{h,cpp}` = pools de
-  descripteurs à la demande), `config.cpp` (registre des options),
+  `framegen_output.cpp` = étage de sortie de l'image réelle, CAS ;
+  `framegen_internal.h` = push constants et disposition du tampon d'état ;
+  `descriptor_planner.{h,cpp}` = pools de descripteurs à la demande),
+  **`fg_pass.h` + `passes/`** = passes optionnelles (voir ci-dessous),
+  `config.cpp` (registre des options),
   `device.cpp`, `platform.cpp` (shims Linux/Windows), `format.cpp`, `log.cpp`.
 - `layer/shaders/` — `downsample`, `block_match`, `flow_smooth`,
   `flow_refine`, `reduce_cost`, `interpolate`, `upscale`, `cas`,
@@ -109,6 +109,21 @@ les répétitions sur GPU. En extrapolation avec
 position future (carte `r32ui`, `atomicMin` priorité|index). Pacing par sommeil quand le
 present mode n'est pas FIFO ; `PRESENT_MODE=auto` transforme la demande FIFO du
 jeu en mailbox.
+
+### Passes optionnelles (`fg_pass.h`, depuis le 2026-09-25)
+
+Une fonctionnalité opt-in qui ajoute du travail GPU est une classe `FgPass`
+dans `layer/src/passes/` : `create`/`destroy` + hooks (`frameBegin`,
+`slotBegin`, `analysisDone`, `flowBegin`, `overrideConfig`,
+`needsPreviousFlow`, `fineFlow`, `synthesisInputs`, `realOutput`). Elle ne
+voit le moteur qu'à travers `FgContext`. Ajout = le fichier, une ligne dans
+`passes/registry.cpp` (ordre = ordre des hooks ; `online_tune` en premier,
+il note le flux avant qu'on le réécrive), la source dans
+`BDEX_ENGINE_SOURCES` (`layer/CMakeLists.txt`, liste unique pour la couche,
+`bdex_offline` et `bdex_capture`), l'option dans le registre de `config.cpp`.
+Migrées : `flow_temporal`, `online_tune`, `upscale_temporal`. Restent dans
+`FrameGen` (liées au shader de synthèse lui-même) : `extrapolate_splat`,
+`extrapolate_accel`, `dedup`, le HUD.
 
 ## 6. Le block matcher — le cœur, ses invariants et ses pièges
 

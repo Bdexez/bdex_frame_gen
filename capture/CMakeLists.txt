@@ -13,10 +13,7 @@ add_executable(bdex_capture
   # The layer's engine and device helpers, shared as source: they only
   # depend on bdex_core and the generated shaders.h. platform.cpp joins for
   # platformConfigPath() (the launcher's config-file save).
-  ../layer/src/framegen.cpp
-  ../layer/src/framegen_tune.cpp
-  ../layer/src/framegen_output.cpp
-  ../layer/src/device.cpp
+  ${BDEX_ENGINE_SOURCES}
   ../layer/src/platform.cpp
 )
 add_dependencies(bdex_capture bdex_layer_shaders)
