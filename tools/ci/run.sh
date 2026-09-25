@@ -28,7 +28,7 @@ set -uo pipefail
 cd /work/src
 export VK_ICD_FILENAMES="$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -1)" LIBGL_ALWAYS_SOFTWARE=1
 if [ "$1" = build ]; then
-  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release >/dev/null && cmake --build build -j"$(nproc)" >/dev/null || exit 1
+  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBDEX_WERROR=ON >/dev/null && cmake --build build -j"$(nproc)" >/dev/null || exit 1
   cmake -S /work/baseline -B /work/baseline/build -DCMAKE_BUILD_TYPE=Release >/dev/null
   cmake --build /work/baseline/build -j"$(nproc)" >/dev/null || exit 1
   BDEX_REQUIRE_DISPLAY=1 xvfb-run -a ctest --test-dir build --output-on-failure --repeat until-pass:2 || exit 1

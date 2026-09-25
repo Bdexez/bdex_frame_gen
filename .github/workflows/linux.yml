@@ -58,7 +58,7 @@ jobs:
           fi
 
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBDEX_WERROR=ON
 
       - name: Build
         run: |

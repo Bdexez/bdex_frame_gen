@@ -63,6 +63,7 @@ if(WIN32)
   target_link_libraries(bdex_core PUBLIC shell32)
 endif()
 target_compile_options(bdex_core PRIVATE ${BDEX_WARNINGS})
+bdex_strict(bdex_core)
 
 # The engine (FrameGen, its optional passes, the device helpers), built into
 # the layer, bdex_offline and bdex_capture from this one list.
@@ -89,6 +90,7 @@ add_dependencies(bdex_framegen bdex_layer_shaders)
 target_include_directories(bdex_framegen PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated" src)
 target_link_libraries(bdex_framegen PRIVATE bdex_core)
 target_compile_options(bdex_framegen PRIVATE ${BDEX_WARNINGS})
+bdex_strict(bdex_framegen)
 if(WIN32)
   # VkLayer_bdex_framegen.dll (no lib prefix). No version-script/-Bsymbolic:
   # those are ELF linker concepts; exports come from __declspec(dllexport).

@@ -28,6 +28,7 @@ target_include_directories(bdex_capture PRIVATE
 # dwmapi: extended frame bounds / cloaked state of the target window.
 target_link_libraries(bdex_capture PRIVATE bdex_core Vulkan::Vulkan d3d11 dxgi dwmapi windowsapp)
 target_compile_definitions(bdex_capture PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+bdex_strict(bdex_capture)
 # Only our own sources see the Win32 Vulkan platform header (windows.h in
 # tow); the layer sources compile exactly as they do in the DLL.
 set_source_files_properties(src/main.cpp src/capture.cpp src/vkctx.cpp

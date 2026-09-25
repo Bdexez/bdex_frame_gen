@@ -985,7 +985,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             int len = 0;
             if (skipped) len = snprintf(skip, sizeof(skip), ", %llu predicted frame(s) skipped", static_cast<unsigned long long>(skipped));
             if (feedback_) {
-                std::lock_guard<std::mutex> lock(fbMutex_);
+                std::lock_guard<std::mutex> fbLock(fbMutex_);
                 const double hz = displayClock_.refreshHz();
                 char buf[96];
                 const int k = hz > 0.0 ? snprintf(buf, sizeof buf, ", display %.1f Hz", hz)

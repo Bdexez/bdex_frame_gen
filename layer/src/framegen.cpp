@@ -709,8 +709,11 @@ bool FrameGen::writeDump(const std::string& path, uint32_t which) {
                 if (enc == ENC_A2B10G10R10) { r = q(v); g = q(v >> 10); b = q(v >> 20); }
                 else { b = q(v); g = q(v >> 10); r = q(v >> 20); }
             }
-            else if (enc == ENC_A2B10G10R10) { r = (v & 1023) >> 2; g = ((v >> 10) & 1023) >> 2; b = ((v >> 20) & 1023) >> 2; }
-            else { b = (v & 1023) >> 2; g = ((v >> 10) & 1023) >> 2; r = ((v >> 20) & 1023) >> 2; }
+            else if (enc == ENC_A2B10G10R10) {
+                r = uint8_t((v & 1023) >> 2); g = uint8_t(((v >> 10) & 1023) >> 2); b = uint8_t(((v >> 20) & 1023) >> 2);
+            } else {
+                b = uint8_t((v & 1023) >> 2); g = uint8_t(((v >> 10) & 1023) >> 2); r = uint8_t(((v >> 20) & 1023) >> 2);
+            }
             row[x * 3] = r; row[x * 3 + 1] = g; row[x * 3 + 2] = b;
         }
         fwrite(row.data(), 1, row.size(), f);
