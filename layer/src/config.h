@@ -138,8 +138,12 @@ struct Config {
     // Every key Config::apply understands (with their aliases if `aliases`),
     // from the option registry in config.cpp.
     static std::vector<std::string> optionKeys(bool aliases = true);
-    // online_tune candidates for this mode, in trial order: (key, trial value).
-    std::vector<std::pair<std::string, std::string>> tuneCandidates() const;
+    // online_tune candidates for this mode, in trial order.
+    struct TuneCandidate {
+        std::string key, value;
+        bool synthesis = false;  // rated by the synthesis probe (else by the flow self-evaluation)
+    };
+    std::vector<TuneCandidate> tuneCandidates() const;
 };
 
 const char* presentModeName(int mode);

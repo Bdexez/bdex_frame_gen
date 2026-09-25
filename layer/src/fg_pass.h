@@ -38,6 +38,7 @@ struct FgFineLevel {
     uint32_t block = 4;       // luma pixels per flow texel
     VkImageView pyr[2] = {};  // luma per parity: [parity] = current frame, [1 - parity] = previous
     VkImageView flow[2] = {}; // [0] forward (at previous-frame positions), [1] backward (at current ones)
+    VkImage flowImage[2] = {};  // the same images (TRANSFER_SRC: they may be copied)
 };
 
 // What a pass may use of the engine.
@@ -64,6 +65,8 @@ public:
     virtual VkImageView previousBackwardFlow() const = 0;  // the previous pair's finest backward flow (see needsPreviousFlow)
     virtual VkBuffer stateBuffer() const = 0;              // frame state (frame_state.comp layout)
     virtual uint32_t sourceCount() const = 0;
+    virtual VkFormat sourceFormat() const = 0;
+    virtual VkImage sourceImage(uint32_t index) const = 0;  // TRANSFER_SRC; GENERAL between acquire and release
     virtual VkImageView sourceView(uint32_t index) const = 0;
     virtual VkExtent2D renderExtent() const = 0;
     virtual VkExtent2D displayExtent() const = 0;
@@ -84,6 +87,16 @@ public:
     // every synthesis keeps pixels at or above hud_mask's threshold as they
     // are (a 1x1 zero image until a pass provides one).
     virtual void setStaticMask(VkImageView view) = 0;
+
+    // Syntheses of a pass's own (online_tune's probe): the synthesis shader
+    // writing linear rgba16f whatever the swapchain format, its descriptor
+    // sets with any inputs, flows and output, and a synthesis recorded with
+    // given settings (no fps HUD, fixed t).
+    virtual FgPipeline makeLinearSynthesisPipeline() = 0;
+    virtual VkDescriptorSet synthesisSetFor(VkDescriptorSetLayout layout, VkImageView prev, VkImageView cur,
+                                            VkImageView fwd, VkImageView bwd, VkImageView out) = 0;
+    virtual void recordSynthesisWith(VkCommandBuffer cmd, const FgPipeline& pipe, VkDescriptorSet set, float t,
+                                     const Config& cfg) = 0;
 };
 
 class FgPass {

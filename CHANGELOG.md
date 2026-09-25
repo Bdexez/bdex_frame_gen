@@ -8,6 +8,26 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-25)
 
+- **`online_tune` tries the synthesis options, and again when the content
+  changes.** A synthesis probe (`passes/synthesis_probe.{h,cpp}`,
+  `flow_compose.comp`, `probe_compare.comp`) runs the engine's own
+  synthesis (a linear-output variant) on a frame the game rendered but the
+  synthesis did not see — interpolation: the middle of three frames from
+  the outer two with composed flows; extrapolation: the next frame — and
+  compares it (RMS, weighted like PSNR; mean absolute error missed fixes
+  of a few badly wrong pixels) with a naive predictor. Candidates:
+  `occlusion_strength`, `pixel_vectors`, `synth_bicubic` (interpolation),
+  `extrapolate_splat`, `extrapolate_accel`, `synth_bicubic` (extrapolation);
+  `static_guard` is not one, the probe's two-frame gap magnifies its known
+  failure. Offline the decisions follow the PSNR (accel kept on a swinging
+  camera, +0.94 dB; splat on a pan, +0.82 dB; each dropped where it loses).
+  Once decided, the engine keeps watching motion and brightness (every 8th
+  frame) and starts the trial again on a lasting change (tested with a
+  bright pan followed by a dark swinging scene: `zero_bias_contrast`,
+  +3.4 dB there, is re-decided). A strong prediction gain now stands even
+  when the flow changes more (tracking an accelerating camera). The
+  validation test gains two probe runs (primed cache). Defaults
+  byte-identical.
 - **`online_tune` rates stability too.** The self-evaluation also sums the
   flow's change from one pair to the next for the same content, relative to
   the motion; an option is kept for a prediction gain that does not

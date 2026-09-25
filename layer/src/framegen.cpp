@@ -226,8 +226,9 @@ void FrameGen::createResources() {
         gateReduce_ = gate(1 + kCutTiles * kCutTiles, 1, false);  // global + local tiles (idle when off)
         gateDupReal_ = gate(divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), true);
         if (gateFull_.size() / 4 > kGateEntries) throw VkError(VK_ERROR_INITIALIZATION_FAILED, "too many gated dispatches");
-        // The splat key packs the source index in 23 bits (4K fits).
-        splatting_ = cfg.extrapolate && cfg.extrapolateSplat &&
+        // The splat key packs the source index in 23 bits (4K fits). Sized
+        // too when online_tune may try extrapolate_splat.
+        splatting_ = cfg.extrapolate && (cfg.extrapolateSplat || cfg.onlineTune) &&
                      uint64_t(displayExtent_.width) * displayExtent_.height <= (1ull << 23);
         splatMap_ = dev_.createImage(VK_FORMAT_R32_UINT, splatting_ ? displayExtent_ : VkExtent2D{1, 1},
                                      VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, true);
@@ -515,18 +516,31 @@ FgFineLevel FrameGen::fineLevel() const {
     for (int i = 0; i < 2; ++i) {
         f.pyr[i] = l0.pyr[i].view;
         f.flow[i] = l0.flowFine[i].view;
+        f.flowImage[i] = l0.flowFine[i].image;
     }
     return f;
 }
 
 VkDescriptorSet FrameGen::synthesisSet(VkImageView prev, VkImageView cur, uint32_t output) {
+    return synthesisSetFor(interp_.setLayout, prev, cur, levels_v_[0].flowFine[0].view, levels_v_[0].flowFine[1].view,
+                           (sharpen_ ? sharp_[output] : out_[output]).view);
+}
+
+FgPipeline FrameGen::makeLinearSynthesisPipeline() {
+    const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                           SB = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    return makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS});
+}
+
+VkDescriptorSet FrameGen::synthesisSetFor(VkDescriptorSetLayout layout, VkImageView prev, VkImageView cur,
+                                          VkImageView fwd, VkImageView bwd, VkImageView out) {
     const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    VkDescriptorSet s = allocSet(interp_.setLayout);
+    VkDescriptorSet s = allocSet(layout);
     writeImage(s, 0, CIS, prev);
     writeImage(s, 1, CIS, cur);
-    writeImage(s, 2, CIS, levels_v_[0].flowFine[0].view);
-    writeImage(s, 3, CIS, levels_v_[0].flowFine[1].view);
-    writeImage(s, 4, SI, (sharpen_ ? sharp_[output] : out_[output]).view);
+    writeImage(s, 2, CIS, fwd);
+    writeImage(s, 3, CIS, bwd);
+    writeImage(s, 4, SI, out);
     writeBuffer(s, 5, stateBuf_.buffer);
     writeImage(s, 6, SI, splatMap_.view);
     writeImage(s, 7, CIS, prevBwd_.view);
@@ -961,10 +975,20 @@ void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cu
 // buffer instead of `t` (which still tells extrapolation from interpolation).
 // `gated`: dispatched through the state pass's "only on duplicates" entry.
 void FrameGen::recordSynthesis(VkCommandBuffer cmd, VkDescriptorSet set, float t, int32_t timing, bool gated) {
+    recordSynthesisImpl(cmd, interp_, set, t, timing, gated, effectiveConfig(), true);
+}
+
+void FrameGen::recordSynthesisWith(VkCommandBuffer cmd, const FgPipeline& pipe, VkDescriptorSet set, float t,
+                                   const Config& cfg) {
+    recordSynthesisImpl(cmd, pipe, set, t, 0, false, cfg, false);
+}
+
+// `hud`: draw the fps HUD (the frames shown; not a pass's own syntheses).
+void FrameGen::recordSynthesisImpl(VkCommandBuffer cmd, const Pass& pipe, VkDescriptorSet set, float t, int32_t timing,
+                                   bool gated, const Config& cfg, bool hud) {
     auto& vt = dev_.vt;
-    const Config cfg = effectiveConfig();
     const Level& fine = levels_v_[0];
-    const bool splat = splatting_ && t > 1.f;
+    const bool splat = splatting_ && cfg.extrapolateSplat && t > 1.f;
     const uint32_t gx = divUp(displayExtent_.width, 16), gy = divUp(displayExtent_.height, 16);
     auto dispatch = [&] {
         if (gated) vt.CmdDispatchIndirect(cmd, stateBuf_.buffer, kStateGateActive + 12 * VkDeviceSize(gateDupReal_));
@@ -989,7 +1013,7 @@ void FrameGen::recordSynthesis(VkCommandBuffer cmd, VkDescriptorSet set, float t
         dispatch();
         memoryBarrier(cmd);
     }
-    vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, interp_.pipeline);
+    vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe.pipeline);
     // Interpolation output is at display resolution; the flow (in render pixels)
     // and its coverage are scaled to display space, so the same shader also
     // upscales the generated frame when render != display.
@@ -1001,11 +1025,11 @@ void FrameGen::recordSynthesis(VkCommandBuffer cmd, VkDescriptorSet set, float t
                 cfg.sceneCutLow, cfg.sceneCutHigh,
                 {1.f / (fine.fine.width * blk * flowScale_ * sx),
                  1.f / (fine.fine.height * blk * flowScale_ * sy)},
-                cfg.flowIterations, hudMode_, hudGame_, hudOut_, hudLow1_, hudLow01_, cfg.occlusionStrength, cfg.staticGuard, cfg.extrapolateHold, splat ? 1 : 0, cfg.pixelVectors ? 1 : 0, enc_.transfer,
+                cfg.flowIterations, hud ? hudMode_ : 0, hudGame_, hudOut_, hudLow1_, hudLow01_, cfg.occlusionStrength, cfg.staticGuard, cfg.extrapolateHold, splat ? 1 : 0, cfg.pixelVectors ? 1 : 0, enc_.transfer,
                 timing, cfg.sceneCutLocal ? (int32_t)kCutTiles : 0, t > 1.f ? accelThisFrame_ : 0.f, hudLatency_,
                 cfg.synthBicubic ? 1 : 0, hasStaticMask_ ? float(cfg.hudMask) : 0.f};
-    vt.CmdPushConstants(cmd, interp_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
-    vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, interp_.layout, 0, 1, &set, 0, nullptr);
+    vt.CmdPushConstants(cmd, pipe.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+    vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe.layout, 0, 1, &set, 0, nullptr);
     dispatch();
     // Make the previous output copy (worker submission) precede this overwrite.
     memoryBarrier(cmd);

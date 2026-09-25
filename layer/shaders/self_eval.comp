@@ -27,16 +27,16 @@ layout(binding = 4) uniform sampler2D prevBwd;   // pair (n-2, n-1): backward fl
 layout(push_constant) uniform PC {
     ivec2 size;         // finest luma resolution
     vec2 flowExtent;    // luma pixels covered by the flow grid
-    int slot;           // counters at v[slot * 8 ..]: mc, zero, samples, |dB|, |B|, flow samples
+    int slot;           // counters at v[slot * 8 ..]: mc, zero, samples, |dB|, |B|, flow samples, luma
     int step;           // sampling stride (at most 2^18 samples: the sums fit 32 bits)
     int hasPrev;        // prevBwd holds the pair before
 } pc;
 
-shared uint sMc[256], sZero[256], sN[256], sDb[256], sB[256], sM[256];
+shared uint sMc[256], sZero[256], sN[256], sDb[256], sB[256], sM[256], sL[256];
 
 void main() {
     ivec2 q = ivec2(gl_GlobalInvocationID.xy) * pc.step;
-    uint mc = 0u, zr = 0u, n = 0u, db = 0u, bm = 0u, m = 0u;
+    uint mc = 0u, zr = 0u, n = 0u, db = 0u, bm = 0u, m = 0u, l = 0u;
     if (all(lessThan(q, pc.size))) {
         vec2 c = vec2(q) + 0.5;
         vec2 B = texture(flowBwd, c / pc.flowExtent).xy;
@@ -46,6 +46,7 @@ void main() {
             float cur = texelFetch(lumaCur, q, 0).r;
             float pred = texture(lumaPrev, src / vec2(pc.size)).r;
             float prv = texelFetch(lumaPrev, q, 0).r;
+            l = uint(clamp(cur, 0.0, 1.0) * 4096.0 + 0.5);  // brightness (online_tune's content signature)
             mc = uint(min(abs(cur - pred), 1.0) * 4096.0 + 0.5);
             zr = uint(min(abs(cur - prv), 1.0) * 4096.0 + 0.5);
             n = 1u;
@@ -58,12 +59,12 @@ void main() {
         }
     }
     uint i = gl_LocalInvocationIndex;
-    sMc[i] = mc; sZero[i] = zr; sN[i] = n; sDb[i] = db; sB[i] = bm; sM[i] = m;
+    sMc[i] = mc; sZero[i] = zr; sN[i] = n; sDb[i] = db; sB[i] = bm; sM[i] = m; sL[i] = l;
     barrier();
     for (uint s = 128u; s > 0u; s >>= 1) {
         if (i < s) {
             sMc[i] += sMc[i + s]; sZero[i] += sZero[i + s]; sN[i] += sN[i + s];
-            sDb[i] += sDb[i + s]; sB[i] += sB[i + s]; sM[i] += sM[i + s];
+            sDb[i] += sDb[i + s]; sB[i] += sB[i + s]; sM[i] += sM[i + s]; sL[i] += sL[i + s];
         }
         barrier();
     }
@@ -71,6 +72,7 @@ void main() {
         atomicAdd(ev.v[pc.slot * 8 + 0], sMc[0]);
         atomicAdd(ev.v[pc.slot * 8 + 1], sZero[0]);
         atomicAdd(ev.v[pc.slot * 8 + 2], sN[0]);
+        atomicAdd(ev.v[pc.slot * 8 + 6], sL[0]);
     }
     if (i == 0u && sM[0] > 0u) {
         atomicAdd(ev.v[pc.slot * 8 + 3], sDb[0]);

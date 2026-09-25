@@ -22,7 +22,8 @@ namespace bdex {
 // both), on top of the options already kept. Pairs of neighbouring blocks
 // are compared; the option is kept when it lowers the error ratio by at
 // least `kMinGain` (one hundredth of the no-motion error) on average and in
-// three pairs out of four, without making the flow less stable — or when it
+// three pairs out of four, without making the flow less stable (unless the
+// gain is strong, kStrongGain: tracking real acceleration moves the flow) — or when it
 // makes the flow clearly steadier (`kMinStability`: its pair-to-pair change
 // relative to the motion, 10 % lower, in three pairs out of four) without
 // hurting the prediction. The prediction error alone cannot see flicker: a
@@ -31,12 +32,21 @@ namespace bdex {
 // decision. Decisions are cached per game (serialize / deserialize) so the
 // next session starts tuned.
 //
+// Content changes: once every candidate is decided, the engine keeps
+// observing (observe) the amount of motion and the brightness. When they
+// leave the range the decisions were made in — motion three times higher or
+// lower, or brightness off by 0.2, for kChangeSamples observations in a row,
+// and the new content is in motion — the trial starts again (a menu, a
+// cutscene, indoors vs outdoors want other settings). At most once per
+// kRestartCooldown observations.
+//
 // Pure logic, thread-safe (several swapchains may feed it), unit-tested in
 // tests/test_online_tune.cpp.
 class OnlineTune {
 public:
     struct Candidate {
         std::string key, value;  // a Config key and the trial value
+        bool synthesis = false;  // rated by the synthesis probe, not the flow self-evaluation
     };
     struct Decision {
         std::string key, value;
@@ -51,7 +61,10 @@ public:
     static constexpr double kMinGain = 0.01;  // error ratio at least 0.01 lower
     static constexpr double kMinZero = 0.002; // mean |frame difference| below which a frame has no motion
     static constexpr double kMinStability = 0.10;   // a clearly steadier flow
-    static constexpr double kMaxStabilityLoss = 0.05; // what a prediction win may cost in stability
+    static constexpr double kMaxStabilityLoss = 0.05; // what a small prediction win may cost in stability
+    static constexpr double kStrongGain = 0.05;       // a prediction win that no stability loss vetoes
+    static constexpr int kChangeSamples = 30;         // observations in a row outside the tuned range
+    static constexpr int kRestartCooldown = 450;      // observations between two restarts
 
     explicit OnlineTune(std::vector<Candidate> candidates);
 
@@ -66,6 +79,8 @@ public:
                    double flowMagnitude = 0.0, double flowCount = 0.0);
 
     bool done() const;
+    // The candidate on trial is a synthesis option (its samples come from the probe).
+    bool trialIsSynthesis() const;
     std::vector<Decision> decisions() const;
     // Overrides kept so far (all of them once done).
     std::vector<std::pair<std::string, std::string>> kept() const;
@@ -74,6 +89,10 @@ public:
     // Restores the decisions of a previous session: candidates found there
     // are decided, the others are still tried. False if nothing was read.
     bool deserialize(const std::string& text);
+    // Content signature of a measured frame: mean |frame difference| and
+    // mean luma (0..1). Returns true when it restarted the trial.
+    bool observe(double motion, double brightness);
+    int restarts() const;
     // Summary for the log, e.g. "zero_bias_contrast=0.1 kept (-4.2 %), subpixel=1 dropped (+0.3 %)".
     std::string summary() const;
 
@@ -97,6 +116,10 @@ private:
     int block_ = 0, frame_ = 0;        // position in the trial
     uint32_t round_ = 0;               // bumped when a trial restarts: stale samples are dropped
     std::vector<Block> blocks_;
+    // Content tracking (observe).
+    double slowMotion_ = -1.0, slowLuma_ = 0.0;  // the range the decisions were made in
+    double fastMotion_ = -1.0, fastLuma_ = 0.0;  // recent content
+    int deviant_ = 0, sinceRestart_ = 0, restarts_ = 0;
 };
 
 } // namespace bdex

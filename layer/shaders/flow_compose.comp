@@ -1,0 +1,32 @@
+#version 450
+// online_tune's interpolation probe: the flows between frames A and C from
+// A->B and B->C (finest level, flow pixels at luma positions):
+//   forward  A->C at q in A:  F_AB(q) + F_BC(q + F_AB(q))
+//   backward C->A at p in C:  B_CB(p) + B_BA(p + B_CB(p))
+// so the engine's own synthesis can rebuild B from A and C, and B — a real
+// frame the game rendered — tells how good that synthesis is.
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0) uniform sampler2D fwdAB;
+layout(binding = 1) uniform sampler2D fwdBC;
+layout(binding = 2) uniform sampler2D bwdCB;
+layout(binding = 3) uniform sampler2D bwdBA;
+layout(binding = 4, rg32f) uniform writeonly image2D fwdAC;
+layout(binding = 5, rg32f) uniform writeonly image2D bwdCA;
+
+layout(push_constant) uniform PC {
+    ivec2 size;       // flow texels
+    vec2 extent;      // luma pixels covered by the flow grid
+} pc;
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, pc.size))) return;
+    vec2 pos = (vec2(p) + 0.5) * pc.extent / vec2(pc.size);
+    vec2 f = texture(fwdAB, pos / pc.extent).xy;
+    f += texture(fwdBC, (pos + f) / pc.extent).xy;
+    vec2 b = texture(bwdCB, pos / pc.extent).xy;
+    b += texture(bwdBA, (pos + b) / pc.extent).xy;
+    imageStore(fwdAC, p, vec4(f, 0.0, 0.0));
+    imageStore(bwdCA, p, vec4(b, 0.0, 0.0));
+}

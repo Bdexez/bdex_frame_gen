@@ -1,5 +1,6 @@
 #include "online_tune.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <sstream>
@@ -32,6 +33,11 @@ std::vector<std::pair<std::string, std::string>> OnlineTune::keptLocked() const 
 std::vector<std::pair<std::string, std::string>> OnlineTune::kept() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return keptLocked();
+}
+
+bool OnlineTune::trialIsSynthesis() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return current_ < candidates_.size() && candidates_[current_].synthesis;
 }
 
 bool OnlineTune::done() const {
@@ -112,7 +118,10 @@ void OnlineTune::decideLocked() {
         if (off.flowSamples > 0.0 && onb.flowSamples > 0.0) {
             const double sOff = off.change / (off.magnitude + off.flowSamples);
             const double sOn = onb.change / (onb.magnitude + onb.flowSamples);
-            if (sOff > 0.0) steadier.push_back((sOff - sOn) / sOff);
+            // Relative, but a flow already this steady (changes below 5 % of
+            // the motion) has nothing to gain or lose: without the floor a
+            // near-still field turned noise into +1800 %.
+            steadier.push_back((sOff - sOn) / std::max(sOff, 0.05));
         }
     }
     if (int(gains.size()) < kPairs) return;
@@ -128,8 +137,12 @@ void OnlineTune::decideLocked() {
     Decision& d = decisions_[current_];
     d.gain = mean;
     d.stability = measuredStability ? stab : 0.0;
+    // A strong prediction gain stands even if the flow changes more: that is
+    // what tracking an accelerating camera looks like next to a field stuck
+    // at zero (zero_bias_contrast on a dark swinging scene: +3.4 dB, flow
+    // change +1800 %). The stability veto only guards small gains.
     const bool predicts = mean >= kMinGain && positive * 4 >= int(gains.size()) * 3 &&
-                          (!measuredStability || stab >= -kMaxStabilityLoss);
+                          (!measuredStability || stab >= -kMaxStabilityLoss || mean >= kStrongGain);
     const bool steadies = measuredStability && stab >= kMinStability &&
                           steadierPairs * 4 >= int(steadier.size()) * 3 && mean >= -kMinGain / 2;
     d.kept = predicts || steadies;
@@ -142,6 +155,44 @@ void OnlineTune::advanceLocked() {
     block_ = frame_ = 0;
     ++round_;
     blocks_.clear();
+}
+
+bool OnlineTune::observe(double motion, double brightness) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto ema = [](double& v, double x, double a) { v = v < 0.0 ? x : v + a * (x - v); };
+    ema(fastMotion_, motion, 0.2);
+    if (fastLuma_ == 0.0) fastLuma_ = brightness; else fastLuma_ += 0.2 * (brightness - fastLuma_);
+    ++sinceRestart_;
+    const bool trying = current_ < candidates_.size();
+    if (trying || slowMotion_ < 0.0) {
+        // While deciding, the reference follows the content the decisions see.
+        ema(slowMotion_, motion, 0.05);
+        if (slowLuma_ == 0.0) slowLuma_ = brightness; else slowLuma_ += 0.05 * (brightness - slowLuma_);
+        deviant_ = 0;
+        return false;
+    }
+    const double eps = kMinZero;
+    const bool moving = fastMotion_ >= kMinZero;  // a still menu is no reason to re-tune
+    const bool motionShift = std::fabs(std::log((fastMotion_ + eps) / (slowMotion_ + eps))) > std::log(3.0);
+    const bool lumaShift = std::fabs(fastLuma_ - slowLuma_) > 0.2;
+    deviant_ = (moving && (motionShift || lumaShift)) ? deviant_ + 1 : 0;
+    if (deviant_ < kChangeSamples || sinceRestart_ < kRestartCooldown || candidates_.empty()) return false;
+    for (size_t i = 0; i < decided_.size(); ++i) decided_[i] = false;
+    current_ = 0;
+    block_ = frame_ = 0;
+    ++round_;
+    blocks_.clear();
+    slowMotion_ = fastMotion_;
+    slowLuma_ = fastLuma_;
+    deviant_ = 0;
+    sinceRestart_ = 0;
+    ++restarts_;
+    return true;
+}
+
+int OnlineTune::restarts() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return restarts_;
 }
 
 std::string OnlineTune::serialize() const {

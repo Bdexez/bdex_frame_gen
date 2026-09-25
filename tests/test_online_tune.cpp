@@ -120,15 +120,50 @@ TEST(online_tune_keeps_a_steadier_flow_at_equal_prediction) {
     CHECK(t.decisions()[0].kept && t.decisions()[0].stability > 0.2);
 }
 
-TEST(online_tune_drops_a_prediction_win_that_destabilises) {
+TEST(online_tune_drops_a_small_prediction_win_that_destabilises) {
     OnlineTune t({{"a", "1"}});
-    play(t, 2000, 0.9, 1.0, true, 1.5);
+    play(t, 2000, 0.96, 1.0, true, 1.5);  // 2 % better, 50 % less stable
     CHECK(t.done());
     CHECK(!t.decisions()[0].kept);
+}
+
+TEST(online_tune_keeps_a_strong_prediction_win_whatever_the_stability) {
+    OnlineTune t({{"a", "1"}});
+    play(t, 2000, 0.8, 1.0, true, 3.0);  // 10 % better (of the no-motion error)
+    CHECK(t.done());
+    CHECK(t.decisions()[0].kept);
 }
 
 TEST(online_tune_reads_caches_without_stability) {
     OnlineTune t({{"a", "1"}});
     CHECK(t.deserialize("a 1 kept 0.05\n"));
     CHECK(t.kept().size() == 1 && t.decisions()[0].stability == 0.0);
+}
+
+TEST(online_tune_restarts_when_the_content_changes) {
+    OnlineTune t({{"a", "1"}});
+    play(t, 2000, 0.9, 1.0);
+    CHECK(t.done());
+    // Same kind of content: no restart, whatever the time.
+    bool restarted = false;
+    for (int i = 0; i < 1000; ++i) restarted |= t.observe(0.02, 0.4);
+    CHECK(!restarted && t.done());
+    // A still menu: no restart either.
+    for (int i = 0; i < 1000; ++i) restarted |= t.observe(0.0002, 0.8);
+    CHECK(!restarted && t.done());
+    // Much faster content (and darker): restart after a sustained change.
+    int at = -1;
+    for (int i = 0; i < 1000 && at < 0; ++i)
+        if (t.observe(0.12, 0.15)) at = i;
+    CHECK(at >= OnlineTune::kChangeSamples - 1 && !t.done() && t.restarts() == 1);
+    CHECK(t.kept().empty());  // back to the defaults while trying again
+}
+
+TEST(online_tune_restarts_at_most_once_per_cooldown) {
+    OnlineTune t({{"a", "1"}});
+    play(t, 2000, 0.9, 1.0);
+    for (int i = 0; i < 1000; ++i) t.observe(0.02, 0.4);
+    int n = 0;
+    for (int i = 0; i < 200; ++i) n += t.observe(i % 60 < 30 ? 0.12 : 0.02, 0.4);
+    CHECK(n <= 1);
 }
