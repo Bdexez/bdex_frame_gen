@@ -119,6 +119,10 @@ else()
     OUTPUT_NAME "bdex_framegen"
     PREFIX "libVkLayer_"
     LINK_FLAGS "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/layer.map -Wl,-Bsymbolic")
+  if(BDEX_STATIC_RUNTIME)
+    # The version script keeps the static runtime's symbols hidden.
+    target_link_options(bdex_framegen PRIVATE -static-libstdc++ -static-libgcc)
+  endif()
 endif()
 target_compile_definitions(bdex_framegen PRIVATE
   BDEX_LAYER_NAME="${BDEX_LAYER_NAME}"

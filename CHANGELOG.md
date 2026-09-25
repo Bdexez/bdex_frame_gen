@@ -6,6 +6,29 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-25
+
+### Added (release)
+
+- **Prebuilt Linux archive** `bdex-framegen-linux-x86_64-<version>.tar.gz`
+  (`tools/package-linux.sh`, CI job `package`, attached to the GitHub
+  release with the Windows zips): 64- and 32-bit layer, the CLI, the
+  control panel, profiles, `install.sh` / `uninstall.sh` — nothing to
+  compile. Built on Debian 12 (glibc 2.36+) with newer Khronos headers; the
+  layer links libstdc++/libgcc statically (`BDEX_STATIC_RUNTIME`) so it
+  loads inside the Steam runtime.
+
+### Changed (release)
+
+- **`zero_bias_contrast` defaults to `0.02`** (was `0`, the absolute zero
+  bias) on Linux and Windows alike. Offline, on the synthetic corpus and the
+  demo replay, interpolation and extrapolation: never below −0.01 dB; demo
+  +0.10 / +0.83 dB, smooth pan +9.6 / +6.4, swing +2.3 / +0.9, flicker down;
+  no measurable GPU time (RTX 3060 Ti, 1440p). `flow_temporal`, measured with
+  it (+0.1 dB more), stays opt-in: ~0.28 ms of GPU time at 1440p with
+  `preset=quality`. `zero_bias_contrast=0` gives the historical path, which
+  the f2cec5f invariant check now sets explicitly.
+
 ### Fixed (2026-09-25)
 
 - **GPU cost of the default path halved (latency in interpolation).** The
