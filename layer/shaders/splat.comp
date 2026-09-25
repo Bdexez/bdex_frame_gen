@@ -19,6 +19,7 @@ layout(std430, binding = 3) readonly buffer State {
     float meanCost; uint dup; uint diffCount; float ageLast; float agePrev; float interval; uint repeats; uint pad1;
     float t[4];
 } st;
+layout(binding = 4) uniform sampler2D prevBwd;  // previous pair's backward flow (extrapolate_accel)
 
 layout(push_constant) uniform PC {
     ivec2 size;        // display resolution
@@ -26,6 +27,7 @@ layout(push_constant) uniform PC {
     float flowScale;   // level pixels -> display pixels
     vec2 flowInvSize;  // 1 / (display pixels covered by the flow textures)
     int timing;        // > 0: s = st.t[timing - 1] - 1 (content time, see frame_state.comp)
+    float accel;       // second-order term weight (see extrapDisp in interpolate.comp), 0 = off
 } pc;
 
 vec2 fwdAt(vec2 p) { return texture(flowFwd, p * pc.flowInvSize).xy * pc.flowScale; }
@@ -37,7 +39,16 @@ void main() {
     vec2 src = vec2(p) + 0.5;
     vec2 B = bwdAt(src);                    // minus the motion of this pixel
     float s = pc.timing > 0 ? st.t[pc.timing - 1] - 1.0 : pc.s;
-    ivec2 dst = ivec2(floor(src - s * B));
+    vec2 d = -s * B;
+    if (pc.accel > 0.0) {  // same trajectory as extrapDisp in interpolate.comp
+        vec2 v = -B;
+        vec2 a = v - pc.flowScale * -texture(prevBwd, (src + B) * pc.flowInvSize).xy;
+        float lim = 0.5 * length(v) + 1.0, la = length(a);
+        if (la > lim) a *= lim / la;
+        a *= smoothstep(pc.flowScale, 2.0 * pc.flowScale, la);
+        d = s * v + pc.accel * 0.5 * s * (s + 1.0) * a;
+    }
+    ivec2 dst = ivec2(floor(src + d));
     if (any(lessThan(dst, ivec2(0))) || any(greaterThanEqual(dst, pc.size))) return;
     // Priority (lower wins): pixels whose forward/backward flow agree beat
     // inconsistent ones; among those, the faster-moving pixel wins — without

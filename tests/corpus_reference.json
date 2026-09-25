@@ -78,5 +78,21 @@
  "subpixel/interpolate/default": {
   "psnr": 51.86,
   "ssim": 0.9986
+ },
+ "swing/extrapolate/candidate": {
+  "psnr": 28.57,
+  "ssim": 0.7516
+ },
+ "swing/extrapolate/default": {
+  "psnr": 26.99,
+  "ssim": 0.7048
+ },
+ "swing/interpolate/candidate": {
+  "psnr": 36.89,
+  "ssim": 0.9487
+ },
+ "swing/interpolate/default": {
+  "psnr": 31.95,
+  "ssim": 0.8784
  }
 }

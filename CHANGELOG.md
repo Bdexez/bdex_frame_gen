@@ -44,6 +44,23 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-24)
 
+- **`extrapolate_accel` (opt-in): second-order extrapolation.** Extrapolation
+  assumed constant velocity, so a camera that speeds up, slows down or turns
+  around overshoots and lags. The previous pair's finest backward flow is
+  kept (one small image copy per frame) and each pixel follows a quadratic
+  trajectory `s·v + a·s(s+1)/2`, `a` being the change of its motion since
+  the previous pair — averaged over 3×3 neighbouring blocks that move alike
+  (bilateral), gated by forward/backward consistency, ignored where the
+  content's trajectory leaves the picture (entering content has garbage
+  flow), below the flow's quantisation step, and limited to half the speed.
+  Forward splatting follows the same trajectory. New corpus sequence
+  `swing` (sinusoidal pan): x2 +1.0 dB, x3 +0.25; with
+  `zero_bias_contrast=0.1` +2.7 dB. Other sequences ±0.05 except the
+  smooth fast pan −0.13 (its flow is unreliable at the default zero bias);
+  online demo `--speed 2` +0.13 dB (moving edges +0.35, revealed +0.8),
+  normal −0.01. Each estimator step was measured: unfiltered per-block
+  acceleration lost up to 0.9 dB on constant motion. Default 0 is
+  byte-identical.
 - **`scene_cut_local` (opt-in): scene cuts detected per region.** The
   scene-cut fallback used the mean matching cost of the whole frame: a menu
   opening over part of the screen was diluted (no fallback, warped panel)

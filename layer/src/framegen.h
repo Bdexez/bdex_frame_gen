@@ -204,6 +204,8 @@ private:
     VkDescriptorSet dsReduce_ = VK_NULL_HANDLE;
     VkDescriptorSet dsSplat_ = VK_NULL_HANDLE;
     AllocatedImage splatMap_;  // forward-splat targets (display size), or 1x1 when splatting is off
+    AllocatedImage prevBwd_;   // extrapolate_accel: the previous pair's finest backward flow
+    float accelThisFrame_ = 0.f; // extrapolate_accel weight for this frame's syntheses (0 = off)
     bool splatting_ = false;   // extrapolate_splat in effect
     std::vector<VkDescriptorSet> dsInterp_;           // [(prev * N + cur) * outputs + output]
     std::vector<VkDescriptorSet> dsUpscale_;          // [source]; only when upscaling_
