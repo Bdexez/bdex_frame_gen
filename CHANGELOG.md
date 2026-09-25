@@ -8,6 +8,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-25)
 
+- **Recorded game sequences in the CI.** `bdex-framegen --record DIR [N]`
+  records a game's real frames; `tools/corpus_pack.py` packs a downscaled
+  window of them (PNG + meta.json), `tools/corpus_fetch.py` unpacks
+  archives into sequence directories. The Linux CI downloads the archives
+  of the repository's `corpus` release, when it exists, and scores them in
+  the corpus regression test (`BDEX_CORPUS_DIR`). CONTRIBUTING.md explains
+  how to add a game. No game sequence ships yet: they have to be recorded
+  on a machine with the games.
 - `bdex-framegen --tuned-profile [GAME] [--mode M] [--apply]`: the options
   `online_tune` kept for a game (pairs expanded) as a `[GAME]` config
   section — printed (ready to share or to add to `layer/profiles.conf`), or

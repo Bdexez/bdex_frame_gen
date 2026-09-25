@@ -129,6 +129,22 @@ jobs:
             echo "$report" | awk '/^  mean/ { seen=1; if ($2 < 28) bad=1 } END { exit !seen || bad }'
           done
 
+      # Recorded game sequences (tools/corpus_pack.py), attached to the
+      # repository's release named "corpus": scored like the synthetic corpus
+      # against tests/corpus_reference.json (a sequence without references is
+      # reported, not failed: add them with `test_corpus.py build --update`).
+      # Skipped when there is no such release.
+      - name: Recorded game corpus
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release download corpus --repo "$GITHUB_REPOSITORY" --dir corpus-archives --pattern '*.tar.gz'; then
+            python3 tools/corpus_fetch.py corpus-real corpus-archives/*.tar.gz
+            BDEX_CORPUS_DIR=corpus-real python3 tests/test_corpus.py build
+          else
+            echo "no \"corpus\" release: recorded sequences skipped"
+          fi
+
   # The layer and the demo built with ASan+UBSan, then with TSan, running the
   # GPU tests on lavapipe (the swapchain virtualisation has a worker thread,
   # three mutexes and condition variables). The tests load the build's layer

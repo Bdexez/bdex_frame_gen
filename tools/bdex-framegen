@@ -25,6 +25,9 @@
 #                          through the config file; bind it to a desktop shortcut)
 #       --report [FILE]    write a diagnostic report for bug reports (default:
 #                          ./bdex-framegen-report.txt)
+#       --record DIR [N]   record the game's real frames into DIR (N, default
+#                          240; generation off) for the evaluation corpus:
+#                          tools/corpus_pack.py, then eval_sequence.py
 #       --tuned-profile [GAME] [--mode M] [--apply]
 #                          the options online_tune kept for GAME as a [GAME]
 #                          config section (no GAME: list the tuned games);
@@ -219,6 +222,9 @@ while [ $# -gt 0 ]; do
     --toggle)          toggle; exit 0 ;;
     --report)          report "${2:-}"; exit 0 ;;
     --tuned-profile)   shift; tuned_profile "$@"; exit $? ;;
+    --record)          rec="$2"; mkdir -p "$rec"; rec="$(realpath "$rec")"
+                       n=240; case "${3:-}" in ''|*[!0-9]*) shift 2 ;; *) n="$3"; shift 3 ;; esac
+                       env_vars+=("BDEX_FG_MULTIPLIER=1" "BDEX_FG_DUMP=$rec" "BDEX_FG_DUMP_FRAMES=$n") ;;
     -m|--multiplier)   env_vars+=("BDEX_FG_MULTIPLIER=$2"); shift 2 ;;
     -x|--extrapolate)  env_vars+=("BDEX_FG_MODE=extrapolate"); shift ;;
     -P|--preset)       env_vars+=("BDEX_FG_PRESET=$2"); shift 2 ;;
