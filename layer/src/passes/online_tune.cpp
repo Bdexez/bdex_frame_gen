@@ -23,7 +23,7 @@
 namespace bdex {
 namespace {
 
-struct SelfEvalPC { int32_t size[2]; float flowExtent[2]; int32_t slot; int32_t step; };
+struct SelfEvalPC { int32_t size[2]; float flowExtent[2]; int32_t slot; int32_t step; int32_t hasPrev; };
 
 // Per game and mode (the decisions differ between interpolation and
 // extrapolation); "" when there is no cache.
@@ -68,6 +68,7 @@ static std::shared_ptr<OnlineTune> createOnlineTune(const Config& cfg) {
 class OnlineTunePass : public FgPass {
 public:
     static constexpr uint32_t kSlots = 16;  // command slots tracked (the engine's profile slots)
+    static constexpr uint32_t kSlotBytes = 32;  // 8 counters (see self_eval.comp)
 
     const char* name() const override { return "online_tune"; }
 
@@ -82,8 +83,8 @@ public:
             tune_ = dev.onlineTune;
         }
         const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SB = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        pipe_ = ctx.makePipeline(self_eval_comp, self_eval_comp_size, {CIS, CIS, CIS, SB});
-        buf_ = dev.createBuffer(kSlots * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
+        pipe_ = ctx.makePipeline(self_eval_comp, self_eval_comp_size, {CIS, CIS, CIS, SB, CIS});
+        buf_ = dev.createBuffer(kSlots * kSlotBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
         VK_CHECK(dev.vt.MapMemory(dev.device, buf_.memory, 0, VK_WHOLE_SIZE, 0, &mapped_));
         const FgFineLevel l0 = ctx.fineLevel();
         for (uint32_t parity = 0; parity < 2; ++parity) {
@@ -93,6 +94,7 @@ public:
             ctx.writeImage(e, 1, CIS, l0.pyr[parity]);
             ctx.writeImage(e, 2, CIS, l0.flow[1]);
             ctx.writeBuffer(e, 3, buf_.buffer);
+            ctx.writeImage(e, 4, CIS, ctx.previousBackwardFlow());
         }
     }
     void destroy(FgContext& ctx) override {
@@ -112,17 +114,25 @@ public:
         // Rate the flow still in the images (the previous pair's) on the
         // frame that just arrived, then pick the settings of this one.
         // (Nothing left to measure once every candidate is decided.)
-        if (ctx.flowLastFrame() && tagValid_ && !tune_->done()) record(ctx, cmd, parity);
+        // The previous pair's flow is at hand (stability) when it was kept
+        // last frame: the copy happens in recordFlow after this hook, on a
+        // frame whose previous one computed a flow.
+        const bool hasPrev = copiedLastFrame_ && ctx.flowLastFrame();
+        copiedLastFrame_ = ctx.flowLastFrame() && !tune_->done();
+        if (ctx.flowLastFrame() && tagValid_ && !tune_->done()) record(ctx, cmd, parity, hasPrev);
         tag_ = tune_->nextFlow(overrides_);
         tagValid_ = true;
     }
+
+    // While trying, keep the previous pair's flow for the stability measure.
+    bool needsPreviousFlow(const Config&) const override { return !tune_->done(); }
 
     void overrideConfig(Config& c) const override {
         for (const auto& kv : overrides_) c.apply(kv.first, kv.second);
     }
 
 private:
-    void record(FgContext& ctx, VkCommandBuffer cmd, uint32_t parity) {
+    void record(FgContext& ctx, VkCommandBuffer cmd, uint32_t parity, bool hasPrev) {
         const uint32_t slot = slot_;
         if (slot >= kSlots || pending_[slot]) return;
         auto& vt = ctx.device().vt;
@@ -130,11 +140,12 @@ private:
         // At most 2^18 samples, so the fixed-point sums cannot overflow.
         uint32_t step = 2;
         while (uint64_t(fg::divUp(l0.luma.width, step)) * fg::divUp(l0.luma.height, step) > (1u << 18)) ++step;
-        vt.CmdFillBuffer(cmd, buf_.buffer, VkDeviceSize(slot) * 16, 16, 0);
+        vt.CmdFillBuffer(cmd, buf_.buffer, VkDeviceSize(slot) * kSlotBytes, kSlotBytes, 0);
         ctx.barrier(cmd);
         vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe_.pipeline);
         SelfEvalPC pc{{(int32_t)l0.luma.width, (int32_t)l0.luma.height},
-                      {float(l0.fine.width * l0.block), float(l0.fine.height * l0.block)}, (int32_t)slot, (int32_t)step};
+                      {float(l0.fine.width * l0.block), float(l0.fine.height * l0.block)}, (int32_t)slot, (int32_t)step,
+                      hasPrev ? 1 : 0};
         vt.CmdPushConstants(cmd, pipe_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
         vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe_.layout, 0, 1, &sets_[parity], 0, nullptr);
         vt.CmdDispatch(cmd, fg::divUp(fg::divUp(l0.luma.width, step), 16), fg::divUp(fg::divUp(l0.luma.height, step), 16), 1);
@@ -151,8 +162,9 @@ private:
     void collect(FgContext& ctx, uint32_t slot) {
         if (slot >= kSlots || !pending_[slot]) return;
         pending_[slot] = false;
-        const auto* w = static_cast<const uint32_t*>(mapped_) + slot * 4;
-        if (w[2] > 0) tune_->addSample(tags_[slot], w[0] / 4096.0, w[1] / 4096.0, double(w[2]));
+        const auto* w = static_cast<const uint32_t*>(mapped_) + slot * (kSlotBytes / 4);
+        if (w[2] > 0)
+            tune_->addSample(tags_[slot], w[0] / 4096.0, w[1] / 4096.0, double(w[2]), w[3] / 16.0, w[4] / 16.0, double(w[5]));
         report(ctx);
     }
 
@@ -164,8 +176,9 @@ private:
         const auto decisions = tune_->decisions();
         if (decisions.size() == dev.onlineTuneReported) return;
         for (size_t i = dev.onlineTuneReported; i < decisions.size(); ++i)
-            BDEX_INFO("online_tune: %s=%s %s (prediction error %+.1f %%)", decisions[i].key.c_str(),
-                      decisions[i].value.c_str(), decisions[i].kept ? "kept" : "dropped", -100.0 * decisions[i].gain);
+            BDEX_INFO("online_tune: %s=%s %s (prediction error %+.1f %%, flow change %+.0f %%)", decisions[i].key.c_str(),
+                      decisions[i].value.c_str(), decisions[i].kept ? "kept" : "dropped", -100.0 * decisions[i].gain,
+                      -100.0 * decisions[i].stability);
         dev.onlineTuneReported = decisions.size();
         if (tune_->done()) BDEX_INFO("online_tune: done for %s: %s", cfg.tuneName.c_str(), tune_->summary().c_str());
         // Cached after each decision: a short session still spares the next one.
@@ -188,6 +201,7 @@ private:
     uint32_t tags_[kSlots]{};
     uint32_t tag_ = 0;                  // tag of the flow in the flow images
     bool tagValid_ = false;
+    bool copiedLastFrame_ = false;      // the previous frame kept its predecessor's flow
     std::vector<std::pair<std::string, std::string>> overrides_;  // this frame's trial settings
 };
 

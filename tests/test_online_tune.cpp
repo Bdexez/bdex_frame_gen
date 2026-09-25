@@ -15,11 +15,12 @@ bool has(const std::vector<std::pair<std::string, std::string>>& o, const std::s
 }
 
 // Plays `frames` flows: the error ratio is 0.5 without options, times the
-// factor of each active option; `motion` = false gives static frames.
+// factor of each active option; `motion` = false gives static frames. The
+// flow's pair-to-pair change is 0.4 of the motion, times `steadyA` with "a".
 // Samples come back two flows late, as from a GPU queue.
-void play(OnlineTune& t, int frames, double factorA, double factorB, bool motion = true) {
+void play(OnlineTune& t, int frames, double factorA, double factorB, bool motion = true, double steadyA = 1.0) {
     uint32_t seed = 12345;
-    std::vector<std::pair<uint32_t, double>> pending;
+    std::vector<std::pair<uint32_t, std::pair<double, double>>> pending;
     for (int i = 0; i < frames; ++i) {
         std::vector<std::pair<std::string, std::string>> o;
         const uint32_t tag = t.nextFlow(o);
@@ -30,11 +31,12 @@ void play(OnlineTune& t, int frames, double factorA, double factorB, bool motion
         const double noise = 1.0 + 0.04 * (double(seed >> 8) / double(1u << 24) - 0.5);  // +-2 %
         // The scene's amount of motion drifts slowly: the ratio does not.
         const double zero = motion ? 0.02 * (1.0 + 0.5 * std::sin(i * 0.01)) : 0.0005;
-        pending.emplace_back(tag, ratio * noise * zero);
+        const double change = 0.4 * 5.0 * (has(o, "a") ? steadyA : 1.0) * noise;  // per sample, motion 4 px (+1)
+        pending.emplace_back(tag, std::make_pair(ratio * noise * zero, change));
         if (pending.size() > 2) {
             const auto s = pending.front();
             pending.erase(pending.begin());
-            t.addSample(s.first, s.second * 1000.0, zero * 1000.0, 1000.0);
+            t.addSample(s.first, s.second.first * 1000.0, zero * 1000.0, 1000.0, s.second.second * 1000.0, 4000.0, 1000.0);
         }
     }
 }
@@ -105,4 +107,28 @@ TEST(online_tune_summary) {
     CHECK(t.summary().empty());
     t.deserialize("a 1 kept 0.042\n");
     CHECK(t.summary() == "a=1 kept (-4.2 %)");
+    OnlineTune u({{"a", "1"}});
+    u.deserialize("a 1 kept 0 0.25\n");
+    CHECK(u.summary() == "a=1 kept (-0.0 %, flow change -25 %)");
+}
+
+TEST(online_tune_keeps_a_steadier_flow_at_equal_prediction) {
+    // flow_temporal's case: same prediction error, a third less flow change.
+    OnlineTune t({{"a", "1"}});
+    play(t, 2000, 1.0, 1.0, true, 0.67);
+    CHECK(t.done());
+    CHECK(t.decisions()[0].kept && t.decisions()[0].stability > 0.2);
+}
+
+TEST(online_tune_drops_a_prediction_win_that_destabilises) {
+    OnlineTune t({{"a", "1"}});
+    play(t, 2000, 0.9, 1.0, true, 1.5);
+    CHECK(t.done());
+    CHECK(!t.decisions()[0].kept);
+}
+
+TEST(online_tune_reads_caches_without_stability) {
+    OnlineTune t({{"a", "1"}});
+    CHECK(t.deserialize("a 1 kept 0.05\n"));
+    CHECK(t.kept().size() == 1 && t.decisions()[0].stability == 0.0);
 }
