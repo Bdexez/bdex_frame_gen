@@ -34,7 +34,8 @@ CONFIG_PATH = os.path.join(
 MODES = [("Interpolation (défaut)", "interpolate"),
          ("Extrapolation — latence minimale", "extrapolate")]
 PRESETS = [("Auto — adapté au GPU", "auto"), ("Qualité", "quality"),
-           ("Équilibré", "balanced"), ("Performance", "performance")]
+           ("Équilibré", "balanced"), ("Amélioré — options de qualité mesurées", "enhanced"),
+           ("Performance", "performance")]
 FILTERS = [("Lanczos (le plus net)", "lanczos"), ("Bicubique", "bicubic"), ("Bilinéaire", "bilinear")]
 PRESENT = [("Auto (recommandé)", "auto"), ("Mode du jeu", "app"), ("FIFO (vsync)", "fifo"),
            ("Mailbox", "mailbox"), ("Immediate (sans vsync)", "immediate")]

@@ -489,8 +489,8 @@ enum {
     ID_TIMER_RUNNING = 1,
 };
 
-const wchar_t* const kPresets[] = {L"Auto", L"Qualité", L"Équilibré", L"Performance"};
-const char* const kPresetVals[] = {"", "quality", "balanced", "performance"};
+const wchar_t* const kPresets[] = {L"Auto", L"Qualité", L"Équilibré", L"Amélioré (options mesurées)", L"Performance"};
+const char* const kPresetVals[] = {"", "quality", "balanced", "enhanced", "performance"};
 const wchar_t* const kFilters[] = {L"Lanczos (le plus net)", L"Bicubique", L"Bilinéaire"};
 const int kFilterVals[] = {2, 1, 0};
 const wchar_t* const kHud[] = {L"Désactivé", L"FPS", L"FPS + génération", L"+ 1% low",
@@ -672,7 +672,7 @@ void fillFromChoice(Ui& ui) {
     const LaunchChoice& c = *ui.choice;
     SendMessageW(ui.gen, BM_SETCHECK, c.multiplier > 1 ? BST_CHECKED : BST_UNCHECKED, 0);
     int p = 0;
-    for (int i = 1; i <= 3; ++i)
+    for (int i = 1; i < static_cast<int>(std::size(kPresetVals)); ++i)
         if (c.preset == kPresetVals[i]) p = i;
     SendMessageW(ui.preset, CB_SETCURSEL, p, 0);
     SendMessageW(ui.mult, CB_SETCURSEL, std::clamp(c.multiplier, 2, 4) - 2, 0);

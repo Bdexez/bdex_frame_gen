@@ -331,3 +331,12 @@ TEST(config_option_info) {
     }
     CHECK(seenSmooth && seenRefine);
 }
+
+TEST(config_preset_enhanced) {
+    Config c;
+    CHECK(c.applyPreset("enhanced"));
+    CHECK(!c.autoTune && c.pixelVectors && c.zeroBiasContrast == 0.02f && c.hudMask == 24 && c.dedup &&
+          c.extrapolateSplat && c.flowScale == 0);
+    // A later explicit option still wins over the preset.
+    CHECK(c.apply("pixel_vectors", "0") && !c.pixelVectors);
+}

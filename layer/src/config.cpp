@@ -67,6 +67,18 @@ bool Config::applyPreset(const std::string& name) {
         flowScale = 1; refineAll = true; flowIterations = 2; levels = 5; searchRadius = 4; searchFine = 2;
     } else if (v == "performance" || v == "perf" || v == "fast") {
         flowScale = 4; refineAll = false; flowIterations = 0; levels = 4; searchRadius = 4; searchFine = 2;
+    } else if (v == "enhanced") {
+        // Balanced flow plus the opt-ins measured positive together on the
+        // corpus and the demo replays (2026-09-25, x2, vs the defaults):
+        // interpolation +0.08 to +10.8 dB (demo +0.71, fast demo +0.28,
+        // occlusions +2.8, HUD +0.75), extrapolation -0.04 to +7.1 (demo
+        // +2.0). zero_bias_contrast at 0.02: at 0.1 it lost 1.2 dB on the
+        // demo together with pixel_vectors. Costs ~2x the synthesis
+        // (pixel_vectors). frame_timing, extrapolate_accel and reveal_fill
+        // lose on some content: left out.
+        flowScale = 0; refineAll = true; flowIterations = 1; levels = 4; searchRadius = 4; searchFine = 2;
+        zeroBiasContrast = 0.02f; pixelVectors = true; flowTemporal = 1.f; hudMask = 24; sceneCutLocal = true;
+        dedup = true; extrapolateSplat = true;
     } else if (v == "latency" || v == "lowlatency" || v == "low_latency") {
         // Minimal input lag: extrapolation presents the real frame immediately
         // (no half-frame hold), x2 keeps the least work on the critical path,
