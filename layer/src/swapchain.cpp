@@ -618,7 +618,8 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
 
     const int mult = generating_ ? chooseMultiplier() : 1;
     // A rebuilt output stage has no analysis of the previous frame yet.
-    const bool interpolate = generating_ && prevIndex_ >= 0 && mult > 1 && !historyLost_;
+    const bool haveHistory = prevIndex_ >= 0 && !historyLost_;
+    const bool interpolate = generating_ && haveHistory && mult > 1;
     historyLost_ = false;
     const int prev = prevIndex_;
     if (dev_.config.overlayMode > 0) {
@@ -638,6 +639,12 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     if (generating_) {
         fg_->recordAcquireSources(slot.cmd, prev, static_cast<int>(imageIndex));
         fg_->recordAnalysis(slot.cmd, parity_, imageIndex);
+        FrameGen::FrameTiming timing;
+        timing.sinceLastMs = dt;
+        timing.intervalMs = frameIntervalMs_;
+        timing.multiplier = interpolate ? mult : 1;
+        timing.reset = !haveHistory || !(dt > 0.5 && dt < 500.0);
+        fg_->recordFrameState(slot.cmd, timing);
         fg_->profileMark(slot.cmd, slotIdx, FrameGen::StageAnalysis);
         if (interpolate) {
             fg_->recordFlow(slot.cmd, parity_);
@@ -651,7 +658,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         }
         // Resample the real frame into the internal image the worker presents
         // (for upscaling, or so the HUD can be drawn on it).
-        if (fg_->packReal()) fg_->recordUpscaleReal(slot.cmd, imageIndex);
+        if (fg_->packReal()) fg_->recordUpscaleReal(slot.cmd, imageIndex, interpolate ? prev : -1);
         if (dumping_) {
             if (interpolate)
                 for (int i = 0; i < mult - 1; ++i) fg_->recordDump(slot.cmd, static_cast<uint32_t>(i), imageIndex);
@@ -764,8 +771,15 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             const uint64_t out = statsOutFrames_.exchange(0);
             const uint64_t delayUs = statsRealDelayUs_.exchange(0);
             const uint64_t skipped = statsSkipped_.exchange(0);
-            char skip[64] = "";
-            if (skipped) snprintf(skip, sizeof(skip), ", %llu predicted frame(s) skipped", static_cast<unsigned long long>(skipped));
+            char skip[128] = "";
+            int len = 0;
+            if (skipped) len = snprintf(skip, sizeof(skip), ", %llu predicted frame(s) skipped", static_cast<unsigned long long>(skipped));
+            // dedup: read without waiting (the counter is at most a few frames old).
+            FrameGen::State st;
+            if (dev_.config.dedup && fg_->readState(st)) {
+                snprintf(skip + len, sizeof(skip) - size_t(len), ", %u repeated frame(s)", st.repeats - statsRepeats_);
+                statsRepeats_ = st.repeats;
+            }
             BDEX_INFO("game %.1f fps -> output %.1f fps (x%.2f), present call %.2f ms, real frame delayed %.1f ms%s%s",
                       statsAppFrames_ / elapsed, out / elapsed, statsAppFrames_ ? double(out) / statsAppFrames_ : 0.0,
                       statsAppFrames_ ? statsCpuMs_ / statsAppFrames_ : 0.0,

@@ -3,7 +3,7 @@
 // can be exercised without a game.
 //
 //   bdex_demo [--fps N] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]
-//             [--deterministic] [--speed X] [--srgb] [--cut N]
+//             [--deterministic] [--speed X] [--srgb] [--cut N] [--repeat N]
 //
 // Run it with BDEX_FG=1 (and VK_LAYER_PATH pointing at the build tree if the
 // layer is not installed) to see the generated frames.
@@ -40,6 +40,7 @@ struct Options {
     bool srgb = false;           // request an sRGB swapchain format
     float speed = 1.0f;          // animation speed multiplier
     long cutEvery = 0;           // switch scene every N frames (0 = never), to test scene cut handling
+    long repeat = 1;             // present every image N times (e.g. 2: 30 fps content in a 60 fps loop)
 };
 
 struct PushConstants {
@@ -89,6 +90,7 @@ private:
     std::vector<VkSemaphore> renderSem_;  // per swapchain image
     VkFence fences_[kInFlight]{};
     int frameIndex_ = 0;
+    double animTime_ = 0.0;  // animation time of the image being drawn
     uint32_t frameCount_ = 0;
     bool resized_ = false;
 };
@@ -403,11 +405,14 @@ void Demo::drawFrame() {
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
-    const double animTime = opt_.deterministic
-                                ? frameCount_ / opt_.fps
-                                : std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-    PushConstants pc{{float(extent_.width), float(extent_.height)}, float(animTime * opt_.speed), frameCount_,
-                     opt_.cutEvery > 0 ? uint32_t((frameCount_ / opt_.cutEvery) & 1) : 0u};
+    // --repeat: the frame shown is the first of its group of N, identical
+    // to the others (counter included), like a game duplicating frames.
+    const auto shown = frameCount_ - frameCount_ % static_cast<decltype(frameCount_)>(opt_.repeat);
+    if (opt_.deterministic) animTime_ = shown / opt_.fps;
+    else if (shown == frameCount_)  // the group keeps its first frame's wall-clock time
+        animTime_ = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    PushConstants pc{{float(extent_.width), float(extent_.height)}, float(animTime_ * opt_.speed), shown,
+                     opt_.cutEvery > 0 ? uint32_t((shown / opt_.cutEvery) & 1) : 0u};
     vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRenderPass(cmd);
@@ -514,6 +519,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--srgb") o.srgb = true;
         else if (a == "--cut") o.cutEvery = atol(value().c_str());
         else if (a == "--speed") o.speed = atof(value().c_str());
+        else if (a == "--repeat") o.repeat = std::max(1L, atol(value().c_str()));
         else if (a == "--size") {
             std::string v = value();
             if (sscanf(v.c_str(), "%dx%d", &o.width, &o.height) != 2) throw std::runtime_error("bad --size");
@@ -525,7 +531,7 @@ Options parseArgs(int argc, char** argv) {
             else throw std::runtime_error("bad --mode");
         } else if (a == "-h" || a == "--help") {
             printf("usage: bdex_demo [--fps N] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]\n"
-                   "                 [--deterministic] [--ignore-resize] [--speed X] [--srgb] [--cut N]\n");
+                   "                 [--deterministic] [--ignore-resize] [--speed X] [--srgb] [--cut N] [--repeat N]\n");
             exit(0);
         } else {
             throw std::runtime_error("unknown option " + a);
