@@ -87,6 +87,8 @@ TEST(config_apply_values) {
     CHECK(c.apply("FPS_LIMIT", "Auto") && c.fpsLimit < 0.f);
     CHECK(c.apply("fps_limit", "72") && c.fpsLimit == 72.f);
     CHECK(c.presentFeedback && c.apply("present_feedback", "0") && !c.presentFeedback);
+    CHECK(c.captureHdr == -1 && c.apply("capture_hdr", "1") && c.captureHdr == 1);
+    CHECK(c.apply("CAPTURE_HDR", "auto") && c.captureHdr == -1 && c.apply("capture_hdr", "off") && c.captureHdr == 0);
     CHECK(c.apply("EXTRAPOLATE_ACCEL", "3") && c.extrapolateAccel == 1.f);   // clamped
     {
         Config live, fresh;

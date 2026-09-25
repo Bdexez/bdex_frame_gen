@@ -42,7 +42,11 @@ public:
     // on the adapter `luid` (the Vulkan GPU; null = default adapter). False
     // (with a logged reason) if WGC refused: unsupported window, capture
     // denied, no D3D11.
-    bool start(HWND target, const LUID* luid);
+    // `hdr`: capture in scRGB (R16G16B16A16_FLOAT) instead of BGRA8, for a
+    // game on an HDR display (VkCtx::setHdr must match).
+    bool start(HWND target, const LUID* luid, bool hdr = false);
+    // Whether the monitor showing `window` is in HDR (advanced colour) mode.
+    static bool displayIsHdr(HWND window);
     void stop();
 
     // Main thread: waits up to `timeoutMs` and returns the newest captured

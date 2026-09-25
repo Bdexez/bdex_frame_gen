@@ -63,6 +63,9 @@ bool VkCtx::init(HWND overlay, int gpuIndex, bool preferFifo, const Config& cfg)
             LOGE("instance extension %s missing", e);
             return false;
         }
+    // Optional: HDR colour spaces for the overlay swapchain (scRGB).
+    const bool colorspaceExt = hasExt(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME, instExts);
+    if (colorspaceExt) wantInst.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
     std::vector<const char*> layers;
     if (std::getenv("BDEX_CAP_VALIDATION")) layers.push_back("VK_LAYER_KHRONOS_validation");
 
@@ -92,6 +95,7 @@ bool VkCtx::init(HWND overlay, int gpuIndex, bool preferFifo, const Config& cfg)
         uint32_t qf;
         VkPhysicalDeviceProperties props;
         bool dedicatedOnly;
+        bool hdrImport;  // can also import D3D11 R16G16B16A16_FLOAT textures (HDR capture)
     };
     std::vector<Candidate> usable;
     uint32_t nPhys = 0;
@@ -153,9 +157,16 @@ bool VkCtx::init(HWND overlay, int gpuIndex, bool preferFifo, const Config& cfg)
             LOGW("%s: cannot import D3D11 B8G8R8A8 textures, skipped", gp.deviceName);
             continue;
         }
-        usable.push_back({pd, qf, gp,
-                          (extOut.externalMemoryProperties.externalMemoryFeatures &
-                           VK_EXTERNAL_MEMORY_FEATURE_DEDICATED_ONLY_BIT) != 0});
+        const bool dedicatedOnly = (extOut.externalMemoryProperties.externalMemoryFeatures &
+                                    VK_EXTERNAL_MEMORY_FEATURE_DEDICATED_ONLY_BIT) != 0;
+        fmtIn.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+        extOut = VkExternalImageFormatProperties{VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES};
+        fmtOut = VkImageFormatProperties2{VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2, &extOut};
+        // (Imports always use a dedicated allocation, see importSlot.)
+        const bool hdrImport = vkGetPhysicalDeviceImageFormatProperties2(pd, &fmtIn, &fmtOut) == VK_SUCCESS &&
+                               (extOut.externalMemoryProperties.externalMemoryFeatures &
+                                VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT) != 0;
+        usable.push_back({pd, qf, gp, dedicatedOnly, hdrImport});
     }
     if (usable.empty()) {
         LOGE("no GPU with D3D11 import + keyed mutex + GRAPHICS/COMPUTE queue");
@@ -187,6 +198,16 @@ bool VkCtx::init(HWND overlay, int gpuIndex, bool preferFifo, const Config& cfg)
     const Candidate& c = usable[pick];
     phys_ = c.pd;
     qf_ = c.qf;
+    // HDR needs the FP16 import and an scRGB surface format on the overlay.
+    if (colorspaceExt && c.hdrImport) {
+        uint32_t nFmt = 0;
+        vkGetPhysicalDeviceSurfaceFormatsKHR(phys_, surface_, &nFmt, nullptr);
+        std::vector<VkSurfaceFormatKHR> fmts(nFmt);
+        vkGetPhysicalDeviceSurfaceFormatsKHR(phys_, surface_, &nFmt, fmts.data());
+        for (auto& f : fmts)
+            if (f.format == VK_FORMAT_R16G16B16A16_SFLOAT && f.colorSpace == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT)
+                hdrCapable_ = true;
+    }
     LOGI("using gpu %zu: %s (%s, queue family %u, D3D11 import%s)", pick, c.props.deviceName,
          kind(c.props), c.qf, c.dedicatedOnly ? " dedicated-only" : "");
 
@@ -318,10 +339,11 @@ bool VkCtx::createSwapchain(uint32_t w, uint32_t h) {
     vkGetPhysicalDeviceSurfaceFormatsKHR(phys_, surface_, &nFmt, fmts.data());
     bool found = false;
     for (auto& f : fmts)
-        if (f.format == scFormat_ && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+        if (f.format == scFormat_ && f.colorSpace == scColorSpace_)
             found = true;
     if (!found) {
-        LOGE("B8G8R8A8_UNORM/SRGB surface format not supported");
+        LOGE(hdr_ ? "R16G16B16A16_SFLOAT/scRGB surface format not supported"
+                  : "B8G8R8A8_UNORM/SRGB surface format not supported");
         return false;
     }
 
@@ -332,7 +354,7 @@ bool VkCtx::createSwapchain(uint32_t w, uint32_t h) {
     sw.surface = surface_;
     sw.minImageCount = imageCount;
     sw.imageFormat = scFormat_;
-    sw.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    sw.imageColorSpace = scColorSpace_;
     sw.imageExtent = {width_, height_};
     sw.imageArrayLayers = 1;
     sw.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
@@ -379,6 +401,13 @@ bool VkCtx::setSize(uint32_t w, uint32_t h) {
     return true;
 }
 
+void VkCtx::setHdr(bool on) {
+    hdr_ = on && hdrCapable_;
+    scFormat_ = hdr_ ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_B8G8R8A8_UNORM;
+    scColorSpace_ = hdr_ ? VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT : VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    LOGI("colour: %s", hdr_ ? "HDR (scRGB, FP16)" : "SDR (BGRA8)");
+}
+
 // -------------------------------------------------------------- engine ----
 
 void VkCtx::destroyEngine() {
@@ -409,7 +438,7 @@ bool VkCtx::rebuildEngine(uint32_t cw, uint32_t ch) {
         }
         const uint32_t outputs = static_cast<uint32_t>(std::max(1, layerDev_.config.multiplier) - 1);
         fg_ = std::make_unique<FrameGen>(layerDev_, scFormat_, VkExtent2D{cw, ch},
-                                         VkExtent2D{width_, height_}, outputs, sources);
+                                         VkExtent2D{width_, height_}, outputs, sources, scColorSpace_);
     } catch (const std::exception& e) {
         LOGE("frame generation setup failed: %s", e.what());
         destroyEngine();
@@ -447,7 +476,7 @@ bool VkCtx::importSlot(SlotVk& sl, const Capture::Frame& f) {
     ext.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT;
     VkImageCreateInfo ic{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, &ext};
     ic.imageType = VK_IMAGE_TYPE_2D;
-    ic.format = VK_FORMAT_B8G8R8A8_UNORM;
+    ic.format = scFormat_;  // the capture ring's format (see setHdr)
     ic.extent = {f.width, f.height, 1};
     ic.mipLevels = 1;
     ic.arrayLayers = 1;

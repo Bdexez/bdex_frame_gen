@@ -253,6 +253,8 @@ struct ExtraOpt {
 const wchar_t* const kFlowScaleLabels[] = {L"Auto", L"Pleine (1)", L"Moitié (2)", L"Quart (4)"};
 const char* const kFlowScaleValues[] = {"auto", "1", "2", "4"};
 const wchar_t* const kDebugLabels[] = {L"Aucun", L"Flux (mouvement coloré)", L"Écran partagé"};
+const wchar_t* const kHdrLabels[] = {L"Auto (selon l'écran)", L"Toujours SDR", L"HDR si possible"};
+const char* const kHdrValues[] = {"auto", "0", "1"};
 const char* const kDebugValues[] = {"none", "flow", "split"};
 // Section headers are entries with a null key.
 const ExtraOpt kExtra[] = {
@@ -274,6 +276,7 @@ const ExtraOpt kExtra[] = {
     {"census_weight", L"Recherche par structure — poids (0–8)", kNumber, "0"},
     {"census_margin", L"Recherche par structure — seuil (0–1)", kNumber, "0.05"},
     {"extrapolate_hold", L"Extrapolation : figer les pixels incertains (0–1)", kNumber, "0"},
+    {"capture_hdr", L"Couleur HDR (écrans HDR)", kChoice, "auto", kHdrLabels, kHdrValues, 3},
     {nullptr, L"Structure du flux (désactive l'auto-réglage)", kCheck, ""},
     {"flow_scale", L"Résolution du flux", kChoice, "auto", kFlowScaleLabels, kFlowScaleValues, 4},
     {"levels", L"Niveaux de pyramide (1–6)", kNumber, "4"},
