@@ -3,7 +3,9 @@
 at constant speed must be interpolated (x2) and extrapolated (x2) far better
 than repeating the nearest input frame. On an irregular "game" — uneven frame
 times (--jitter), or every image presented twice (--dup 2) — frame_timing and
-dedup must beat the fixed timing, in both modes. Usage: test_offline.py <build dir>"""
+dedup must beat the fixed timing, in both modes; and on a menu opening over
+part of the screen, scene_cut_local must beat the frame-wide scene-cut test.
+Usage: test_offline.py <build dir>"""
 import os
 import subprocess
 import sys
@@ -62,6 +64,14 @@ def main():
                 if not opt > base + 0.3:
                     print(f"{mode} {offline}: {option} {opt:.2f} dB does not beat the fixed timing {base:.2f} dB")
                     return 1
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        subprocess.run([sys.executable, str(ROOT / "tools" / "make_corpus.py"), str(d), "--frames", "41"],
+                       check=True, stdout=subprocess.DEVNULL)
+        base, local = evaluate(build, d / "popup", {"BDEX_FG_MODE": "interpolate"}, ["--variant", "SCENE_CUT_LOCAL=1"])
+        if not local > base + 0.5:
+            print(f"popup: scene_cut_local {local:.2f} dB does not beat the frame-wide test {base:.2f} dB")
+            return 1
     return 0
 
 

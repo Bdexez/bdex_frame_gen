@@ -47,6 +47,22 @@
   "psnr": 33.77,
   "ssim": 0.9099
  },
+ "popup/extrapolate/candidate": {
+  "psnr": 15.15,
+  "ssim": 0.7666
+ },
+ "popup/extrapolate/default": {
+  "psnr": 15.16,
+  "ssim": 0.7633
+ },
+ "popup/interpolate/candidate": {
+  "psnr": 22.82,
+  "ssim": 0.8677
+ },
+ "popup/interpolate/default": {
+  "psnr": 22.74,
+  "ssim": 0.8648
+ },
  "subpixel/extrapolate/candidate": {
   "psnr": 49.46,
   "ssim": 0.9971

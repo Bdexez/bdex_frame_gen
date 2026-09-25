@@ -35,6 +35,7 @@ layout(std430, binding = 5) readonly buffer Cost {
     uint repeats;
     uint pad1;
     float t[4];
+    float tileCost[64];  // scene_cut_local grid (reduce_cost.comp)
 } cost;
 layout(binding = 6, r32ui) uniform readonly uimage2D splatMap;  // forward-splat sources (extrapolation, see splat.comp)
 
@@ -72,6 +73,7 @@ layout(push_constant) uniform PC {
     int pixelVectors;        // interpolation: per-pixel choice among the neighbouring blocks' vectors
     int transfer;            // TRANSFER_* of the sampled values (HDR: errors on a perceptual scale)
     int timing;              // > 0: t is cost.t[timing - 1] (content time), pc.t only tells the mode
+    int localCut;            // > 0: scene cut from the localCut^2 tile grid instead of the frame mean
 } pc;
 
 // Photometric error between two samples, on the scale the thresholds below
@@ -80,6 +82,19 @@ layout(push_constant) uniform PC {
 float colourError(vec4 a, vec4 b) {
     if (pc.transfer < TRANSFER_SCRGB) return luma(abs(a.rgb - b.rgb));
     return luma(abs(hdrToMatch(a.rgb, pc.transfer) - hdrToMatch(b.rgb, pc.transfer)));
+}
+
+// scene_cut_local: the mean matching cost around uv, bilinear between the
+// tile centres (no visible tile edges in the fade).
+float localCost(vec2 uv) {
+    int n = pc.localCut;
+    vec2 g = clamp(uv * float(n) - 0.5, vec2(0.0), vec2(float(n - 1)));
+    ivec2 i0 = ivec2(floor(g));
+    ivec2 i1 = min(i0 + 1, ivec2(n - 1));
+    vec2 f = g - vec2(i0);
+    float c00 = cost.tileCost[i0.y * n + i0.x], c10 = cost.tileCost[i0.y * n + i1.x];
+    float c01 = cost.tileCost[i1.y * n + i0.x], c11 = cost.tileCost[i1.y * n + i1.x];
+    return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
 }
 
 vec2 fwdAt(vec2 p) { return texture(flowFwd, p * pc.flowInvSize).xy * pc.flowScale; }
@@ -136,7 +151,7 @@ void main() {
     vec2 uv = q / fsize;
     float t = pc.timing > 0 ? cost.t[pc.timing - 1] : pc.t;
     vec4 cur = texture(curTex, uv);
-    float cut = smoothstep(pc.cutLow, pc.cutHigh, cost.meanCost);
+    float cut = smoothstep(pc.cutLow, pc.cutHigh, pc.localCut > 0 ? localCost(uv) : cost.meanCost);
     vec4 c;
     vec2 F;
 

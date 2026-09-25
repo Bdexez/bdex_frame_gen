@@ -47,6 +47,7 @@ struct Config {
     std::string logFile;
     float sceneCutLow   = 0.05f;  // mean matching cost above which we start fading to the real frame
     float sceneCutHigh  = 0.09f;  // ... and above which the generated frame is a plain duplicate
+    bool  sceneCutLocal = false;  // scene-cut test per region (8x8 grid) instead of on the frame mean (opt-in)
     float smoothness    = 0.004f; // penalty per pixel of deviation from the coarse prediction
     float zeroBias      = 0.002f; // bias toward zero motion (helps static HUDs)
     float zeroBiasContrast = 0.0f; // mean luma gradient at which zero_bias fully applies; lower-contrast blocks get proportionally less (0 = absolute bias, bit-for-bit)

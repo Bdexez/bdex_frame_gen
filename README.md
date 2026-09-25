@@ -301,6 +301,7 @@ them).
 | `PACING` | `1` | even spacing of the frames in non-FIFO modes |
 | `LOW_LATENCY` | `0` | block the game until its previous frame has been handed to the display (only matters with FIFO) |
 | `SCENE_CUT_LOW` / `SCENE_CUT_HIGH` | `0.05` / `0.09` | scene cut detection thresholds |
+| `SCENE_CUT_LOCAL` | `0` | Experimental: applies the scene-cut test per region (8×8 grid, blended between tile centres) instead of on the whole frame's mean cost, so a menu or overlay opening over part of the screen falls back to the real frame there instead of being warped, and a large fast object no longer pushes the whole frame toward the fallback. Offline: a pause menu opening over a quarter of a panning scene +1.0 dB, flicker −5.8, interpolation; neutral elsewhere (±0.03 dB), whole-frame cuts unchanged. `1` to enable. |
 | `DEBUG` | `none` | `flow` (visualise the flow), `split` (left generated / right real), `passthrough` |
 | `STATS` / `STATS_INTERVAL` | `1` / `5` | terminal statistics, period in seconds |
 | `PROFILE` | `0` | GPU time per stage in the statistics |

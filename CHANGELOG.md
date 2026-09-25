@@ -44,6 +44,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-24)
 
+- **`scene_cut_local` (opt-in): scene cuts detected per region.** The
+  scene-cut fallback used the mean matching cost of the whole frame: a menu
+  opening over part of the screen was diluted (no fallback, warped panel)
+  and a large fast object could fade everything. `reduce_cost` also averages
+  an 8×8 tile grid; the synthesis blends between tile centres. New corpus
+  sequence `popup` (a pause menu over a quarter of a pan, opening between
+  two inputs): interpolation +1.0 dB, flicker −5.8; neutral on the other
+  sequences and on the online demo (±0.04 dB), whole-frame cuts identical.
 - **`frame_timing` and `dedup` (opt-in): generated frames follow the game's
   real timing.** A per-frame state pass on the GPU (`frame_state.comp`, no
   read-back before presenting) keeps a content clock: `frame_timing` gives

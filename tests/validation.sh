@@ -20,12 +20,12 @@ bdex_use_layer "$LAYER_DIR"
 trap 'rm -rf "$LOG" "$BDEX_LAYER_XDG"' EXIT
 status=0
 # Second pass per mode: the per-frame state options (content-time t, repeated
-# frames), on a demo that presents every image twice so the repeat path
+# frames, per-region scene cuts), on a demo that presents every image twice so the repeat path
 # (gated flow dispatches, extrapolated real frame) runs too.
 for run in interpolate extrapolate interpolate:state extrapolate:state; do
   mode=${run%%:*}
   if [ "$run" != "$mode" ]; then
-    state="BDEX_FG_FRAME_TIMING=1 BDEX_FG_DEDUP=1"; demo_args="--repeat 2"
+    state="BDEX_FG_FRAME_TIMING=1 BDEX_FG_DEDUP=1 BDEX_FG_SCENE_CUT_LOCAL=1"; demo_args="--repeat 2"
   else
     state=""; demo_args=""
   fi

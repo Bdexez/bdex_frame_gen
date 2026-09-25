@@ -8,6 +8,9 @@ Each sequence isolates one regime that the demo does not cover well:
             bias makes the matcher give up)
   subpixel  the same kind of texture panning 3.25 px/frame (sub-pixel motion)
   fade      a slow pan while the brightness fades out by 4 %/frame
+  popup     the HUD scene's pan with an opaque menu panel (a quarter of the
+            screen) opening and closing every 4 frames, between two inputs:
+            a scene cut confined to part of the screen
 Usage: make_corpus.py <out_dir> [--width W --height H --frames N]
 The default size is small enough for CI on a software Vulkan driver.
 """
@@ -72,6 +75,23 @@ def hud(out, w, h, n, seed):
         im.save(out / f"f{i:04d}.ppm")
 
 
+def popup(out, w, h, n, seed):
+    rng = np.random.default_rng(seed)
+    speed = max(1, round(9 * w / 640))
+    tex = rng.integers(0, 256, (h // 6 + 4, (w + n * speed) // 6 + 4, 3), dtype=np.uint8)
+    tex = np.asarray(Image.fromarray(tex).resize((tex.shape[1] * 6, tex.shape[0] * 6), Image.BICUBIC))
+    k = w / 640
+    for i in range(n):
+        im = Image.fromarray(np.ascontiguousarray(tex[:h, i * speed:i * speed + w]))
+        if ((i + 1) // 4) % 2 == 1:  # open on frames 3-6, 11-14, ...: always between two x2 inputs
+            d = ImageDraw.Draw(im)
+            box = [int(0.25 * w), int(0.2 * h), int(0.7 * w), int(0.75 * h)]
+            d.rectangle(box, fill=(24, 28, 40), outline=(200, 200, 220), width=3)
+            for j, line in enumerate(("PAUSED", "Resume", "Options", "Quit")):
+                d.text((box[0] + int(20 * k), box[1] + int((16 + 24 * j) * k)), line, fill=(230, 230, 230))
+        im.save(out / f"f{i:04d}.ppm")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("out")
@@ -84,7 +104,8 @@ def main():
     for name, make in (("hud", lambda d: hud(d, w, h, n, 3)),
                        ("pan", lambda d: pan(d, w, h, n, max(2, round(16 * w / 960)), 11)),
                        ("subpixel", lambda d: subpixel(d, w, h, n, 13)),
-                       ("fade", lambda d: pan(d, w, h, n, max(1, round(8 * w / 960)), 17, lambda i: 1.0 - 0.04 * i))):
+                       ("fade", lambda d: pan(d, w, h, n, max(1, round(8 * w / 960)), 17, lambda i: 1.0 - 0.04 * i)),
+                       ("popup", lambda d: popup(d, w, h, n, 19))):
         d = root / name
         d.mkdir(parents=True, exist_ok=True)
         make(d)
