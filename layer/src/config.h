@@ -63,6 +63,7 @@ struct Config {
     bool  temporalPrediction = false; // coarsest matching level searches around the previous frame pair's motion instead of zero, so sustained fast pans are followed beyond the pyramid's range (opt-in; off = bit-for-bit)
     bool  extrapolateSplat = false; // extrapolation: forward-splat the current frame, backward warp only where nothing lands (opt-in)
     float flowTemporal  = 0.0f;   // temporal stabilisation of the finest flow: keep the previous pair's vector where it matches as well (tolerance; 0 = off, bit-for-bit)
+    float upscaleTemporal = 0.0f; // render_scale < 1 with generation: history weight of the flow-guided temporal upscaling (0 = spatial only, bit-for-bit; read at start-up)
     bool  onlineTune    = false;  // per-game choice of the opt-in flow options from an online self-evaluation (opt-in, read at start-up; decisions cached per game)
     std::string tuneName;         // the game's name for the online_tune cache (set by load: the extra process, else this process)
     float extrapolateAccel = 0.0f; // extrapolation: weight of a second-order (acceleration) term from the previous pair's motion (0 = constant velocity, bit-for-bit)

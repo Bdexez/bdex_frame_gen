@@ -23,6 +23,7 @@ struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t has
 struct SizePC { int32_t size[2]; };
 struct ReducePC { int32_t size[2]; int32_t tiles; };
 struct TemporalPC { int32_t size[2]; int32_t luma[2]; int32_t block; float strength; };
+struct TaaPC { int32_t outSize[2]; int32_t srcSize[2]; float flowInvSize[2]; float flowScale; float weight; float cutLow; float cutHigh; int32_t filterMode; int32_t hasHistory; int32_t useDup; };
 struct SelfEvalPC { int32_t size[2]; float flowExtent[2]; int32_t slot; int32_t step; };
 
 // Per game and mode (the decisions differ between interpolation and
@@ -118,6 +119,12 @@ FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, Vk
     // when the HUD must be drawn on it, or when a repeated frame may have to
     // be replaced by an extrapolated one (otherwise it is copied straight).
     packReal_ = upscaling_ || hudMode_ > 0 || dupReal_;
+    // Temporal upscaling needs the flow (frame generation) and a filterable
+    // rgba16f history.
+    taa_ = upscaling_ && outputs_ > 0 && (*cfgp_).upscaleTemporal > 0.f &&
+           dev.formatSupports(VK_FORMAT_R16G16B16A16_SFLOAT,
+                              VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+                                  VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT);
     // The CAS pass needs a linear rgba16f intermediate it can both write and
     // sample with filtering; skip sharpening if the driver cannot provide it.
     sharpen_ = upscaling_ && (*cfgp_).sharpness > 0.f &&
@@ -228,6 +235,7 @@ void FrameGen::createPipelines() {
         if (chroma_) downChroma_ = makePass(downsample_chroma_comp, downsample_chroma_comp_size, {CIS, SI});
         temporal_ = makePass(flow_temporal_comp, flow_temporal_comp_size, {SI, SI, CIS, CIS, CIS});
         if (tune_) selfEval_ = makePass(self_eval_comp, self_eval_comp_size, {CIS, CIS, CIS, SB});
+        if (taa_) taaPass_ = makePass(upscale_temporal_comp, upscale_temporal_comp_size, {CIS, CIS, CIS, SI, SB, CIS});
     }
     if (packReal_) {
         if (sharpen_)       upscale_ = makePass(upscale_comp_sharp, upscale_comp_sharp_size, {CIS, SI});
@@ -293,6 +301,10 @@ void FrameGen::createResources() {
             sharp_.push_back(dev_.createImage(VK_FORMAT_R16G16B16A16_SFLOAT, displayExtent_, sharpUsage, true));
         sharpReal_ = dev_.createImage(VK_FORMAT_R16G16B16A16_SFLOAT, displayExtent_, sharpUsage, true);
     }
+    if (taa_)
+        for (auto& h : taaHist_)
+            h = dev_.createImage(VK_FORMAT_R16G16B16A16_SFLOAT, displayExtent_,
+                                 VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, true);
     if (outputs_ > 0) {
         stateBuf_ = dev_.createBuffer(kStateSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                                                       VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
@@ -368,6 +380,7 @@ void FrameGen::createResources() {
         if (packReal_) add(outReal_);
         for (auto& s : sharp_) add(s);
         if (sharpen_) add(sharpReal_);
+        if (taa_) for (auto& h : taaHist_) add(h);
         dev_.vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
                                    nullptr, static_cast<uint32_t>(barriers.size()), barriers.data());
@@ -432,12 +445,20 @@ void FrameGen::createDescriptors() {
     const uint32_t nCIS = gen * (2 * N + 2 * L + 4 * L * 4 + 5 * nInterp + 3 + 2 + 6 + 6) + 5 * nReal + nChroma + up + cas;  // + splat flows, state lumas, temporal
     const uint32_t nSI = gen * (2 * N + 2 * L + 4 * L * 4 + 2 * L * 2 + 4 * L * 5 + 1 + nInterp * 2 + 1 + 4) + 2 * nReal + nChroma + up + cas;  // interp + splat map + temporal
     const uint32_t nSB = gen * (1 + nInterp + 1 + 1 + 2) + nReal;  // reduce, interp, splat, state, self-eval
+    // upscale_temporal: 2N accumulation sets (4 samplers, the history, the
+    // state), 2 output sets, 2 * O synthesis sets sampling the history.
+    const uint32_t tN = taa_ ? 2 * N : 0, tO = taa_ ? 2 * O : 0, tU = taa_ ? 2 : 0;
     std::vector<VkDescriptorPoolSize> sizes;
     if (nCIS) sizes.push_back({VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nCIS});
     if (nSI) sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nSI});
     if (nSB) sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nSB});
     VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    pi.maxSets = nSets;
+    for (auto& sz : sizes) {
+        if (sz.type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) sz.descriptorCount += 4 * tN + tU + 5 * tO;
+        if (sz.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) sz.descriptorCount += tN + tU + 2 * tO;
+        if (sz.type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) sz.descriptorCount += tN + tO;
+    }
+    pi.maxSets = nSets + tN + tU + tO;
     pi.poolSizeCount = static_cast<uint32_t>(sizes.size());
     pi.pPoolSizes = sizes.data();
     VK_CHECK(dev_.vt.CreateDescriptorPool(dev_.device, &pi, nullptr, &pool_));
@@ -451,6 +472,36 @@ void FrameGen::createDescriptors() {
             writeImage(s, 0, CIS, sources_[n].view);
             writeImage(s, 1, SI, (sharpen_ ? sharpReal_ : outReal_).view);
             dsUpscale_.push_back(s);
+        }
+    }
+    if (taa_) {
+        for (uint32_t n = 0; n < N; ++n)
+            for (uint32_t h = 0; h < 2; ++h) {
+                VkDescriptorSet s = allocSet(taaPass_.setLayout);
+                writeImage(s, 0, CIS, sources_[n].view);
+                writeImage(s, 1, CIS, taaHist_[1 - h].view);
+                writeImage(s, 2, CIS, levels_v_[0].flowFine[1].view);
+                writeImage(s, 3, SI, taaHist_[h].view);
+                writeBuffer(s, 4, stateBuf_.buffer);
+                writeImage(s, 5, CIS, levels_v_[0].flowFine[0].view);
+                dsTaa_.push_back(s);
+            }
+        for (uint32_t h = 0; h < 2; ++h) {
+            dsUpscaleTaa_[h] = allocSet(upscale_.setLayout);
+            writeImage(dsUpscaleTaa_[h], 0, CIS, taaHist_[h].view);
+            writeImage(dsUpscaleTaa_[h], 1, SI, (sharpen_ ? sharpReal_ : outReal_).view);
+            for (uint32_t o = 0; o < O; ++o) {
+                VkDescriptorSet s = allocSet(interp_.setLayout);
+                writeImage(s, 0, CIS, taaHist_[1 - h].view);
+                writeImage(s, 1, CIS, taaHist_[h].view);
+                writeImage(s, 2, CIS, levels_v_[0].flowFine[0].view);
+                writeImage(s, 3, CIS, levels_v_[0].flowFine[1].view);
+                writeImage(s, 4, SI, (sharpen_ ? sharp_[o] : out_[o]).view);
+                writeBuffer(s, 5, stateBuf_.buffer);
+                writeImage(s, 6, SI, splatMap_.view);
+                writeImage(s, 7, CIS, prevBwd_.view);
+                dsInterpTaa_.push_back(s);
+            }
         }
     }
     if (sharpen_) {
@@ -595,7 +646,7 @@ void FrameGen::destroyAll() {
     VkDevice d = dev_.device;
     if (pool_) vt.DestroyDescriptorPool(d, pool_, nullptr);
     pool_ = VK_NULL_HANDLE;
-    for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_, &splat_, &frameState_, &downChroma_, &temporal_, &selfEval_}) {
+    for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_, &splat_, &frameState_, &downChroma_, &temporal_, &selfEval_, &taaPass_}) {
         if (p->pipeline) vt.DestroyPipeline(d, p->pipeline, nullptr);
         if (p->layout) vt.DestroyPipelineLayout(d, p->layout, nullptr);
         if (p->setLayout) vt.DestroyDescriptorSetLayout(d, p->setLayout, nullptr);
@@ -626,6 +677,8 @@ void FrameGen::destroyAll() {
     sharp_.clear();
     if (sharpReal_.image) dev_.destroyImage(sharpReal_);
     dev_.destroyBuffer(stateBuf_);
+    for (auto& h : taaHist_)
+        if (h.image) dev_.destroyImage(h);
     if (evalMapped_) vt.UnmapMemory(d, evalBuf_.memory);
     evalMapped_ = nullptr;
     dev_.destroyBuffer(evalBuf_);
@@ -760,6 +813,7 @@ void FrameGen::memoryBarrier(VkCommandBuffer cmd) {
 }
 
 void FrameGen::recordAcquireSources(VkCommandBuffer cmd, int prev, int cur) {
+    ++frame_;  // one call per recorded frame, generating or not
     VkImageMemoryBarrier b[2];
     uint32_t n = 0;
     for (int idx : {prev, cur}) {
@@ -954,6 +1008,7 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
     }
     const Config cfg = effectiveConfig();
     flowThisFrame_ = true;
+    flowFrame_ = frame_;
     // extrapolate_accel: keep the previous pair's finest backward flow before
     // this frame overwrites it (on a repeat, dedup keeps the flow, so the
     // copy equals it and the acceleration is zero).
@@ -1056,8 +1111,15 @@ void FrameGen::copyToPresent(VkCommandBuffer cmd, VkImage src, VkImageLayout src
 
 void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cur, float t, uint32_t output) {
     const uint32_t N = static_cast<uint32_t>(sources_.size());
-    recordSynthesis(cmd, dsInterp_[(prev * N + cur) * outputs_ + output], t, timingActive_ ? int32_t(output) + 1 : 0,
-                    false);
+    VkDescriptorSet set = dsInterp_[(prev * N + cur) * outputs_ + output];
+    if (taa_) {
+        // Synthesise from the accumulated history of both frames, so the
+        // generated frames match the real ones (else they alternate between
+        // accumulated and plain upscale).
+        recordTemporalUpscale(cmd, cur);
+        if (taaPrevValid_) set = dsInterpTaa_[taaH_ * outputs_ + output];
+    }
+    recordSynthesis(cmd, set, t, timingActive_ ? int32_t(output) + 1 : 0, false);
     if (sharpen_) recordCas(cmd, dsCas_[output]);  // sharp_[output] -> out_[output]
 }
 
@@ -1119,15 +1181,44 @@ void FrameGen::recordCopyOutput(VkCommandBuffer cmd, uint32_t output, VkImage ds
     copyToPresent(cmd, out_[output].image, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, dst);
 }
 
+void FrameGen::recordTemporalUpscale(VkCommandBuffer cmd, uint32_t cur) {
+    if (taaFrame_ == frame_) return;  // once per frame (synthesis or real output first)
+    auto& vt = dev_.vt;
+    const Config cfg = effectiveConfig();
+    taaPrevValid_ = taaFrame_ + 1 == frame_;
+    const bool history = taaPrevValid_ && flowFrame_ == frame_;
+    taaH_ = taaFrame_ == ~0ull ? 0 : 1 - taaH_;
+    taaFrame_ = frame_;
+    const Level& fine = levels_v_[0];
+    const float sx = float(displayExtent_.width) / float(extent_.width);
+    const float sy = float(displayExtent_.height) / float(extent_.height);
+    const float blk = float(fine.refined ? kFineBlock : kBlockSize);
+    TaaPC pc{{(int32_t)displayExtent_.width, (int32_t)displayExtent_.height},
+             {(int32_t)extent_.width, (int32_t)extent_.height},
+             {1.f / (fine.fine.width * blk * flowScale_ * sx), 1.f / (fine.fine.height * blk * flowScale_ * sy)},
+             flowScale_ * sx, cfg.upscaleTemporal, cfg.sceneCutLow, cfg.sceneCutHigh,
+             std::clamp(cfg.upscaleFilter, 0, 2), history ? 1 : 0, timingActive_ && dedup_ ? 1 : 0};
+    vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, taaPass_.pipeline);
+    vt.CmdPushConstants(cmd, taaPass_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+    vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, taaPass_.layout, 0, 1, &dsTaa_[cur * 2 + taaH_], 0, nullptr);
+    vt.CmdDispatch(cmd, divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), 1);
+    memoryBarrier(cmd);
+}
+
 void FrameGen::recordUpscaleReal(VkCommandBuffer cmd, uint32_t cur, int prev) {
     auto& vt = dev_.vt;
+    // With upscale_temporal the real frame is the accumulated history, only
+    // packed (and given the HUD) at 1:1.
+    if (taa_) recordTemporalUpscale(cmd, cur);
+    const VkExtent2D src = taa_ ? displayExtent_ : extent_;
     vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, upscale_.pipeline);
     UpscalePC pc{{(int32_t)displayExtent_.width, (int32_t)displayExtent_.height},
-                 {(int32_t)extent_.width, (int32_t)extent_.height},
+                 {(int32_t)src.width, (int32_t)src.height},
                  enc_.encoding, std::clamp((*cfgp_).upscaleFilter, 0, 2),
                  hudMode_, hudGame_, hudOut_, hudLow1_, hudLow01_, hudLatency_};
     vt.CmdPushConstants(cmd, upscale_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
-    vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, upscale_.layout, 0, 1, &dsUpscale_[cur], 0, nullptr);
+    vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, upscale_.layout, 0, 1,
+                             taa_ ? &dsUpscaleTaa_[taaH_] : &dsUpscale_[cur], 0, nullptr);
     vt.CmdDispatch(cmd, divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), 1);
     // Order the CAS pass / the worker's copy after this write.
     memoryBarrier(cmd);

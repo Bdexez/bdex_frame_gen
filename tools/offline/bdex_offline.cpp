@@ -10,7 +10,7 @@
 // compositor gives the window, and any recorded game becomes a test scene.
 //
 // Usage: bdex_offline <in_dir> <out_dir> [--multiplier N] [--format F] [--colorspace C] [--render-scale S]
-//                     [--gpu I] [--max-inputs N] [--jitter J] [--dup N] [--spacing S] [--seed N] [--verbose]
+//                     [--gpu I] [--max-inputs N] [--jitter J] [--dup N] [--spacing S] [--seed N] [--verbose] [--score-real]
 //   --format        swapchain format the engine sees: rgba8 (default), bgra8,
 //                   srgb (R8G8B8A8_SRGB), rgb10 (A2B10G10R10), rgba16f —
 //                   exercises every output encoding (--srgb = --format srgb)
@@ -50,6 +50,8 @@
 // position i (1..multiplier-1), plus manifest.txt with one line per generated
 // frame: "<generated file> <ground-truth file> <t> <previous input> <current input>".
 // --verbose prints the engine's per-frame state (repeat flag, t of each slot).
+// --score-real lists the real frames in the manifest too, as the engine
+// outputs them (upscaled with --render-scale): scores the upscaler.
 // --bench N repeats the flow N times per input, back to back (with
 // temporal_prediction or accel the repetitions differ slightly).
 // BDEX_FG_PROFILE=1 prints the mean GPU time per stage (analysis, flow,
@@ -211,7 +213,7 @@ int main(int argc, char** argv) {
     int mult = 2, gpu = -1, maxInputs = 0, dupCount = 1;
     double jitter = 0.0, spacing = 0.0;
     uint64_t seed = 1;
-    bool verbose = false, steadyContent = false;
+    bool verbose = false, steadyContent = false, scoreReal = false;
     int benchReps = 1;
     bool hudCounter = false, refreshKnown = false;
     double refreshHz = 0.0;
@@ -231,6 +233,7 @@ int main(int argc, char** argv) {
         else if (a == "--spacing" && i + 1 < argc) spacing = atof(argv[++i]);
         else if (a == "--seed" && i + 1 < argc) seed = strtoull(argv[++i], nullptr, 10);
         else if (a == "--verbose") verbose = true;
+        else if (a == "--score-real") scoreReal = true;
         else if (a == "--steady-content") steadyContent = true;
         else if (a == "--bench" && i + 1 < argc) benchReps = std::max(1, atoi(argv[++i]));
         else if (a == "--hud-counter") hudCounter = true;
@@ -485,7 +488,7 @@ int main(int argc, char** argv) {
                         timing.displayMs[i - 1] = float(at[extrap ? i : i - 1] * msPerFrame);
                 }
             }
-            const bool dumpReal = schedule && fg.packReal();
+            const bool dumpReal = (schedule || scoreReal) && fg.packReal();
             dev.immediate([&](VkCommandBuffer cmd) {
                 // Upload into the history image and hand it over the way a
                 // game does: in PRESENT_SRC.
@@ -569,7 +572,7 @@ int main(int argc, char** argv) {
                              << (extrap ? 1.f : 0.f) + float(i) / mult << ' ' << prevPath << ' ' << curPath << '\n';
                 }
                 size_t gt;
-                if (schedule && truth(now, gt)) {
+                if ((schedule || scoreReal) && truth(now, gt)) {
                     // The real frame (content time `now` in both display
                     // models); with dedup in extrapolation a repeat is
                     // replaced by an extrapolated frame, so score what the

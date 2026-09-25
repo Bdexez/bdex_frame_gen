@@ -267,6 +267,7 @@ const ExtraOpt kExtra[] = {
     {"chroma_weight", L"Couleur dans la recherche du mouvement (0–8, 1 conseillé)", kNumber, "0"},
     {"scene_cut_local", L"Coupure de scène par zone (menus, incrustations)", kCheck, "0"},
     {nullptr, L"Expérimental", kCheck, ""},
+    {"upscale_temporal", L"Upscaling temporel (0–0,95, 0,05 conseillé)", kNumber, "0"},
     {"frame_timing", L"Suivre le temps réel des images du jeu (saccades)", kCheck, "0"},
     {"dedup", L"Détecter les images répétées (cinématiques 30 i/s)", kCheck, "0"},
     {"extrapolate_accel", L"Extrapolation : accélération (0–1)", kNumber, "0"},

@@ -155,6 +155,11 @@ SECTIONS = [
              0.0, 0.50, 0.01, 2, 0.09),
     ]),
     ("experimental", "Expérimental", "Options en cours d'évaluation", True, [
+        spin("upscale_temporal", "Upscaling temporel",
+             "Avec une échelle de rendu < 1 et la génération active : les images générées sont calculées à "
+             "partir des images réelles déjà upscalées (plus nettes), et l'upscale accumule un peu l'image "
+             "précédente le long du mouvement. 0 = désactivé ; 0,05 conseillé (au-delà de 0,1 l'accumulation "
+             "floute, faute de jitter du jeu). Pris en compte au lancement du jeu.", 0.0, 0.95, 0.05, 2, 0.0),
         switch("extrapolate_splat", "Extrapolation par projection",
                "En mode extrapolation : projette les pixels vers leur position future (moins d'images "
                "doubles et de bavures), ~0,8 ms de plus."),

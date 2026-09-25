@@ -60,8 +60,12 @@ def luma(img):
 
 
 def box(img, r):
-    """Mean over (2r)x(2r) windows, same size (edges clamped), via an integral image."""
-    p = np.pad(img, ((r, r), (r, r)), mode="edge")
+    """Mean over (2r)x(2r) windows, same size (edges clamped), via an integral image.
+
+    Summed in float64: the integral of squared 8-bit values reaches ~1e11 on
+    a 2 Mpx frame, where float32 keeps 4 significant digits and the window
+    differences (the local variances of SSIM) drown in rounding noise."""
+    p = np.pad(img.astype(np.float64), ((r, r), (r, r)), mode="edge")
     c = np.pad(p.cumsum(0).cumsum(1), ((1, 0), (1, 0)))
     h, w = img.shape
     n = 2 * r
