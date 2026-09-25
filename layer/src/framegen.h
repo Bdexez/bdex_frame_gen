@@ -1,4 +1,5 @@
 #pragma once
+#include "descriptor_planner.h"
 #include "device.h"
 #include "format.h"
 
@@ -204,7 +205,8 @@ private:
     AllocatedBuffer costReadback_;
     void* costMapped_ = nullptr;
     VkSampler sampler_ = VK_NULL_HANDLE;
-    VkDescriptorPool pool_ = VK_NULL_HANDLE;
+    std::vector<VkDescriptorPool> pools_;  // opened as allocSet needs them (see DescriptorPlanner)
+    DescriptorPlanner planner_;
 
     Pass downsample_, blockMatch_, smooth_, refine_, reduce_, interp_, upscale_, cas_, splat_, frameState_, downChroma_,
         temporal_;
