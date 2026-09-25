@@ -286,7 +286,8 @@ réintroduire) :
   `--format`, `--render-scale`) + `eval_sequence.py` (PSNR global/mouvement/
   arêtes, SSIM, scintillement, références répétition/fondu, `--variant`,
   `--json`). Reproduit exactement les frames du layer en ligne.
-- **Tests ctest** : `matcher` (vrai shader vs modèle C++ du départage ; attrape
+- **Tests ctest** : `determinism` (chaque option exécutée deux fois, images
+  identiques ; une nouvelle option doit y être ajoutée), `matcher` (vrai shader vs modèle C++ du départage ; attrape
   0549e44), `offline`, `corpus` (références `tests/corpus_reference.json`,
   `--update` après un changement voulu), `formats`, `validation` (Khronos +
   sync), plus le job CI `sanitizers` (ASan+UBSan, TSan).

@@ -40,6 +40,9 @@ if(Python3_Interpreter_FOUND)
       # Every output encoding (8/10-bit, sRGB, FP16) and the upscaling path.
       add_test(NAME formats COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_formats.py" "${CMAKE_BINARY_DIR}")
       set_tests_properties(formats PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+      # Every option gives the same frames twice (races, out-of-bounds reads).
+      add_test(NAME determinism COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_determinism.py" "${CMAKE_BINARY_DIR}")
+      set_tests_properties(determinism PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)
     endif()
   endif()
   if(TARGET bdex_offline)
