@@ -47,6 +47,15 @@ essai sur de vrais jeux :
 - Mode capture Windows : `frame_timing`/`dedup` branchés (non compilé
   localement, la CI le vérifiera au prochain push).
 
+## Fait le 2026-09-25 — à vérifier sur du matériel
+
+- [ ] `present_feedback` sur un écran à **fréquence fixe** (X11 sans
+  compositeur, ou session DRM/gamescope) : le poste de dev (Hyprland, VRR)
+  ne montre pas de grille. Vérifier dans les stats « display NNN Hz » puis
+  `target_fps = auto`.
+- [ ] Capture Windows en HDR sur un écran HDR (log `colour: HDR`).
+- [ ] CI Windows après push : `capture.cpp` (WinRT) n'a pas été compilé ici.
+
 ## Qualité de l'image
 
 - [x] **`zero_bias` proportionnel au contraste** — fait : `zero_bias_contrast`

@@ -281,6 +281,42 @@ x2/x3/x4), sauf le correctif HDR (les chemins SDR restent identiques).
   ligne (copier `~/.cache/bdex-eval/gt/*real*` en `fNNNN.ppm`) sont plus
   rapides et reproductibles pour itérer.
 
+### Session 2026-09-25 — huit axes de plus, rendus génériques
+
+- **Matcher** : sortie anticipée des blocs statiques (bit à bit, −25 à
+  −38 % du temps de flow sur la démo) ; `rot_weight` lisait hors de sa
+  tuile (déplacement absolu vs tuile centrée sur `base`, et candidat zéro
+  hors fenêtre) → non déterministe, corrigé ; `chroma_weight` refuse un
+  challenger loin du mouvement de la paire précédente.
+- **Profilage** : `bdex_offline` + `BDEX_FG_PROFILE=1` et `--bench N`
+  (flow répété, GPU à fréquence stable). Mesuré : lissage + barrière ≈ 0 ms,
+  flow en demi-précision inutile (textures ~32 k texels) → non faits.
+- **Extrapolation** : la synthèse est soumise par le worker *après* la
+  copie/présentation de la frame réelle quand celle-ci est copiée directement
+  (`Job::synthSlot`, `submitDeferredSynthesis`) : 3,5 → 1,5 ms (balanced).
+- **`dedup` partiel** : grille 8×8 de pixels différents (`tileDiff`) ;
+  répétition si ≤ 7 tuiles changées juste après ≥ 32 (HUD 60 i/s sur monde
+  30 i/s). `bdex_offline --hud-counter`.
+- **Retour d'affichage** (`present_feedback`, défaut 1) : la couche active
+  `present_id`/`present_wait` pour elle seule si supportés (réessai sans),
+  thread `feedbackLoop` (pause pendant `followSurface`, arrêt avant
+  destruction), `DisplayClock` (testé) pour la grille de rafraîchissement.
+  Grille valide → pacing calé (0,3 période avant le vblank), `t` sur
+  l'affichage prédit (`FrameTiming::displayMs`, `kStateDisplay`, défaut),
+  `target_fps`/`fps_limit = auto`. Poste de dev (Hyprland) : pas de grille
+  (VRR / compositeur) → rien ne change. `bdex_offline --refresh HZ
+  [--refresh-known]` simule un écran fixe : +2 à +15 dB.
+- **Capture Windows HDR** (`capture_hdr`, auto) : scRGB FP16 de bout en bout
+  si l'écran du jeu est en HDR (DXGI G2084/P2020) et que import FP16 +
+  surface scRGB existent ; sinon SDR. Syntaxe vérifiée via MinGW (Docker)
+  sauf `capture.cpp` (C++/WinRT, CI Windows seulement).
+- **Threads** : chaque swapchain a ses propres pools de commandes (un par
+  thread) — le pool unique du device était utilisé par le thread du jeu *et*
+  le worker (et crashait le pilote à deux swapchains) ; config en instantané
+  par swapchain (`snapshotConfig`), le worker ne lit que le `Job`. Test
+  `multithread_config` (deux files requises, sinon 77 — c'est le cas sous
+  lavapipe). TSan local inutilisable avec le pilote NVIDIA (SEGV interne).
+
 ### CI Linux — pièges (2026-09-24)
 
 - Le loader d'Ubuntu 24.04 (1.3.275) **ignore `VK_IMPLICIT_LAYER_PATH`** (et
