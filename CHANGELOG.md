@@ -126,6 +126,19 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed (2026-09-25)
 
+- **Option registry.** The plain bool / int / float options are declared
+  once, in a table in `config.cpp` (key, alias, range, live-reloadable,
+  `online_tune` candidate and trial value): `Config::apply`,
+  `Config::applyLive` and the `online_tune` candidates are driven by it
+  instead of ~50 hand-written branches, a copy list and a separate
+  candidate list in `framegen.cpp`. `Config::optionKeys()` and
+  `bdex_offline --list-options [--canonical]` list every key. Parsing and
+  output unchanged (byte-identical).
+- **`option_keys` test**: the GTK panel, the Windows launcher and the README
+  option table may only name keys the engine understands, and the README
+  must document every one; ten options found undocumented
+  (`SMOOTHNESS`, `ZERO_BIAS`, `GRAD_WEIGHT`, `REFINE_BIAS`, `SYNC_PRESENT`,
+  `HIDE_PRESENT_EXT`, `CAPTURE_HDR`, `FULLRES`, `UPSCALE`, `ENABLED`) now are.
 - **Descriptor pools sized by construction.** `FrameGen` no longer keeps
   hand-written totals of every pass's descriptors (each optional pass had to
   add its sets to three formulas, and an undersized pool failed the

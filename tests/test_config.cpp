@@ -2,6 +2,7 @@
 #include "platform.h"
 #include "test.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -281,4 +282,32 @@ TEST(config_tune_name) {
     // The online_tune cache key: the game a capture runs for, else this process.
     CHECK(Config::load("C:\\Games\\Skyrim.exe").tuneName == "skyrim");
     CHECK(!Config::load().tuneName.empty());
+}
+
+TEST(config_option_registry) {
+    const auto keys = Config::optionKeys();
+    auto has = [&](const char* k) { return std::find(keys.begin(), keys.end(), k) != keys.end(); };
+    CHECK(has("flow_temporal") && has("sharpen") && has("present_mode") && has("mode"));
+    CHECK(!has("no_such_option"));
+    Config c;
+    CHECK(!c.apply("no_such_option", "1"));
+    // Candidates in trial order; sub-pixel only in extrapolation.
+    auto cand = c.tuneCandidates();
+    CHECK(cand.size() == 3 && cand[0].first == "zero_bias_contrast" && cand[0].second == "0.1" &&
+          cand[2].first == "flow_temporal");
+    c.extrapolate = true;
+    cand = c.tuneCandidates();
+    CHECK(cand.size() == 4 && cand[2].first == "subpixel");
+}
+
+TEST(config_apply_live_follows_the_registry) {
+    Config c, n;
+    n.zeroBiasContrast = 0.2f;  // live
+    n.frameTiming = true;       // live
+    n.levels = 6;               // sizes resources: not live
+    n.dedup = true;             // not live
+    n.fpsLimit = 50.f;          // live (custom syntax, copied by hand)
+    c.applyLive(n);
+    CHECK(c.zeroBiasContrast == 0.2f && c.frameTiming && c.fpsLimit == 50.f);
+    CHECK(c.levels != 6 && !c.dedup);
 }

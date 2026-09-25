@@ -96,6 +96,144 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
     autoTunedTo = preset;
 }
 
+// ---------------------------------------------------------------------------
+// Option registry: every option that is a plain bool / int / float member,
+// declared once — the parser, the live reload, the online_tune candidates
+// and the list of known keys (Config::optionKeys, checked against the GUI,
+// the launcher and the README by tests/test_option_keys.py) all read it.
+// Options with a syntax of their own (mode, overlay, present_mode, "auto"
+// values...) are parsed in Config::apply and listed in kCustomKeys.
+namespace {
+
+enum class Kind { Bool, Int, Float };
+enum class Tune { Never, Always, Extrapolation };
+constexpr unsigned kLive = 1;  // copied by Config::applyLive (read per frame, sizes nothing)
+
+struct OptionDef {
+    const char* key;
+    const char* alias;
+    Kind kind;
+    bool Config::*b = nullptr;
+    int Config::*i = nullptr;
+    float Config::*f = nullptr;
+    float lo = 0.f, hi = 0.f;
+    unsigned flags = 0;
+    Tune tune = Tune::Never;   // online_tune candidate (a flow option the self-evaluation can rate)
+    const char* trial = nullptr;  // ... with this trial value
+    int tuneOrder = 0;            // ... tried in this order
+};
+
+OptionDef B(const char* k, const char* a, bool Config::*m, unsigned fl = 0, Tune t = Tune::Never,
+            const char* trial = nullptr, int order = 0) {
+    OptionDef d{k, a, Kind::Bool};
+    d.b = m; d.flags = fl; d.tune = t; d.trial = trial; d.tuneOrder = order;
+    return d;
+}
+OptionDef I(const char* k, const char* a, int Config::*m, int lo, int hi, unsigned fl = 0) {
+    OptionDef d{k, a, Kind::Int};
+    d.i = m; d.lo = float(lo); d.hi = float(hi); d.flags = fl;
+    return d;
+}
+OptionDef F(const char* k, const char* a, float Config::*m, float lo, float hi, unsigned fl = 0,
+            Tune t = Tune::Never, const char* trial = nullptr, int order = 0) {
+    OptionDef d{k, a, Kind::Float};
+    d.f = m; d.lo = lo; d.hi = hi; d.flags = fl; d.tune = t; d.trial = trial; d.tuneOrder = order;
+    return d;
+}
+
+const std::vector<OptionDef>& registry() {
+    static const std::vector<OptionDef> defs = {
+    B("enabled", "enable", &Config::enabled),
+    I("multiplier", "mult", &Config::multiplier, 1, 4),
+    I("levels", nullptr, &Config::levels, 1, 6),
+    B("low_latency", "lowlatency", &Config::lowLatency),
+    B("sync_present", "sync", &Config::syncPresent),
+    B("hide_present_ext", nullptr, &Config::hidePresentExt),
+    I("search", "search_radius", &Config::searchRadius, 1, 4),
+    I("search_fine", nullptr, &Config::searchFine, 1, 4),
+    F("render_scale", nullptr, &Config::renderScale, 0.5f, 1.0f),
+    F("sharpness", "sharpen", &Config::sharpness, 0.f, 1.f),
+    B("pacing", nullptr, &Config::pacing),
+    B("present_feedback", nullptr, &Config::presentFeedback),
+    B("async_compute", nullptr, &Config::asyncCompute),
+    I("log", "log_level", &Config::logLevel, 0, 3),
+    F("scene_cut_low", nullptr, &Config::sceneCutLow, 0.f, 1.f, kLive),
+    F("scene_cut_high", nullptr, &Config::sceneCutHigh, 0.f, 1.f, kLive),
+    B("scene_cut_local", nullptr, &Config::sceneCutLocal, kLive),
+    F("smoothness", nullptr, &Config::smoothness, 0.f, 1.f, kLive),
+    F("zero_bias", nullptr, &Config::zeroBias, 0.f, 1.f, kLive),
+    F("zero_bias_contrast", nullptr, &Config::zeroBiasContrast, 0.f, 1.f, kLive, Tune::Always, "0.1", 1),
+    F("grad_weight", nullptr, &Config::gradWeight, 0.f, 8.f, kLive),
+    F("census_weight", nullptr, &Config::censusWeight, 0.f, 8.f, kLive),
+    F("census_margin", nullptr, &Config::censusMargin, 0.f, 1.f, kLive),
+    F("rot_weight", nullptr, &Config::rotWeight, 0.f, 1.f, kLive),
+    F("chroma_weight", nullptr, &Config::chromaWeight, 0.f, 8.f),
+    F("occlusion_strength", nullptr, &Config::occlusionStrength, 0.f, 1.f, kLive),
+    B("temporal_prediction", nullptr, &Config::temporalPrediction, kLive, Tune::Always, "1", 2),
+    B("extrapolate_splat", nullptr, &Config::extrapolateSplat),
+    F("extrapolate_hold", nullptr, &Config::extrapolateHold, 0.f, 1.f, kLive),
+    F("extrapolate_accel", nullptr, &Config::extrapolateAccel, 0.f, 1.f, kLive),
+    F("flow_temporal", nullptr, &Config::flowTemporal, 0.f, 1.f, kLive, Tune::Always, "1", 4),
+    B("online_tune", nullptr, &Config::onlineTune),
+    F("upscale_temporal", nullptr, &Config::upscaleTemporal, 0.f, 0.95f),
+    B("frame_timing", nullptr, &Config::frameTiming, kLive),
+    B("dedup", nullptr, &Config::dedup),
+    B("paused", "pause", &Config::paused, kLive),
+    F("gpu_budget", nullptr, &Config::gpuBudget, 0.f, 1.f),
+    B("pixel_vectors", nullptr, &Config::pixelVectors, kLive),
+    B("subpixel", nullptr, &Config::subpixel, kLive, Tune::Extrapolation, "1", 3),
+    F("static_guard", nullptr, &Config::staticGuard, 0.f, 1.f, kLive),
+    B("refine", nullptr, &Config::refine),
+    B("refine_all", nullptr, &Config::refineAll),
+    I("flow_iterations", nullptr, &Config::flowIterations, 0, 3, kLive),
+    F("refine_bias", nullptr, &Config::refineBias, 0.f, 64.f, kLive),
+    B("stats", nullptr, &Config::stats),
+    B("profile", nullptr, &Config::profile),
+    B("shared_queue", nullptr, &Config::sharedQueue),
+    F("stats_interval", nullptr, &Config::statsInterval, 0.5f, 3600.f),
+    I("dump_frames", nullptr, &Config::dumpFrames, 1, 100000),
+    };
+    return defs;
+}
+
+// Parsed by hand in Config::apply (their own value syntax): key, alias.
+const std::pair<const char*, const char*> kCustomKeys[] = {
+    {"preset", nullptr},      {"fullres", nullptr},    {"flow_scale", nullptr},     {"mode", nullptr},
+    {"upscale", nullptr},     {"overlay", "hud"},      {"upscale_filter", nullptr}, {"capture_hdr", nullptr},
+    {"log_file", nullptr},    {"target_fps", nullptr}, {"fps_limit", "fps_cap"},    {"dump", "dump_dir"},
+    {"present_mode", nullptr}, {"debug", nullptr}};
+
+const OptionDef* findOption(const std::string& key) {
+    for (const auto& d : registry())
+        if (key == d.key || (d.alias && key == d.alias)) return &d;
+    return nullptr;
+}
+
+} // namespace
+
+std::vector<std::string> Config::optionKeys(bool aliases) {
+    std::vector<std::string> keys;
+    for (const auto& d : registry()) {
+        keys.push_back(d.key);
+        if (aliases && d.alias) keys.push_back(d.alias);
+    }
+    for (const auto& [k, a] : kCustomKeys) {
+        keys.push_back(k);
+        if (aliases && a) keys.push_back(a);
+    }
+    return keys;
+}
+
+std::vector<std::pair<std::string, std::string>> Config::tuneCandidates() const {
+    std::vector<const OptionDef*> defs;
+    for (const auto& d : registry())
+        if (d.tune == Tune::Always || (d.tune == Tune::Extrapolation && extrapolate)) defs.push_back(&d);
+    std::stable_sort(defs.begin(), defs.end(), [](const OptionDef* a, const OptionDef* b) { return a->tuneOrder < b->tuneOrder; });
+    std::vector<std::pair<std::string, std::string>> out;
+    for (const OptionDef* d : defs) out.emplace_back(d->key, d->trial);
+    return out;
+}
+
 bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     const std::string key = lower(trim(rawKey));
     const std::string value = trim(rawValue);
@@ -104,9 +242,13 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
                           "refine", "refine_all", "flow_iterations"})
         if (key == k) { autoTune = false; break; }
     if (key == "preset")                      return applyPreset(value);
-    if (key == "enabled" || key == "enable")  return parseBool(value, enabled);
-    if (key == "multiplier" || key == "mult") return parseInt(value, multiplier, 1, 4);
-    if (key == "levels")                      return parseInt(value, levels, 1, 6);
+    if (const OptionDef* d = findOption(key)) {
+        switch (d->kind) {
+        case Kind::Bool:  return parseBool(value, this->*(d->b));
+        case Kind::Int:   return parseInt(value, this->*(d->i), int(d->lo), int(d->hi));
+        case Kind::Float: return parseFloat(value, this->*(d->f), d->lo, d->hi);
+        }
+    }
     if (key == "fullres")                     { bool b; if (!parseBool(value, b)) return false; flowScale = b ? 1 : 0; return true; }
     if (key == "flow_scale") {
         const std::string v = lower(value);
@@ -116,9 +258,6 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
         flowScale = x;
         return true;
     }
-    if (key == "low_latency" || key == "lowlatency") return parseBool(value, lowLatency);
-    if (key == "sync_present" || key == "sync")      return parseBool(value, syncPresent);
-    if (key == "hide_present_ext")            return parseBool(value, hidePresentExt);
     if (key == "mode") {
         const std::string v = lower(value);
         if (v == "interpolate" || v == "interp") extrapolate = false;
@@ -126,16 +265,12 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
         else return false;
         return true;
     }
-    if (key == "search" || key == "search_radius") return parseInt(value, searchRadius, 1, 4);
-    if (key == "search_fine")                 return parseInt(value, searchFine, 1, 4);
-    if (key == "render_scale")                return parseFloat(value, renderScale, 0.5f, 1.0f);
     if (key == "upscale") {  // display / render ratio, e.g. 1.5 -> renderScale 0.667
         float ratio;
         if (!parseFloat(value, ratio, 1.0f, 2.0f)) return false;
         renderScale = 1.0f / ratio;
         return true;
     }
-    if (key == "sharpness" || key == "sharpen") return parseFloat(value, sharpness, 0.f, 1.f);
     if (key == "overlay" || key == "hud") {
         const std::string v = lower(value);
         if (v == "off" || v == "false" || v == "no" || v == "none")        { overlayMode = 0; return true; }
@@ -154,9 +289,6 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
         else return false;
         return true;
     }
-    if (key == "pacing")                      return parseBool(value, pacing);
-    if (key == "present_feedback")            return parseBool(value, presentFeedback);
-    if (key == "async_compute")               return parseBool(value, asyncCompute);
     if (key == "capture_hdr") {
         if (lower(value) == "auto") { captureHdr = -1; return true; }
         bool b;
@@ -164,30 +296,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
         captureHdr = b ? 1 : 0;
         return true;
     }
-    if (key == "log" || key == "log_level")   return parseInt(value, logLevel, 0, 3);
     if (key == "log_file")                    { logFile = platformExpandPath(value); return true; }
-    if (key == "scene_cut_low")               return parseFloat(value, sceneCutLow, 0.f, 1.f);
-    if (key == "scene_cut_high")              return parseFloat(value, sceneCutHigh, 0.f, 1.f);
-    if (key == "scene_cut_local")             return parseBool(value, sceneCutLocal);
-    if (key == "smoothness")                  return parseFloat(value, smoothness, 0.f, 1.f);
-    if (key == "zero_bias")                   return parseFloat(value, zeroBias, 0.f, 1.f);
-    if (key == "zero_bias_contrast")          return parseFloat(value, zeroBiasContrast, 0.f, 1.f);
-    if (key == "grad_weight")                 return parseFloat(value, gradWeight, 0.f, 8.f);
-    if (key == "census_weight")               return parseFloat(value, censusWeight, 0.f, 8.f);
-    if (key == "census_margin")               return parseFloat(value, censusMargin, 0.f, 1.f);
-    if (key == "rot_weight")                  return parseFloat(value, rotWeight, 0.f, 1.f);
-    if (key == "chroma_weight")               return parseFloat(value, chromaWeight, 0.f, 8.f);
-    if (key == "occlusion_strength")           return parseFloat(value, occlusionStrength, 0.f, 1.f);
-    if (key == "temporal_prediction")          return parseBool(value, temporalPrediction);
-    if (key == "extrapolate_splat")           return parseBool(value, extrapolateSplat);
-    if (key == "extrapolate_hold")            return parseFloat(value, extrapolateHold, 0.f, 1.f);
-    if (key == "extrapolate_accel")           return parseFloat(value, extrapolateAccel, 0.f, 1.f);
-    if (key == "flow_temporal")               return parseFloat(value, flowTemporal, 0.f, 1.f);
-    if (key == "online_tune")                 return parseBool(value, onlineTune);
-    if (key == "upscale_temporal")            return parseFloat(value, upscaleTemporal, 0.f, 0.95f);
-    if (key == "frame_timing")                return parseBool(value, frameTiming);
-    if (key == "dedup")                       return parseBool(value, dedup);
-    if (key == "paused" || key == "pause")    return parseBool(value, paused);
     // "auto" (-1): from the refresh rate the present feedback measures.
     if (key == "target_fps") {
         if (lower(value) == "auto") { targetFps = -1.f; return true; }
@@ -197,20 +306,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
         if (lower(value) == "auto") { fpsLimit = -1.f; return true; }
         return parseFloat(value, fpsLimit, 0.f, 1000.f);
     }
-    if (key == "gpu_budget")                  return parseFloat(value, gpuBudget, 0.f, 1.f);
-    if (key == "pixel_vectors")               return parseBool(value, pixelVectors);
-    if (key == "subpixel")                    return parseBool(value, subpixel);
-    if (key == "static_guard")                return parseFloat(value, staticGuard, 0.f, 1.f);
-    if (key == "refine")                      return parseBool(value, refine);
-    if (key == "refine_all")                  return parseBool(value, refineAll);
-    if (key == "flow_iterations")             return parseInt(value, flowIterations, 0, 3);
-    if (key == "refine_bias")                 return parseFloat(value, refineBias, 0.f, 64.f);
-    if (key == "stats")                       return parseBool(value, stats);
-    if (key == "profile")                     return parseBool(value, profile);
-    if (key == "shared_queue")                return parseBool(value, sharedQueue);
-    if (key == "stats_interval")              return parseFloat(value, statsInterval, 0.5f, 3600.f);
     if (key == "dump" || key == "dump_dir")   { dumpDir = value; return true; }
-    if (key == "dump_frames")                 return parseInt(value, dumpFrames, 1, 100000);
     if (key == "present_mode") {
         const std::string v = lower(value);
         if (v == "auto" || v.empty())               presentMode = -2;
@@ -323,16 +419,15 @@ void Config::applyLive(const Config& n) {
     // resources (multiplier, render scale, levels, flow scale, HUD, formats)
     // or that the presentation worker reads (pacing, present mode) needs a
     // restart. Environment overrides still win, since `n` was loaded with them.
-    paused = n.paused;
-    smoothness = n.smoothness; zeroBias = n.zeroBias; zeroBiasContrast = n.zeroBiasContrast;
-    gradWeight = n.gradWeight; censusWeight = n.censusWeight; censusMargin = n.censusMargin;
-    rotWeight = n.rotWeight; temporalPrediction = n.temporalPrediction; subpixel = n.subpixel;
-    pixelVectors = n.pixelVectors; occlusionStrength = n.occlusionStrength; staticGuard = n.staticGuard;
-    extrapolateHold = n.extrapolateHold; extrapolateAccel = n.extrapolateAccel; flowTemporal = n.flowTemporal; flowIterations = n.flowIterations; refineBias = n.refineBias;
-    sceneCutLow = n.sceneCutLow; sceneCutHigh = n.sceneCutHigh; sceneCutLocal = n.sceneCutLocal;
+    for (const auto& d : registry()) {
+        if (!(d.flags & kLive)) continue;
+        if (d.b) this->*(d.b) = n.*(d.b);
+        if (d.i) this->*(d.i) = n.*(d.i);
+        if (d.f) this->*(d.f) = n.*(d.f);
+    }
     fpsLimit = n.fpsLimit; targetFps = n.targetFps;
     if (gpuBudget > 0.f && n.gpuBudget > 0.f) gpuBudget = n.gpuBudget;  // 0 <-> >0 creates the timestamp queries
-    frameTiming = n.frameTiming;  // dedup sizes the output stage (extrapolation): restart
+    // (dedup sizes the output stage in extrapolation: restart.)
     if (sharpness > 0.f && n.sharpness > 0.f) sharpness = n.sharpness;  // 0 <-> >0 changes the passes
     if (chromaWeight > 0.f && n.chromaWeight > 0.f) chromaWeight = n.chromaWeight;  // likewise (chroma pyramid)
 }
