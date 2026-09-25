@@ -6,6 +6,7 @@
 #pragma once
 #include <windows.h>
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -54,6 +55,11 @@ struct LaunchChoice {
     int   flowIterations = 1;    // flow_iterations
     float sceneCutLow = 0.05f;   // scene_cut_low
     float sceneCutHigh = 0.09f;  // scene_cut_high
+    // The other engine options shown in the launcher's "Options avancées"
+    // column, by config key (kExtra in launcher.cpp). Values are config
+    // strings; an absent key means the default. Persisted to the config file
+    // like the rest, which the capture then loads.
+    std::map<std::string, std::string> extra;
 };
 
 // Runs the launcher modally (its own message loop). `choice` carries both

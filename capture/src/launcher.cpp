@@ -235,7 +235,73 @@ static std::vector<std::pair<std::string, std::string>> readScope(const std::str
 
 // Keys the launcher manages in the global scope; a stale one not present in
 // the new set is removed from the file (preset / present_mode = "auto").
+// The launcher's "Options avancées" column: every engine option that has an
+// effect in the capture app (layer-only ones — game fps limit, dynamic
+// multiplier, pause, present-extension compatibility — do not apply to a
+// captured window). Values are passed to Config::apply through the config
+// file, so the engine reads them exactly as on Linux.
+enum ExtraKind { kCheck, kNumber, kChoice };
+struct ExtraOpt {
+    const char* key;
+    const wchar_t* label;
+    ExtraKind kind;
+    const char* def;                  // config-string default (Config's)
+    const wchar_t* const* choiceLabels = nullptr;
+    const char* const* choiceValues = nullptr;
+    int choices = 0;
+};
+const wchar_t* const kFlowScaleLabels[] = {L"Auto", L"Pleine (1)", L"Moitié (2)", L"Quart (4)"};
+const char* const kFlowScaleValues[] = {"auto", "1", "2", "4"};
+const wchar_t* const kDebugLabels[] = {L"Aucun", L"Flux (mouvement coloré)", L"Écran partagé"};
+const char* const kDebugValues[] = {"none", "flow", "split"};
+// Section headers are entries with a null key.
+const ExtraOpt kExtra[] = {
+    {nullptr, L"Qualité du mouvement", kCheck, ""},
+    {"zero_bias_contrast", L"Stabilité adaptée au contraste (0,1 recommandé)", kNumber, "0"},
+    {"pixel_vectors", L"Contours d'objets (synthèse ~2× plus coûteuse)", kCheck, "0"},
+    {"subpixel", L"Mouvement sous-pixel", kCheck, "0"},
+    {"extrapolate_splat", L"Extrapolation par projection (moins d'images doubles)", kCheck, "0"},
+    {nullptr, L"Expérimental", kCheck, ""},
+    {"static_guard", L"Protection du HUD statique (0–1)", kNumber, "0"},
+    {"temporal_prediction", L"Prédiction temporelle (panoramiques rapides)", kCheck, "0"},
+    {"occlusion_strength", L"Gestion des occlusions (0–1)", kNumber, "0"},
+    {"rot_weight", L"Rotation / zoom (0 ou 1)", kNumber, "0"},
+    {"census_weight", L"Recherche par structure — poids (0–8)", kNumber, "0"},
+    {"census_margin", L"Recherche par structure — seuil (0–1)", kNumber, "0.05"},
+    {"extrapolate_hold", L"Extrapolation : figer les pixels incertains (0–1)", kNumber, "0"},
+    {nullptr, L"Structure du flux (désactive l'auto-réglage)", kCheck, ""},
+    {"flow_scale", L"Résolution du flux", kChoice, "auto", kFlowScaleLabels, kFlowScaleValues, 4},
+    {"levels", L"Niveaux de pyramide (1–6)", kNumber, "4"},
+    {"search_radius", L"Rayon de recherche grossier (1–4)", kNumber, "4"},
+    {"refine", L"Raffinement 4×4", kCheck, "1"},
+    {"refine_all", L"Raffiner tous les niveaux", kCheck, "1"},
+    {"refine_bias", L"Préférence pour le mouvement du bloc (0–5)", kNumber, "0.5"},
+    {nullptr, L"Diagnostic", kCheck, ""},
+    {"debug", L"Mode de débogage", kChoice, "none", kDebugLabels, kDebugValues, 3},
+};
+
+// Canonical config string of an extra option (numbers without trailing zeros,
+// booleans as 0/1, choices lower-case); the default when unparsable.
+static std::string normalizeExtra(const ExtraOpt& o, std::string v) {
+    v = trim(v);
+    for (auto& ch : v) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    if (o.kind == kCheck) return (v == "1" || v == "true" || v == "on" || v == "yes") ? "1" : "0";
+    if (o.kind == kChoice) {
+        for (int i = 0; i < o.choices; ++i)
+            if (v == o.choiceValues[i]) return v;
+        return o.def;
+    }
+    char* end = nullptr;
+    const double d = std::strtod(v.c_str(), &end);
+    if (!end || end == v.c_str()) return o.def;
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%g", d);
+    return buf;
+}
+
 static bool managedKey(const std::string& key) {
+    for (const ExtraOpt& o : kExtra)
+        if (o.key && key == o.key) return true;
     static const char* kManaged[] = {"preset",        "multiplier",  "mode",      "present_mode",
                                      "upscale_filter", "sharpness",  "overlay",   "hud",
                                      "grad_weight",   "smoothness",  "zero_bias", "search_fine",
@@ -376,6 +442,7 @@ struct Ui {
     HWND fifo = nullptr, hud = nullptr;
     HWND grad = nullptr, scLow = nullptr, scHigh = nullptr, smooth = nullptr;
     HWND zbias = nullptr, sfine = nullptr, fiter = nullptr;
+    std::vector<HWND> extra;  // one control per kExtra entry (nullptr for headers)
 };
 
 int sel(HWND combo) {
@@ -470,6 +537,9 @@ void applyScopeToChoice(const std::vector<std::pair<std::string, std::string>>& 
         else if (k == "flow_iterations") c.flowIterations = std::clamp(toI(v, c.flowIterations), 0, 3);
         else if (k == "scene_cut_low") c.sceneCutLow = std::clamp(toF(v, c.sceneCutLow), 0.f, 1.f);
         else if (k == "scene_cut_high") c.sceneCutHigh = std::clamp(toF(v, c.sceneCutHigh), 0.f, 1.f);
+        else
+            for (const ExtraOpt& o : kExtra)
+                if (o.key && k == o.key) c.extra[k] = normalizeExtra(o, v);
     }
 }
 
@@ -515,6 +585,22 @@ void fillFromChoice(Ui& ui) {
     setNum(ui.zbias, c.zeroBias);
     setNum(ui.sfine, c.searchFine);
     setNum(ui.fiter, c.flowIterations);
+    for (size_t i = 0; i < std::size(kExtra); ++i) {
+        const ExtraOpt& o = kExtra[i];
+        if (!o.key || !ui.extra[i]) continue;
+        const auto it = c.extra.find(o.key);
+        const std::string v = it != c.extra.end() ? it->second : o.def;
+        if (o.kind == kCheck) {
+            SendMessageW(ui.extra[i], BM_SETCHECK, v == "1" ? BST_CHECKED : BST_UNCHECKED, 0);
+        } else if (o.kind == kChoice) {
+            int s = 0;
+            for (int k = 0; k < o.choices; ++k)
+                if (v == o.choiceValues[k]) s = k;
+            SendMessageW(ui.extra[i], CB_SETCURSEL, s, 0);
+        } else {
+            SetWindowTextW(ui.extra[i], wideFromAcp(v.c_str()).c_str());
+        }
+    }
     updateEnabled(ui);
 }
 
@@ -546,6 +632,11 @@ void persist(const LaunchChoice& c) {
     addNum("flow_iterations", c.flowIterations, 1);
     addNum("scene_cut_low", c.sceneCutLow, 0.05);
     addNum("scene_cut_high", c.sceneCutHigh, 0.09);
+    for (const ExtraOpt& o : kExtra) {
+        if (!o.key) continue;
+        const auto it = c.extra.find(o.key);
+        if (it != c.extra.end() && it->second != normalizeExtra(o, o.def)) kv.emplace_back(o.key, it->second);
+    }
     // A per-game profile writes into the target's [game] section (Config::load
     // applies it over the globals when bdex_capture runs on that title);
     // otherwise the global [*] scope, as before.
@@ -589,6 +680,23 @@ void gather(Ui& ui) {
     c.zeroBias = std::clamp(readFloat(ui.zbias, 0.002f), 0.f, 1.f);
     c.searchFine = std::clamp(readInt(ui.sfine, 2), 1, 4);
     c.flowIterations = std::clamp(readInt(ui.fiter, 1), 0, 3);
+    for (size_t i = 0; i < std::size(kExtra); ++i) {
+        const ExtraOpt& o = kExtra[i];
+        if (!o.key || !ui.extra[i]) continue;
+        std::string v;
+        if (o.kind == kCheck) {
+            v = SendMessageW(ui.extra[i], BM_GETCHECK, 0, 0) == BST_CHECKED ? "1" : "0";
+        } else if (o.kind == kChoice) {
+            v = o.choiceValues[std::clamp(sel(ui.extra[i]), 0, o.choices - 1)];
+        } else {
+            wchar_t buf[32] = {};
+            GetWindowTextW(ui.extra[i], buf, 32);
+            v = narrow(buf);
+            for (auto& ch : v)
+                if (ch == ',') ch = '.';  // accept a French decimal comma
+        }
+        c.extra[o.key] = normalizeExtra(o, v);
+    }
     c.perGame = SendMessageW(ui.perGame, BM_GETCHECK, 0, 0) == BST_CHECKED;
 }
 
@@ -673,8 +781,37 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         ui->sfine  = advEdit(L"Précision de recherche (1–4)", 722, ID_SFINE, true);
         ui->fiter  = advEdit(L"Itérations de synthèse (0–3)", 748, ID_FITER, true);
 
-        add(L"BUTTON", L"Démarrer", BS_DEFPUSHBUTTON | WS_TABSTOP, 286, 790, 96, 26, IDOK);
-        add(L"BUTTON", L"Quitter", BS_PUSHBUTTON | WS_TABSTOP, 390, 790, 94, 26, IDCANCEL);
+        // Second column: every other engine option (kExtra), section by section.
+        group(L"Options avancées", 496, 8, 472, 770);
+        add(L"STATIC", L"Seules les valeurs modifiées sont enregistrées ; par défaut convient à la plupart des jeux.",
+            SS_LEFT, 508, 26, 452, 16, 0);
+        ui->extra.assign(std::size(kExtra), nullptr);
+        int y = 50;
+        for (size_t i = 0; i < std::size(kExtra); ++i) {
+            const ExtraOpt& o = kExtra[i];
+            const int id = 300 + static_cast<int>(i);
+            if (!o.key) {  // section header
+                y += 6;
+                add(L"STATIC", o.label, SS_LEFT, 508, y, 452, 16, 0);
+                y += 22;
+                continue;
+            }
+            if (o.kind == kCheck) {
+                ui->extra[i] = add(L"BUTTON", o.label, BS_AUTOCHECKBOX | WS_TABSTOP, 520, y, 440, 20, id);
+            } else if (o.kind == kChoice) {
+                add(L"STATIC", o.label, SS_LEFT, 520, y + 3, 250, 16, 0);
+                ui->extra[i] = combo(776, y, 184, id);
+                for (int k = 0; k < o.choices; ++k)
+                    SendMessageW(ui->extra[i], CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(o.choiceLabels[k]));
+            } else {
+                add(L"STATIC", o.label, SS_LEFT, 520, y + 3, 330, 16, 0);
+                ui->extra[i] = add(L"EDIT", nullptr, WS_TABSTOP | WS_BORDER, 870, y, 90, 23, id);
+            }
+            y += 27;
+        }
+
+        add(L"BUTTON", L"Démarrer", BS_DEFPUSHBUTTON | WS_TABSTOP, 770, 790, 96, 26, IDOK);
+        add(L"BUTTON", L"Quitter", BS_PUSHBUTTON | WS_TABSTOP, 874, 790, 94, 26, IDCANCEL);
 
         for (const wchar_t* s : kPresets)
             SendMessageW(ui->preset, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
@@ -748,7 +885,14 @@ bool runLauncher(LaunchChoice& choice) {
         wc.lpszClassName = cls;
         if (!RegisterClassExW(&wc)) return false;
     }
-    RECT client{0, 0, 496, 830};
+    // Prefill the advanced column from the global config scope (what the
+    // capture would load), unless the caller already did.
+    for (const ExtraOpt& o : kExtra)
+        if (o.key && !choice.extra.count(o.key)) {
+            const std::string v = globalConfigValue(o.key);
+            if (!v.empty()) choice.extra[o.key] = normalizeExtra(o, v);
+        }
+    RECT client{0, 0, 980, 830};
     AdjustWindowRect(&client, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, FALSE);
     RECT wa{};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
