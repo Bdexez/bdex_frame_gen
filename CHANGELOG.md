@@ -8,6 +8,19 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-25)
 
+- **`reveal_fill` (opt-in, extrapolation)**: in areas a moving object
+  uncovers, the source search alternates between the object and the
+  background; the pixel now takes the source whose content moves less (the
+  background — the model `extrapolate_splat` already uses), where the
+  trajectory is also inconsistent. Revealed areas +1.9 dB on the new
+  `occlude` corpus scene, pan +1.04, HUD +0.58, swing +0.39; demo −0.33
+  (−0.07 with `extrapolate_splat`). An `online_tune` candidate.
+- Corpus: `occlude` (an object crossing a panning background) with masks
+  of the areas it uncovers or covers; `eval_sequence.py` scores them in an
+  `occl` column for any sequence that ships `occlusion/<frame>.png`. It
+  showed that in interpolation `pixel_vectors` handles occlusions well
+  (+1.3 dB there); a per-trajectory visibility test (a trajectory whose far
+  end is hidden judged by its visible sample) lost 1 dB and was dropped.
 - **`online_tune` tries pairs.** Options measured to pay only together are
   declared as pairs in the registry (`kTunePairs`) and tried as one
   candidate (key `a+b`, value `x+y`, expanded when applied and cached as

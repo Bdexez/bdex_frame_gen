@@ -126,6 +126,9 @@ SECTIONS = [
                "Choisit le mouvement pixel par pixel aux frontières d'objets : moins de bavures, "
                "synthèse ~2× plus coûteuse."),
         switch("subpixel", "Mouvement sous-pixel", "Affine le mouvement au-delà du pixel entier."),
+        switch("reveal_fill", "Extrapolation : zones révélées",
+               "Là où un objet en mouvement découvre le décor, prend le fond plutôt que l'objet (celui des "
+               "deux candidats qui bouge le moins). Gagne sur la plupart des scènes, perd un peu sur la démo."),
         spin("hud_mask", "Masque de HUD appris",
              "Apprend, pendant les mouvements de caméra, les pixels qui ne changent jamais (HUD, mini-carte, "
              "réticule) et les garde tels quels dans les images générées. Nombre d'images stables requis ; "

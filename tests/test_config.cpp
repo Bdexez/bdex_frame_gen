@@ -300,8 +300,9 @@ TEST(config_option_registry) {
           cand[6].synthesis && cand[7].key == "subpixel+synth_bicubic");
     c.extrapolate = true;
     cand = c.tuneCandidates();
-    CHECK(cand.size() == 8 && cand[2].key == "subpixel" && cand[4].key == "subpixel_lk" &&
-          cand[5].key == "extrapolate_splat" && cand[5].synthesis && cand[7].key == "synth_bicubic");
+    CHECK(cand.size() == 9 && cand[2].key == "subpixel" && cand[4].key == "subpixel_lk" &&
+          cand[5].key == "extrapolate_splat" && cand[5].synthesis && cand[7].key == "reveal_fill" &&
+          cand[8].key == "synth_bicubic");
 }
 
 TEST(config_apply_live_follows_the_registry) {

@@ -14,6 +14,8 @@ Each sequence isolates one regime that the demo does not cover well:
   chroma    colour blobs of (nearly) equal brightness panning 6 px/frame, with
             a faint luma texture: the edges exist only in chroma, where a
             luma-only matcher sees nothing moving
+  occlude   a textured object crossing fast over a slowly panning background,
+            with masks of the areas it uncovers / covers (occlusion/)
   popup     the HUD scene's pan with an opaque menu panel (a quarter of the
             screen) opening and closing every 4 frames, between two inputs:
             a scene cut confined to part of the screen
@@ -131,6 +133,38 @@ def popup(out, w, h, n, seed):
         im.save(out / f"f{i:04d}.ppm")
 
 
+def occlude(out, w, h, n, seed):
+    """A textured object crossing fast over a slowly panning textured
+    background: the areas it uncovers (and covers) are what neither frame
+    shows, the regime where the synthesis has to invent content. Writes
+    occlusion/fNNNN.png too: the background pixels the object hides in the
+    frame before or after (eval_sequence.py scores them apart)."""
+    rng = np.random.default_rng(seed)
+    k = w / 480
+    bg_speed, obj_speed = max(1, round(2 * k)), max(2, round(14 * k))
+    bg = fractal(rng, h + 8, w + n * bg_speed + 8, scale(OCT, w / 960))
+    size = int(0.3 * h)
+    obj = fractal(rng, size, size, scale([(24, 1.0), (8, 0.6), (3, 0.3)], k))
+    y0 = (h - size) // 2
+    x_at = lambda i: (int(0.05 * w) + i * obj_speed) % (w + size) - size  # wraps around
+    (out / "occlusion").mkdir(exist_ok=True)
+    def covered(i):
+        m = np.zeros((h, w), bool)
+        if 0 <= i < n:
+            x = x_at(i)
+            m[y0:y0 + size, max(0, x):max(0, min(w, x + size))] = True
+        return m
+    for i in range(n):
+        im = bg[:h, i * bg_speed:i * bg_speed + w].copy()
+        x = x_at(i)
+        a, b = max(0, x), min(w, x + size)
+        if b > a:
+            im[y0:y0 + size, a:b] = obj[:, a - x:b - x]
+        Image.fromarray(im.clip(0, 255).astype(np.uint8)).save(out / f"f{i:04d}.ppm")
+        occl = (covered(i - 1) | covered(i + 1)) & ~covered(i)
+        Image.fromarray((occl * 255).astype(np.uint8)).save(out / "occlusion" / f"f{i:04d}.png")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("out")
@@ -146,7 +180,8 @@ def main():
                        ("fade", lambda d: pan(d, w, h, n, max(1, round(8 * w / 960)), 17, lambda i: 1.0 - 0.04 * i)),
                        ("popup", lambda d: popup(d, w, h, n, 19)),
                        ("chroma", lambda d: chroma(d, w, h, n, 29)),
-                       ("swing", lambda d: swing(d, w, h, n, 23))):
+                       ("swing", lambda d: swing(d, w, h, n, 23)),
+                       ("occlude", lambda d: occlude(d, w, h, n, 31))):
         d = root / name
         d.mkdir(parents=True, exist_ok=True)
         make(d)

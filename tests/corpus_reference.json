@@ -1,19 +1,19 @@
 {
  "chroma/extrapolate/candidate": {
   "psnr": 19.47,
-  "ssim": 0.9896
+  "ssim": 0.9889
  },
  "chroma/extrapolate/default": {
   "psnr": 19.37,
-  "ssim": 0.9901
+  "ssim": 0.9889
  },
  "chroma/interpolate/candidate": {
   "psnr": 22.47,
-  "ssim": 0.9917
+  "ssim": 0.9909
  },
  "chroma/interpolate/default": {
   "psnr": 22.27,
-  "ssim": 0.9912
+  "ssim": 0.9905
  },
  "fade/extrapolate/candidate": {
   "psnr": 29.92,
@@ -21,7 +21,7 @@
  },
  "fade/extrapolate/default": {
   "psnr": 29.03,
-  "ssim": 0.8078
+  "ssim": 0.808
  },
  "fade/interpolate/candidate": {
   "psnr": 34.19,
@@ -29,11 +29,11 @@
  },
  "fade/interpolate/default": {
   "psnr": 33.26,
-  "ssim": 0.8575
+  "ssim": 0.8576
  },
  "hud/extrapolate/candidate": {
   "psnr": 23.04,
-  "ssim": 0.9548
+  "ssim": 0.9549
  },
  "hud/extrapolate/default": {
   "psnr": 22.52,
@@ -47,13 +47,29 @@
   "psnr": 24.66,
   "ssim": 0.9622
  },
+ "occlude/extrapolate/candidate": {
+  "psnr": 30.92,
+  "ssim": 0.9707
+ },
+ "occlude/extrapolate/default": {
+  "psnr": 29.27,
+  "ssim": 0.9644
+ },
+ "occlude/interpolate/candidate": {
+  "psnr": 39.4,
+  "ssim": 0.9917
+ },
+ "occlude/interpolate/default": {
+  "psnr": 35.52,
+  "ssim": 0.9853
+ },
  "pan/extrapolate/candidate": {
   "psnr": 41.8,
   "ssim": 0.9913
  },
  "pan/extrapolate/default": {
   "psnr": 29.61,
-  "ssim": 0.8464
+  "ssim": 0.8463
  },
  "pan/interpolate/candidate": {
   "psnr": 46.41,
@@ -61,7 +77,7 @@
  },
  "pan/interpolate/default": {
   "psnr": 33.77,
-  "ssim": 0.9099
+  "ssim": 0.9098
  },
  "popup/extrapolate/candidate": {
   "psnr": 15.15,
@@ -81,31 +97,31 @@
  },
  "subpixel/extrapolate/candidate": {
   "psnr": 49.46,
-  "ssim": 0.9971
+  "ssim": 0.9966
  },
  "subpixel/extrapolate/default": {
   "psnr": 45.93,
-  "ssim": 0.993
+  "ssim": 0.9925
  },
  "subpixel/interpolate/candidate": {
-  "psnr": 50.65,
-  "ssim": 0.9978
+  "psnr": 50.66,
+  "ssim": 0.9973
  },
  "subpixel/interpolate/default": {
   "psnr": 51.86,
-  "ssim": 0.9986
+  "ssim": 0.9981
  },
  "swing/extrapolate/candidate": {
   "psnr": 28.57,
-  "ssim": 0.7516
+  "ssim": 0.7517
  },
  "swing/extrapolate/default": {
   "psnr": 26.99,
-  "ssim": 0.7048
+  "ssim": 0.705
  },
  "swing/interpolate/candidate": {
   "psnr": 36.89,
-  "ssim": 0.9487
+  "ssim": 0.9485
  },
  "swing/interpolate/default": {
   "psnr": 31.95,
