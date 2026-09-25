@@ -1,0 +1,129 @@
+#version 450
+// Per-frame state of the frame generation, kept on the GPU so that nothing
+// has to be read back before the frame is presented.
+//
+// mode 0 — duplicate test: counts the pixels of the level-0 luma pyramid that
+// differ between the two pyramid slots (the previous and the current frame).
+// mode 1 — update (one invocation): decides whether the current frame repeats
+// the previous one, advances the content clock and writes, for every output
+// slot, the time t the synthesis should show:
+//
+// Content time. A real frame shows the game's state at the moment it was
+// presented; a repeated frame (the game presenting the same image twice,
+// e.g. 30 fps content in a 60 fps loop) shows nothing new, so the content
+// clock keeps the time the image *first* appeared. `ageLast` / `agePrev` are
+// the ages (ms before now) of the current and the previous distinct images,
+// so `interval = agePrev - ageLast` is the real content interval between
+// them, which a frame-time spike or a run of duplicates makes differ from the
+// smoothed present interval the pacing spreads the outputs over.
+//
+// Display model (the pacing of swapchain.cpp, non-FIFO): interpolation
+// presents output i (1..m-1) at now + I(i-1)/m and the real frame at
+// now + I(m-1)/m, so everything shows the game L = I(m-1)/m late and output i
+// should show content time now - I(m-i)/m. Extrapolation presents the real
+// frame at once and output i at now + I*i/m, showing that content time. t is
+// the position of that content time between the two distinct images (0..1),
+// or past the current one (1 + s). With a steady frame rate and no
+// duplicates this is exactly the fixed i/m.
+//
+// Duplicates also gate the flow passes: a repeated image carries no motion,
+// so the flow of the previous distinct pair is kept (its dispatches get zero
+// workgroups through the indirect arguments written here) and extrapolation
+// keeps moving along it; the real-frame slot, which would show the stale
+// repeat, gets an extrapolated frame instead (the "only on duplicates"
+// entries, see FrameGen::recordUpscaleReal).
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0) uniform sampler2D lumaA;  // level-0 luma, pyramid slot 0
+layout(binding = 1) uniform sampler2D lumaB;  // level-0 luma, pyramid slot 1
+
+// Layout shared with FrameGen (kState* offsets) and the synthesis shaders.
+layout(std430, binding = 2) buffer State {
+    float meanCost;   // scene-cut cost (reduce_cost.comp)
+    uint dup;         // the current frame repeats the previous one
+    uint diffCount;   // mode 0 result: differing level-0 pixels
+    float ageLast;    // ms since the current distinct image first appeared
+    float agePrev;    // ms since the previous distinct image first appeared
+    float interval;   // content interval between them (ms)
+    uint repeats;     // repeated frames detected so far (statistics)
+    uint pad1;
+    float t[4];       // per output slot; [3] = the real frame's slot (extrapolated duplicate)
+    float tileCost[64];
+    uvec4 gateFull[24];     // dispatch size, w = 1: runs only on duplicates
+    uint gateActive[72];    // VkDispatchIndirectCommand per entry
+} st;
+
+layout(push_constant) uniform PC {
+    ivec2 size;          // level-0 luma size (mode 0)
+    int mode;
+    int multiplier;      // frames presented for this real frame
+    float sinceLastMs;   // time since the previous present
+    float intervalMs;    // smoothed present interval (the pacing's)
+    int flags;
+    int gateCount;
+    uint dupMaxPixels;   // at most this many differing pixels = a repeat
+} pc;
+
+#define FLAG_RESET 1   // no usable previous frame: restart the clock
+#define FLAG_DEDUP 2   // detect repeats (the previous pair's flow is valid to keep)
+#define FLAG_EXTRAP 4  // extrapolation display model
+
+shared uint sCount;
+
+void main() {
+    if (pc.mode == 0) {
+        if (gl_LocalInvocationIndex == 0u) sCount = 0u;
+        barrier();
+        ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+        if (all(lessThan(p, pc.size))) {
+            float d = abs(texelFetch(lumaA, p, 0).r - texelFetch(lumaB, p, 0).r);
+            if (d > 1.0 / 512.0) atomicAdd(sCount, 1u);
+        }
+        barrier();
+        if (gl_LocalInvocationIndex == 0u && sCount > 0u) atomicAdd(st.diffCount, sCount);
+        return;
+    }
+    if (gl_LocalInvocationIndex != 0u) return;
+
+    bool reset = (pc.flags & FLAG_RESET) != 0;
+    bool dup = !reset && (pc.flags & FLAG_DEDUP) != 0 && st.diffCount <= pc.dupMaxPixels;
+    float I = max(pc.intervalMs, 0.5);
+    float ageLast = st.ageLast, agePrev = st.agePrev;
+    if (reset) {
+        ageLast = 0.0;
+        agePrev = I;
+    } else {
+        float dt = clamp(pc.sinceLastMs, 0.0, 1000.0);
+        ageLast += dt;
+        agePrev += dt;
+        if (!dup) { agePrev = ageLast; ageLast = 0.0; }
+        agePrev = min(agePrev, ageLast + 1000.0);  // a long pause is not an interval
+    }
+    float interval = max(agePrev - ageLast, 0.5);
+    int m = max(pc.multiplier, 1);
+    bool extrap = (pc.flags & FLAG_EXTRAP) != 0;
+    for (int i = 1; i < 4; ++i) {
+        float t = 0.0;
+        if (i < m) {
+            // Written as the fixed i/m plus a correction, so that a steady
+            // game (interval == I, no repeat) gets exactly the fixed t.
+            float f = float(i) / float(m);
+            if (extrap) t = 1.0 + clamp(f + ((I - interval) * f + ageLast) / interval, 0.0, 1.0);
+            else t = clamp(f + ((interval - I) * (1.0 - f) + ageLast) / interval, 0.0, 1.0);
+        }
+        st.t[i - 1] = t;
+    }
+    st.t[3] = 1.0 + clamp(ageLast / interval, 0.0, 1.0);
+    st.dup = dup ? 1u : 0u;
+    if (dup) st.repeats += 1u;
+    st.ageLast = ageLast;
+    st.agePrev = agePrev;
+    st.interval = interval;
+    for (int e = 0; e < pc.gateCount; ++e) {
+        uvec4 f = st.gateFull[e];
+        bool run = f.w != 0u ? dup : !dup;
+        st.gateActive[3 * e + 0] = run ? f.x : 0u;
+        st.gateActive[3 * e + 1] = f.y;
+        st.gateActive[3 * e + 2] = f.z;
+    }
+}

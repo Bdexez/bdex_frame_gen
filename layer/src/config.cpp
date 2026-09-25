@@ -169,6 +169,8 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "temporal_prediction")          return parseBool(value, temporalPrediction);
     if (key == "extrapolate_splat")           return parseBool(value, extrapolateSplat);
     if (key == "extrapolate_hold")            return parseFloat(value, extrapolateHold, 0.f, 1.f);
+    if (key == "frame_timing")                return parseBool(value, frameTiming);
+    if (key == "dedup")                       return parseBool(value, dedup);
     if (key == "paused" || key == "pause")    return parseBool(value, paused);
     if (key == "target_fps")                  return parseFloat(value, targetFps, 0.f, 1000.f);
     if (key == "fps_limit" || key == "fps_cap") return parseFloat(value, fpsLimit, 0.f, 1000.f);
@@ -305,6 +307,7 @@ void Config::applyLive(const Config& n) {
     extrapolateHold = n.extrapolateHold; flowIterations = n.flowIterations; refineBias = n.refineBias;
     sceneCutLow = n.sceneCutLow; sceneCutHigh = n.sceneCutHigh;
     fpsLimit = n.fpsLimit; targetFps = n.targetFps;
+    frameTiming = n.frameTiming;  // dedup sizes the output stage (extrapolation): restart
     if (sharpness > 0.f && n.sharpness > 0.f) sharpness = n.sharpness;  // 0 <-> >0 changes the passes
 }
 
@@ -355,6 +358,8 @@ std::string Config::describe() const {
     if (pixelVectors) o << " pixel_vectors=1";
     if (subpixel) o << " subpixel=1";
     if (staticGuard > 0.f) o << " static_guard=" << staticGuard;
+    if (frameTiming) o << " frame_timing=1";
+    if (dedup) o << " dedup=1";
     if (antiCheatDisabled) o << " [disabled: anti-cheat detected]";
     return o.str();
 }
