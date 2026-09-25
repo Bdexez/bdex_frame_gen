@@ -240,6 +240,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed (2026-09-25)
 
+- `pixel_vectors` with `synth_bicubic`: a candidate vector equal to the
+  current one or to one already tried is skipped (same error, rejected by
+  the strict comparison) — away from motion boundaries one evaluation
+  instead of four: synthesis 6.1 → 2.1 ms on a 1.7 Mpx frame (RTX 3060 Ti),
+  output byte-identical. Not done with bilinear samples, where the test
+  costs more than it saves.
 - **One description of the option controls for both UIs.**
   `layer/options_ui.conf` holds the sections, labels, help texts and UI
   ranges; kinds, registry ranges and defaults come from the option
