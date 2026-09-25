@@ -376,6 +376,13 @@ x2/x3/x4), sauf le correctif HDR (les chemins SDR restent identiques).
 - **Avant de pousser un changement de CI** : `tools/ci/run.sh` (build) et
   `tools/ci/run.sh asan|tsan` rejouent les jobs dans Docker, même loader,
   lavapipe.
+- **Avant de pousser du C++** : `tools/ci/run.sh mingw` compile (syntaxe)
+  ce que la CI Windows construit, avec MinGW x64 **et i686** — le passage
+  32 bits attrape les erreurs propres à MSVC Win32 (handles Vulkan non
+  dispatchables = `uint64_t`, pas de `reinterpret_cast`), vues sinon
+  seulement après le push. Faux positif connu : aucun (l'app capture et
+  `bdex_offline` ne sont pas compilés en 32 bits / sous Windows, le job
+  suit les mêmes règles que `CMakeLists.txt`).
 
 ## 10. Décisions & mesures clés (retenir les chiffres)
 

@@ -8,6 +8,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-25)
 
+- `tools/ci/run.sh mingw`: syntax-compiles what the Windows CI builds with
+  MinGW for x64 and 32-bit x86 (i686), in Docker. The 32-bit pass reports
+  the Win32-only MSVC errors (Vulkan handle casts) before a push; it
+  catches the `test_descriptor_planner` error the Win32 CI found.
 - **`upscale_temporal` (opt-in): flow-guided temporal upscaling** for
   `render_scale` < 1. A pass (`upscale_temporal.comp`) upscales the real
   frame into a display-size rgba16f history (ping-pong) and blends in the
