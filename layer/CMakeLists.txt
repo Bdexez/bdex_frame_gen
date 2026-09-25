@@ -45,6 +45,7 @@ add_library(bdex_core STATIC
   src/vk_util.cpp
   src/budget.cpp
   src/display_clock.cpp
+  src/status.cpp
 )
 target_include_directories(bdex_core PUBLIC src)
 target_link_libraries(bdex_core PUBLIC Vulkan::Headers)

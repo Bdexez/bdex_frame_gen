@@ -493,6 +493,80 @@ def detect_gpus():
     return names
 
 
+def status_dir():
+    """Where the layer publishes one live status file per game (layer/src/status.h)."""
+    if "BDEX_FG_STATUS_DIR" in os.environ:
+        return os.environ["BDEX_FG_STATUS_DIR"]
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    return os.path.join(runtime, "bdex-framegen") if runtime else f"/tmp/bdex-framegen-{os.getuid()}"
+
+
+def read_running():
+    """Live status of the running games: [(process, [entry dict, ...])]; stale files skipped."""
+    out = []
+    try:
+        names = sorted(os.listdir(status_dir()))
+    except OSError:
+        return out
+    for name in names:
+        if not name.endswith(".status"):
+            continue
+        path = os.path.join(status_dir(), name)
+        try:
+            text = open(path, encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+        head, entries, cur = {}, [], None
+        for line in text.splitlines():
+            line = line.strip()
+            if line.startswith("[") and line.endswith("]"):
+                cur = {"kind": line[1:-1].split()[0]}
+                entries.append(cur)
+            elif "=" in line:
+                k, _, v = line.partition("=")
+                (cur if cur is not None else head)[k] = v
+        try:
+            pid = int(head.get("pid", "0"))
+            os.kill(pid, 0)  # still running?
+        except (ValueError, ProcessLookupError, PermissionError):
+            try:
+                os.unlink(path)  # left behind by a crashed game
+            except OSError:
+                pass
+            continue
+        out.append((head.get("process", "?"), entries))
+    return out
+
+
+def describe_entry(e):
+    """One line of French for a status entry."""
+    if e.get("kind") == "device":
+        if e.get("state") == "active":
+            return None
+        return f"Couche inactive : {e.get('reason', e.get('state', ''))}"
+    state = e.get("state", "")
+    if state == "pass-through":
+        return f"Transparente — {e.get('reason', 'raison inconnue')}"
+    parts = []
+    try:
+        game, outp = float(e.get("game_fps", 0)), float(e.get("output_fps", 0))
+        parts.append(f"{game:.0f} → {outp:.0f} i/s (×{e.get('multiplier', '?')}, "
+                     f"{'extrapolation' if e.get('mode') == 'extrapolate' else 'interpolation'})")
+        hz = float(e.get("refresh_hz", 0))
+        if hz > 0:
+            parts.append(f"écran {hz:.0f} Hz")
+        lat = float(e.get("latency_ms", -1))
+        if lat >= 0:
+            parts.append(f"latence {lat:.0f} ms")
+        lvl = int(e.get("gpu_budget_level", 0))
+        if lvl > 0:
+            parts.append(f"budget GPU : niveau {lvl}")
+    except ValueError:
+        pass
+    prefix = "En pause — " if state == "paused" else ""
+    return prefix + " · ".join(parts)
+
+
 class Window(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="bdex-framegen")
@@ -522,6 +596,7 @@ class Window(Adw.ApplicationWindow):
         scroller.set_child(page)
 
         self._build_status(page)
+        self._build_running(page)
         self._build_activation(page)
         self._build_games(page)
         self._build_framegen(page)
@@ -561,6 +636,34 @@ class Window(Adw.ApplicationWindow):
             subtitle=(" · ".join(gpus) + "\nProfil « Auto » : réglé selon ce GPU" if gpus else "non détectée"))
         gpu_row.add_prefix(Gtk.Image(icon_name="video-display-symbolic", valign=Gtk.Align.CENTER))
         g.add(gpu_row)
+
+    def _build_running(self, page):
+        """What the layer is doing in the games running now (refreshed every second)."""
+        self.running_group = Adw.PreferencesGroup(
+            title="En cours",
+            description="Jeux lancés avec la couche active : cadence, écran mesuré, latence, "
+                        "et la raison quand elle laisse passer les images sans les générer.")
+        page.add(self.running_group)
+        self.running_rows = []
+        self._refresh_running()
+        GLib.timeout_add_seconds(1, self._refresh_running)
+
+    def _refresh_running(self):
+        for row in self.running_rows:
+            self.running_group.remove(row)
+        self.running_rows = []
+        games = read_running()
+        if not games:
+            row = Adw.ActionRow(title="Aucun jeu en cours", subtitle="Lance un jeu Vulkan (ou via Proton)")
+            self.running_group.add(row)
+            self.running_rows.append(row)
+            return True
+        for process, entries in games:
+            lines = [d for d in (describe_entry(e) for e in entries) if d]
+            row = Adw.ActionRow(title=process, subtitle="\n".join(lines) or "Couche chargée")
+            self.running_group.add(row)
+            self.running_rows.append(row)
+        return True  # keep the timer
 
     def _build_activation(self, page):
         g = Adw.PreferencesGroup(
