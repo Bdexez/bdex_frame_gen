@@ -41,6 +41,8 @@ essai sur de vrais jeux :
 - [ ] `frame_timing` : gagnant sur un jeu à pas variable, −0,6 dB au pire sur
   pas fixe — à trancher par jeu (profil) ;
 - [ ] `extrapolate_accel` (extrapolation) : caméra qui accélère +1 à +2,7 dB ;
+- [ ] `flow_temporal=1` : démo +0,13 dB, scintillement −5 % ; à confirmer sur
+  des jeux (textures répétées, sols, feuillages) ;
 - [ ] `gpu_budget=0.25` sur l'iGPU Vega 8 : vérifier que la génération ne
   fait plus chuter les fps du jeu ;
 - [ ] HDR réel (scRGB / HDR10) sur un jeu ; gamescope + un émulateur.

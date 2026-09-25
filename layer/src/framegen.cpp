@@ -16,6 +16,7 @@ struct DownsamplePC { int32_t size[2]; int32_t fromColor; int32_t transfer; };
 struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; float gradWeight; float censusWeight; float censusMargin; float rotWeight; int32_t temporal; float zeroBiasContrast; float chromaWeight; int32_t chromaHistory; };
 struct SizePC { int32_t size[2]; };
 struct ReducePC { int32_t size[2]; int32_t tiles; };
+struct TemporalPC { int32_t size[2]; int32_t luma[2]; int32_t block; float strength; };
 struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; int32_t subpixel; };
 struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; float occlusionStrength; float staticGuard; float extrapHold; int32_t splat; int32_t pixelVectors; int32_t transfer; int32_t timing; int32_t localCut; float accel; int32_t hudLatency; };
 struct UpscalePC { int32_t outSize[2]; int32_t srcSize[2]; uint32_t encoding; int32_t filter; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; int32_t hudLatency; };
@@ -169,6 +170,7 @@ void FrameGen::createPipelines() {
         splat_ = makePass(splat_comp, splat_comp_size, {CIS, CIS, SI, SB, CIS});
         frameState_ = makePass(frame_state_comp, frame_state_comp_size, {CIS, CIS, SB});
         if (chroma_) downChroma_ = makePass(downsample_chroma_comp, downsample_chroma_comp_size, {CIS, SI});
+        temporal_ = makePass(flow_temporal_comp, flow_temporal_comp_size, {SI, SI, CIS, CIS, CIS});
     }
     if (packReal_) {
         if (sharpen_)       upscale_ = makePass(upscale_comp_sharp, upscale_comp_sharp_size, {CIS, SI});
@@ -362,12 +364,12 @@ void FrameGen::createDescriptors() {
     const uint32_t cas = sharpen_ ? O + 1 : 0;    // one CAS set per generated output, plus the real frame
     const uint32_t nReal = dupReal_ ? N * N : 0;  // extrapolated replacements of repeated real frames
     const uint32_t nChroma = chroma_ ? 2 * N + 2 * L : 0;  // chroma pyramid sets (like the luma ones)
-    const uint32_t nSets = gen * (2 * N + 2 * L + 4 * L + 2 * L + 4 * L + 1 + nInterp + 1 + 1) + nReal + nChroma + up + cas;  // + splat, state
+    const uint32_t nSets = gen * (2 * N + 2 * L + 4 * L + 2 * L + 4 * L + 1 + nInterp + 1 + 1 + 2) + nReal + nChroma + up + cas;  // + splat, state, temporal
     // Block-match sets (2 parities x 2 directions x L) hold two samplers each:
     // the coarse prediction and the previous backward flow (temporal prediction).
     // Block-match sets also hold the two chroma samplers (a dummy when off).
-    const uint32_t nCIS = gen * (2 * N + 2 * L + 4 * L * 4 + 5 * nInterp + 3 + 2) + 5 * nReal + nChroma + up + cas;  // + splat flows, state lumas
-    const uint32_t nSI = gen * (2 * N + 2 * L + 4 * L * 4 + 2 * L * 2 + 4 * L * 5 + 1 + nInterp * 2 + 1) + 2 * nReal + nChroma + up + cas;  // interp + splat map
+    const uint32_t nCIS = gen * (2 * N + 2 * L + 4 * L * 4 + 5 * nInterp + 3 + 2 + 6) + 5 * nReal + nChroma + up + cas;  // + splat flows, state lumas, temporal
+    const uint32_t nSI = gen * (2 * N + 2 * L + 4 * L * 4 + 2 * L * 2 + 4 * L * 5 + 1 + nInterp * 2 + 1 + 4) + 2 * nReal + nChroma + up + cas;  // interp + splat map + temporal
     const uint32_t nSB = gen * (1 + nInterp + 1 + 1) + nReal;  // reduce, interp, splat, state
     std::vector<VkDescriptorPoolSize> sizes;
     if (nCIS) sizes.push_back({VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nCIS});
@@ -475,6 +477,15 @@ void FrameGen::createDescriptors() {
     writeImage(dsSplat_, 2, SI, splatMap_.view);
     writeBuffer(dsSplat_, 3, stateBuf_.buffer);
     writeImage(dsSplat_, 4, CIS, prevBwd_.view);
+    for (uint32_t parity = 0; parity < 2; ++parity) {
+        VkDescriptorSet& s = dsTemporal_[parity];
+        s = allocSet(temporal_.setLayout);
+        writeImage(s, 0, SI, levels_v_[0].flowFine[0].view);
+        writeImage(s, 1, SI, levels_v_[0].flowFine[1].view);
+        writeImage(s, 2, CIS, prevBwd_.view);
+        writeImage(s, 3, CIS, levels_v_[0].pyr[1 - parity].view);
+        writeImage(s, 4, CIS, levels_v_[0].pyr[parity].view);
+    }
     dsState_ = allocSet(frameState_.setLayout);
     writeImage(dsState_, 0, CIS, levels_v_[0].pyr[0].view);
     writeImage(dsState_, 1, CIS, levels_v_[0].pyr[1].view);
@@ -515,7 +526,7 @@ void FrameGen::destroyAll() {
     VkDevice d = dev_.device;
     if (pool_) vt.DestroyDescriptorPool(d, pool_, nullptr);
     pool_ = VK_NULL_HANDLE;
-    for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_, &splat_, &frameState_, &downChroma_}) {
+    for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_, &splat_, &frameState_, &downChroma_, &temporal_}) {
         if (p->pipeline) vt.DestroyPipeline(d, p->pipeline, nullptr);
         if (p->layout) vt.DestroyPipelineLayout(d, p->layout, nullptr);
         if (p->setLayout) vt.DestroyDescriptorSetLayout(d, p->setLayout, nullptr);
@@ -812,7 +823,8 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
     // this frame overwrites it (on a repeat, dedup keeps the flow, so the
     // copy equals it and the acceleration is zero).
     accelThisFrame_ = 0.f;
-    if (cfg.extrapolate && cfg.extrapolateAccel > 0.f && flowLastFrame_) {
+    const bool temporalThisFrame = cfg.flowTemporal > 0.f && flowLastFrame_;
+    if (((cfg.extrapolate && cfg.extrapolateAccel > 0.f) || temporalThisFrame) && flowLastFrame_) {
         VkImageCopy region{};
         region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
@@ -820,7 +832,7 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
         vt.CmdCopyImage(cmd, levels_v_[0].flowFine[1].image, VK_IMAGE_LAYOUT_GENERAL, prevBwd_.image,
                         VK_IMAGE_LAYOUT_GENERAL, 1, &region);
         memoryBarrier(cmd);
-        accelThisFrame_ = cfg.extrapolateAccel;
+        if (cfg.extrapolate) accelThisFrame_ = cfg.extrapolateAccel;
     }
     for (int l = levels_ - 1; l >= 0; --l) {
         const Level& lv = levels_v_[l];
@@ -864,6 +876,17 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
     }
 
     const Level& fine = levels_v_[0];
+    if (temporalThisFrame) {
+        // (On a repeat the flows are kept and prevBwd_ equals them: no-op.)
+        vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, temporal_.pipeline);
+        TemporalPC tpc{{(int32_t)fine.fine.width, (int32_t)fine.fine.height},
+                       {(int32_t)fine.size.width, (int32_t)fine.size.height},
+                       int32_t(fine.refined ? kFineBlock : kBlockSize), cfg.flowTemporal};
+        vt.CmdPushConstants(cmd, temporal_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(tpc), &tpc);
+        vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, temporal_.layout, 0, 1, &dsTemporal_[parity], 0, nullptr);
+        vt.CmdDispatch(cmd, divUp(fine.fine.width, 16), divUp(fine.fine.height, 16), 1);
+        memoryBarrier(cmd);
+    }
     vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, reduce_.pipeline);
     const uint32_t tiles = cfg.sceneCutLocal ? kCutTiles : 0;
     ReducePC rpc{{(int32_t)fine.blocks.width, (int32_t)fine.blocks.height}, (int32_t)tiles};

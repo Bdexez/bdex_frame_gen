@@ -8,6 +8,19 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-25)
 
+- **`flow_temporal` (opt-in): temporal stabilisation of the motion.** A new
+  pass after the finest flow (`flow_temporal.comp`) reconsiders each vector
+  against the same content's motion one pair earlier (the previous backward
+  flow, followed along the new one for the backward direction) and keeps
+  the old vector where it is close (≤ 2 px) and its block difference is
+  within a tolerance of the new one's — the ambiguous matches that switch
+  from pair to pair and shimmer. A first version that blended the two
+  vectors lost 0.5 dB on the demo (it lagged genuine motion changes) and
+  was replaced by this cost-checked choice. Offline demo replay:
+  interpolation +0.13 dB (moving edges +0.25, flicker −5 %), extrapolation
+  +0.05 dB (moving edges +0.25), fast motion +0.01, synthetic corpus
+  neutral; GPU time within noise. Default 0 is byte-identical; covered by
+  the validation state and async runs.
 - **`async_compute` (opt-in): the synthesis on a compute-only queue.** Where
   the device has a compute-only queue family with a free queue, the layer
   takes one for the synthesis and keeps copies and presents on its

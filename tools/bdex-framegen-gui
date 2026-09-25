@@ -173,6 +173,10 @@ SECTIONS = [
         spin("extrapolate_accel", "Extrapolation : accélération",
              "Prédit des trajectoires courbes (caméra qui accélère, freine ou se retourne) au lieu d'une "
              "vitesse constante. 0 = désactivé, 1 = plein effet.", 0.0, 1.0, 0.1, 1, 0.0),
+        spin("flow_temporal", "Stabilisation temporelle du mouvement",
+             "Garde le mouvement de la paire précédente là où il explique aussi bien la nouvelle paire "
+             "(zones plates, textures répétées) : moins de scintillement. 0 = désactivé, 1 = conseillé.",
+             0.0, 1.0, 0.1, 1, 0.0),
         spin("extrapolate_hold", "Extrapolation : figer les pixels incertains",
              "1 = ancien comportement (images doubles). 0 = suivre le mouvement partout.",
              0.0, 1.0, 0.1, 1, 0.0),
