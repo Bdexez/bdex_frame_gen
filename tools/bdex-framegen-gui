@@ -126,6 +126,10 @@ SECTIONS = [
                "Choisit le mouvement pixel par pixel aux frontières d'objets : moins de bavures, "
                "synthèse ~2× plus coûteuse."),
         switch("subpixel", "Mouvement sous-pixel", "Affine le mouvement au-delà du pixel entier."),
+        spin("hud_mask", "Masque de HUD appris",
+             "Apprend, pendant les mouvements de caméra, les pixels qui ne changent jamais (HUD, mini-carte, "
+             "réticule) et les garde tels quels dans les images générées. Nombre d'images stables requis ; "
+             "24 conseillé, 0 = désactivé. Activation prise en compte au lancement du jeu.", 0, 200, 1, 0, 0),
         spin("subpixel_lk", "Sous-pixel précis (Lucas-Kanade)",
              "Affine chaque vecteur par Lucas-Kanade (nombre d'itérations, 2 conseillé) ; ~0,1 ms. En "
              "interpolation, à combiner avec l'échantillonnage bicubique. 0 = désactivé.", 0, 4, 1, 0, 0),

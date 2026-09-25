@@ -80,6 +80,10 @@ public:
     // output stage (packing, HUD) from `src`.
     virtual VkDescriptorSet synthesisSet(VkImageView prev, VkImageView cur, uint32_t output) = 0;
     virtual VkDescriptorSet realOutputSet(VkImageView src) = 0;
+    // A per-render-pixel count of frames a pixel stayed unchanged (r32f):
+    // every synthesis keeps pixels at or above hud_mask's threshold as they
+    // are (a 1x1 zero image until a pass provides one).
+    virtual void setStaticMask(VkImageView view) = 0;
 };
 
 class FgPass {
@@ -104,7 +108,8 @@ public:
     virtual void fineFlow(FgContext&, VkCommandBuffer, uint32_t /*parity*/, const Config&) {}  // finest flow done, before the scene-cut reduction
     // Before a synthesis: a descriptor set to use instead of the engine's
     // (VK_NULL_HANDLE keeps it).
-    virtual VkDescriptorSet synthesisInputs(FgContext&, VkCommandBuffer, uint32_t /*cur*/, uint32_t /*output*/) {
+    virtual VkDescriptorSet synthesisInputs(FgContext&, VkCommandBuffer, uint32_t /*prev*/, uint32_t /*cur*/,
+                                            uint32_t /*output*/) {
         return VK_NULL_HANDLE;
     }
     // The real frame's output stage: replace its descriptor set and source

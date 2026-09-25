@@ -63,6 +63,7 @@ struct Config {
     float occlusionStrength = 0.0f; // opt-in flow confidence and reduced cross-fade fallback (0 = historical synthesis)
     bool  temporalPrediction = false; // coarsest matching level searches around the previous frame pair's motion instead of zero, so sustained fast pans are followed beyond the pyramid's range (opt-in; off = bit-for-bit)
     bool  extrapolateSplat = false; // extrapolation: forward-splat the current frame, backward warp only where nothing lands (opt-in)
+    int   hudMask       = 0;      // learned static-overlay mask: frames a pixel must stay unchanged while the picture moves to be kept as is (0 = off, bit-for-bit; enabling it is read at start-up)
     bool  synthBicubic  = false;  // synthesis samples the frames with Catmull-Rom instead of bilinear (keeps sub-pixel detail; opt-in, off = bit-for-bit)
     int   subpixelLk    = 0;      // Lucas-Kanade sub-pixel refinement of the finest flow: Gauss-Newton steps (0 = off, bit-for-bit)
     float flowTemporal  = 0.0f;   // temporal stabilisation of the finest flow: keep the previous pair's vector where it matches as well (tolerance; 0 = off, bit-for-bit)
