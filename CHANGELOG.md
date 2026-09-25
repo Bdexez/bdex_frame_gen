@@ -6,6 +6,25 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed (2026-09-25)
+
+- **GPU cost of the default path halved (latency in interpolation).** The
+  opt-in terms added to the block matcher since 2026-09-14 (census,
+  rotation, chroma, gradient) sized its shared memory for all of them
+  (~21 KB a workgroup against ~3.4 KB), whatever their weights: half the
+  blocks in flight per SM, flow ~2x slower. The synthesis carried the same
+  weight in registers (Catmull-Rom taps inlined in every sample,
+  pixel_vectors, occlusion...). Both shaders now have a specialization
+  constant `kOptIns`; the layer builds a second, lean pipeline with it off
+  and binds it while those options are 0 (`Pass::lean`). Measured on an
+  RTX 3060 Ti, 1440p output, preset quality, render_scale 0.67: flow
+  1.9-2.0 -> 0.8-0.9 ms, synthesis 0.75 -> 0.55 ms per real frame. The
+  matcher's exported cost is also summed from per-thread loads instead of
+  64 dependent image loads on one thread (same order, same value). Frames:
+  byte-identical to `f2cec5f` on NVIDIA again (main had drifted by 1 LSB in
+  interpolation through code generation) and on lavapipe; byte-identical
+  to main with every option on.
+
 ### Added (2026-09-25)
 
 - **`preset = enhanced`**: balanced flow plus the opt-ins measured positive
