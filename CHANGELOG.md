@@ -8,6 +8,20 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed (2026-09-24)
 
+- **HDR swapchains are matched on the right scale.** The engine looked only
+  at the swapchain format, never its colour space: an scRGB game (FP16,
+  `EXTENDED_SRGB_LINEAR`, 1 = 80 nits, highlights at 10+) was matched on raw
+  linear values, and HDR10 (PQ) on code values with white at 0.58. Costs,
+  photometric errors and the scene-cut thresholds are tuned for a
+  perceptual scale with SDR white at 1. HDR values are now converted to
+  linear light relative to SDR white (203 nits) and encoded like decoded
+  sRGB. Offline (`bdex_offline --colorspace scrgb|hdr10`, corpus with
+  highlights up to ~1000 nits): scRGB HUD scene 10.8 → 20.0 dB (the raw
+  costs tripped the scene cut), fade +0.55; HDR10 pan +2.8, fade +0.6.
+  On SDR-range content both now score within 0.05 dB of the sRGB format
+  (HDR10 subpixel pan was 34.5 → 44.5 dB). A PQ-domain scale was measured
+  and rejected (mid-tones too flat: −3 to −10 dB to the zero bias). SDR
+  swapchains are byte-identical. The `formats` test covers both.
 - **Crash when a game exits under native Wayland** without destroying its
   device: the layer's global instance/device tables were torn down by static
   destructors at process exit, destroying the virtual swapchains after the

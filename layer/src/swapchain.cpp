@@ -25,6 +25,7 @@ bool presentModeSupported(DeviceData& dev, VkSurfaceKHR surface, VkPresentModeKH
 
 VirtualSwapchain::VirtualSwapchain(DeviceData& dev, const VkSwapchainCreateInfoKHR& appInfo) : dev_(dev) {
     format_ = appInfo.imageFormat;
+    colorSpace_ = appInfo.imageColorSpace;
     extent_ = appInfo.imageExtent;
     try {
         createReal(appInfo);
@@ -60,13 +61,13 @@ std::unique_ptr<FrameGen> VirtualSwapchain::makeFrameGen(bool& generating) {
     if (generating) {
         try {
             return std::make_unique<FrameGen>(dev_, format_, extent_, displayExtent_,
-                                              static_cast<uint32_t>(dev_.config.multiplier - 1), sources);
+                                              static_cast<uint32_t>(dev_.config.multiplier - 1), sources, colorSpace_);
         } catch (const VkError& e) {
             BDEX_WARN("frame generation unavailable for this swapchain (%s); passing frames through", e.what());
             generating = false;
         }
     }
-    return std::make_unique<FrameGen>(dev_, format_, extent_, displayExtent_, 0, sources);
+    return std::make_unique<FrameGen>(dev_, format_, extent_, displayExtent_, 0, sources, colorSpace_);
 }
 
 void VirtualSwapchain::createReal(const VkSwapchainCreateInfoKHR& appInfo) {

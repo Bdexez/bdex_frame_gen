@@ -8,6 +8,10 @@ engine packs for (RGBA8, BGRA8, sRGB, A2B10G10R10, RGBA16F) and with the
   - 10-bit and FP16 match RGBA8 up to quantisation (>= 50 dB);
   - sRGB (blended in linear light) scores within 1 dB of RGBA8 against the
     ground truth;
+  - HDR swapchains — scRGB (FP16, 1 = 80 nits) and HDR10 (PQ, 10-bit), the
+    SDR frames converted with white at 203 nits — score within 0.5 dB of the
+    sRGB format: the matching brings HDR values to the same perceptual scale
+    (without it scRGB costs are 2.5x too large, PQ mid-tones too flat);
   - upscaled output stays within 3 dB of native and well above frame
     repetition.
 Usage: test_formats.py <build dir>. Needs a Vulkan device, no display.
@@ -47,6 +51,8 @@ def main():
         seq = tmp / "c" / "hud"
         runs = {"rgba8": [], "bgra8": ["--format", "bgra8"], "srgb": ["--format", "srgb"],
                 "rgb10": ["--format", "rgb10"], "rgba16f": ["--format", "rgba16f"],
+                "scrgb": ["--format", "rgba16f", "--colorspace", "scrgb"],
+                "hdr10": ["--format", "rgb10", "--colorspace", "hdr10"],
                 "up0.75": ["--render-scale", "0.75"], "up0.5": ["--render-scale", "0.5"]}
         for name, args in runs.items():
             subprocess.run([str(tool), str(seq), str(tmp / name)] + args, check=True, env=env,
@@ -67,6 +73,9 @@ def main():
             failures.append(f"{f} deviates from RGBA8 beyond quantisation ({vs8[f]:.1f} dB)")
     if abs(vsgt["srgb"] - vsgt["rgba8"]) > 1:
         failures.append(f"sRGB {vsgt['srgb']:.2f} dB vs RGBA8 {vsgt['rgba8']:.2f} dB")
+    for f in ("scrgb", "hdr10"):
+        if abs(vsgt[f] - vsgt["srgb"]) > 0.5:
+            failures.append(f"{f} {vsgt[f]:.2f} dB vs sRGB {vsgt['srgb']:.2f} dB")
     for f in ("up0.75", "up0.5"):
         if vsgt[f] < vsgt["rgba8"] - 3 or vsgt[f] < dup + 6:
             failures.append(f"{f}: {vsgt[f]:.2f} dB (native {vsgt['rgba8']:.2f}, repetition {dup:.2f})")
