@@ -31,7 +31,7 @@ if(Python3_Interpreter_FOUND)
     if(TARGET bdex_offline)
       # Headless: the engine on a synthetic sequence (needs a Vulkan device, no display).
       add_test(NAME offline COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_offline.py" "${CMAKE_BINARY_DIR}")
-      set_tests_properties(offline PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+      set_tests_properties(offline PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)  # sanitizer builds on software Vulkan are ~10x slower
       # Quality regression on the synthetic corpus (+ $BDEX_CORPUS_DIR), headless.
       add_test(NAME corpus COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_corpus.py" "${CMAKE_BINARY_DIR}")
       set_tests_properties(corpus PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)

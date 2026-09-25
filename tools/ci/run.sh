@@ -4,6 +4,7 @@
 # change can be checked before pushing:
 #   tools/ci/run.sh            # the "build" job (tests, f2cec5f invariant, PSNR gates)
 #   tools/ci/run.sh asan|tsan  # one "sanitizers" job
+#   BDEX_CI_CPUS=4 tools/ci/run.sh ...  # with a GitHub runner's CPU count
 # Needs Docker. Works on a copy of the working tree (tracked + untracked files).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -43,4 +44,6 @@ else
     ctest --test-dir build -R "unit|offline|integration|acquire" --output-on-failure
 fi
 JOB
-docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$work:/work" bdex-ci:24.04 bash /work/job.sh "$job"
+# BDEX_CI_CPUS=4 caps the container at a GitHub runner's 4 vCPUs: lavapipe
+# scales with cores, so an uncapped replay can pass timeouts CI then misses.
+docker run --rm ${BDEX_CI_CPUS:+--cpus "$BDEX_CI_CPUS"} --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$work:/work" bdex-ci:24.04 bash /work/job.sh "$job"
