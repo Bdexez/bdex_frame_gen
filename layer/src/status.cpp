@@ -2,6 +2,7 @@
 #include "platform.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -66,7 +67,8 @@ std::string statusFormat(const std::string& process, long pid, long long unixTim
         o << "state=" << e.state << "\n";
         if (!e.reason.empty()) o << "reason=" << e.reason << "\n";
         if (!e.device.empty()) o << "device=" << e.device << "\n";
-        if (e.kind != "swapchain") continue;
+        if (e.kind == "device") continue;
+        if (!e.target.empty()) o << "target=" << e.target << "\n";
         char buf[64];
         o << "size=" << e.width << "x" << e.height << "\n";
         if (!e.mode.empty()) o << "mode=" << e.mode << "\n";
@@ -84,6 +86,84 @@ std::string statusFormat(const std::string& process, long pid, long long unixTim
         if (!e.tune.empty()) o << "online_tune=" << e.tune << "\n";
     }
     return o.str();
+}
+
+StatusFile statusParse(const std::string& text) {
+    StatusFile f;
+    std::istringstream in(text);
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty()) continue;
+        if (line.front() == '[' && line.back() == ']') {
+            StatusFile::Section s;
+            s.kind = line.substr(1, line.find(' ') == std::string::npos ? line.size() - 2 : line.find(' ') - 1);
+            f.sections.push_back(s);
+            continue;
+        }
+        const size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        const std::string key = line.substr(0, eq), value = line.substr(eq + 1);
+        if (!f.sections.empty()) {
+            f.sections.back().values[key] = value;
+        } else if (key == "process") {
+            f.process = value;
+        } else if (key == "pid") {
+            f.pid = std::strtol(value.c_str(), nullptr, 10);
+        } else if (key == "time") {
+            f.time = std::strtoll(value.c_str(), nullptr, 10);
+        }
+    }
+    return f;
+}
+
+std::vector<std::string> statusDescribe(const StatusFile& file) {
+    std::vector<std::string> out;
+    auto num = [](const std::map<std::string, std::string>& v, const char* k, double def) {
+        auto it = v.find(k);
+        return it == v.end() ? def : std::strtod(it->second.c_str(), nullptr);
+    };
+    auto get = [](const std::map<std::string, std::string>& v, const char* k) {
+        auto it = v.find(k);
+        return it == v.end() ? std::string() : it->second;
+    };
+    for (const auto& s : file.sections) {
+        const auto& v = s.values;
+        const std::string state = get(v, "state");
+        if (s.kind == "device") {
+            if (state != "active") out.push_back("Couche inactive : " + (v.count("reason") ? get(v, "reason") : state));
+            continue;
+        }
+        const std::string who = s.kind == "capture" && !get(v, "target").empty() ? get(v, "target") + " : " : "";
+        if (state == "pass-through") {
+            out.push_back(who + "transparente — " + (v.count("reason") ? get(v, "reason") : "raison inconnue"));
+            continue;
+        }
+        char buf[160];
+        snprintf(buf, sizeof buf, "%.0f → %.0f i/s (×%s, %s)", num(v, "game_fps", 0), num(v, "output_fps", 0),
+                 get(v, "multiplier").c_str(), get(v, "mode") == "extrapolate" ? "extrapolation" : "interpolation");
+        std::string line = (state == "paused" ? "En pause — " : "") + who + buf;
+        if (num(v, "refresh_hz", 0) > 0) {
+            snprintf(buf, sizeof buf, " · écran %.0f Hz", num(v, "refresh_hz", 0));
+            line += buf;
+        }
+        if (num(v, "latency_ms", -1) >= 0) {
+            snprintf(buf, sizeof buf, " · latence %.0f ms", num(v, "latency_ms", -1));
+            line += buf;
+        }
+        if (num(v, "gpu_budget_level", 0) > 0) {
+            snprintf(buf, sizeof buf, " · budget GPU : niveau %.0f", num(v, "gpu_budget_level", 0));
+            line += buf;
+        }
+        out.push_back(line);
+        if (!get(v, "passes").empty()) {
+            std::string p = get(v, "passes");
+            for (size_t i = 0; (i = p.find(',', i)) != std::string::npos; i += 2) p.replace(i, 1, ", ");
+            out.push_back("   passes : " + p);
+        }
+        if (!get(v, "online_tune").empty()) out.push_back("   réglage auto : " + get(v, "online_tune"));
+    }
+    return out;
 }
 
 void statusSet(uint64_t key, const StatusEntry& entry) {

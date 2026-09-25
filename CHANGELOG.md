@@ -8,6 +8,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-25)
 
+- **Windows: live status in the capture app's launcher.** `bdex_capture`
+  publishes its state like the layer (`kind=capture`, with the captured
+  game, fps, latency from WGC to the present call, passes, `online_tune`),
+  and the launcher gains an **En cours** frame that reads the status files
+  every second (layer games and captures; files of dead processes skipped).
+  Parsing and the French summary are shared, unit-tested code
+  (`statusParse`, `statusDescribe` in `status.cpp`).
 - **Richer diagnostics.** The live status of a swapchain now lists the
   optional passes at work (`passes=`, `FgPass::active`) and `online_tune`'s
   state (`online_tune=`: its decisions, or the option on trial and how many
