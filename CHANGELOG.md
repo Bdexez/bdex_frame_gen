@@ -8,6 +8,19 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-25)
 
+- **`subpixel_lk` and `synth_bicubic` (opt-in): accurate sub-pixel motion.**
+  `subpixel_lk` (an `FgPass`, `flow_lk.comp`) refines each finest vector by
+  Lucas-Kanade — Gauss-Newton steps over an 8×8 window, kept only where the
+  fit is well posed, stays within a pixel and lowers the SAD; +0.1 ms.
+  Measuring it found the real limit of sub-pixel vectors in interpolation:
+  the synthesis's bilinear sampling (with it alone, as with `subpixel`,
+  −0.8 dB on a sub-pixel pan). `synth_bicubic` samples along the
+  trajectories with a clamped 9-tap Catmull-Rom: together +0.37 dB there,
+  demo +0.09 dB, neutral elsewhere. In extrapolation +2.1 dB on that pan.
+  Lucas-Kanade matches the parabolic fit on single frames and beats it in
+  `upscale_temporal` accumulation (weight 0.3: +0.83 vs +0.67 dB, swinging
+  camera +0.01 vs −0.16 dB). `subpixel_lk` is an `online_tune` candidate in
+  extrapolation. Default 0 byte-identical; in the validation state runs.
 - `tools/ci/run.sh mingw`: syntax-compiles what the Windows CI builds with
   MinGW for x64 and 32-bit x86 (i686), in Docker. The 32-bit pass reports
   the Win32-only MSVC errors (Vulkan handle casts) before a push; it

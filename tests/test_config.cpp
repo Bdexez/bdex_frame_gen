@@ -297,7 +297,7 @@ TEST(config_option_registry) {
           cand[2].first == "flow_temporal");
     c.extrapolate = true;
     cand = c.tuneCandidates();
-    CHECK(cand.size() == 4 && cand[2].first == "subpixel");
+    CHECK(cand.size() == 5 && cand[2].first == "subpixel" && cand[4].first == "subpixel_lk");
 }
 
 TEST(config_apply_live_follows_the_registry) {

@@ -129,9 +129,10 @@ OptionDef B(const char* k, const char* a, bool Config::*m, unsigned fl = 0, Tune
     d.b = m; d.flags = fl; d.tune = t; d.trial = trial; d.tuneOrder = order;
     return d;
 }
-OptionDef I(const char* k, const char* a, int Config::*m, int lo, int hi, unsigned fl = 0) {
+OptionDef I(const char* k, const char* a, int Config::*m, int lo, int hi, unsigned fl = 0, Tune t = Tune::Never,
+            const char* trial = nullptr, int order = 0) {
     OptionDef d{k, a, Kind::Int};
-    d.i = m; d.lo = float(lo); d.hi = float(hi); d.flags = fl;
+    d.i = m; d.lo = float(lo); d.hi = float(hi); d.flags = fl; d.tune = t; d.trial = trial; d.tuneOrder = order;
     return d;
 }
 OptionDef F(const char* k, const char* a, float Config::*m, float lo, float hi, unsigned fl = 0,
@@ -174,6 +175,8 @@ const std::vector<OptionDef>& registry() {
     F("extrapolate_hold", nullptr, &Config::extrapolateHold, 0.f, 1.f, kLive),
     F("extrapolate_accel", nullptr, &Config::extrapolateAccel, 0.f, 1.f, kLive),
     F("flow_temporal", nullptr, &Config::flowTemporal, 0.f, 1.f, kLive, Tune::Always, "1", 4),
+    I("subpixel_lk", nullptr, &Config::subpixelLk, 0, 4, kLive, Tune::Extrapolation, "2", 5),
+    B("synth_bicubic", nullptr, &Config::synthBicubic, kLive),
     B("online_tune", nullptr, &Config::onlineTune),
     F("upscale_temporal", nullptr, &Config::upscaleTemporal, 0.f, 0.95f),
     B("frame_timing", nullptr, &Config::frameTiming, kLive),
@@ -479,6 +482,8 @@ std::string Config::describe() const {
     if (extrapolateHold > 0.f) o << " extrapolate_hold=" << extrapolateHold;
     if (extrapolateAccel > 0.f) o << " extrapolate_accel=" << extrapolateAccel;
     if (flowTemporal > 0.f) o << " flow_temporal=" << flowTemporal;
+    if (subpixelLk > 0) o << " subpixel_lk=" << subpixelLk;
+    if (synthBicubic) o << " synth_bicubic=1";
     if (onlineTune) o << " online_tune=1";
     if (upscaleTemporal > 0.f) o << " upscale_temporal=" << upscaleTemporal;
     if (targetFps != 0.f) o << " target_fps=" << (targetFps < 0.f ? std::string("auto") : std::to_string(targetFps));

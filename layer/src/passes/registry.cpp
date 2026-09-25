@@ -8,6 +8,7 @@ namespace bdex {
 std::unique_ptr<FgPass> makeFlowTemporalPass();
 std::unique_ptr<FgPass> makeOnlineTunePass();
 std::unique_ptr<FgPass> makeTemporalUpscalePass();
+std::unique_ptr<FgPass> makeSubpixelLkPass();
 
 std::vector<std::unique_ptr<FgPass>> createOptionalPasses(const Config& cfg, DeviceData& dev, uint32_t outputs,
                                                           bool upscaling) {
@@ -16,6 +17,7 @@ std::vector<std::unique_ptr<FgPass>> createOptionalPasses(const Config& cfg, Dev
     // Self-evaluation first: it rates the previous flow before anything rewrites it.
     if (cfg.onlineTune) passes.push_back(makeOnlineTunePass());
     passes.push_back(makeFlowTemporalPass());  // flow_temporal can be switched on live
+    passes.push_back(makeSubpixelLkPass());    // likewise; after flow_temporal (it keeps whole-pixel vectors only)
     // Needs a filterable rgba16f history.
     if (upscaling && cfg.upscaleTemporal > 0.f &&
         dev.formatSupports(VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT |
