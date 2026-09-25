@@ -44,6 +44,24 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-24)
 
+- **`frame_timing` and `dedup` (opt-in): generated frames follow the game's
+  real timing.** A per-frame state pass on the GPU (`frame_state.comp`, no
+  read-back before presenting) keeps a content clock: `frame_timing` gives
+  every output the t of the moment it is displayed within the *actual*
+  interval between the two real frames (the pacing spreads them over the
+  *smoothed* one, so a frame-time spike used to misplace them); `dedup`
+  detects images the game presents twice (level-0 luma, a few pixels of
+  tolerance), gates the flow passes off through indirect dispatches so the
+  previous pair's motion is kept, times the outputs on first appearances
+  and, in extrapolation, replaces the stale repeated frame with an
+  extrapolated one. Measured with the new `bdex_offline --jitter / --dup /
+  --steady-content` schedules (every displayed frame scored against the
+  frame the player should see): variable frame times ±20–40 % +0.1 to
+  +2.3 dB; each image presented twice +0.9 to +7 dB (HUD scene extrapolated
+  22.3 → 29.2 dB, flicker 48.6 → 7.8); a fixed-timestep game with jittery
+  presents −0.6 dB at worst for `frame_timing` (hence opt-in). Both are
+  byte-identical on a steady, non-repeating game. The demo gains
+  `--repeat N`; the validation test runs both options (0 messages).
 - **The Windows launcher gains an "Options avancées" column** with every
   engine option that applies to the capture app (motion quality,
   experimental, flow structure, debug view), table-driven, saved like the
