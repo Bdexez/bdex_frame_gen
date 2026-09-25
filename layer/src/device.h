@@ -124,6 +124,11 @@ struct DeviceData {
     // copies into `out` when `version` is behind, and updates `version`.
     void snapshotConfig(Config& out, uint64_t& version);
     uint64_t configVersion = 0;  // bumped by each live reload (configMutex)
+    // online_tune: the per-game option trial, shared by the device's
+    // swapchains and kept across their rebuilds (created by the first FrameGen).
+    std::shared_ptr<class OnlineTune> onlineTune;
+    std::mutex onlineTuneMutex;  // guards onlineTune and onlineTuneReported
+    size_t onlineTuneReported = 0;  // decisions already logged / cached
     std::mutex configMutex;
     std::chrono::steady_clock::time_point configChecked{};
     int64_t configStamp = -1;  // mtime of the file last seen, -1 = none yet, -2 = missing

@@ -8,6 +8,26 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-25)
 
+- **`online_tune` (opt-in): per-game automatic choice of the motion
+  options.** A new pass (`self_eval.comp`) rates the motion field on the
+  game's own next frame: the previous pair's motion predicts it at
+  constant velocity and the error is compared with predicting no motion
+  (sampled grid, fixed-point sums per command-buffer slot, read back when
+  the slot is reused — no stall). `OnlineTune` (`online_tune.{h,cpp}`,
+  unit-tested) tries each candidate in alternating ABBA blocks of 8 flows
+  on top of the options already kept, skips frames without motion, and
+  keeps an option that lowers the error ratio by ≥ 0.01 on average and in
+  3 pairs out of 4. Candidates: `zero_bias_contrast=0.1`,
+  `temporal_prediction=1`, `subpixel=1` (extrapolation only — measured
+  −0.9 dB interpolated where the measure favours it), `flow_temporal=1`;
+  options the user set are not candidates. Decisions are logged and cached
+  per game and mode after each one (`platformCacheDir()`,
+  `BDEX_FG_CACHE_DIR`), so the next session starts tuned. The demo is
+  tuned in 6.6 s at 60 fps; offline the choices match the PSNR (e.g.
+  `zero_bias_contrast` +4.75 dB kept on a swinging camera, dropped on the
+  neutral HUD scene). Also in the capture app (its command slots feed the
+  read-back), the GTK panel and the launcher. Default 0 is byte-identical;
+  covered by the validation state and async runs.
 - **`flow_temporal` (opt-in): temporal stabilisation of the motion.** A new
   pass after the finest flow (`flow_temporal.comp`) reconsiders each vector
   against the same content's motion one pair earlier (the previous backward

@@ -17,6 +17,7 @@ bdex_add_shaders(bdex_layer_shaders
     shaders/frame_state.comp
     shaders/downsample_chroma.comp
     shaders/flow_temporal.comp
+    shaders/self_eval.comp
     shaders/interpolate.comp:u32
     shaders/interpolate.comp:u64:OUT_64
     shaders/interpolate.comp:sharp:SHARP
@@ -45,6 +46,7 @@ add_library(bdex_core STATIC
   src/platform.cpp
   src/vk_util.cpp
   src/budget.cpp
+  src/online_tune.cpp
   src/display_clock.cpp
   src/status.cpp
 )

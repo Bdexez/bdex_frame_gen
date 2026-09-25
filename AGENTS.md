@@ -255,6 +255,19 @@ x2/x3/x4), sauf le correctif HDR (les chemins SDR restent identiques).
   qui force `packReal_`). Les formules de t retombent exactement sur i/m à
   cadence régulière (écrites « i/m + correction »).
 - **`scene_cut_local`** : grille 8×8 dans `reduce_cost` (groupes 1..64).
+- **`online_tune`** (2026-09-25) : `self_eval.comp` au début de
+  `recordFlow` (avant que le matching ne réécrive le flow) note le flow
+  précédent sur l'image qui arrive (prédiction à vitesse constante vs
+  « pas de mouvement ») ; sommes en virgule fixe par slot de profilage
+  (`evalBuf_`, lues dans `profileBegin` quand le slot est réutilisé, donc
+  après sa fence — le mode capture appelle `profileBegin` pour ça).
+  `OnlineTune` (partagé dans `DeviceData`, survit aux reconstructions) :
+  blocs ABBA de 8 flows, gain **absolu** du ratio (le relatif explosait sur
+  les contenus quasi parfaits : +90 % pour une différence invisible).
+  Surcharges appliquées dans `effectiveConfig()` *avant* celles de
+  `gpu_budget`. `subpixel` n'est candidat qu'en extrapolation (le critère
+  est celui de l'extrapolation : +2 dB extrap / −0,9 dB interp sur le même
+  panoramique). Cache `online-tune-<jeu>-<mode>.txt` (`Config::tuneName`).
 - **`flow_temporal`** (2026-09-25) : passe `flow_temporal.comp` après le flow
   du niveau 0, avant `reduce_cost` ; réutilise la copie `prevBwd_` (comme
   `extrapolate_accel`) et les lumas du niveau 0 (un set par parité). Choix

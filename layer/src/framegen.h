@@ -2,7 +2,9 @@
 #include "device.h"
 #include "format.h"
 
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace bdex {
@@ -207,6 +209,24 @@ private:
     Pass downsample_, blockMatch_, smooth_, refine_, reduce_, interp_, upscale_, cas_, splat_, frameState_, downChroma_,
         temporal_;
     VkDescriptorSet dsTemporal_[2] = {};  // flow_temporal per parity: finest flows, prevBwd_, lumas
+
+    // online_tune (see online_tune.h): the self-evaluation of the previous
+    // flow is recorded into the command buffer's profile slot and read back
+    // when the slot is begun again (its previous submission has completed).
+    void recordSelfEval(VkCommandBuffer cmd, uint32_t parity);
+    void collectSelfEval(uint32_t slot);
+    void reportOnlineTune();
+    std::shared_ptr<class OnlineTune> tune_;  // dev_.onlineTune when online_tune is on
+    Pass selfEval_;
+    VkDescriptorSet dsEval_[2] = {};          // per parity: lumas of the pair, finest backward flow, counters
+    AllocatedBuffer evalBuf_;                 // host-visible: 4 words per profile slot
+    void* evalMapped_ = nullptr;
+    uint32_t evalSlot_ = kProfileSlots;       // slot of the command buffer being recorded
+    bool evalPending_[kProfileSlots]{};
+    uint32_t evalTag_[kProfileSlots]{};
+    uint32_t tuneTag_ = 0;                    // tag of the flow in the flow images
+    bool tuneTagValid_ = false;
+    std::vector<std::pair<std::string, std::string>> tuneOverrides_;  // this frame's trial settings
     bool chroma_ = false;                         // chroma pyramid built (chroma_weight > 0 at creation)
     AllocatedImage chromaDummy_;                  // bound to the matcher's chroma slots when chroma_ is off
     std::vector<VkDescriptorSet> dsChromaSrc_[2]; // [parity] per source (level 0)

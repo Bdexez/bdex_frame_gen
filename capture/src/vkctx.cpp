@@ -609,6 +609,9 @@ int VkCtx::synthesize(const Capture::Frame& f, bool& consumed) {
     // Same sequence as VirtualSwapchain::present: analyse the new frame,
     // flow against the previous one, synthesise the in-between (or
     // predicted) frames, resample the real frame if upscaling / HUD.
+    // profileBegin marks the command slot (its fence was waited in nextCmd):
+    // online_tune reads back the self-evaluation recorded there last time.
+    fg_->profileBegin(cb, static_cast<uint32_t>(&s - cmds_));
     fg_->recordAcquireSources(cb, prev, static_cast<int>(cur));
     fg_->recordAnalysis(cb, parity_, cur);
     FrameGen::FrameTiming timing;  // frame_timing / dedup (no-op otherwise)

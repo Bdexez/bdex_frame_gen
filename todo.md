@@ -41,6 +41,9 @@ essai sur de vrais jeux :
 - [ ] `frame_timing` : gagnant sur un jeu à pas variable, −0,6 dB au pire sur
   pas fixe — à trancher par jeu (profil) ;
 - [ ] `extrapolate_accel` (extrapolation) : caméra qui accélère +1 à +2,7 dB ;
+- [ ] `online_tune=1` : vérifier les décisions sur de vrais jeux (journal
+  `online_tune:`) et leur cohérence d'une session à l'autre ; le critère
+  (prédiction de l'image suivante) note le mouvement, pas le scintillement ;
 - [ ] `flow_temporal=1` : démo +0,13 dB, scintillement −5 % ; à confirmer sur
   des jeux (textures répétées, sols, feuillages) ;
 - [ ] `gpu_budget=0.25` sur l'iGPU Vega 8 : vérifier que la génération ne

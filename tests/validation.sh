@@ -20,8 +20,8 @@ bdex_use_layer "$LAYER_DIR"
 trap 'rm -rf "$LOG" "$BDEX_LAYER_XDG"' EXIT
 status=0
 # Second pass per mode: the per-frame state options (content-time t, repeated
-# frames, per-region scene cuts, acceleration, chroma, flow_temporal, GPU budget), on a demo
-# that presents every image twice so the repeat path (gated flow dispatches,
+# frames, per-region scene cuts, acceleration, chroma, flow_temporal,
+# online_tune, GPU budget), on a demo that presents every image twice so the repeat path (gated flow dispatches,
 # extrapolated real frame) runs too. "direct": extrapolation with the real
 # frame copied straight (no upscaling / HUD), the path where the worker
 # submits the synthesis after the real frame.
@@ -33,11 +33,11 @@ for run in interpolate extrapolate interpolate:state extrapolate:state extrapola
   if [ "$run" = extrapolate:direct ]; then
     state=""; demo_args="--frames 90 --duration 40"; output="BDEX_FG_HUD=0"
   elif [ "${run#*:}" = async ]; then
-    state="BDEX_FG_ASYNC_COMPUTE=1 BDEX_FG_DEDUP=1 BDEX_FG_FLOW_TEMPORAL=1"; demo_args="--repeat 2 --frames 90 --duration 40"; output="BDEX_FG_HUD=0"
+    state="BDEX_FG_ASYNC_COMPUTE=1 BDEX_FG_DEDUP=1 BDEX_FG_FLOW_TEMPORAL=1 BDEX_FG_ONLINE_TUNE=1 BDEX_FG_CACHE_DIR="; demo_args="--repeat 2 --frames 90 --duration 40"; output="BDEX_FG_HUD=0"
   elif [ "$run" != "$mode" ]; then
     # A tiny gpu_budget walks the whole quality ladder within the run,
     # output-stage rebuild included (level 3) unless the flow is at 1/4.
-    state="BDEX_FG_FRAME_TIMING=1 BDEX_FG_DEDUP=1 BDEX_FG_SCENE_CUT_LOCAL=1 BDEX_FG_EXTRAPOLATE_ACCEL=1 BDEX_FG_CHROMA_WEIGHT=1 BDEX_FG_FLOW_TEMPORAL=1 BDEX_FG_GPU_BUDGET=0.001"
+    state="BDEX_FG_FRAME_TIMING=1 BDEX_FG_DEDUP=1 BDEX_FG_SCENE_CUT_LOCAL=1 BDEX_FG_EXTRAPOLATE_ACCEL=1 BDEX_FG_CHROMA_WEIGHT=1 BDEX_FG_FLOW_TEMPORAL=1 BDEX_FG_ONLINE_TUNE=1 BDEX_FG_CACHE_DIR= BDEX_FG_GPU_BUDGET=0.001"
     demo_args="--repeat 2 --frames 300 --duration 40"
   else
     state=""; demo_args="--frames 45 --duration 40"

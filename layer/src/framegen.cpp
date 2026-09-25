@@ -1,12 +1,18 @@
 #include "framegen.h"
 #include "log.h"
+#include "online_tune.h"
+#include "platform.h"
 #include "shaders.h"
 #include "vk_util.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cctype>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 
 namespace bdex {
 
@@ -17,6 +23,48 @@ struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t has
 struct SizePC { int32_t size[2]; };
 struct ReducePC { int32_t size[2]; int32_t tiles; };
 struct TemporalPC { int32_t size[2]; int32_t luma[2]; int32_t block; float strength; };
+struct SelfEvalPC { int32_t size[2]; float flowExtent[2]; int32_t slot; int32_t step; };
+
+// Per game and mode (the decisions differ between interpolation and
+// extrapolation); "" when there is no cache.
+static std::string onlineTuneCachePath(const Config& cfg) {
+    const std::string dir = platformCacheDir();
+    if (dir.empty() || cfg.tuneName.empty()) return "";
+    std::string name;
+    for (char c : cfg.tuneName) name += (std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '.') ? c : '_';
+    return dir + "/online-tune-" + name + (cfg.extrapolate ? "-extrapolate" : "-interpolate") + ".txt";
+}
+
+// online_tune candidates: flow options measured non-negative on average
+// that the self-evaluation can rate (they change the motion field; synthesis
+// and resource-sizing options cannot be tried this way). An option the user
+// set is left alone: it is not a candidate. The self-evaluation predicts the
+// next frame, i.e. rates the flow the way extrapolation uses it; sub-pixel
+// vectors are only tried there: on a 3.25 px/frame pan they win 2 dB in
+// extrapolation, as the measure says, but lose 0.9 dB interpolated (the
+// half-way bilinear resampling blurs).
+static std::shared_ptr<OnlineTune> createOnlineTune(const Config& cfg) {
+    std::vector<OnlineTune::Candidate> all = {{"zero_bias_contrast", "0.1"}, {"temporal_prediction", "1"}};
+    if (cfg.extrapolate) all.push_back({"subpixel", "1"});
+    all.push_back({"flow_temporal", "1"});
+    std::vector<OnlineTune::Candidate> candidates;
+    const std::string mine = cfg.describe();
+    for (const auto& c : all) {
+        Config off = cfg;
+        off.apply(c.key, "0");
+        if (off.describe() == mine) candidates.push_back(c);
+    }
+    auto tune = std::make_shared<OnlineTune>(candidates);
+    if (const std::string path = onlineTuneCachePath(cfg); !path.empty()) {
+        std::ifstream in(path);
+        std::stringstream text;
+        text << in.rdbuf();
+        if (in && tune->deserialize(text.str()))
+            BDEX_INFO("online_tune: cached decisions for %s: %s%s", cfg.tuneName.c_str(), tune->summary().c_str(),
+                      tune->done() ? "" : " (trying the others)");
+    }
+    return tune;
+}
 struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; int32_t subpixel; };
 struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; float occlusionStrength; float staticGuard; float extrapHold; int32_t splat; int32_t pixelVectors; int32_t transfer; int32_t timing; int32_t localCut; float accel; int32_t hudLatency; };
 struct UpscalePC { int32_t outSize[2]; int32_t srcSize[2]; uint32_t encoding; int32_t filter; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; int32_t hudLatency; };
@@ -58,6 +106,14 @@ FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, Vk
     dedup_ = outputs_ > 0 && (*cfgp_).dedup;
     chroma_ = outputs_ > 0 && (*cfgp_).chromaWeight > 0.f;
     dupReal_ = dedup_ && (*cfgp_).extrapolate;
+    if (outputs_ > 0 && (*cfgp_).onlineTune) {
+        std::lock_guard<std::mutex> lock(dev_.onlineTuneMutex);
+        if (!dev_.onlineTune) {
+            dev_.onlineTune = createOnlineTune(*cfgp_);
+            dev_.onlineTuneReported = dev_.onlineTune->decisions().size();  // cached ones were logged
+        }
+        tune_ = dev_.onlineTune;
+    }
     // The real frame is resampled into an internal packed image when upscaling,
     // when the HUD must be drawn on it, or when a repeated frame may have to
     // be replaced by an extrapolated one (otherwise it is copied straight).
@@ -171,6 +227,7 @@ void FrameGen::createPipelines() {
         frameState_ = makePass(frame_state_comp, frame_state_comp_size, {CIS, CIS, SB});
         if (chroma_) downChroma_ = makePass(downsample_chroma_comp, downsample_chroma_comp_size, {CIS, SI});
         temporal_ = makePass(flow_temporal_comp, flow_temporal_comp_size, {SI, SI, CIS, CIS, CIS});
+        if (tune_) selfEval_ = makePass(self_eval_comp, self_eval_comp_size, {CIS, CIS, CIS, SB});
     }
     if (packReal_) {
         if (sharpen_)       upscale_ = makePass(upscale_comp_sharp, upscale_comp_sharp_size, {CIS, SI});
@@ -239,6 +296,10 @@ void FrameGen::createResources() {
     if (outputs_ > 0) {
         stateBuf_ = dev_.createBuffer(kStateSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                                                       VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
+        if (tune_) {
+            evalBuf_ = dev_.createBuffer(kProfileSlots * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
+            VK_CHECK(dev_.vt.MapMemory(dev_.device, evalBuf_.memory, 0, VK_WHOLE_SIZE, 0, &evalMapped_));
+        }
         stateReadback_ = dev_.createBuffer(kStateHead, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
         VK_CHECK(dev_.vt.MapMemory(dev_.device, stateReadback_.memory, 0, VK_WHOLE_SIZE, 0, &stateMapped_));
         // The dispatches the state pass may gate, in a fixed order: per flow
@@ -364,13 +425,13 @@ void FrameGen::createDescriptors() {
     const uint32_t cas = sharpen_ ? O + 1 : 0;    // one CAS set per generated output, plus the real frame
     const uint32_t nReal = dupReal_ ? N * N : 0;  // extrapolated replacements of repeated real frames
     const uint32_t nChroma = chroma_ ? 2 * N + 2 * L : 0;  // chroma pyramid sets (like the luma ones)
-    const uint32_t nSets = gen * (2 * N + 2 * L + 4 * L + 2 * L + 4 * L + 1 + nInterp + 1 + 1 + 2) + nReal + nChroma + up + cas;  // + splat, state, temporal
+    const uint32_t nSets = gen * (2 * N + 2 * L + 4 * L + 2 * L + 4 * L + 1 + nInterp + 1 + 1 + 2 + 2) + nReal + nChroma + up + cas;  // + splat, state, temporal
     // Block-match sets (2 parities x 2 directions x L) hold two samplers each:
     // the coarse prediction and the previous backward flow (temporal prediction).
     // Block-match sets also hold the two chroma samplers (a dummy when off).
-    const uint32_t nCIS = gen * (2 * N + 2 * L + 4 * L * 4 + 5 * nInterp + 3 + 2 + 6) + 5 * nReal + nChroma + up + cas;  // + splat flows, state lumas, temporal
+    const uint32_t nCIS = gen * (2 * N + 2 * L + 4 * L * 4 + 5 * nInterp + 3 + 2 + 6 + 6) + 5 * nReal + nChroma + up + cas;  // + splat flows, state lumas, temporal
     const uint32_t nSI = gen * (2 * N + 2 * L + 4 * L * 4 + 2 * L * 2 + 4 * L * 5 + 1 + nInterp * 2 + 1 + 4) + 2 * nReal + nChroma + up + cas;  // interp + splat map + temporal
-    const uint32_t nSB = gen * (1 + nInterp + 1 + 1) + nReal;  // reduce, interp, splat, state
+    const uint32_t nSB = gen * (1 + nInterp + 1 + 1 + 2) + nReal;  // reduce, interp, splat, state, self-eval
     std::vector<VkDescriptorPoolSize> sizes;
     if (nCIS) sizes.push_back({VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nCIS});
     if (nSI) sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nSI});
@@ -485,6 +546,14 @@ void FrameGen::createDescriptors() {
         writeImage(s, 2, CIS, prevBwd_.view);
         writeImage(s, 3, CIS, levels_v_[0].pyr[1 - parity].view);
         writeImage(s, 4, CIS, levels_v_[0].pyr[parity].view);
+        if (tune_) {
+            VkDescriptorSet& e = dsEval_[parity];
+            e = allocSet(selfEval_.setLayout);
+            writeImage(e, 0, CIS, levels_v_[0].pyr[1 - parity].view);
+            writeImage(e, 1, CIS, levels_v_[0].pyr[parity].view);
+            writeImage(e, 2, CIS, levels_v_[0].flowFine[1].view);
+            writeBuffer(e, 3, evalBuf_.buffer);
+        }
     }
     dsState_ = allocSet(frameState_.setLayout);
     writeImage(dsState_, 0, CIS, levels_v_[0].pyr[0].view);
@@ -526,7 +595,7 @@ void FrameGen::destroyAll() {
     VkDevice d = dev_.device;
     if (pool_) vt.DestroyDescriptorPool(d, pool_, nullptr);
     pool_ = VK_NULL_HANDLE;
-    for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_, &splat_, &frameState_, &downChroma_, &temporal_}) {
+    for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_, &splat_, &frameState_, &downChroma_, &temporal_, &selfEval_}) {
         if (p->pipeline) vt.DestroyPipeline(d, p->pipeline, nullptr);
         if (p->layout) vt.DestroyPipelineLayout(d, p->layout, nullptr);
         if (p->setLayout) vt.DestroyDescriptorSetLayout(d, p->setLayout, nullptr);
@@ -557,6 +626,9 @@ void FrameGen::destroyAll() {
     sharp_.clear();
     if (sharpReal_.image) dev_.destroyImage(sharpReal_);
     dev_.destroyBuffer(stateBuf_);
+    if (evalMapped_) vt.UnmapMemory(d, evalBuf_.memory);
+    evalMapped_ = nullptr;
+    dev_.destroyBuffer(evalBuf_);
     if (stateMapped_) vt.UnmapMemory(d, stateReadback_.memory);
     stateMapped_ = nullptr;
     dev_.destroyBuffer(stateReadback_);
@@ -815,8 +887,71 @@ bool FrameGen::readState(State& out) const {
     return true;
 }
 
+void FrameGen::recordSelfEval(VkCommandBuffer cmd, uint32_t parity) {
+    auto& vt = dev_.vt;
+    const uint32_t slot = evalSlot_;
+    if (slot >= kProfileSlots || evalPending_[slot]) return;
+    const Level& l0 = levels_v_[0];
+    const uint32_t block = l0.refined ? kFineBlock : kBlockSize;
+    // At most 2^18 samples, so the fixed-point sums cannot overflow.
+    uint32_t step = 2;
+    while (uint64_t(divUp(l0.size.width, step)) * divUp(l0.size.height, step) > (1u << 18)) ++step;
+    vt.CmdFillBuffer(cmd, evalBuf_.buffer, VkDeviceSize(slot) * 16, 16, 0);
+    memoryBarrier(cmd);
+    vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, selfEval_.pipeline);
+    SelfEvalPC pc{{(int32_t)l0.size.width, (int32_t)l0.size.height},
+                  {float(l0.fine.width * block), float(l0.fine.height * block)}, (int32_t)slot, (int32_t)step};
+    vt.CmdPushConstants(cmd, selfEval_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+    vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, selfEval_.layout, 0, 1, &dsEval_[parity], 0, nullptr);
+    vt.CmdDispatch(cmd, divUp(divUp(l0.size.width, step), 16), divUp(divUp(l0.size.height, step), 16), 1);
+    // The matching then rewrites the flow it read; the host reads the sums.
+    memoryBarrier(cmd);
+    VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, nullptr, 0, nullptr);
+    evalPending_[slot] = true;
+    evalTag_[slot] = tuneTag_;
+}
+
+void FrameGen::collectSelfEval(uint32_t slot) {
+    if (slot >= kProfileSlots || !evalPending_[slot]) return;
+    evalPending_[slot] = false;
+    const auto* w = static_cast<const uint32_t*>(evalMapped_) + slot * 4;
+    if (w[2] > 0) tune_->addSample(evalTag_[slot], w[0] / 4096.0, w[1] / 4096.0, double(w[2]));
+    reportOnlineTune();
+}
+
+// Logs each new decision and caches the decisions made so far for the game.
+void FrameGen::reportOnlineTune() {
+    std::lock_guard<std::mutex> lock(dev_.onlineTuneMutex);
+    const auto decisions = tune_->decisions();
+    if (decisions.size() == dev_.onlineTuneReported) return;
+    for (size_t i = dev_.onlineTuneReported; i < decisions.size(); ++i)
+        BDEX_INFO("online_tune: %s=%s %s (prediction error %+.1f %%)", decisions[i].key.c_str(),
+                  decisions[i].value.c_str(), decisions[i].kept ? "kept" : "dropped", -100.0 * decisions[i].gain);
+    dev_.onlineTuneReported = decisions.size();
+    if (tune_->done()) BDEX_INFO("online_tune: done for %s: %s", (*cfgp_).tuneName.c_str(), tune_->summary().c_str());
+    // Cached after each decision: a short session still spares the next one.
+    const std::string path = onlineTuneCachePath(*cfgp_);
+    if (path.empty()) return;
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+    std::ofstream out(path, std::ios::trunc);
+    out << tune_->serialize();
+    if (out && tune_->done()) BDEX_INFO("online_tune: decisions cached in %s", path.c_str());
+}
+
 void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
     auto& vt = dev_.vt;
+    if (tune_) {
+        // Rate the flow still in the images (the previous pair's) on the
+        // frame that just arrived, then pick the settings of this one.
+        // (Nothing left to measure once every candidate is decided.)
+        if (flowLastFrame_ && tuneTagValid_ && !tune_->done()) recordSelfEval(cmd, parity);
+        tuneTag_ = tune_->nextFlow(tuneOverrides_);
+        tuneTagValid_ = true;
+    }
     const Config cfg = effectiveConfig();
     flowThisFrame_ = true;
     // extrapolate_accel: keep the previous pair's finest backward flow before
@@ -1049,6 +1184,11 @@ void FrameGen::recordCopySource(VkCommandBuffer cmd, uint32_t src, VkImage dst) 
 namespace bdex {
 
 void FrameGen::profileBegin(VkCommandBuffer cmd, uint32_t slot) {
+    // The slot's previous submission has completed: its self-evaluation can be read.
+    if (tune_) {
+        collectSelfEval(slot);
+        evalSlot_ = slot;
+    }
     if (!queryPool_ || slot >= kProfileSlots) return;
     const uint32_t base = slot * (StageCount + 1);
     dev_.vt.CmdResetQueryPool(cmd, queryPool_, base, StageCount + 1);
@@ -1097,6 +1237,7 @@ double FrameGen::takeGpuMs() {
 
 Config FrameGen::effectiveConfig() const {
     Config c = (*cfgp_);
+    for (const auto& kv : tuneOverrides_) c.apply(kv.first, kv.second);
     if (qualityLevel_ >= 1) {
         c.pixelVectors = false;
         c.subpixel = false;

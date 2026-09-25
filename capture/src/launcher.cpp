@@ -259,6 +259,7 @@ const char* const kDebugValues[] = {"none", "flow", "split"};
 // Section headers are entries with a null key.
 const ExtraOpt kExtra[] = {
     {nullptr, L"Qualité du mouvement", kCheck, ""},
+    {"online_tune", L"Réglage automatique par jeu (essaie les options ci-dessous)", kCheck, "0"},
     {"zero_bias_contrast", L"Stabilité adaptée au contraste (0,1 recommandé)", kNumber, "0"},
     {"pixel_vectors", L"Contours d'objets (synthèse ~2× plus coûteuse)", kCheck, "0"},
     {"subpixel", L"Mouvement sous-pixel", kCheck, "0"},
