@@ -126,6 +126,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed (2026-09-25)
 
+- `framegen.cpp` split by feature: `framegen_tune.cpp` (self-evaluation and
+  `online_tune`), `framegen_output.cpp` (the real frame's output stage:
+  spatial / temporal upscaling, HUD, dedup replacement, CAS), and
+  `framegen_internal.h` (push-constant blocks, state-buffer layout, shared
+  helpers, private to these files). The layer, `bdex_offline` and
+  `bdex_capture` build all three. No behaviour change.
 - **Option registry.** The plain bool / int / float options are declared
   once, in a table in `config.cpp` (key, alias, range, live-reloadable,
   `online_tune` candidate and trial value): `Config::apply`,

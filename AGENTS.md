@@ -37,7 +37,12 @@ tous les shaders de `layer/shaders/`.
 - `layer/src/` — la couche : `layer.cpp` (négociation loader, dispatch,
   `vkGetInstanceProcAddr`), `swapchain.cpp` (virtualisation des swapchains,
   pacing), `present_slice.{h,cpp}` (réindexation des tableaux `pNext` lors
-  d'un present multi-swapchain), `framegen.cpp` (orchestration du pipeline), `config.cpp`,
+  d'un present multi-swapchain), `framegen.cpp` (orchestration du pipeline ;
+  `framegen_tune.cpp` = auto-évaluation/`online_tune`, `framegen_output.cpp`
+  = étage de sortie de l'image réelle : upscale spatial/temporel, CAS ;
+  `framegen_internal.h` = push constants et disposition du tampon d'état,
+  privés à ces fichiers ; `descriptor_planner.{h,cpp}` = pools de
+  descripteurs à la demande), `config.cpp` (registre des options),
   `device.cpp`, `platform.cpp` (shims Linux/Windows), `format.cpp`, `log.cpp`.
 - `layer/shaders/` — `downsample`, `block_match`, `flow_smooth`,
   `flow_refine`, `reduce_cost`, `interpolate`, `upscale`, `cas`,

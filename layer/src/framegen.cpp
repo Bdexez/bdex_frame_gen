@@ -1,99 +1,19 @@
 #include "framegen.h"
+#include "framegen_internal.h"
 #include "log.h"
 #include "online_tune.h"
-#include "platform.h"
 #include "shaders.h"
 #include "vk_util.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <cctype>
 #include <cstring>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
 
 namespace bdex {
 
-namespace {
+using namespace fg;
 
-struct DownsamplePC { int32_t size[2]; int32_t fromColor; int32_t transfer; };
-struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; float gradWeight; float censusWeight; float censusMargin; float rotWeight; int32_t temporal; float zeroBiasContrast; float chromaWeight; int32_t chromaHistory; };
-struct SizePC { int32_t size[2]; };
-struct ReducePC { int32_t size[2]; int32_t tiles; };
-struct TemporalPC { int32_t size[2]; int32_t luma[2]; int32_t block; float strength; };
-struct TaaPC { int32_t outSize[2]; int32_t srcSize[2]; float flowInvSize[2]; float flowScale; float weight; float cutLow; float cutHigh; int32_t filterMode; int32_t hasHistory; int32_t useDup; };
-struct SelfEvalPC { int32_t size[2]; float flowExtent[2]; int32_t slot; int32_t step; };
-
-// Per game and mode (the decisions differ between interpolation and
-// extrapolation); "" when there is no cache.
-static std::string onlineTuneCachePath(const Config& cfg) {
-    const std::string dir = platformCacheDir();
-    if (dir.empty() || cfg.tuneName.empty()) return "";
-    std::string name;
-    for (char c : cfg.tuneName) name += (std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '.') ? c : '_';
-    return dir + "/online-tune-" + name + (cfg.extrapolate ? "-extrapolate" : "-interpolate") + ".txt";
-}
-
-// online_tune candidates come from the option registry (config.cpp, the
-// Tune column): flow options measured non-negative on average that the
-// self-evaluation can rate (they change the motion field; synthesis and
-// resource-sizing options cannot be tried this way). The self-evaluation
-// predicts the next frame, i.e. rates the flow the way extrapolation uses
-// it; sub-pixel vectors are only tried there: on a 3.25 px/frame pan they
-// win 2 dB in extrapolation, as the measure says, but lose 0.9 dB
-// interpolated (the half-way bilinear resampling blurs). An option the user
-// set is left alone: it is not a candidate.
-static std::shared_ptr<OnlineTune> createOnlineTune(const Config& cfg) {
-    std::vector<OnlineTune::Candidate> candidates;
-    const std::string mine = cfg.describe();
-    for (const auto& [key, trial] : cfg.tuneCandidates()) {
-        const OnlineTune::Candidate c{key, trial};
-        Config off = cfg;
-        off.apply(c.key, "0");
-        if (off.describe() == mine) candidates.push_back(c);
-    }
-    auto tune = std::make_shared<OnlineTune>(candidates);
-    if (const std::string path = onlineTuneCachePath(cfg); !path.empty()) {
-        std::ifstream in(path);
-        std::stringstream text;
-        text << in.rdbuf();
-        if (in && tune->deserialize(text.str()))
-            BDEX_INFO("online_tune: cached decisions for %s: %s%s", cfg.tuneName.c_str(), tune->summary().c_str(),
-                      tune->done() ? "" : " (trying the others)");
-    }
-    return tune;
-}
-struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; int32_t subpixel; };
-struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; float occlusionStrength; float staticGuard; float extrapHold; int32_t splat; int32_t pixelVectors; int32_t transfer; int32_t timing; int32_t localCut; float accel; int32_t hudLatency; };
-struct UpscalePC { int32_t outSize[2]; int32_t srcSize[2]; uint32_t encoding; int32_t filter; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; int32_t hudLatency; };
-struct SplatPC { int32_t size[2]; float s; float flowScale; float flowInvSize[2]; int32_t timing; float accel; };
-struct FrameStatePC { int32_t size[2]; int32_t mode; int32_t multiplier; float sinceLastMs; float intervalMs; int32_t flags; int32_t gateCount; uint32_t dupMaxPixels; float displayMs[4]; };
-struct CasPC { int32_t size[2]; uint32_t encoding; float sharpness; };
-
-constexpr uint32_t kBlockSize = 8;
-constexpr uint32_t kFineBlock = 4;
-constexpr uint32_t kPushSize = 128;  // the guaranteed minimum of maxPushConstantsSize
-static_assert(sizeof(InterpPC) <= kPushSize && sizeof(MatchPC) <= kPushSize);
-
-// Frame state buffer layout (the State block of frame_state.comp; the
-// synthesis shaders read its head).
-constexpr VkDeviceSize kStateSize = 2048;
-constexpr VkDeviceSize kStateDiffCount = 8;
-constexpr VkDeviceSize kStateHead = 48;          // meanCost .. t[4], read back for the tools
-constexpr VkDeviceSize kStateGateFull = 304;     // uvec4 per gated dispatch
-constexpr VkDeviceSize kStateGateActive = 688;   // VkDispatchIndirectCommand per gated dispatch
-constexpr VkDeviceSize kStateTileDiff = 976;     // uint per tile of the 8x8 repeat grid
-constexpr uint32_t kGateEntries = 24;
-constexpr uint32_t kCutTiles = 8;  // scene_cut_local grid (tileCost[64] in the state)
-static_assert(kStateGateActive + kGateEntries * 12 <= kStateTileDiff);
-static_assert(kStateTileDiff + 65 * 4 <= kStateSize);
-enum { kStateReset = 1, kStateDedup = 2, kStateExtrap = 4, kStateDisplay = 8, kStateContent = 16 };
-
-uint32_t divUp(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
-
-} // namespace
 
 FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, VkExtent2D displayExtent, uint32_t outputs,
                    const std::vector<VkImage>& sources, VkColorSpaceKHR colorSpace, int flowScaleFactor,
@@ -924,61 +844,6 @@ bool FrameGen::readState(State& out) const {
     return true;
 }
 
-void FrameGen::recordSelfEval(VkCommandBuffer cmd, uint32_t parity) {
-    auto& vt = dev_.vt;
-    const uint32_t slot = evalSlot_;
-    if (slot >= kProfileSlots || evalPending_[slot]) return;
-    const Level& l0 = levels_v_[0];
-    const uint32_t block = l0.refined ? kFineBlock : kBlockSize;
-    // At most 2^18 samples, so the fixed-point sums cannot overflow.
-    uint32_t step = 2;
-    while (uint64_t(divUp(l0.size.width, step)) * divUp(l0.size.height, step) > (1u << 18)) ++step;
-    vt.CmdFillBuffer(cmd, evalBuf_.buffer, VkDeviceSize(slot) * 16, 16, 0);
-    memoryBarrier(cmd);
-    vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, selfEval_.pipeline);
-    SelfEvalPC pc{{(int32_t)l0.size.width, (int32_t)l0.size.height},
-                  {float(l0.fine.width * block), float(l0.fine.height * block)}, (int32_t)slot, (int32_t)step};
-    vt.CmdPushConstants(cmd, selfEval_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
-    vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, selfEval_.layout, 0, 1, &dsEval_[parity], 0, nullptr);
-    vt.CmdDispatch(cmd, divUp(divUp(l0.size.width, step), 16), divUp(divUp(l0.size.height, step), 16), 1);
-    // The matching then rewrites the flow it read; the host reads the sums.
-    memoryBarrier(cmd);
-    VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-    mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
-    vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, nullptr, 0, nullptr);
-    evalPending_[slot] = true;
-    evalTag_[slot] = tuneTag_;
-}
-
-void FrameGen::collectSelfEval(uint32_t slot) {
-    if (slot >= kProfileSlots || !evalPending_[slot]) return;
-    evalPending_[slot] = false;
-    const auto* w = static_cast<const uint32_t*>(evalMapped_) + slot * 4;
-    if (w[2] > 0) tune_->addSample(evalTag_[slot], w[0] / 4096.0, w[1] / 4096.0, double(w[2]));
-    reportOnlineTune();
-}
-
-// Logs each new decision and caches the decisions made so far for the game.
-void FrameGen::reportOnlineTune() {
-    std::lock_guard<std::mutex> lock(dev_.onlineTuneMutex);
-    const auto decisions = tune_->decisions();
-    if (decisions.size() == dev_.onlineTuneReported) return;
-    for (size_t i = dev_.onlineTuneReported; i < decisions.size(); ++i)
-        BDEX_INFO("online_tune: %s=%s %s (prediction error %+.1f %%)", decisions[i].key.c_str(),
-                  decisions[i].value.c_str(), decisions[i].kept ? "kept" : "dropped", -100.0 * decisions[i].gain);
-    dev_.onlineTuneReported = decisions.size();
-    if (tune_->done()) BDEX_INFO("online_tune: done for %s: %s", (*cfgp_).tuneName.c_str(), tune_->summary().c_str());
-    // Cached after each decision: a short session still spares the next one.
-    const std::string path = onlineTuneCachePath(*cfgp_);
-    if (path.empty()) return;
-    std::error_code ec;
-    std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
-    std::ofstream out(path, std::ios::trunc);
-    out << tune_->serialize();
-    if (out && tune_->done()) BDEX_INFO("online_tune: decisions cached in %s", path.c_str());
-}
-
 void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
     auto& vt = dev_.vt;
     if (tune_) {
@@ -1162,67 +1027,6 @@ void FrameGen::recordSynthesis(VkCommandBuffer cmd, VkDescriptorSet set, float t
 
 void FrameGen::recordCopyOutput(VkCommandBuffer cmd, uint32_t output, VkImage dst) {
     copyToPresent(cmd, out_[output].image, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, dst);
-}
-
-void FrameGen::recordTemporalUpscale(VkCommandBuffer cmd, uint32_t cur) {
-    if (taaFrame_ == frame_) return;  // once per frame (synthesis or real output first)
-    auto& vt = dev_.vt;
-    const Config cfg = effectiveConfig();
-    taaPrevValid_ = taaFrame_ + 1 == frame_;
-    const bool history = taaPrevValid_ && flowFrame_ == frame_;
-    taaH_ = taaFrame_ == ~0ull ? 0 : 1 - taaH_;
-    taaFrame_ = frame_;
-    const Level& fine = levels_v_[0];
-    const float sx = float(displayExtent_.width) / float(extent_.width);
-    const float sy = float(displayExtent_.height) / float(extent_.height);
-    const float blk = float(fine.refined ? kFineBlock : kBlockSize);
-    TaaPC pc{{(int32_t)displayExtent_.width, (int32_t)displayExtent_.height},
-             {(int32_t)extent_.width, (int32_t)extent_.height},
-             {1.f / (fine.fine.width * blk * flowScale_ * sx), 1.f / (fine.fine.height * blk * flowScale_ * sy)},
-             flowScale_ * sx, cfg.upscaleTemporal, cfg.sceneCutLow, cfg.sceneCutHigh,
-             std::clamp(cfg.upscaleFilter, 0, 2), history ? 1 : 0, timingActive_ && dedup_ ? 1 : 0};
-    vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, taaPass_.pipeline);
-    vt.CmdPushConstants(cmd, taaPass_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
-    vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, taaPass_.layout, 0, 1, &dsTaa_[cur * 2 + taaH_], 0, nullptr);
-    vt.CmdDispatch(cmd, divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), 1);
-    memoryBarrier(cmd);
-}
-
-void FrameGen::recordUpscaleReal(VkCommandBuffer cmd, uint32_t cur, int prev) {
-    auto& vt = dev_.vt;
-    // With upscale_temporal the real frame is the accumulated history, only
-    // packed (and given the HUD) at 1:1.
-    if (taa_) recordTemporalUpscale(cmd, cur);
-    const VkExtent2D src = taa_ ? displayExtent_ : extent_;
-    vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, upscale_.pipeline);
-    UpscalePC pc{{(int32_t)displayExtent_.width, (int32_t)displayExtent_.height},
-                 {(int32_t)src.width, (int32_t)src.height},
-                 enc_.encoding, std::clamp((*cfgp_).upscaleFilter, 0, 2),
-                 hudMode_, hudGame_, hudOut_, hudLow1_, hudLow01_, hudLatency_};
-    vt.CmdPushConstants(cmd, upscale_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
-    vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, upscale_.layout, 0, 1,
-                             taa_ ? &dsUpscaleTaa_[taaH_] : &dsUpscale_[cur], 0, nullptr);
-    vt.CmdDispatch(cmd, divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), 1);
-    // Order the CAS pass / the worker's copy after this write.
-    memoryBarrier(cmd);
-    // dedup + extrapolation: a repeated frame shows the game's state from its
-    // first appearance; replace it with a frame extrapolated to now along
-    // the kept flow (state slot 3). Zero workgroups unless it is a repeat.
-    if (dupReal_ && timingActive_ && prev >= 0) {
-        const uint32_t N = static_cast<uint32_t>(sources_.size());
-        recordSynthesis(cmd, dsInterpReal_[uint32_t(prev) * N + cur], 1.5f, 4, true);
-    }
-    if (sharpen_) recordCas(cmd, dsCasReal_);  // sharpReal_ -> outReal_
-}
-
-void FrameGen::recordCas(VkCommandBuffer cmd, VkDescriptorSet set) {
-    auto& vt = dev_.vt;
-    vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cas_.pipeline);
-    CasPC pc{{(int32_t)displayExtent_.width, (int32_t)displayExtent_.height}, enc_.encoding, (*cfgp_).sharpness};
-    vt.CmdPushConstants(cmd, cas_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
-    vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cas_.layout, 0, 1, &set, 0, nullptr);
-    vt.CmdDispatch(cmd, divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), 1);
-    memoryBarrier(cmd);
 }
 
 void FrameGen::recordCopySource(VkCommandBuffer cmd, uint32_t src, VkImage dst) {

@@ -64,6 +64,8 @@ add_library(bdex_framegen SHARED
   src/layer.cpp
   src/device.cpp
   src/framegen.cpp
+  src/framegen_tune.cpp
+  src/framegen_output.cpp
   src/swapchain.cpp
 )
 add_dependencies(bdex_framegen bdex_layer_shaders)
