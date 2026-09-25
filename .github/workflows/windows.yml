@@ -73,7 +73,7 @@ jobs:
           # Job logs need repository admin rights through the API; the
           # development environment has none, so a failed run pushes its logs
           # to an orphan ci-log-<arch> branch readable with plain git.
-          "## Errors (${{ matrix.arch }})" >> $env:GITHUB_STEP_SUMMARY
+          "## Errors (${{ matrix.arch }}, commit ${{ github.sha }})" >> $env:GITHUB_STEP_SUMMARY
           '```' >> $env:GITHUB_STEP_SUMMARY
           Get-ChildItem logs/*.log | ForEach-Object {
             Select-String -Path $_ -Pattern 'error [A-Z]+[0-9]+|error:|fatal error|CMake Error' |

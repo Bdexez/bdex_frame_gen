@@ -21,8 +21,10 @@ if(NOT WIN32)
 endif()
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
+  # Quiet: a missing module is expected on some runners (the Python tests are
+  # then skipped), and its traceback would read as an error in CI summaries.
   execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import numpy, PIL"
-                  RESULT_VARIABLE BDEX_EVAL_PYTHON_DEPS)
+                  RESULT_VARIABLE BDEX_EVAL_PYTHON_DEPS OUTPUT_QUIET ERROR_QUIET)
   if(BDEX_EVAL_PYTHON_DEPS EQUAL 0)
     add_test(NAME eval_quality COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_eval_quality.py")
     if(TARGET bdex_offline)
