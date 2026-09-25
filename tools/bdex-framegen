@@ -25,6 +25,11 @@
 #                          through the config file; bind it to a desktop shortcut)
 #       --report [FILE]    write a diagnostic report for bug reports (default:
 #                          ./bdex-framegen-report.txt)
+#       --tuned-profile [GAME] [--mode M] [--apply]
+#                          the options online_tune kept for GAME as a [GAME]
+#                          config section (no GAME: list the tuned games);
+#                          --apply writes it into the config file, ready to
+#                          share or to add to layer/profiles.conf
 #   -h, --help
 set -euo pipefail
 
@@ -82,6 +87,72 @@ report() {
     fi
   } > "$out"
   echo "report written to $out — attach it to the issue (check it for anything private first)"
+}
+
+# online_tune's cached decisions for a game as a [game] config section.
+tuned_profile() {
+  BDEX_TP_CACHE="${BDEX_FG_CACHE_DIR-${XDG_CACHE_HOME:-$HOME/.cache}/bdex-framegen}" \
+  BDEX_TP_CONFIG="${BDEX_FG_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/bdex-framegen.conf}" \
+  python3 - "$@" <<'PY'
+import os, re, sys, time
+cache, config = os.environ["BDEX_TP_CACHE"], os.environ["BDEX_TP_CONFIG"]
+args = sys.argv[1:]
+apply = "--apply" in args
+mode = args[args.index("--mode") + 1] if "--mode" in args else None
+names = [a for i, a in enumerate(args) if not a.startswith("--") and (i == 0 or args[i - 1] != "--mode")]
+pat = re.compile(r"online-tune-(.+)-(interpolate|extrapolate)\.txt$")
+files = {}
+for f in sorted(os.listdir(cache)) if os.path.isdir(cache) else []:
+    m = pat.match(f)
+    if m:
+        files.setdefault(m.group(1), {})[m.group(2)] = os.path.join(cache, f)
+if not names:
+    if not files:
+        print(f"no online_tune decisions in {cache} (run a game with online_tune=1 first)")
+    for game, modes in sorted(files.items()):
+        print(f"{game}: {', '.join(sorted(modes))}")
+    sys.exit(0)
+game = names[0].lower().removesuffix(".exe")
+if game not in files:
+    sys.exit(f"no online_tune decisions for '{game}' in {cache}")
+modes = files[game]
+if mode is None:  # the most recently tuned mode
+    mode = max(modes, key=lambda m: os.path.getmtime(modes[m]))
+if mode not in modes:
+    sys.exit(f"'{game}' was not tuned in {mode} mode (only {', '.join(modes)})")
+kept, total, decisions = [], 0, 0
+for line in open(modes[mode]):
+    parts = line.split()
+    if len(parts) < 4:
+        continue
+    total += 1
+    if parts[2] == "kept":  # pairs ("a+b" = "x+y") are several settings
+        decisions += 1
+        kept += list(zip(parts[0].split("+"), parts[1].split("+")))
+stamp = time.strftime("%Y-%m-%d", time.localtime(os.path.getmtime(modes[mode])))
+header = f"# online_tune ({mode}, {stamp}): {decisions} kept of {total} tried"
+section = [f"[{game}]", header] + [f"{k} = {v}" for k, v in kept]
+if not apply:
+    print("\n".join(section))
+    if not kept:
+        print("# (none kept: the defaults suit this game)")
+    sys.exit(0)
+# Merge into the config file: the [game] section's keys set, other lines kept.
+lines = open(config).read().splitlines() if os.path.exists(config) else []
+start = next((i for i, l in enumerate(lines) if l.strip().lower() == f"[{game}]"), None)
+if start is None:
+    lines += [""] + section
+else:
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].strip().startswith("[")), len(lines))
+    body = [l for l in lines[start + 1:end]
+            if not l.strip().startswith("# online_tune")
+            and l.split("=")[0].strip().lower() not in {k for k, _ in kept}]
+    lines[start:end] = [lines[start], header] + [f"{k} = {v}" for k, v in kept] + body
+os.makedirs(os.path.dirname(config) or ".", exist_ok=True)
+with open(config, "w") as f:
+    f.write("\n".join(lines) + "\n")
+print(f"[{game}] written to {config}: {', '.join(f'{k}={v}' for k, v in kept) or 'nothing kept'}")
+PY
 }
 
 # Flips `paused` in the global [*] section of the config file. Running games
@@ -147,6 +218,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --toggle)          toggle; exit 0 ;;
     --report)          report "${2:-}"; exit 0 ;;
+    --tuned-profile)   shift; tuned_profile "$@"; exit $? ;;
     -m|--multiplier)   env_vars+=("BDEX_FG_MULTIPLIER=$2"); shift 2 ;;
     -x|--extrapolate)  env_vars+=("BDEX_FG_MODE=extrapolate"); shift ;;
     -P|--preset)       env_vars+=("BDEX_FG_PRESET=$2"); shift 2 ;;
