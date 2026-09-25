@@ -19,16 +19,25 @@ LOG="$(mktemp)"
 bdex_use_layer "$LAYER_DIR"
 trap 'rm -rf "$LOG" "$BDEX_LAYER_XDG"' EXIT
 status=0
-for mode in interpolate extrapolate; do
-  VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation \
+# Second pass per mode: the per-frame state options (content-time t, repeated
+# frames), on a demo that presents every image twice so the repeat path
+# (gated flow dispatches, extrapolated real frame) runs too.
+for run in interpolate extrapolate interpolate:state extrapolate:state; do
+  mode=${run%%:*}
+  if [ "$run" != "$mode" ]; then
+    state="BDEX_FG_FRAME_TIMING=1 BDEX_FG_DEDUP=1"; demo_args="--repeat 2"
+  else
+    state=""; demo_args=""
+  fi
+  env $state VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation \
   VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true BDEX_FG=1 BDEX_FG_CONFIG=/dev/null BDEX_FG_LOG=1 \
   BDEX_FG_MODE=$mode BDEX_FG_MULTIPLIER=3 BDEX_FG_RENDER_SCALE=0.75 BDEX_FG_SHARPNESS=0.5 BDEX_FG_HUD=2 \
   BDEX_FG_ZERO_BIAS_CONTRAST=0.1 BDEX_FG_SUBPIXEL=1 BDEX_FG_PIXEL_VECTORS=1 BDEX_FG_EXTRAPOLATE_SPLAT=1 \
   BDEX_FG_TEMPORAL_PREDICTION=1 BDEX_FG_STATIC_GUARD=1 BDEX_FG_OCCLUSION_STRENGTH=1 \
-    timeout 120 "$DEMO" --fps 30 --frames 45 --deterministic >"$LOG" 2>&1
+    timeout 120 "$DEMO" --fps 30 --frames 45 --deterministic $demo_args >"$LOG" 2>&1
   rc=$?
   n=$(grep -cE "VUID-|SYNC-" "$LOG")
-  echo "$mode: demo exit $rc, $n validation message(s)"
+  echo "$run: demo exit $rc, $n validation message(s)"
   if [ "$n" -gt 0 ]; then grep -E "VUID-|SYNC-" "$LOG" | head -20; status=1; fi
   if [ "$rc" -ne 0 ]; then tail -20 "$LOG"; status=1; fi
 done

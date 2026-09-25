@@ -10,7 +10,7 @@
 // compositor gives the window, and any recorded game becomes a test scene.
 //
 // Usage: bdex_offline <in_dir> <out_dir> [--multiplier N] [--format F] [--colorspace C] [--render-scale S]
-//                     [--gpu I] [--max-inputs N]
+//                     [--gpu I] [--max-inputs N] [--jitter J] [--dup N] [--spacing S] [--seed N] [--verbose]
 //   --format        swapchain format the engine sees: rgba8 (default), bgra8,
 //                   srgb (R8G8B8A8_SRGB), rgb10 (A2B10G10R10), rgba16f —
 //                   exercises every output encoding (--srgb = --format srgb)
@@ -22,12 +22,27 @@
 //                   frames are converted with white at 203 nits, and the
 //                   dumps converted back, so HDR runs score against the same
 //                   ground truth
+//   --jitter J      irregular game: presents every S input frames (--spacing,
+//                   default the multiplier) times 1 +- J (uniform, --seed),
+//                   each showing the frame of its own time — frame-time
+//                   spikes of a variable-timestep game
+//   --dup N         the game presents each image N times (e.g. 2: 30 fps
+//                   content in a 60 fps loop); combines with --jitter
+//   --steady-content  with --jitter: a fixed-timestep game instead, image k
+//                   shows time k*S and is presented within +-J*S/2 of it
+//                   (only the present times jitter, the content does not)
+//   With --jitter, --dup or --spacing, the ground truth of every displayed
+//   frame, real ones included, is the input frame at the time the player
+//   should see then, following the layer's pacing (see the loop below), and
+//   the manifest lists real frames too (the engine's output when it may
+//   replace them, the input otherwise). Time runs as a 60 fps game.
 // Settings come from BDEX_FG_* environment variables (the config file is
 // ignored unless BDEX_FG_CONFIG names one), e.g. BDEX_FG_MODE=extrapolate.
 //
 // Output: <out_dir>/gen_<k>_<i>.ppm, the frame generated for input pair k at
 // position i (1..multiplier-1), plus manifest.txt with one line per generated
 // frame: "<generated file> <ground-truth file> <t> <previous input> <current input>".
+// --verbose prints the engine's per-frame state (repeat flag, t of each slot).
 #include "config.h"
 #include "device.h"
 #include "framegen.h"
@@ -180,7 +195,10 @@ int main(int argc, char** argv) {
         return 2;
     }
     const fs::path inDir = argv[1], outDir = argv[2];
-    int mult = 2, gpu = -1, maxInputs = 0;
+    int mult = 2, gpu = -1, maxInputs = 0, dupCount = 1;
+    double jitter = 0.0, spacing = 0.0;
+    uint64_t seed = 1;
+    bool verbose = false, steadyContent = false;
     std::string fmtName = "rgba8", csName = "srgb";
     float renderScale = 1.f;
     for (int i = 3; i < argc; ++i) {
@@ -192,9 +210,20 @@ int main(int argc, char** argv) {
         else if (a == "--format" && i + 1 < argc) fmtName = argv[++i];
         else if (a == "--render-scale" && i + 1 < argc) renderScale = float(atof(argv[++i]));
         else if (a == "--colorspace" && i + 1 < argc) csName = argv[++i];
+        else if (a == "--jitter" && i + 1 < argc) jitter = atof(argv[++i]);
+        else if (a == "--dup" && i + 1 < argc) dupCount = atoi(argv[++i]);
+        else if (a == "--spacing" && i + 1 < argc) spacing = atof(argv[++i]);
+        else if (a == "--seed" && i + 1 < argc) seed = strtoull(argv[++i], nullptr, 10);
+        else if (a == "--verbose") verbose = true;
+        else if (a == "--steady-content") steadyContent = true;
         else { fprintf(stderr, "unknown argument %s\n", a.c_str()); return 2; }
     }
     if (mult < 2 || mult > 4) die("--multiplier must be 2, 3 or 4");
+    if (!(jitter >= 0.0 && jitter < 1.0)) die("--jitter must be in [0, 1)");
+    if (dupCount < 1 || dupCount > 8) die("--dup must be 1..8");
+    const bool schedule = jitter > 0.0 || dupCount > 1 || spacing > 0.0;
+    if (spacing <= 0.0) spacing = mult;
+    if (spacing < 1.0) die("--spacing must be >= 1");
 
     std::vector<fs::path> frames;
     for (auto& e : fs::directory_iterator(inDir))
@@ -340,19 +369,55 @@ int main(int argc, char** argv) {
         fs::create_directories(outDir);
         std::ofstream manifest(outDir / "manifest.txt");
         const bool extrap = dev.config.extrapolate;
-        // Input k is frame k*mult. Interpolation generates frames strictly
-        // between inputs k-1 and k; extrapolation generates the frames after
-        // input k (predicted from k-1 and k), so its last input needs mult-1
-        // ground-truth frames after it.
-        size_t nInputs = (frames.size() - 1) / mult + 1;
-        if (extrap) nInputs = (frames.size() - mult) / mult + 1;
-        if (maxInputs > 0) nInputs = std::min(nInputs, size_t(maxInputs));
+
+        // The presents of the "game": which frame it shows (content) and when
+        // (time, in input-frame units). By default input k is frame k*mult,
+        // presented at a steady rate, and the frames in between are the
+        // ground truth of the generated ones. --jitter / --dup instead model
+        // an irregular game (see the usage at the top): presents at uneven
+        // intervals, or the same image presented several times.
+        struct Present { size_t content; double time; };
+        std::vector<Present> sched;
+        if (!schedule) {
+            // Interpolation generates frames strictly between inputs k-1 and
+            // k; extrapolation the frames after input k, so its last input
+            // needs mult-1 ground-truth frames after it.
+            size_t nInputs = (frames.size() - 1) / mult + 1;
+            if (extrap) nInputs = (frames.size() - mult) / mult + 1;
+            if (maxInputs > 0) nInputs = std::min(nInputs, size_t(maxInputs));
+            for (size_t k = 0; k < nInputs; ++k) sched.push_back({k * mult, double(k * mult)});
+        } else {
+            uint64_t rng = seed * 0x9E3779B97F4A7C15ull + 1;
+            auto uniform = [&] {  // [-1, 1), deterministic across platforms
+                rng = rng * 6364136223846793005ull + 1442695040888963407ull;
+                return double(rng >> 11) / double(1ull << 52) - 1.0;
+            };
+            double time = 0.0;
+            const double last = double(frames.size() - 1) - 2.0 * spacing;  // room for the ground truth after
+            for (size_t k = 0; time <= last && (maxInputs <= 0 || k < size_t(maxInputs)); ++k) {
+                // With --dup N the image changes every N presents and shows
+                // the moment of the first one (a 30 fps game in a 60 fps loop).
+                const size_t first = k - k % size_t(dupCount);
+                // --steady-content: a fixed-timestep game, whose image k shows
+                // time k*S whenever it is actually presented.
+                const double own = steadyContent ? double(k) * spacing : time;
+                const double shown = first == k ? own : double(sched[first].content);
+                sched.push_back({size_t(std::lround(shown)), time});
+                if (steadyContent)  // presented late or early around its own slot, never drifting
+                    time = std::max(time + 1.0, std::round(double(k + 1) * spacing + 0.5 * jitter * spacing * uniform()));
+                else
+                    time += std::max(1.0, std::round(spacing * (1.0 + jitter * uniform())));
+            }
+        }
+        // Milliseconds per input frame: a steady present is a 60 fps game.
+        const double msPerFrame = 1000.0 / 60.0 / double(schedule ? spacing : mult);
 
         int prev = -1;
         uint32_t parity = 0;
+        double intervalMs = 0.0;  // the layer's smoothed present interval
         Image img;
-        for (size_t k = 0; k < nInputs; ++k) {
-            const size_t fi = k * mult;
+        for (size_t k = 0; k < sched.size(); ++k) {
+            const size_t fi = sched[k].content;
             if (!readPpm(frames[fi], img) || img.w != extent.width || img.h != extent.height) {
                 fprintf(stderr, "bdex_offline: %s: unreadable or size differs from the first frame\n",
                         frames[fi].string().c_str());
@@ -362,6 +427,15 @@ int main(int argc, char** argv) {
             encode(img, render, format, colorSpace, mapped);
             const int cur = static_cast<int>(k % 2);
             const bool generate = prev >= 0;
+            FrameGen::FrameTiming timing;
+            timing.multiplier = generate ? mult : 1;
+            timing.reset = !generate;
+            if (generate) {
+                timing.sinceLastMs = (sched[k].time - sched[k - 1].time) * msPerFrame;
+                intervalMs = intervalMs > 0.0 ? intervalMs * 0.8 + timing.sinceLastMs * 0.2 : timing.sinceLastMs;
+            }
+            timing.intervalMs = intervalMs;
+            const bool dumpReal = schedule && fg.packReal();
             dev.immediate([&](VkCommandBuffer cmd) {
                 // Upload into the history image and hand it over the way a
                 // game does: in PRESENT_SRC.
@@ -389,6 +463,7 @@ int main(int argc, char** argv) {
                 // The same sequence as VirtualSwapchain::present.
                 fg.recordAcquireSources(cmd, prev, cur);
                 fg.recordAnalysis(cmd, parity, static_cast<uint32_t>(cur));
+                fg.recordFrameState(cmd, timing);
                 if (generate) {
                     fg.recordFlow(cmd, parity);
                     const float base = extrap ? 1.f : 0.f;
@@ -398,12 +473,32 @@ int main(int argc, char** argv) {
                         fg.recordDump(cmd, static_cast<uint32_t>(i - 1), static_cast<uint32_t>(cur));
                     }
                 }
+                if (fg.packReal()) fg.recordUpscaleReal(cmd, static_cast<uint32_t>(cur), generate ? prev : -1);
+                if (dumpReal) fg.recordDump(cmd, fg.outputCount(), static_cast<uint32_t>(cur));
                 fg.recordReleaseSources(cmd, prev, cur);
             });
             if (generate) {
+                // What the player should see on each displayed frame: the
+                // layer's pacing (swapchain.cpp) spreads the frames of a
+                // present over the smoothed interval I. Interpolation shows
+                // output i at +I(i-1)/m and the real frame at +I(m-1)/m, all
+                // one latency L = I(m-1)/m late; extrapolation shows the real
+                // frame at once and output i at +I*i/m. Steady presents give
+                // exactly the frames between (or after) the inputs.
+                const double I = intervalMs / msPerFrame, now = sched[k].time;
+                auto truth = [&](double content, size_t& index) {
+                    const double r = std::round(content);
+                    if (r < 0.0 || r > double(frames.size() - 1)) return false;
+                    index = size_t(r);
+                    return true;
+                };
+                const std::string prevPath = fs::absolute(frames[sched[k - 1].content]).string();
+                const std::string curPath = fs::absolute(frames[fi]).string();
                 for (int i = 1; i < mult; ++i) {
-                    // Interpolation between inputs k-1 and k; extrapolation after k.
-                    const size_t gt = extrap ? fi + i : fi - mult + i;
+                    size_t gt;
+                    const double content = schedule ? (extrap ? now + I * i / mult : now - I * (mult - i) / mult)
+                                                     : double(extrap ? fi + i : fi - mult + i);
+                    if (!truth(content, gt)) continue;
                     char name[64];
                     snprintf(name, sizeof name, "gen_%04zu_%d.ppm", k, i);
                     if (!fg.writeDump((outDir / name).string(), static_cast<uint32_t>(i - 1))) {
@@ -411,10 +506,28 @@ int main(int argc, char** argv) {
                         status = 1;
                     }
                     manifest << name << ' ' << fs::absolute(frames[gt]).string() << ' '
-                             << (extrap ? 1.f : 0.f) + float(i) / mult << ' '
-                             << fs::absolute(frames[fi - mult]).string() << ' '
-                             << fs::absolute(frames[fi]).string() << '\n';
+                             << (extrap ? 1.f : 0.f) + float(i) / mult << ' ' << prevPath << ' ' << curPath << '\n';
                 }
+                size_t gt;
+                if (schedule && truth(now, gt)) {
+                    // The real frame (content time `now` in both display
+                    // models); with dedup in extrapolation a repeat is
+                    // replaced by an extrapolated frame, so score what the
+                    // engine outputs.
+                    std::string name = curPath;
+                    if (dumpReal) {
+                        char buf[64];
+                        snprintf(buf, sizeof buf, "real_%04zu.ppm", k);
+                        name = buf;
+                        if (!fg.writeDump((outDir / name).string(), fg.outputCount())) status = 1;
+                    }
+                    manifest << name << ' ' << fs::absolute(frames[gt]).string() << " 1 "
+                             << prevPath << ' ' << curPath << '\n';
+                }
+                FrameGen::State st;
+                if (verbose && fg.readState(st))
+                    fprintf(stderr, "present %zu: content %zu time %.1f dup %u t %.3f %.3f %.3f real %.3f\n", k, fi,
+                            now, st.dup, st.t[0], st.t[1], st.t[2], st.t[3]);
             }
             prev = cur;
             parity ^= 1;
