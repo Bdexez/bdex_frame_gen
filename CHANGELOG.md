@@ -8,6 +8,9 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-25)
 
+- CI: a `windows-syntax` job in `linux.yml` runs the MinGW x64 / x86
+  syntax check on every push (the check caught both Windows breakages of
+  the day before they reached MSVC, but only when run by hand).
 - **Windows: live status in the capture app's launcher.** `bdex_capture`
   publishes its state like the layer (`kind=capture`, with the captured
   game, fps, latency from WGC to the present call, passes, `online_tune`),
