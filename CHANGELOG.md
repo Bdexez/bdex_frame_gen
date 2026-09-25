@@ -8,6 +8,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed (2026-09-25)
 
+- **`chroma_weight` refuses aliases that break the motion's course.** A
+  chroma challenger must now stay within max(2, half the speed) pixels of
+  the block's motion one pair earlier, unless there was no previous motion
+  (so a motion can start). Stripes scrolling faster than their period match
+  a different alias every pair and are filtered: demo −1.16 → −0.82 dB.
+  The price, measured: isoluminant sequence +12.6 → +10.7 dB, swing
+  +4.4 → +3.2, colourful pan unchanged (+11.7).
 - **`dedup` detects partial repeats.** A game whose world runs at half the
   present rate under a HUD, cursor or counter redrawn every present never
   repeats the whole image, so nothing was detected. The duplicate test also

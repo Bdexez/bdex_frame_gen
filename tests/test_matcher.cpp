@@ -28,7 +28,7 @@ constexpr int BS = 8, NT = 64;
 struct MatchPC {
     int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias;
     float gradWeight; float censusWeight; float censusMargin; float rotWeight; int32_t temporal; float zeroBiasContrast;
-    float chromaWeight;
+    float chromaWeight; int32_t chromaHistory;
 };
 
 struct Image {
@@ -243,7 +243,7 @@ int main() {
     }
     vkUpdateDescriptorSets(device, 8, w, 0, nullptr);
 
-    MatchPC pc{{W, H}, {bw, bh}, R, 0, 0.f, 0.f, 0.f, 0.f, 0.05f, 0.f, 0, 0.f, 0.f};
+    MatchPC pc{{W, H}, {bw, bh}, R, 0, 0.f, 0.f, 0.f, 0.f, 0.05f, 0.f, 0, 0.f, 0.f, 0};
     dev.immediate([&](VkCommandBuffer cmd) {
         std::vector<VkImageMemoryBarrier> bars;
         for (const AllocatedImage* im : {&imRef, &imTgt, &imCoarse, &imFlow, &imCost})
