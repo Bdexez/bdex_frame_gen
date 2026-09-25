@@ -29,6 +29,10 @@ public:
         uint32_t slot = 0;          // ring index; recycle() hands it back
         uint32_t generation = 0;    // bumped when the ring is recreated (resize)
         std::chrono::steady_clock::time_point dequeuedAt{}; // retrieved from the WGC frame pool
+        // When the compositor produced the frame (WGC SystemRelativeTime):
+        // the content clock, free of the capture thread's wake-up jitter.
+        // Equals dequeuedAt when the timestamp is unavailable.
+        std::chrono::steady_clock::time_point contentAt{};
     };
 
     static constexpr uint32_t kRingSize = 3;

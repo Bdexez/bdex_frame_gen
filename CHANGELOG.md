@@ -44,6 +44,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed (2026-09-25)
 
+- **Capture app: frame timing from the compositor's timestamps.** The
+  capture interval (pacing, HUD) and the content interval (`frame_timing`,
+  `dedup`) were measured when the capture thread dequeued each frame,
+  adding that thread's wake-up jitter. They now use WGC's
+  `SystemRelativeTime` (when the compositor produced the frame), converted
+  by its age on the QPC clock so no clock epoch is assumed; the dequeue
+  time remains the fallback.
 - **`chroma_weight` refuses aliases that break the motion's course.** A
   chroma challenger must now stay within max(2, half the speed) pixels of
   the block's motion one pair earlier, unless there was no previous motion
