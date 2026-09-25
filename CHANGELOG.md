@@ -8,6 +8,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-25)
 
+- **`online_tune` tries pairs.** Options measured to pay only together are
+  declared as pairs in the registry (`kTunePairs`) and tried as one
+  candidate (key `a+b`, value `x+y`, expanded when applied and cached as
+  is): in interpolation `subpixel_lk=2 + synth_bicubic=1` and
+  `subpixel=1 + synth_bicubic=1` (alone, sub-pixel vectors lose 0.8 dB
+  there). The probe rates them; on the corpus they are dropped as they
+  should be — neutral on the swinging and HUD scenes, and on the sub-pixel
+  pan their +0.37 dB sits at 52 dB, below the 1 % bar.
 - CI: a `windows-syntax` job in `linux.yml` runs the MinGW x64 / x86
   syntax check on every push (the check caught both Windows breakages of
   the day before they reached MSVC, but only when run by hand).

@@ -235,6 +235,22 @@ std::vector<std::string> Config::optionKeys(bool aliases) {
     return keys;
 }
 
+// online_tune candidates that are several options tried together: options
+// measured to pay only in combination (sub-pixel vectors in interpolation
+// lose 0.8 dB alone — the synthesis's bilinear sampling blurs — and gain
+// with the Catmull-Rom sampling). Key "a+b", value "x+y" (OnlineTune expands
+// them); rated by the synthesis probe, in the mode given.
+struct TunePair {
+    const char* keys;
+    const char* values;
+    bool interpolation;  // else extrapolation
+    int order;
+};
+const TunePair kTunePairs[] = {
+    {"subpixel_lk+synth_bicubic", "2+1", true, 14},
+    {"subpixel+synth_bicubic", "1+1", true, 15},
+};
+
 std::vector<Config::TuneCandidate> Config::tuneCandidates() const {
     std::vector<const OptionDef*> defs;
     for (const auto& d : registry()) {
@@ -244,11 +260,16 @@ std::vector<Config::TuneCandidate> Config::tuneCandidates() const {
         if (on) defs.push_back(&d);
     }
     std::stable_sort(defs.begin(), defs.end(), [](const OptionDef* a, const OptionDef* b) { return a->tuneOrder < b->tuneOrder; });
-    std::vector<TuneCandidate> out;
+    std::vector<std::pair<int, TuneCandidate>> out;
     for (const OptionDef* d : defs)
-        out.push_back({d->key, d->trial,
-                       d->tune == Tune::SynthAlways || d->tune == Tune::SynthInterpolation || d->tune == Tune::SynthExtrapolation});
-    return out;
+        out.push_back({d->tuneOrder, {d->key, d->trial,
+                       d->tune == Tune::SynthAlways || d->tune == Tune::SynthInterpolation || d->tune == Tune::SynthExtrapolation}});
+    for (const TunePair& p : kTunePairs)
+        if (p.interpolation != extrapolate) out.push_back({p.order, {p.keys, p.values, true}});
+    std::stable_sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    std::vector<TuneCandidate> list;
+    for (auto& [order, c] : out) list.push_back(c);
+    return list;
 }
 
 bool Config::apply(const std::string& rawKey, const std::string& rawValue) {

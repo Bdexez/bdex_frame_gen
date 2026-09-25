@@ -45,7 +45,7 @@ namespace bdex {
 class OnlineTune {
 public:
     struct Candidate {
-        std::string key, value;  // a Config key and the trial value
+        std::string key, value;  // a Config key and the trial value ("a+b" / "x+y": several tried together)
         bool synthesis = false;  // rated by the synthesis probe, not the flow self-evaluation
     };
     struct Decision {
@@ -95,6 +95,9 @@ public:
     int restarts() const;
     // For the status: the decisions once done, else the option on trial.
     std::string status() const;
+    // "a+b" = "x+y" as the settings a=x, b=y.
+    static void expand(const std::string& key, const std::string& value,
+                       std::vector<std::pair<std::string, std::string>>& out);
     // Summary for the log, e.g. "zero_bias_contrast=0.1 kept (-4.2 %), subpixel=1 dropped (+0.3 %)".
     std::string summary() const;
 

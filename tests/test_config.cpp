@@ -294,9 +294,10 @@ TEST(config_option_registry) {
     // Candidates in trial order: flow options first, then the synthesis
     // options of this mode; sub-pixel only in extrapolation.
     auto cand = c.tuneCandidates();
-    CHECK(cand.size() == 6 && cand[0].key == "zero_bias_contrast" && cand[0].value == "0.1" && !cand[0].synthesis &&
+    CHECK(cand.size() == 8 && cand[0].key == "zero_bias_contrast" && cand[0].value == "0.1" && !cand[0].synthesis &&
           cand[2].key == "flow_temporal" && cand[3].key == "occlusion_strength" && cand[3].synthesis &&
-          cand[5].key == "synth_bicubic");
+          cand[5].key == "synth_bicubic" && cand[6].key == "subpixel_lk+synth_bicubic" && cand[6].value == "2+1" &&
+          cand[6].synthesis && cand[7].key == "subpixel+synth_bicubic");
     c.extrapolate = true;
     cand = c.tuneCandidates();
     CHECK(cand.size() == 8 && cand[2].key == "subpixel" && cand[4].key == "subpixel_lk" &&
