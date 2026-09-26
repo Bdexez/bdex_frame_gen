@@ -624,21 +624,19 @@ void VirtualSwapchain::updateHudLows(double dtMs) {
 }
 
 // Frames presented per game frame. Fixed at `multiplier`, unless target_fps
-// is set: then the multiplier follows target_fps x the game's frame interval
-// (so 72 fps on a 144 Hz target gives x2, 50 fps gives x3, and x1 once the
-// game reaches the target), capped at `multiplier`, which the output stage
-// was sized for. A switch needs the ideal ratio to pass the halfway point by
-// 0.15, so a game hovering on a boundary does not flip every frame.
+// is set: then the largest multiplier whose output stays at or under the
+// target — the refresh rate — (on 144 Hz: 72 fps gives x2, 50 fps x2, 45 fps
+// x3, 36 fps x4, x1 from 74 fps), capped at `multiplier`, which the output
+// stage was sized for (dynamicMultiplier, display_clock.h).
 int VirtualSwapchain::chooseMultiplier() {
     const int maxMult = std::max(1, cfg_.multiplier);
     if (cfg_.paused) return 1;
-    // auto: the measured refresh rate; unknown (no feedback, VRR): fixed.
+    // auto: the refresh rate (measured, else the control panel's); unknown:
+    // x2, the output a display is the least likely to overflow (auto usually
+    // comes with multiplier = 4, the ceiling, not a choice).
     const double target = cfg_.targetFps < 0.f ? displayHz() : double(cfg_.targetFps);
-    if (target <= 0.0) return maxMult;
-    const double ratio = target * frameIntervalMs_ / 1000.0;
-    if (dynMult_ == 0) dynMult_ = std::clamp(static_cast<int>(ratio + 0.5), 1, maxMult);
-    else if (ratio >= dynMult_ + 0.65) dynMult_ = std::min(maxMult, static_cast<int>(ratio + 0.5));
-    else if (ratio <= dynMult_ - 0.65) dynMult_ = std::max(1, static_cast<int>(ratio + 0.5));
+    if (target <= 0.0) return cfg_.targetFps < 0.f ? std::min(2, maxMult) : maxMult;
+    dynMult_ = dynamicMultiplier(dynMult_, target * frameIntervalMs_ / 1000.0, maxMult);
     return dynMult_;
 }
 
@@ -1234,7 +1232,10 @@ double VirtualSwapchain::displayLatencyMs() {
 
 double VirtualSwapchain::displayHz() {
     std::lock_guard<std::mutex> lock(fbMutex_);
-    return displayClock_.refreshHz();
+    const double measured = displayClock_.refreshHz();
+    // Not measurable (no present feedback, or no refresh grid, e.g. KDE with
+    // NVIDIA): the refresh rate the control panel reads from the system.
+    return measured > 0.0 ? measured : cfg_.panelDisplayHz;
 }
 
 bool VirtualSwapchain::displayGrid(double& lastMs, double& periodMs) {

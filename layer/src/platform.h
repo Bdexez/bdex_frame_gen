@@ -40,11 +40,12 @@ bool platformIsCompetitiveGame(const std::string& name);
 
 // The control panel's session (require_app), like the Windows launcher: while
 // it is open it keeps <platformStatusDir()>/app.session = "<its pid> <target
-// pid>", the target being the game where « Démarrer » started the generation
+// pid> <refresh Hz>", the target being the game where « Démarrer » started the generation
 // (0 = none), rewritten every second: older than 5 s, the panel is gone.
 struct AppSession {
-    bool open = false;  // the panel is running
-    long target = 0;    // process generating frames, 0 = none
+    bool open = false;      // the panel is running
+    long target = 0;        // process generating frames, 0 = none
+    double displayHz = 0.0; // the monitor's refresh rate as the panel reads it, 0 unknown
 };
 AppSession platformAppSession();
 

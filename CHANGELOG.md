@@ -6,6 +6,31 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **« Auto » multiplier in the control panel** (the default for a new
+  config; `multiplier = 4` + `target_fps = auto`): for each game frame, as
+  many frames as fit **under the screen's refresh rate** — on 144 Hz, 60 fps
+  gives x2 (120), 45 fps x3 (135), 36 fps x4 (144), and no generation from
+  74 fps — without slowing the game down (mailbox, unlike FIFO). Above the
+  refresh rate a mailbox display drops frames unevenly, which looked like no
+  gain at all (SteamOS, KDE, NVIDIA: 60 fps x4 = 240 on 144 Hz).
+- The panel reads the refresh rate from the system (GDK) and passes it in its
+  session; the layer uses it where it cannot measure the display itself (no
+  present feedback, no refresh grid: KDE + NVIDIA). Neither known: x2.
+
+### Changed
+
+- `target_fps`: the largest multiplier at or under the target (was the
+  nearest: 50 fps on 144 gave x3 = 150), down at once past it, up with a 3 %
+  margin (`dynamicMultiplier`, unit-tested).
+
+### Fixed
+
+- `target_fps = -1` / `fps_limit = -1`, which the panel's advanced spin
+  buttons write for "auto", were clamped to 0 (off) without a warning.
+- `tests/integration.sh` ignores the user's config (it read multiplier = 4).
+
 ## [0.5.1] - 2026-09-26
 
 ### Fixed

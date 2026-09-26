@@ -381,12 +381,19 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     }
     if (key == "log_file")                    { logFile = platformExpandPath(value); return true; }
     // "auto" (-1): from the refresh rate the present feedback measures.
+    // "auto", or any negative number (the UIs' spin buttons write -1 for it).
     if (key == "target_fps") {
-        if (lower(value) == "auto") { targetFps = -1.f; return true; }
+        if (lower(value) == "auto" || (parseFloat(value, targetFps, -1000.f, 1000.f) && targetFps < 0.f)) {
+            targetFps = -1.f;
+            return true;
+        }
         return parseFloat(value, targetFps, 0.f, 1000.f);
     }
     if (key == "fps_limit" || key == "fps_cap") {
-        if (lower(value) == "auto") { fpsLimit = -1.f; return true; }
+        if (lower(value) == "auto" || (parseFloat(value, fpsLimit, -1000.f, 1000.f) && fpsLimit < 0.f)) {
+            fpsLimit = -1.f;
+            return true;
+        }
         return parseFloat(value, fpsLimit, 0.f, 1000.f);
     }
     if (key == "dump" || key == "dump_dir")   { dumpDir = value; return true; }
@@ -575,6 +582,7 @@ Config Config::loadWithDefaults(Config c, const std::string& extraProcess) {
         } else {
             const AppSession s = platformAppSession();
             if (!s.open) c.renderScale = 1.0f;
+            c.panelDisplayHz = s.displayHz;
             c.appTargeted = s.target != 0 && s.target == platformPid();
             if (!c.appTargeted) {
                 c.paused = true;

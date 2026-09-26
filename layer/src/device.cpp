@@ -184,13 +184,21 @@ void DeviceData::pollConfig() {
     // require_app: « Démarrer » / « Arrêter » in the control panel start and
     // stop the generation in this process (Config::load reads the session).
     bool targeted = config.appTargeted;
+    double panelHz = config.panelDisplayHz;
     if (config.requireApp) {
         const AppSession s = platformAppSession();
         targeted = s.target != 0 && s.target == platformPid();
+        panelHz = s.displayHz;
     }
     const bool fileChanged = configStamp != -1 && stamp != configStamp;
     configStamp = stamp;
-    if (!fileChanged && targeted == config.appTargeted) return;
+    if (!fileChanged && targeted == config.appTargeted) {
+        if (panelHz != config.panelDisplayHz) {  // the panel read the monitor (again)
+            config.panelDisplayHz = panelHz;
+            ++configVersion;
+        }
+        return;
+    }
     Config fresh = Config::load();
     fresh.autoConfigure(props, memProps);
     const bool wasPaused = config.paused;
@@ -204,6 +212,7 @@ void DeviceData::pollConfig() {
         config.applyLive(fresh);
         config.appTargeted = fresh.appTargeted;
     }
+    config.panelDisplayHz = panelHz;
     ++configVersion;
     BDEX_INFO("%s%s", fileChanged ? "config file changed: live settings reloaded" : "control panel: generation target changed",
               config.paused != wasPaused ? (config.paused ? " (frame generation paused)" : " (frame generation resumed)") : "");

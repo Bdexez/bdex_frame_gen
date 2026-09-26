@@ -511,6 +511,7 @@ class Options:
         self.generate = True
         self.preset = "auto"
         self.multiplier = 2
+        self.auto_mult = True        # « Auto »: up to x4, never above the screen's refresh rate (target_fps = -1)
         self.mode = "interpolate"
         self.present = "auto"
         self.low_latency = False
@@ -536,6 +537,8 @@ class Options:
         self.generate = self.multiplier > 1
         if self.multiplier < 2:
             self.multiplier = 2
+        # A file without a multiplier (new user) starts on « Auto ».
+        self.auto_mult = "multiplier" not in g or g.get("target_fps", "").lower() in ("-1", "auto")
         self.mode = "extrapolate" if g.get("mode", "").lower().startswith("extrap") else "interpolate"
         self.present = g.get("present_mode", "auto").lower()
         self.low_latency = flag("low_latency")
@@ -569,7 +572,7 @@ class Options:
         glob["enabled"] = "1"       # every game armed ...
         glob["require_app"] = "1"   # ... generating only where this panel's « Démarrer » targets
         glob["preset"] = self.preset
-        glob["multiplier"] = str(self.multiplier if self.generate else 1)
+        glob["multiplier"] = str((4 if self.auto_mult else self.multiplier) if self.generate else 1)
         if self.generate:
             glob["mode"] = self.mode
         glob["present_mode"] = self.present
@@ -588,13 +591,21 @@ class Options:
             value = self.values[o["key"]]
             if value != o["default"]:
                 glob[o["key"]] = value
+        # « Auto » is target_fps = -1 (the refresh rate); a fixed multiplier
+        # drops it, whatever the advanced row still shows.
+        if self.auto_mult and self.generate:
+            glob["target_fps"] = "auto"
+        elif glob.get("target_fps", "").lower() in ("-1", "auto"):
+            glob.pop("target_fps")
 
     def steam_string(self):
         """Equivalent per-game Steam launch options (BDEX_FG_* ... %command%)."""
         e = ["BDEX_FG=1"]
         if self.preset != "auto":
             e.append(f"BDEX_FG_PRESET={self.preset}")
-        e.append(f"BDEX_FG_MULTIPLIER={self.multiplier if self.generate else 1}")
+        e.append(f"BDEX_FG_MULTIPLIER={(4 if self.auto_mult else self.multiplier) if self.generate else 1}")
+        if self.auto_mult and self.generate:
+            e.append("BDEX_FG_TARGET_FPS=auto")
         if self.generate:
             e.append(f"BDEX_FG_MODE={self.mode}")
         e.append(f"BDEX_FG_PRESENT_MODE={self.present}")
@@ -663,13 +674,26 @@ def session_path():
     return os.path.join(status_dir(), "app.session")
 
 
+def display_hz():
+    """The highest refresh rate among the monitors (GDK reads it from the
+    compositor / X server): the layer's target for « Auto » when it cannot
+    measure the display itself (no present feedback, KDE + NVIDIA...)."""
+    try:
+        monitors = Gdk.Display.get_default().get_monitors()
+        rates = [monitors.get_item(i).get_refresh_rate() for i in range(monitors.get_n_items())]
+        return max(rates) / 1000.0 if rates else 0.0
+    except Exception:  # no display, old GDK
+        return 0.0
+
+
 def write_session(target=0):
-    """"<panel pid> <target pid>": the panel is open; `target` generates frames.
-    Rewritten every second: the layer takes an older file for a closed panel."""
+    """"<panel pid> <target pid> <refresh Hz>": the panel is open; `target`
+    generates frames. Rewritten every second: the layer takes an older file for
+    a closed panel."""
     os.makedirs(status_dir(), mode=0o700, exist_ok=True)
     tmp = session_path() + ".tmp"
     with open(tmp, "w") as f:
-        f.write(f"{os.getpid()} {target}\n")
+        f.write(f"{os.getpid()} {target} {display_hz():.3f}\n")
     os.replace(tmp, session_path())
 
 
@@ -1028,9 +1052,12 @@ class Window(Adw.ApplicationWindow):
         self.preset_row.set_selected(_combo_index(PRESETS, self.opt.preset))
         self.preset_row.connect("notify::selected", self.on_change)
         g.add(self.preset_row)
-        self.mult_row = Adw.ComboRow(title="Images affichées par image rendue",
-                                     model=Gtk.StringList.new(["×2", "×3", "×4"]))
-        self.mult_row.set_selected(max(0, min(2, self.opt.multiplier - 2)))
+        self.mult_row = Adw.ComboRow(
+            title="Images affichées par image rendue",
+            subtitle="Auto : le plus d'images possible sans dépasser la fréquence de l'écran "
+                     "(×2 à 60 i/s sur 144 Hz, ×4 à 36 i/s), sans freiner le jeu",
+            model=Gtk.StringList.new(["Auto — selon l'écran (jusqu'à ×4)", "×2", "×3", "×4"]))
+        self.mult_row.set_selected(0 if self.opt.auto_mult else max(1, min(3, self.opt.multiplier - 1)))
         self.mult_row.connect("notify::selected", self.on_change)
         g.add(self.mult_row)
         self.mode_row = Adw.ComboRow(title="Mode",
@@ -1137,7 +1164,9 @@ class Window(Adw.ApplicationWindow):
         o = self.opt
         o.generate = self.gen_row.get_active()
         o.preset = PRESETS[self.preset_row.get_selected()][1]
-        o.multiplier = self.mult_row.get_selected() + 2
+        o.auto_mult = self.mult_row.get_selected() == 0
+        if not o.auto_mult:
+            o.multiplier = self.mult_row.get_selected() + 1
         o.mode = MODES[self.mode_row.get_selected()][1]
         o.upscale = self.up_row.get_active()
         o.render_scale = int(self.scale_row.get_value())
