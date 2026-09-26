@@ -25,6 +25,7 @@
 
 #include <windows.h>
 #include <dwmapi.h>
+#include <mmsystem.h>
 
 #include <algorithm>
 #include <atomic>
@@ -40,6 +41,38 @@
 #include <vector>
 
 namespace {
+
+// Precise waits for the pacing. Sleep() and WaitForMultipleObjects() tick at
+// the process's timer resolution — 15.6 ms by default since Windows 10 2004,
+// whatever the game asks for itself — so a 16.7 ms wait (x2 at 30 fps) ended
+// at 31 ms: the generated frame reached the screen next to the real one (or
+// was dropped in extrapolation) and the real frame came up to a period late.
+// main() raises the resolution to 1 ms; the waits below sleep until ~1.5 ms
+// before the deadline, then spin on the clock like limitFrameRate() does.
+using Clock = bdex::VkCtx::clock;
+constexpr auto kSpin = std::chrono::microseconds(1500);
+
+DWORD coarseMs(Clock::time_point deadline) {
+    const auto left = deadline - kSpin - Clock::now();
+    return left.count() > 0 ? static_cast<DWORD>(std::chrono::duration_cast<std::chrono::milliseconds>(left).count())
+                            : 0;
+}
+
+void sleepUntil(Clock::time_point deadline) {
+    if (const DWORD ms = coarseMs(deadline)) Sleep(ms);
+    while (Clock::now() < deadline) SwitchToThread();
+}
+
+// Same, but returns true as soon as a captured frame is pending (the
+// predicted frames it would have been shown before are obsolete).
+bool frameBefore(bdex::Capture& cap, Clock::time_point deadline) {
+    if (cap.waitPending(coarseMs(deadline))) return true;
+    while (Clock::now() < deadline) {
+        if (cap.waitPending(0)) return true;
+        SwitchToThread();
+    }
+    return false;
+}
 
 struct Options {
     std::wstring title;
@@ -68,7 +101,7 @@ void usage() {
         "  --scale <f>        overlay size = capture size x f (default 1.0)\n"
         "  --fit              overlay fills the game's monitor, aspect preserved\n"
         "  --multiplier <n>   frames shown per captured frame: 1 (off), 2, 3, 4 (default 2)\n"
-        "  --mode <m>         extrapolate (default, no added latency) | interpolate (smoother)\n"
+        "  --mode <m>         interpolate (default, fewer artefacts) | extrapolate (half a frame less latency)\n"
         "  --preset <p>       performance | balanced | quality (default: auto from the GPU)\n"
         "  --filter <0|1|2>   upscale filter: bilinear | bicubic | Lanczos-2 (default)\n"
         "  --sharpness <f>    sharpening after upscaling, 0..1 (default 0)\n"
@@ -371,15 +404,14 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
     }
 
     // Frame-generation settings: the layer's config file / environment, then
-    // the command line, then the launcher. Extrapolation is the default
-    // here: capture already costs a frame of latency, interpolation would
-    // add half of one more.
+    // the command line, then the launcher. Interpolation is the default, as
+    // in the layer: extrapolation saves half a frame of latency but its
+    // predictions break down on the larger motion of low frame rates, where
+    // generation matters most (--mode extrapolate / the launcher for it).
     // The game's process name is added to the section matcher, so a [game]
     // profile in the config file overrides the globals for this title — the
     // per-game profiles the launcher writes and hand-edited sections alike.
-    bdex::Config captureDefaults;
-    captureDefaults.extrapolate = true;
-    bdex::Config cfg = bdex::Config::loadWithDefaults(captureDefaults, gameProc);
+    bdex::Config cfg = bdex::Config::load(gameProc);
     cfg.enabled = true;
     if (!o.preset.empty() && !cfg.apply("preset", o.preset)) {
         LOGE("unknown preset '%s' (performance, balanced, quality)", o.preset.c_str());
@@ -536,16 +568,13 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
             if (i > 0) {
                 if (cfg.pacing && !vk.fifo()) {
                     const auto target_t =
-                        job.start + std::chrono::duration_cast<bdex::VkCtx::clock::duration>(
+                        job.start + std::chrono::duration_cast<Clock::duration>(
                                         std::chrono::duration<double, std::milli>(
                                             job.intervalMs * i / job.frames));
-                    const auto remain = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        target_t - bdex::VkCtx::clock::now());
                     if (job.realFirst) {
-                        if (remain.count() > 0 && cap.waitPending(static_cast<uint32_t>(remain.count())))
-                            break;
-                    } else if (remain.count() > 0) {
-                        Sleep(static_cast<DWORD>(remain.count()));
+                        if (frameBefore(cap, target_t)) break;
+                    } else {
+                        sleepUntil(target_t);
                     }
                 } else if (job.realFirst && cap.waitPending(0)) {
                     break;
@@ -625,6 +654,9 @@ int main(int argc, char** argv) {
     SetEnvironmentVariableA("BDEX_FG_DISABLE", "1");
     SetConsoleOutputCP(CP_UTF8);
     setDpiAware();
+    // 1 ms timer resolution for the pacing waits (see sleepUntil); per
+    // process since Windows 10 2004, released at exit.
+    timeBeginPeriod(1);
 
     if (o.list) {
         for (auto& w : bdex::capturableWindows())
@@ -643,9 +675,7 @@ int main(int argc, char** argv) {
     bdex::LaunchChoice choice;
     HWND target = nullptr;
     if (useLauncher) {
-        bdex::Config captureDefaults;
-        captureDefaults.extrapolate = true;
-        const bdex::Config d = bdex::Config::loadWithDefaults(captureDefaults);
+        const bdex::Config d = bdex::Config::load("");
         choice.multiplier = std::max(1, d.multiplier);
         choice.extrapolate = d.extrapolate;
         choice.filter = d.upscaleFilter;

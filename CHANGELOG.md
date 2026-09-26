@@ -6,6 +6,24 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Windows capture: interpolation by default**, as in the layer (was
+  extrapolation). Extrapolation's predictions break down on the larger
+  motion of low frame rates — visibly more artefacts than the Linux layer
+  with the same defaults. `--mode extrapolate` or the launcher keep it
+  available; a mode already saved by the launcher is kept.
+
+### Fixed
+
+- **Windows capture pacing**: the waits between the frames of a job used
+  `Sleep` / `WaitForMultipleObjects` at the process's default 15.6 ms timer
+  resolution (per process since Windows 10 2004), so a 16.7 ms wait (x2 at
+  30 fps) lasted up to 31 ms: the generated frame reached the screen next to
+  the real one, which came up to a period late; in extrapolation the
+  predicted frame was often dropped. The app now sets a 1 ms resolution and
+  sleeps until ~1.5 ms before each deadline, then spins on the clock.
+
 ## [0.4.0] - 2026-09-25
 
 ### Added (release)

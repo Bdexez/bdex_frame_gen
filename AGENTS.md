@@ -229,7 +229,10 @@ submit, barriers de ownership `VK_QUEUE_FAMILY_EXTERNAL`) → `VkCtx` construit
 le `DeviceData` du layer sur le device Vulkan de l'app et pilote `FrameGen`
 inchangé → swapchain Win32 (mailbox) dans un overlay topmost sans activation
 qui suit la fenêtre jeu (`WS_EX_TRANSPARENT` pour laisser passer les clics),
-pacing comme `presentOne`. Sélection GPU discrète par LUID commun D3D/Vulkan
+pacing comme `presentOne` (résolution du timer à 1 ms, `timeBeginPeriod`,
+et attentes « dormir puis tourner » `sleepUntil`/`frameBefore` : à 15,6 ms,
+défaut par process depuis Windows 10 2004, une attente de 16,7 ms finissait
+à 31 ms — image générée collée à la réelle, réelle en retard). Sélection GPU discrète par LUID commun D3D/Vulkan
 (`--gpu`). Options CLI : `--list/--title/--pid`, `--multiplier`, `--mode`,
 `--preset`, `--filter`, `--sharpness`, `--hud`, `--scale/--fit`, `--fifo`.
 Sans argument : launcher natif (sélecteur de fenêtre + options avancées flow,
@@ -272,8 +275,9 @@ réintroduire) :
   seuil minimal (75 % des frames attendues, arrondi à l'entier inférieur).
   Il conserve les dumps en `uint8` pour limiter la mémoire et mesure aussi les
   pixels révélés par la barre jaune et les arêtes du carré en rotation.
-- Capture Windows : la valeur par défaut `extrapolate=1` est posée avant
-  lecture du fichier/env (`Config::loadWithDefaults`) ; priorité : défauts <
+- Capture Windows : interpolation par défaut depuis le 2026-09-26, comme la
+  couche (l'extrapolation à bas fps : beaucoup plus d'artefacts, retour
+  utilisateur Linux vs Windows) ; priorité : défauts <
   fichier < env < preset CLI < options CLI explicites < launcher. Le launcher
   lit le mode effectif, y compris `BDEX_FG_MODE`.
 - La CI Windows utilise le SDK Vulkan `1.4.357.0` et contrôle son SHA256 avant
