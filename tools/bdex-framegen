@@ -38,12 +38,115 @@ set -euo pipefail
 
 usage() { sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; }
 
+# The screens as the desktop sees them: "<output> <current mode>" per enabled
+# output (KDE's kscreen-doctor, else xrandr), for the report and the quick read.
+screens() {
+  if command -v kscreen-doctor >/dev/null; then
+    kscreen-doctor -o 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | awk '
+      /^Output:/ { name = $3; on = 0 }
+      /^[ \t]*enabled/ { on = 1 }
+      /^[ \t]*Vrr:/ { vrr[name] = $2 }
+      /Modes:/ && on { if (match($0, /[0-9]+x[0-9]+@[0-9.]+\*/)) cur[name] = substr($0, RSTART, RLENGTH - 1) }
+      END { for (n in cur) printf "%s %s vrr=%s (kscreen)\n", n, cur[n], vrr[n] }' || true
+  fi
+  if command -v xrandr >/dev/null && [ -n "${DISPLAY:-}" ]; then
+    xrandr --query 2>/dev/null | awk '
+      / connected/ { name = $1 }
+      /\*/ && name { for (i = 2; i <= NF; i++) if ($i ~ /\*/) { hz = $i; gsub(/[*+]/, "", hz); printf "%s %s@%s (xrandr)\n", name, $1, hz }; name = "" }' || true
+  fi
+}
+
+# GPU vendor from a Vulkan device name or a kernel driver: nvidia | amd | intel.
+gpu_vendor() {
+  case "$1" in
+    *NVIDIA*|*GeForce*|*Quadro*|nvidia*) echo nvidia ;;
+    *AMD*|*Radeon*|*RADV*|amdgpu|radeon) echo amd ;;
+    *Intel*|i915|xe) echo intel ;;
+    *) echo "?" ;;
+  esac
+}
+
+# The GPUs the screens are plugged into (kernel driver of each connected output).
+connected_outputs() {
+  for c in /sys/class/drm/card*-*; do
+    [ "$(cat "$c/status" 2>/dev/null)" = connected ] || continue
+    conn="${c##*/}"; card="${conn%%-*}"
+    drv="$(basename "$(readlink -f "/sys/class/drm/$card/device/driver" 2>/dev/null)" 2>/dev/null || true)"
+    echo "${conn#*-} $card ${drv:-?}"
+  done
+}
+
+# « Lecture rapide »: what the report says about the usual causes of « no
+# generated frames » — Auto on a misdetected screen (x1), panel closed or
+# targeting another process, the game on another GPU than the screen.
+quick_read() {
+  local sdir="$1" sess="$1/app.session" panel_hz="" panel_target="" hz_desktop
+  hz_desktop="$(screens | sed -n 's/.*@\([0-9.]*\).*/\1/p' | sort -g | tail -1)"
+  local outputs; outputs="$(connected_outputs)"
+  echo "écrans (bureau) : $(screens | tr '\n' ';' | sed 's/;$//;s/;/ ; /g')"
+  echo "sorties branchées sur : $(echo "$outputs" | awk 'NF { printf "%s%s → %s (%s)", s, $1, $2, $3; s = " ; " }')"
+  if [ -f "$sess" ]; then
+    local age=$(( $(date +%s) - $(stat -c %Y "$sess" 2>/dev/null || echo 0) ))
+    read -r _ panel_target panel_hz < "$sess" || true
+    if [ "$age" -gt 5 ]; then
+      echo "panneau : FERMÉ (session vieille de ${age} s) → avec require_app, aucun jeu ne génère d'images"
+    else
+      echo "panneau : ouvert, cible pid ${panel_target:-0}, fréquence lue ${panel_hz:-0} Hz"
+      [ "${panel_target:-0}" = 0 ] && echo "  → aucun jeu démarré : cliquer « Démarrer » sur le jeu"
+      case "${panel_hz:-0}" in 0|0.000) echo "  → le panneau n'a pas pu lire la fréquence de l'écran" ;; esac
+    fi
+  else
+    echo "panneau : pas de session (panneau jamais ouvert, ou fermé proprement)"
+  fi
+  local found=0 f
+  for f in "$sdir"/*.status; do
+    [ -f "$f" ] || continue
+    found=1
+    local pid; pid="$(sed -n 's/^pid=//p' "$f" | head -1)"
+    # One line per swapchain: state device multiplier game_fps output_fps refresh_hz
+    awk -F= '
+      /^\[/ { if (sc) print st "\t" dv "\t" m "\t" g "\t" o "\t" r; sc = ($0 ~ /^\[swapchain/); st = dv = m = g = o = r = "" }
+      $1 == "state" { st = $2 } $1 == "device" { dv = $2 } $1 == "multiplier" { m = $2 }
+      $1 == "game_fps" { g = $2 } $1 == "output_fps" { o = $2 } $1 == "refresh_hz" { r = $2 }
+      END { if (sc) print st "\t" dv "\t" m "\t" g "\t" o "\t" r }' "$f" |
+    while IFS=$'\t' read -r state dev mult gfps ofps rhz; do
+      echo "jeu $(sed -n 's/^process=//p' "$f" | head -1) (pid $pid) : $state, ×$mult, $gfps → $ofps fps, écran selon la couche ${rhz} Hz, GPU $dev"
+      case "$state" in
+        ready)  if [ "${panel_target:-0}" != "$pid" ]; then echo "  → armé mais pas ciblé : le panneau vise le pid ${panel_target:-0}, pas $pid"
+                else echo "  → armé, en attente de « Démarrer »"; fi ;;
+        paused) echo "  → génération en pause (raccourci --toggle ou paused=1)" ;;
+        pass-through) echo "  → pas de génération sur cette swapchain (raison dans le statut détaillé plus bas)" ;;
+      esac
+      if [ "$state" = generating ] && [ "$mult" = 1 ]; then
+        echo "  → ×1 : le jeu ($gfps fps) atteint déjà la fréquence que la couche croit être celle de l'écran (${rhz} Hz) ;"
+        echo "    en « Auto », rien n'est généré. Si l'écran est plus rapide, la détection est fausse : tester ×2 fixe dans le panneau"
+      fi
+      if awk -v r="${rhz:-0}" 'BEGIN { exit !(r + 0 == 0) }'; then
+        echo "  → fréquence de l'écran inconnue (ni mesurée ni transmise par le panneau) : « Auto » se limite à ×2"
+      elif [ -n "$hz_desktop" ] && awk -v r="$rhz" -v d="$hz_desktop" 'BEGIN { exit !(r < d * 0.95 || r > d * 1.05) }'; then
+        echo "  → la couche compte sur ${rhz} Hz mais le bureau annonce ${hz_desktop} Hz : écran mal détecté"
+      fi
+      local gv; gv="$(gpu_vendor "$dev")"
+      if [ -n "$outputs" ] && [ "$gv" != "?" ] &&
+         ! echo "$outputs" | while read -r _ _ drv; do [ "$(gpu_vendor "$drv")" = "$gv" ] && echo y; done | grep -q y; then
+        echo "  → le jeu tourne sur $dev mais aucun écran n'est branché sur ce GPU : les images passent par l'autre GPU"
+        echo "    (copie PRIME ; brancher l'écran sur la carte graphique du jeu, ou lancer le jeu sur le GPU de l'écran)"
+      fi
+    done
+  done
+  [ "$found" = 1 ] || echo "aucun jeu ne publie d'état : jeu non lancé, ou couche non chargée dans le jeu (bdex-framegen --check)"
+}
+
 # Everything a bug report needs, in one file to attach to an issue.
 report() {
   out="${1:-bdex-framegen-report.txt}"
   cfg="${BDEX_FG_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/bdex-framegen.conf}"
+  sdir="${BDEX_FG_STATUS_DIR:-${HOME:+$HOME/.cache/bdex-framegen/run}}"
+  sdir="${sdir:-/tmp/bdex-framegen-$(id -u)}"
   {
     echo "== bdex-framegen diagnostic report, $(date -u '+%Y-%m-%d %H:%M UTC')"
+    echo; echo "== lecture rapide (à faire pendant que le jeu tourne, après « Démarrer »)"
+    quick_read "$sdir"
     echo; echo "== system"
     uname -srm
     grep -h '^PRETTY_NAME' /etc/os-release 2>/dev/null || true
@@ -62,9 +165,26 @@ report() {
     done
     echo; echo "== environment"
     env | grep -E '^(BDEX_FG|VK_|PROTON_|DXVK_|VKD3D_|MESA_|RADV_|__GL)' | sort || true
+    echo; echo "== screens"
+    if command -v kscreen-doctor >/dev/null; then
+      kscreen-doctor -o 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^Output:|^\s*(enabled|disabled|connected|Vrr:|Geometry:)|Modes:' |
+        sed -E 's/Modes:.*[ ]([0-9]+:[0-9]+x[0-9]+@[0-9.]+!?\*).*/Modes: \1 (current)/' || true
+    fi
+    if command -v xrandr >/dev/null && [ -n "${DISPLAY:-}" ]; then
+      xrandr --query 2>&1 | grep -E ' connected|\*' || true
+    fi
+    echo "connected outputs (connector card driver):"
+    connected_outputs | sed 's/^/  /'
+    echo; echo "== GPUs"
+    if command -v lspci >/dev/null; then lspci -nn 2>/dev/null | grep -Ei 'vga|3d|display' || true; fi
+    echo; echo "== control panel session ($sdir/app.session: panel pid, target pid, refresh Hz)"
+    if [ -f "$sdir/app.session" ]; then
+      cat "$sdir/app.session"
+      echo "written $(( $(date +%s) - $(stat -c %Y "$sdir/app.session") )) s ago (older than 5 s = panel closed)"
+    else
+      echo "(none)"
+    fi
     echo; echo "== running games (live status)"
-    sdir="${BDEX_FG_STATUS_DIR:-${HOME:+$HOME/.cache/bdex-framegen/run}}"
-    sdir="${sdir:-/tmp/bdex-framegen-$(id -u)}"
     found=0
     for f in "$sdir"/*.status; do
       [ -f "$f" ] || continue
