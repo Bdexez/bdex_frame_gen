@@ -38,6 +38,11 @@ bool platformAntiCheatPresent(std::string* foundName);
 // process to detect (VAC, Vanguard, Ricochet...) or runs inside the game.
 bool platformIsCompetitiveGame(const std::string& name);
 
+// True while the control panel runs with frame generation started: it keeps
+// <platformStatusDir()>/app.session holding its process id, removed when it
+// stops; a stale file (process gone) counts as stopped.
+bool platformAppSessionActive();
+
 // Directory of the per-process live status files (status.h): Linux
 // $XDG_RUNTIME_DIR/bdex-framegen (else /tmp/bdex-framegen-<uid>), Windows
 // %TEMP%\bdex-framegen; BDEX_FG_STATUS_DIR overrides it, an empty value

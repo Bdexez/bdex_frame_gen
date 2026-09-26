@@ -21,6 +21,8 @@ struct Config {
     bool  enabled       = false;  // the layer is now always loaded (no enable_environment);
                                   // it stays a pure pass-through until turned on by the
                                   // config file ([*] or a [game] section) or BDEX_FG=1.
+    bool  requireApp    = false;  // generate only while the control panel runs with frame generation started
+                                  // (its session file, platformAppSessionActive); set by the panel. BDEX_FG=1 bypasses it.
     bool  antiCheatDisabled = false;  // forced off by platformAntiCheatPresent() (multiplayer
                                       // anti-cheat running); wins over enabled, file and env.
     bool  autoTune      = true;   // pick the quality preset from the detected GPU (until the user sets a preset or a flow option)
