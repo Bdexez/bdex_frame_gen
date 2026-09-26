@@ -80,6 +80,12 @@ private:
         int presentMode = -1;        // VkSwapchainPresentModeInfoEXT (-1 = none), applied to every present
         uint64_t presentId = 0;      // VkPresentIdKHR (0 = none), forwarded on the real frame
         VkFence presentFence = VK_NULL_HANDLE;  // VkSwapchainPresentFenceInfoEXT, idem
+        // Extrapolation with a directly copied real frame: the synthesis
+        // (recorded in slots_[synthSlot]) is submitted by the worker right
+        // after the real frame's copy and present, so the real frame does
+        // not wait for the analysis, flow and synthesis on the queue. -1 =
+        // already submitted by the application thread.
+        int synthSlot = -1;
     };
 
     void createReal(const VkSwapchainCreateInfoKHR& appInfo);
@@ -102,6 +108,7 @@ private:
     void workerLoop();
     void runJob(const Job& job);
     VkResult presentOne(const Job& job, int index, const std::function<void()>* onSubmitted);
+    VkResult submitDeferredSynthesis(const Job& job);
     void waitWorkerSubmitted(std::unique_lock<std::mutex>& lock);
     void waitWorkerIdle(std::unique_lock<std::mutex>& lock);
 
