@@ -57,6 +57,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-24)
 
+- **Both control panels expose the new options**: the GTK panel (Cadence:
+  `frame_timing`, `dedup`, `gpu_budget`; Motion quality: `chroma_weight`,
+  `scene_cut_local`; Experimental: `extrapolate_accel`) and the Windows
+  launcher's "Options avancées" column (the same minus `gpu_budget`, which
+  the capture app does not drive; rows tightened to 25 px to fit).
 - **`gpu_budget`: dynamic quality under a GPU-time budget.** Auto-tuning
   picked a preset once, at start-up, from the GPU type; a heavy scene or an
   iGPU could still let the generation eat the game's frame time. With

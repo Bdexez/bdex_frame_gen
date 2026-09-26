@@ -261,7 +261,12 @@ const ExtraOpt kExtra[] = {
     {"pixel_vectors", L"Contours d'objets (synthèse ~2× plus coûteuse)", kCheck, "0"},
     {"subpixel", L"Mouvement sous-pixel", kCheck, "0"},
     {"extrapolate_splat", L"Extrapolation par projection (moins d'images doubles)", kCheck, "0"},
+    {"chroma_weight", L"Couleur dans la recherche du mouvement (0–8, 1 conseillé)", kNumber, "0"},
+    {"scene_cut_local", L"Coupure de scène par zone (menus, incrustations)", kCheck, "0"},
     {nullptr, L"Expérimental", kCheck, ""},
+    {"frame_timing", L"Suivre le temps réel des images du jeu (saccades)", kCheck, "0"},
+    {"dedup", L"Détecter les images répétées (cinématiques 30 i/s)", kCheck, "0"},
+    {"extrapolate_accel", L"Extrapolation : accélération (0–1)", kNumber, "0"},
     {"static_guard", L"Protection du HUD statique (0–1)", kNumber, "0"},
     {"temporal_prediction", L"Prédiction temporelle (panoramiques rapides)", kCheck, "0"},
     {"occlusion_strength", L"Gestion des occlusions (0–1)", kNumber, "0"},
@@ -786,14 +791,15 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         add(L"STATIC", L"Seules les valeurs modifiées sont enregistrées ; par défaut convient à la plupart des jeux.",
             SS_LEFT, 508, 26, 452, 16, 0);
         ui->extra.assign(std::size(kExtra), nullptr);
-        int y = 50;
+        // 25 px per row: the whole column fits the 770 px group.
+        int y = 48;
         for (size_t i = 0; i < std::size(kExtra); ++i) {
             const ExtraOpt& o = kExtra[i];
             const int id = 300 + static_cast<int>(i);
             if (!o.key) {  // section header
-                y += 6;
+                y += 5;
                 add(L"STATIC", o.label, SS_LEFT, 508, y, 452, 16, 0);
-                y += 22;
+                y += 21;
                 continue;
             }
             if (o.kind == kCheck) {
@@ -807,7 +813,7 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 add(L"STATIC", o.label, SS_LEFT, 520, y + 3, 330, 16, 0);
                 ui->extra[i] = add(L"EDIT", nullptr, WS_TABSTOP | WS_BORDER, 870, y, 90, 23, id);
             }
-            y += 27;
+            y += 25;
         }
 
         add(L"BUTTON", L"Démarrer", BS_DEFPUSHBUTTON | WS_TABSTOP, 770, 790, 96, 26, IDOK);

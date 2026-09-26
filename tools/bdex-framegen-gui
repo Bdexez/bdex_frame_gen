@@ -91,6 +91,16 @@ SECTIONS = [
              "Taux de rafraîchissement visé (ex. 144) : le multiplicateur s'adapte aux FPS du jeu "
              "(72 → ×2, 50 → ×3, ×1 quand le jeu atteint la cible), sans dépasser le multiplicateur choisi. "
              "0 = multiplicateur fixe.", 0, 360, 1, 0, 0),
+        switch("frame_timing", "Suivre le temps réel des images",
+               "Place chaque image générée selon l'instant réel des images du jeu plutôt qu'à intervalle "
+               "fixe : moins de saccades quand le temps d'image varie. Peut coûter un peu sur les jeux à "
+               "pas de simulation fixe."),
+        switch("dedup", "Détecter les images répétées",
+               "Repère les images que le jeu présente deux fois (cinématiques à 30 i/s, émulateurs) : garde "
+               "le mouvement précédent et ne fige plus l'image. Pris en compte au lancement du jeu."),
+        spin("gpu_budget", "Budget GPU de la génération",
+             "Part du temps d'image du jeu que la génération peut prendre (0,25 = un quart) ; au-delà la "
+             "qualité baisse par paliers, puis remonte. 0 = désactivé.", 0.0, 1.0, 0.05, 2, 0.0),
         switch("pacing", "Espacement régulier des images",
                "Répartit les images générées dans l'intervalle du jeu (hors vsync FIFO).", True),
         switch("sync_present", "Présentation synchrone (compatibilité)",
@@ -121,6 +131,12 @@ SECTIONS = [
              "Défaut 2.", 1, 4, 1, 0, 2),
         spin("flow_iterations", "Itérations de synthèse",
              "Raffinements de la recherche du mouvement lors de l'interpolation. Défaut 1.", 0, 3, 1, 0, 1),
+        spin("chroma_weight", "Couleur dans la recherche du mouvement",
+             "Voit les contours entre couleurs de même luminosité (rouge sur vert…), qui sinon se fondent. "
+             "0 = désactivé ; essayer 1. Pris en compte au lancement du jeu.", 0.0, 8.0, 0.5, 1, 0.0),
+        switch("scene_cut_local", "Coupure de scène par zone",
+               "Décide le repli sur l'image réelle zone par zone : un menu qui s'ouvre sur une partie de "
+               "l'écran n'est plus déformé."),
         spin("scene_cut_low", "Coupure de scène — début du fondu",
              "Coût de mouvement moyen au-delà duquel on commence à fondre vers l'image réelle. Défaut 0,05.",
              0.0, 0.30, 0.01, 2, 0.05),
@@ -150,6 +166,9 @@ SECTIONS = [
         spin("census_margin", "Seuil d'ambiguïté (census)",
              "Écart relatif en dessous duquel une correspondance est jugée ambiguë. Défaut 0,05.",
              0.0, 1.0, 0.01, 2, 0.05),
+        spin("extrapolate_accel", "Extrapolation : accélération",
+             "Prédit des trajectoires courbes (caméra qui accélère, freine ou se retourne) au lieu d'une "
+             "vitesse constante. 0 = désactivé, 1 = plein effet.", 0.0, 1.0, 0.1, 1, 0.0),
         spin("extrapolate_hold", "Extrapolation : figer les pixels incertains",
              "1 = ancien comportement (images doubles). 0 = suivre le mouvement partout.",
              0.0, 1.0, 0.1, 1, 0.0),
