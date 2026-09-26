@@ -1,6 +1,7 @@
 #include "status.h"
 #include "platform.h"
 
+#include <charconv>
 #include <chrono>
 #include <cstdlib>
 #include <cstdio>
@@ -57,6 +58,13 @@ void writeLocked(Board& b) {
 
 } // namespace
 
+// One decimal, always with a dot (snprintf follows the process's locale;
+// the panel and the report parse these files).
+static void fixed1(char* buf, size_t size, double v) {
+    auto [end, ec] = std::to_chars(buf, buf + size - 1, v, std::chars_format::fixed, 1);
+    *(ec == std::errc() ? end : buf) = '\0';
+}
+
 std::string statusFormat(const std::string& process, long pid, long long unixTime,
                          const std::map<uint64_t, StatusEntry>& entries) {
     std::ostringstream o;
@@ -73,13 +81,13 @@ std::string statusFormat(const std::string& process, long pid, long long unixTim
         o << "size=" << e.width << "x" << e.height << "\n";
         if (!e.mode.empty()) o << "mode=" << e.mode << "\n";
         o << "multiplier=" << e.multiplier << "\n";
-        snprintf(buf, sizeof buf, "%.1f", e.gameFps);
+        fixed1(buf, sizeof buf, e.gameFps);
         o << "game_fps=" << buf << "\n";
-        snprintf(buf, sizeof buf, "%.1f", e.outFps);
+        fixed1(buf, sizeof buf, e.outFps);
         o << "output_fps=" << buf << "\n";
-        snprintf(buf, sizeof buf, "%.1f", e.refreshHz);
+        fixed1(buf, sizeof buf, e.refreshHz);
         o << "refresh_hz=" << buf << "\n";
-        snprintf(buf, sizeof buf, "%.1f", e.latencyMs);
+        fixed1(buf, sizeof buf, e.latencyMs);
         o << "latency_ms=" << buf << "\n";
         o << "gpu_budget_level=" << e.budgetLevel << "\n";
         if (!e.passes.empty()) o << "passes=" << e.passes << "\n";
@@ -121,7 +129,10 @@ std::vector<std::string> statusDescribe(const StatusFile& file) {
     std::vector<std::string> out;
     auto num = [](const std::map<std::string, std::string>& v, const char* k, double def) {
         auto it = v.find(k);
-        return it == v.end() ? def : std::strtod(it->second.c_str(), nullptr);
+        if (it == v.end()) return def;
+        double x = def;
+        std::from_chars(it->second.data(), it->second.data() + it->second.size(), x);
+        return x;
     };
     auto get = [](const std::map<std::string, std::string>& v, const char* k) {
         auto it = v.find(k);

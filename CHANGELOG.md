@@ -6,6 +6,22 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-09-26
+
+### Fixed
+
+- Numbers in the config file are read with a dot whatever the process's
+  locale: a game or toolkit running with a French (decimal comma) locale
+  rejected `scene_cut_low = 0.3` as an ignored option, and a process in the
+  C locale rejected `0,3`. The status files the panel and the report read
+  are written with a dot too.
+- The control panel re-reads the config file before saving it: lines added
+  by hand while it was open ([game] sections, other keys) were erased by its
+  next save (« Démarrer », any setting).
+- The scene-cut statistics of 0.5.4 read the mean cost while the GPU could
+  still be writing it (a data race ThreadSanitizer reported in CI): it is
+  now copied per command slot and read after that slot's fence.
+
 ## [0.5.4] - 2026-09-26
 
 ### Added

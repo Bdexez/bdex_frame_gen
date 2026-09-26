@@ -45,7 +45,7 @@ public:
     void recordAnalysis(VkCommandBuffer cmd, uint32_t parity, uint32_t cur);
     // Computes the flow fields between pyramid slots 1-parity (previous
     // frame) and parity (current frame). Requires both to have been analysed.
-    void recordFlow(VkCommandBuffer cmd, uint32_t parity);
+    void recordFlow(VkCommandBuffer cmd, uint32_t parity, int costSlot = -1);
     // Writes the frame at time t (0..1: between prev and cur; 1..2: after
     // cur) into the internal output image `output`.
     void recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cur, float t, uint32_t output);
@@ -76,9 +76,11 @@ public:
         uint32_t repeats = 0; // repeated frames detected since the output stage was built
     };
     bool readState(State& out) const;
-    // Mean matching cost of the last computed flow (the scene-cut input),
-    // read without waiting: a frame or two old. Negative when unavailable.
-    float lastMeanCost() const;
+    // Mean matching cost of the last flow read back (the scene-cut input), a
+    // few frames old; negative when none yet. collectMeanCost(slot) takes the
+    // value recordFlow(..., slot) copied, once that slot's fence has signalled.
+    float lastMeanCost() const { return lastCost_; }
+    void collectMeanCost(uint32_t slot);
     // Copies output image `output` into `dst` (UNDEFINED -> PRESENT_SRC).
     void recordCopyOutput(VkCommandBuffer cmd, uint32_t output, VkImage dst);
     // Copies source `src` (PRESENT_SRC) into `dst` (UNDEFINED -> PRESENT_SRC).
@@ -280,6 +282,10 @@ private:
     uint32_t gateReduce_ = 0, gateDupReal_ = 0;  // entry indices (flow levels use 3l .. 3l+2)
     AllocatedBuffer stateReadback_;
     void* stateMapped_ = nullptr;
+    AllocatedBuffer meanCostBuf_;         // one float per profiling slot: mean flow cost
+    const float* meanCostMapped_ = nullptr;
+    bool costWritten_[kProfileSlots] = {};
+    float lastCost_ = -1.f;
     VkDescriptorSet dsState_ = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> dsInterpReal_;       // [prev * N + cur]: dupReal_ output (the real-frame image)
 

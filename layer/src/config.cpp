@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -37,10 +38,14 @@ static bool parseInt(const std::string& v, int& out, int lo, int hi) {
     return true;
 }
 
+// Always a dot: strtof follows the process's locale, and a game or toolkit
+// that sets a French one would reject "0.3" (and read "0,3").
 static bool parseFloat(const std::string& v, float& out, float lo, float hi) {
-    char* end = nullptr;
-    float x = strtof(v.c_str(), &end);
-    if (end == v.c_str() || *end != '\0') return false;
+    float x = 0.f;
+    const char* b = v.c_str() + (!v.empty() && v[0] == '+');
+    const char* e = v.c_str() + v.size();
+    auto [end, ec] = std::from_chars(b, e, x);
+    if (ec != std::errc() || end != e || b == e) return false;
     out = std::clamp(x, lo, hi);
     return true;
 }

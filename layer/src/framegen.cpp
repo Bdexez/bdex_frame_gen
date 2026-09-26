@@ -219,6 +219,10 @@ void FrameGen::createResources() {
                                                       VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
         stateReadback_ = dev_.createBuffer(kStateHead, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
         VK_CHECK(dev_.vt.MapMemory(dev_.device, stateReadback_.memory, 0, VK_WHOLE_SIZE, 0, &stateMapped_));
+        meanCostBuf_ = dev_.createBuffer(kProfileSlots * sizeof(float), VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
+        void* cost = nullptr;
+        VK_CHECK(dev_.vt.MapMemory(dev_.device, meanCostBuf_.memory, 0, VK_WHOLE_SIZE, 0, &cost));
+        meanCostMapped_ = static_cast<const float*>(cost);
         // The dispatches the state pass may gate, in a fixed order: per flow
         // level l, block matching (3l), smoothing (3l+1) and refinement
         // (3l+2); then the scene-cut reduction; then the extrapolated
@@ -620,6 +624,9 @@ void FrameGen::destroyAll() {
     if (stateMapped_) vt.UnmapMemory(d, stateReadback_.memory);
     stateMapped_ = nullptr;
     dev_.destroyBuffer(stateReadback_);
+    if (meanCostMapped_) vt.UnmapMemory(d, meanCostBuf_.memory);
+    meanCostMapped_ = nullptr;
+    dev_.destroyBuffer(meanCostBuf_);
     if (queryPool_) vt.DestroyQueryPool(d, queryPool_, nullptr);
     queryPool_ = VK_NULL_HANDLE;
     for (size_t i = 0; i < dumpBuf_.size(); ++i) {
@@ -870,11 +877,10 @@ void FrameGen::recordFrameState(VkCommandBuffer cmd, const FrameTiming& timing) 
     gate_ = dedup;
 }
 
-float FrameGen::lastMeanCost() const {
-    if (!stateMapped_ || !flowValid_) return -1.f;
-    float c;
-    std::memcpy(&c, stateMapped_, 4);
-    return c;
+void FrameGen::collectMeanCost(uint32_t slot) {
+    if (!meanCostMapped_ || slot >= kProfileSlots || !costWritten_[slot]) return;
+    costWritten_[slot] = false;
+    lastCost_ = meanCostMapped_[slot];
 }
 
 bool FrameGen::readState(State& out) const {
@@ -887,7 +893,7 @@ bool FrameGen::readState(State& out) const {
     return true;
 }
 
-void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
+void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity, int costSlot) {
     auto& vt = dev_.vt;
     // The flow images still hold the previous pair's flow (online_tune rates it).
     for (auto& p : passes_) p->flowBegin(*this, cmd, parity);
@@ -964,12 +970,13 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, reduce_.layout, 0, 1, &dsReduce_, 0, nullptr);
     dispatchGated(cmd, gateReduce_, 1 + tiles * tiles, 1);
     memoryBarrier(cmd);
-    if (stateMapped_) {
-        // The mean cost for the statistics (scene-cut fallback rate): word 0
-        // of the readback, which readState does not use.
+    if (meanCostMapped_ && costSlot >= 0 && costSlot < int(kProfileSlots)) {
+        // The mean cost for the statistics (scene-cut fallback rate), in
+        // this slot's word: read by collectMeanCost after its fence.
         stateBarrier(cmd);
-        VkBufferCopy bc{0, 0, 4};
-        vt.CmdCopyBuffer(cmd, stateBuf_.buffer, stateReadback_.buffer, 1, &bc);
+        VkBufferCopy bc{0, VkDeviceSize(costSlot) * sizeof(float), 4};
+        vt.CmdCopyBuffer(cmd, stateBuf_.buffer, meanCostBuf_.buffer, 1, &bc);
+        costWritten_[costSlot] = true;
         VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
         mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
