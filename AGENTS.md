@@ -26,7 +26,7 @@ embarqués au build. Auteur : Bdexez.
 | Principe | layer implicite qui virtualise les swapchains du jeu | capture WGC de la fenêtre jeu, traitement, re-présentation en overlay |
 | Plateforme | Linux (shipping), Windows (compilé CI, jamais validé sur hardware) | Windows x64 |
 | Latence | ~0 ms (dans le present path) | +~1 frame (inherent à la capture) |
-| Anti-cheat | se rétracte si EAC/BattlEye/GameGuard/XIGNCODE3/miHoYo détecté | sûr (pas d'injection) |
+| Anti-cheat | se rétracte si EAC/BattlEye/GameGuard/XIGNCODE3/miHoYo détecté, ou dans un jeu compétitif listé par nom d'exécutable (VAC : CS2, Dota 2… ; `platformIsCompetitiveGame`) | sûr (pas d'injection) |
 | Couverture | jeux Vulkan natifs (et Proton via DXVK/VKD3D) | tous les APIs (D3D9/10/11/12, GL, Vulkan) |
 
 Les deux partagent le même moteur : `FrameGen` (`layer/src/framegen.cpp`) et

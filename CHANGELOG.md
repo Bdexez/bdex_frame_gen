@@ -6,6 +6,17 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **The layer stays off in competitive multiplayer games**, matched by
+  executable name, where the anti-cheat has no process to detect: VAC
+  (CS2, CS:GO, Dota 2, Deadlock, TF2), Vanguard (Valorant, League of
+  Legends), Ricochet (Call of Duty), Overwatch 2, Marvel Rivals, and EAC /
+  BattlEye games whose anti-cheat runs inside the game under Proton (Apex,
+  Fortnite, Rainbow Six Siege, PUBG, Rust, Dead by Daylight, Halo Infinite,
+  Destiny 2, Tarkov, Rocket League, Squad, War Thunder, World of Tanks).
+  Whatever the config says, as for the detected anti-cheats.
+
 ### Changed
 
 - **Windows capture: interpolation by default**, as in the layer (was

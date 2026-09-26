@@ -122,7 +122,10 @@ anti-cheat auto-retract lives behind `platformAntiCheatPresent()`, called from
 (EAC / BattlEye / GameGuard / XIGNCODE3 / miHoYo — Vanguard excepted, see the
 comment in `platform.cpp`), the layer forces itself off for that process and
 logs it. The same scan runs on Linux, where it also catches the Wine/Proton
-case via `/proc`.
+case via `/proc`. It also stays off inside competitive multiplayer games,
+matched by executable name (`platformIsCompetitiveGame`): VAC titles (CS2,
+Dota 2, Deadlock, TF2), Vanguard / Ricochet / Overwatch, and EAC / BattlEye
+games whose anti-cheat runs in-process under Proton (Apex, R6, PUBG...).
 
 ### 2.3 Installation — registry instead of a directory
 

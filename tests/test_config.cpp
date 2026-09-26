@@ -251,6 +251,19 @@ TEST(config_presets) {
     unsetenv("BDEX_FG_PRESET");
 }
 
+// Competitive games keep the layer off even when their anti-cheat has no
+// process to detect (VAC, Vanguard...). Names arrive normalised.
+TEST(config_competitive_games) {
+    using bdex::platformIsCompetitiveGame;
+    CHECK(platformIsCompetitiveGame("cs2"));
+    CHECK(platformIsCompetitiveGame("dota2"));
+    CHECK(platformIsCompetitiveGame("r5apex"));
+    CHECK(platformIsCompetitiveGame("league of legends"));
+    CHECK(!platformIsCompetitiveGame("bdex_demo"));
+    CHECK(!platformIsCompetitiveGame("skyrimse"));
+    CHECK(!platformIsCompetitiveGame("cs"));  // exact names only
+}
+
 // log_file may contain an environment reference in the platform's own syntax
 // (the Windows docs recommend `log_file=%TEMP%\bdex-fg.log`). Without
 // expansion the layer opens a file named literally "%TEMP%\..." and silently
