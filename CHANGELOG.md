@@ -6,6 +6,27 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed (2026-09-25)
+
+- **Static blocks skip the block-matching search.** A block predicted at
+  zero and identical in both frames (1-pixel border included) has a
+  zero-motion candidate costing exactly 0, the unique winner of every
+  selection path when the smoothness penalty is positive, so its search is
+  skipped with a bit-identical result (all sequences, formats, modes and
+  option sets checked against the previous build). Flow time on the demo
+  (mostly static scenery, any GPU): balanced 1.75 → 1.30 ms, quality
+  4.3 → 2.65 ms. Games with static HUDs, menus and scenery gain most.
+
+### Fixed (2026-09-25)
+
+- **`rot_weight` read outside its shared-memory tile** (undefined, run-to-run
+  varying output): rotated candidates were placed with their absolute
+  displacement instead of relative to the coarse prediction the tile is
+  centred on, and the zero-motion candidate outside the search window was
+  re-evaluated from the tile it is not in. Now deterministic. Offline demo
+  replay after the fix: normal −0.27 dB, `--speed 2` +0.13 dB (was
+  −0.18 / 0.00 with the bug); the option stays experimental.
+
 ### Fixed (2026-09-24)
 
 - **`bdex-framegen --gl` did nothing on the NVIDIA driver.** It only set
