@@ -657,14 +657,18 @@ bool FrameGen::writeDump(const std::string& path, uint32_t which) {
 }
 
 // Full compute/transfer barrier: coarse but sufficient for a linear chain of
-// passes on a single queue.
+// passes on a single queue. It also covers indirect-argument reads: the
+// gated dispatches read their arguments from the frame state buffer, which
+// every pass binding it (whole-buffer descriptors) may have written.
 void FrameGen::memoryBarrier(VkCommandBuffer cmd) {
     VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
-    mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT |
+                       VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
     dev_.vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
-                               VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &mb, 0, nullptr,
-                               0, nullptr);
+                               VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT |
+                                   VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+                               0, 1, &mb, 0, nullptr, 0, nullptr);
 }
 
 void FrameGen::recordAcquireSources(VkCommandBuffer cmd, int prev, int cur) {

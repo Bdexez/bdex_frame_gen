@@ -25,8 +25,8 @@ status=0
 for run in interpolate extrapolate interpolate:state extrapolate:state; do
   mode=${run%%:*}
   if [ "$run" != "$mode" ]; then
-    # A tiny gpu_budget walks the whole quality ladder, output-stage
-    # rebuild included (level 3), within the 10 s run.
+    # A tiny gpu_budget walks the whole quality ladder within the run,
+    # output-stage rebuild included (level 3) unless the flow is at 1/4.
     state="BDEX_FG_FRAME_TIMING=1 BDEX_FG_DEDUP=1 BDEX_FG_SCENE_CUT_LOCAL=1 BDEX_FG_EXTRAPOLATE_ACCEL=1 BDEX_FG_CHROMA_WEIGHT=1 BDEX_FG_GPU_BUDGET=0.001"
     demo_args="--repeat 2 --frames 300"
   else
@@ -43,8 +43,9 @@ for run in interpolate extrapolate interpolate:state extrapolate:state; do
   echo "$run: demo exit $rc, $n validation message(s)"
   if [ "$n" -gt 0 ]; then grep -E "VUID-|SYNC-" "$LOG" | head -20; status=1; fi
   if [ "$rc" -ne 0 ]; then tail -20 "$LOG"; status=1; fi
-  if [ -n "$state" ] && [ "$(grep -c "quality level 2 -> 3" "$LOG")" -eq 0 ]; then
-    echo "$run: the GPU budget did not rebuild the output stage (level 3)"; grep "gpu budget" "$LOG"; status=1
+  # The rebuild levels exist only if the flow is not already at 1/4.
+  if [ -n "$state" ] && ! grep -qE "quality level 2 -> 3|level 1 -> 2 \(flow 1/4\)" "$LOG"; then
+    echo "$run: the GPU budget did not walk the quality ladder"; grep "gpu budget" "$LOG"; status=1
   fi
 done
 exit $status
