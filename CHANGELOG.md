@@ -17,6 +17,18 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   (mostly static scenery, any GPU): balanced 1.75 → 1.30 ms, quality
   4.3 → 2.65 ms. Games with static HUDs, menus and scenery gain most.
 
+- **`bdex_offline` benchmarks the engine**: `BDEX_FG_PROFILE=1` prints the
+  mean GPU time per stage of a fixed workload (dump copies excluded), and
+  `--bench N` repeats the flow back to back so the GPU stays at full clock
+  (±7 % between runs instead of ±15–40 % for a live, half-idle demo). Used to
+  settle the remaining flow optimisations, none kept: removing the smoothing
+  pass and its barrier entirely saves nothing measurable (22.4 vs 22.4 ms
+  per 20 flows on the demo), so fusing it into the refinement is not worth
+  its complexity; a half-precision flow would save bandwidth on textures of
+  only ~32 k texels (0.5 Mpx / 16) while needing new shader variants and
+  breaking bit-exactness with `subpixel`. The static-block early-out above
+  was the lever.
+
 ### Fixed (2026-09-25)
 
 - **`rot_weight` read outside its shared-memory tile** (undefined, run-to-run
