@@ -23,8 +23,11 @@ public:
     // is resampled from render to display size.
     // `colorSpace` is the swapchain's: HDR colour spaces change how the
     // sampled values are brought to the matching's perceptual scale.
+    // `flowScaleFactor` multiplies the configured flow resolution divisor (up
+    // to 4): the gpu_budget governor's coarsest levels.
     FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, VkExtent2D displayExtent, uint32_t outputs,
-             const std::vector<VkImage>& sources, VkColorSpaceKHR colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR);
+             const std::vector<VkImage>& sources, VkColorSpaceKHR colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
+             int flowScaleFactor = 1);
     ~FrameGen();
     FrameGen(const FrameGen&) = delete;
     FrameGen& operator=(const FrameGen&) = delete;
@@ -104,6 +107,14 @@ public:
     void profileCollect(uint32_t slot);
     // Average GPU milliseconds per stage since the last call; resets the accumulators.
     std::string profileReport();
+    // gpu_budget: average GPU milliseconds of the generation (analysis, flow,
+    // synthesis) per frame since the last call (0 if unmeasured); resets.
+    double takeGpuMs();
+    // gpu_budget quality level (see GpuBudget): 1 turns the costly opt-in
+    // passes off, 2 also narrows the search. Coarser flow levels are a
+    // rebuild with a larger flowScaleFactor.
+    void setQualityLevel(int level) { qualityLevel_ = level; }
+    int flowScale() const { return int(flowScale_); }
 
 private:
     struct Level {
@@ -169,6 +180,11 @@ private:
     VkQueryPool queryPool_ = VK_NULL_HANDLE;
     static constexpr uint32_t kProfileSlots = 12;  // application slots + worker slots
     double profileMs_[StageCount]{};
+    double budgetMs_ = 0.0;
+    uint32_t budgetFrames_ = 0;
+    int qualityLevel_ = 0;
+    int flowScaleFactor_ = 1;
+    Config effectiveConfig() const;  // dev_.config with the quality level's overrides
     uint32_t profileFrames_[StageCount]{};
     bool profileWritten_[kProfileSlots][StageCount + 1]{};
     float timestampPeriodNs_ = 1.f;

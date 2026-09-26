@@ -61,7 +61,8 @@ std::unique_ptr<FrameGen> VirtualSwapchain::makeFrameGen(bool& generating) {
     if (generating) {
         try {
             return std::make_unique<FrameGen>(dev_, format_, extent_, displayExtent_,
-                                              static_cast<uint32_t>(dev_.config.multiplier - 1), sources, colorSpace_);
+                                              static_cast<uint32_t>(dev_.config.multiplier - 1), sources, colorSpace_,
+                                              flowScaleFactor_);
         } catch (const VkError& e) {
             BDEX_WARN("frame generation unavailable for this swapchain (%s); passing frames through", e.what());
             generating = false;
@@ -244,6 +245,7 @@ void VirtualSwapchain::followSurface() {
     VkSwapchainKHR oldReal = real_;
     real_ = fresh;
     fg_ = std::move(fg);
+    fg_->setQualityLevel(budget_.level());
     generating_ = generating;
     historyLost_ = true;
     try {
@@ -572,6 +574,50 @@ void VirtualSwapchain::limitFrameRate() {
                                                                                   : limitNext_ + interval;
 }
 
+// gpu_budget: about once a second, compare the generation's GPU time with the
+// allowed share of the game's frame interval and move along the quality
+// ladder (see GpuBudget). Levels 1-2 are per-frame overrides; the coarser
+// flow levels rebuild the output stage (like a resize: one frame without
+// generation). Called under mutex_ from present().
+void VirtualSwapchain::applyGpuBudget() {
+    const auto now = clock::now();
+    if (budgetAt_.time_since_epoch().count() == 0) budgetAt_ = now;
+    if (now - budgetAt_ < std::chrono::seconds(1)) return;
+    budgetAt_ = now;
+    const double gpuMs = fg_->takeGpuMs();
+    const int base = dev_.config.flowScaleFor(extent_.width, extent_.height);
+    const int maxLevel = 2 + (base <= 2 ? 1 : 0) + (base <= 1 ? 1 : 0);  // flow divisor up to 4
+    const int before = budget_.level();
+    const int level = budget_.update(gpuMs, frameIntervalMs_, dev_.config.gpuBudget, maxLevel);
+    if (level == before) return;
+    const int factor = level >= 4 ? 4 : level >= 3 ? 2 : 1;
+    if (factor != flowScaleFactor_) {
+        {
+            std::unique_lock<std::mutex> wlock(workerMutex_);
+            waitWorkerIdle(wlock);
+        }
+        {
+            std::lock_guard<std::mutex> qlock(dev_.queueMutex(dev_.queue));
+            dev_.vt.QueueWaitIdle(dev_.queue);
+        }
+        const int oldFactor = flowScaleFactor_;
+        flowScaleFactor_ = factor;
+        bool generating = generating_;
+        try {
+            auto fg = makeFrameGen(generating);
+            fg_ = std::move(fg);
+            generating_ = generating;
+            historyLost_ = true;
+        } catch (const VkError& e) {
+            BDEX_WARN("gpu budget: output stage not rebuilt (%s)", e.what());
+            flowScaleFactor_ = oldFactor;
+        }
+    }
+    fg_->setQualityLevel(level);
+    BDEX_INFO("gpu budget: generation %.2f ms for a %.1f%% budget of %.1f ms: quality level %d -> %d (flow 1/%d)",
+              gpuMs, 100.0 * dev_.config.gpuBudget, frameIntervalMs_, before, level, fg_->flowScale());
+}
+
 VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& info, bool consumeWaitSemaphores) {
     dev_.pollConfig();
     if (dev_.config.fpsLimit > 0.f) limitFrameRate();  // before mutex_: never block acquire while sleeping
@@ -589,6 +635,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     acquireCv_.notify_all();
 
     if (surfaceChanged_.exchange(false)) followSurface();
+    if (dev_.config.gpuBudget > 0.f && generating_) applyGpuBudget();
 
     // The previous job must have been fully submitted by the worker before
     // we overwrite the images it copies from; this is also where FIFO

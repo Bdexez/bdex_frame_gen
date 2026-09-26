@@ -45,8 +45,9 @@ uint32_t divUp(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
 } // namespace
 
 FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, VkExtent2D displayExtent, uint32_t outputs,
-                   const std::vector<VkImage>& sources, VkColorSpaceKHR colorSpace)
-    : dev_(dev), format_(format), extent_(renderExtent), displayExtent_(displayExtent), outputs_(outputs) {
+                   const std::vector<VkImage>& sources, VkColorSpaceKHR colorSpace, int flowScaleFactor)
+    : dev_(dev), format_(format), extent_(renderExtent), displayExtent_(displayExtent), outputs_(outputs),
+      flowScaleFactor_(std::clamp(flowScaleFactor, 1, 4)) {
     upscaling_ = displayExtent_.width != extent_.width || displayExtent_.height != extent_.height;
     hudMode_ = dev.config.overlayMode;
     dedup_ = outputs_ > 0 && dev.config.dedup;
@@ -187,7 +188,7 @@ void FrameGen::createResources() {
 
     // Pyramid: level 0 at full or half resolution, then halving. Stop early
     // when a level would have fewer than 2x2 blocks.
-    const int fs = cfg.flowScaleFor(extent_.width, extent_.height);
+    const int fs = std::min(4, cfg.flowScaleFor(extent_.width, extent_.height) * flowScaleFactor_);
     VkExtent2D size = {divUp(extent_.width, fs), divUp(extent_.height, fs)};
     flowScale_ = float(fs);
     for (int l = 0; outputs_ > 0 && l < cfg.levels; ++l) {
@@ -262,7 +263,7 @@ void FrameGen::createResources() {
         if (!chroma_) chromaDummy_ = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, {1, 1}, VK_IMAGE_USAGE_SAMPLED_BIT, true);
     }
 
-    if (cfg.profile) {
+    if (cfg.profile || cfg.gpuBudget > 0.f) {
         VkQueryPoolCreateInfo qi{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
         qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
         qi.queryCount = kProfileSlots * (StageCount + 1);
@@ -792,7 +793,7 @@ bool FrameGen::readState(State& out) const {
 
 void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
     auto& vt = dev_.vt;
-    const Config& cfg = dev_.config;
+    const Config cfg = effectiveConfig();
     flowThisFrame_ = true;
     // extrapolate_accel: keep the previous pair's finest backward flow before
     // this frame overwrites it (on a repeat, dedup keeps the flow, so the
@@ -894,7 +895,7 @@ void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cu
 // `gated`: dispatched through the state pass's "only on duplicates" entry.
 void FrameGen::recordSynthesis(VkCommandBuffer cmd, VkDescriptorSet set, float t, int32_t timing, bool gated) {
     auto& vt = dev_.vt;
-    const Config& cfg = dev_.config;
+    const Config cfg = effectiveConfig();
     const Level& fine = levels_v_[0];
     const bool splat = splatting_ && t > 1.f;
     const uint32_t gx = divUp(displayExtent_.width, 16), gy = divUp(displayExtent_.height, 16);
@@ -1040,15 +1041,42 @@ void FrameGen::profileCollect(uint32_t slot) {
     uint64_t last = ts[0];
     for (uint32_t s = 0; s < StageCount; ++s) {
         if (!profileWritten_[slot][s + 1]) continue;
-        profileMs_[s] += double(ts[s + 1] - last) * timestampPeriodNs_ * 1e-6;
+        const double ms = double(ts[s + 1] - last) * timestampPeriodNs_ * 1e-6;
+        profileMs_[s] += ms;
         profileFrames_[s] += 1;
+        if (s != StageCopy) budgetMs_ += ms;
+        if (s == StageAnalysis) ++budgetFrames_;
         last = ts[s + 1];
     }
     profileWritten_[slot][0] = false;
 }
 
+double FrameGen::takeGpuMs() {
+    const double ms = budgetFrames_ ? budgetMs_ / budgetFrames_ : 0.0;
+    budgetMs_ = 0.0;
+    budgetFrames_ = 0;
+    return ms;
+}
+
+Config FrameGen::effectiveConfig() const {
+    Config c = dev_.config;
+    if (qualityLevel_ >= 1) {
+        c.pixelVectors = false;
+        c.subpixel = false;
+        c.rotWeight = c.censusWeight = c.gradWeight = c.chromaWeight = 0.f;
+        c.extrapolateAccel = 0.f;
+        c.occlusionStrength = 0.f;
+        c.flowIterations = std::min(c.flowIterations, 1);
+    }
+    if (qualityLevel_ >= 2) {
+        c.searchFine = 1;
+        c.flowIterations = 0;
+    }
+    return c;
+}
+
 std::string FrameGen::profileReport() {
-    if (!queryPool_) return "";
+    if (!queryPool_ || !dev_.config.profile) return "";
     static const char* names[StageCount] = {"analysis", "flow", "interp", "copy"};
     char buf[256];
     std::string out = " | gpu ms:";
