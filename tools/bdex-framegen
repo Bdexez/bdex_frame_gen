@@ -112,6 +112,19 @@ check() {
   exit 1
 }
 
+# OpenGL through Zink. MESA_LOADER_DRIVER_OVERRIDE alone only reaches Mesa's
+# own GL: with a vendor driver installed (NVIDIA's), libglvnd dispatches GLX
+# and EGL to it and Zink is never loaded — the game then runs on native GL,
+# out of the layer's reach, without any error. Force the Mesa vendor too.
+gl_env() {
+  env_vars+=("MESA_LOADER_DRIVER_OVERRIDE=zink" "__GLX_VENDOR_LIBRARY_NAME=mesa")
+  for d in /usr/share/glvnd/egl_vendor.d /etc/glvnd/egl_vendor.d; do
+    for f in "$d"/*mesa*.json; do
+      [ -f "$f" ] && { env_vars+=("__EGL_VENDOR_LIBRARY_FILENAMES=$f"); return; }
+    done
+  done
+}
+
 env_vars=(BDEX_FG=1)
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -130,7 +143,7 @@ while [ $# -gt 0 ]; do
     -l|--log)          env_vars+=("BDEX_FG_LOG=$2"); shift 2 ;;
     --profile)         env_vars+=("BDEX_FG_PROFILE=1"); shift ;;
     --no-stats)        env_vars+=("BDEX_FG_STATS=0"); shift ;;
-    --gl)              env_vars+=("MESA_LOADER_DRIVER_OVERRIDE=zink"); shift ;;
+    --gl)              gl_env; shift ;;
     --off)             env_vars+=("BDEX_FG=0"); shift ;;
     --gui)             exec "$(dirname "$0")/bdex-framegen-gui" ;;
     --check)           check ;;

@@ -8,6 +8,19 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed (2026-09-24)
 
+- **`bdex-framegen --gl` did nothing on the NVIDIA driver.** It only set
+  `MESA_LOADER_DRIVER_OVERRIDE=zink`, which reaches Mesa's own GL; with a
+  vendor driver installed, libglvnd dispatched GLX/EGL to NVIDIA's GL, Zink
+  never loaded and the game ran out of the layer's reach, silently. `--gl`
+  now also selects the Mesa GLX/EGL vendor: `glxgears` on an RTX 3060 Ti
+  goes through Zink, 880 → 1760 fps.
+- **gamescope now works as a catch-all** (emulators, OpenGL/X11 apps): with
+  its SDL backend it presents through one Vulkan swapchain, but it requires
+  `VK_KHR_present_id`/`present_wait`, which the layer hides from games; a
+  shipped `[gamescope]` profile exposes them (`hide_present_ext = 0`), so
+  `enabled = 1` in a `[gamescope]` section is all it takes. Verified:
+  `glxgears` inside gamescope 337 → 675 fps. The default Wayland backend
+  presents dmabufs without a swapchain (documented: no generation there).
 - **HDR swapchains are matched on the right scale.** The engine looked only
   at the swapchain format, never its colour space: an scRGB game (FP16,
   `EXTENDED_SRGB_LINEAR`, 1 = 80 nits, highlights at 10+) was matched on raw
