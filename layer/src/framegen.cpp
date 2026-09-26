@@ -30,14 +30,16 @@ static_assert(sizeof(InterpPC) <= kPushSize && sizeof(MatchPC) <= kPushSize);
 
 // Frame state buffer layout (the State block of frame_state.comp; the
 // synthesis shaders read its head).
-constexpr VkDeviceSize kStateSize = 1024;
+constexpr VkDeviceSize kStateSize = 2048;
 constexpr VkDeviceSize kStateDiffCount = 8;
 constexpr VkDeviceSize kStateHead = 48;          // meanCost .. t[4], read back for the tools
 constexpr VkDeviceSize kStateGateFull = 304;     // uvec4 per gated dispatch
 constexpr VkDeviceSize kStateGateActive = 688;   // VkDispatchIndirectCommand per gated dispatch
+constexpr VkDeviceSize kStateTileDiff = 976;     // uint per tile of the 8x8 repeat grid
 constexpr uint32_t kGateEntries = 24;
 constexpr uint32_t kCutTiles = 8;  // scene_cut_local grid (tileCost[64] in the state)
-static_assert(kStateGateActive + kGateEntries * 12 <= kStateSize);
+static_assert(kStateGateActive + kGateEntries * 12 <= kStateTileDiff);
+static_assert(kStateTileDiff + 65 * 4 <= kStateSize);
 enum { kStateReset = 1, kStateDedup = 2, kStateExtrap = 4 };
 
 uint32_t divUp(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
@@ -766,6 +768,7 @@ void FrameGen::recordFrameState(VkCommandBuffer cmd, const FrameTiming& timing) 
                     std::max(4u, l0.size.width * l0.size.height / 16384u)};
     if (dedup) {
         vt.CmdFillBuffer(cmd, stateBuf_.buffer, kStateDiffCount, 4, 0);
+        vt.CmdFillBuffer(cmd, stateBuf_.buffer, kStateTileDiff, 64 * 4, 0);
         memoryBarrier(cmd);
         vt.CmdPushConstants(cmd, frameState_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
         vt.CmdDispatch(cmd, divUp(l0.size.width, 16), divUp(l0.size.height, 16), 1);

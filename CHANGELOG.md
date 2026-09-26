@@ -8,6 +8,17 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed (2026-09-25)
 
+- **`dedup` detects partial repeats.** A game whose world runs at half the
+  present rate under a HUD, cursor or counter redrawn every present never
+  repeats the whole image, so nothing was detected. The duplicate test also
+  counts differing pixels per tile of an 8×8 grid: a present where at most
+  7 tiles changed right after one where at least 32 did is a repeat of the
+  world (a static scene with a small moving object changes the same few
+  tiles every present and is not). Offline, each image presented twice
+  under a counter redrawn every present (`bdex_offline --hud-counter`):
+  +0.3 to +6.9 dB, same as a full repeat (the whole-image test found none);
+  no repeat detected on a static scene with a small moving object, and
+  byte-identical on every non-repeating sequence.
 - **Extrapolation: the real frame no longer waits for the synthesis.** It is
   presented first, but its copy was queued behind the analysis, flow and
   synthesis on the same queue. When the real frame is copied straight from

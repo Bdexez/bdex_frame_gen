@@ -28,6 +28,9 @@
 //                   spikes of a variable-timestep game
 //   --dup N         the game presents each image N times (e.g. 2: 30 fps
 //                   content in a 60 fps loop); combines with --jitter
+//   --hud-counter   draw a patch that changes on every present (64x16 at
+//                   8,8: exclude it from the scores) — a HUD or cursor over a
+//                   world that --dup repeats
 //   --steady-content  with --jitter: a fixed-timestep game instead, image k
 //                   shows time k*S and is presented within +-J*S/2 of it
 //                   (only the present times jitter, the content does not)
@@ -206,6 +209,7 @@ int main(int argc, char** argv) {
     uint64_t seed = 1;
     bool verbose = false, steadyContent = false;
     int benchReps = 1;
+    bool hudCounter = false;
     std::string fmtName = "rgba8", csName = "srgb";
     float renderScale = 1.f;
     for (int i = 3; i < argc; ++i) {
@@ -224,6 +228,7 @@ int main(int argc, char** argv) {
         else if (a == "--verbose") verbose = true;
         else if (a == "--steady-content") steadyContent = true;
         else if (a == "--bench" && i + 1 < argc) benchReps = std::max(1, atoi(argv[++i]));
+        else if (a == "--hud-counter") hudCounter = true;
         else { fprintf(stderr, "unknown argument %s\n", a.c_str()); return 2; }
     }
     if (mult < 2 || mult > 4) die("--multiplier must be 2, 3 or 4");
@@ -431,6 +436,16 @@ int main(int argc, char** argv) {
                         frames[fi].string().c_str());
                 status = 1;
                 break;
+            }
+            if (hudCounter) {
+                // A HUD element redrawn on every present (a frame counter),
+                // even when the world repeats: 64x16 pixels at (8, 8), to
+                // leave out of the scores with --exclude 8,8,72,24.
+                for (uint32_t y = 8; y < 24 && y < img.h; ++y)
+                    for (uint32_t x = 8; x < 72 && x < img.w; ++x)
+                        for (int c = 0; c < 3; ++c)
+                            img.rgb[(size_t(y) * img.w + x) * 3 + c] =
+                                uint8_t((k * 53 + ((x - 8) / 8) * 29 + c * 71) & 255);
             }
             encode(img, render, format, colorSpace, mapped);
             const int cur = static_cast<int>(k % 2);
