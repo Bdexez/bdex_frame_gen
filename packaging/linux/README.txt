@@ -31,6 +31,12 @@ artefacts on abrupt motion). Settings live in ~/.config/bdex-framegen.conf.
 Contents: 64-bit layer (lib/), 32-bit layer for 32-bit games (lib32/, when
 present), the bdex-framegen command-line launcher, the control panel, per-game
 profiles. The layer carries its own C++ runtime (works inside the Steam
-runtime); it needs glibc 2.35 or newer.
+runtime).
+
+Requirements: x86_64 with glibc 2.36 or newer (Arch / SteamOS, Fedora 37+,
+Debian 12+, Ubuntu 22.10+ / Mint 22); the control panel needs Python 3 with
+PyGObject and GTK 4 — libadwaita 1.4+ is used when present, not required
+(SteamOS has none). Steam installed as a Flatpak or a Snap does not see a
+layer installed in ~/.local.
 
 Project: https://github.com/Bdexez/bdex_frame_gen

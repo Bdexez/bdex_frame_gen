@@ -16,8 +16,10 @@ Everything here is stored in the layer's config file
 (~/.config/bdex-framegen.conf); the layer reads it on its own, so changes take
 effect the next time a game starts.
 
-Depends only on Python 3 and PyGObject with GTK 4 and libadwaita (packages
-python-gobject, gtk4, libadwaita on most distributions).
+Depends only on Python 3 and PyGObject with GTK 4 (packages python-gobject,
+gtk4 on most distributions). libadwaita 1.4+ is used when installed; without
+it (SteamOS, Debian 12, Ubuntu 22.04) the same widgets are built from plain
+GTK 4 (_Compat).
 """
 import json
 import os
@@ -28,8 +30,252 @@ import threading
 
 import gi
 gi.require_version("Gtk", "4.0")
-gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, Gtk, Gdk, GLib  # noqa: E402
+from gi.repository import Gio, GObject, Gtk, Gdk, GLib  # noqa: E402
+
+# libadwaita 1.4+ when installed; otherwise (SteamOS, Debian 12, Ubuntu 22.04:
+# none, or too old for SwitchRow / SpinRow) the same widgets in plain GTK 4.
+try:
+    if os.environ.get("BDEX_FG_GUI_NO_ADW"):   # test the plain GTK 4 path
+        raise ImportError
+    gi.require_version("Adw", "1")
+    from gi.repository import Adw  # noqa: E402
+    HAVE_ADW = (Adw.get_major_version(), Adw.get_minor_version()) >= (1, 4)
+except (ValueError, ImportError):
+    HAVE_ADW = False
+
+
+class _Compat:
+    """The libadwaita widgets this panel uses, rebuilt from plain GTK 4 with the
+    same constructors, properties and signals (only what the panel calls)."""
+
+    class Application(Gtk.Application):
+        pass
+
+    class ApplicationWindow(Gtk.ApplicationWindow):
+        def set_content(self, child):
+            self.set_child(child)
+
+    class HeaderBar(Gtk.HeaderBar):
+        pass
+
+    class WindowTitle(Gtk.Box):
+        def __init__(self, title="", subtitle=""):
+            super().__init__(orientation=Gtk.Orientation.VERTICAL, valign=Gtk.Align.CENTER)
+            t = Gtk.Label(label=title)
+            t.add_css_class("title")
+            s = Gtk.Label(label=subtitle)
+            s.add_css_class("dim-label")
+            self.append(t)
+            self.append(s)
+
+    class Toast:
+        def __init__(self, text):
+            self.text = text
+
+        @staticmethod
+        def new(text):
+            return _Compat.Toast(text)
+
+    class ToastOverlay(Gtk.Overlay):
+        def __init__(self):
+            super().__init__()
+            self._label = Gtk.Label(wrap=True, margin_start=12, margin_end=12, margin_top=8, margin_bottom=8)
+            frame = Gtk.Frame(child=self._label, halign=Gtk.Align.CENTER, valign=Gtk.Align.END,
+                              margin_bottom=24)
+            frame.add_css_class("osd")
+            self._revealer = Gtk.Revealer(child=frame, halign=Gtk.Align.CENTER, valign=Gtk.Align.END,
+                                          transition_type=Gtk.RevealerTransitionType.CROSSFADE)
+            self.add_overlay(self._revealer)
+            self._timer = 0
+
+        def add_toast(self, toast):
+            self._label.set_text(toast.text)
+            self._revealer.set_reveal_child(True)
+            if self._timer:
+                GLib.source_remove(self._timer)
+            self._timer = GLib.timeout_add_seconds(3, self._hide)
+
+        def _hide(self):
+            self._revealer.set_reveal_child(False)
+            self._timer = 0
+            return False
+
+    class PreferencesPage(Gtk.Box):
+        def __init__(self):
+            super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=24, margin_start=24,
+                             margin_end=24, margin_top=24, margin_bottom=24)
+
+        def add(self, group):
+            self.append(group)
+
+    class PreferencesGroup(Gtk.Box):
+        def __init__(self, title="", description=""):
+            super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            head = Gtk.Box(spacing=12)
+            texts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True)
+            if title:
+                t = Gtk.Label(label=title, xalign=0)
+                t.add_css_class("heading")
+                texts.append(t)
+            if description:
+                d = Gtk.Label(label=description, xalign=0, wrap=True)
+                d.add_css_class("dim-label")
+                texts.append(d)
+            head.append(texts)
+            self._head = head
+            self.append(head)
+            self._list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+            self._list.add_css_class("boxed-list")
+            self._list.add_css_class("frame")
+            self._list.connect("row-activated", lambda _l, row: row._on_activated())
+            self.append(self._list)
+
+        def add(self, row):
+            self._list.append(row)
+
+        def remove(self, row):
+            self._list.remove(row)
+
+        def set_header_suffix(self, widget):
+            self._head.append(widget)
+
+    class ActionRow(Gtk.ListBoxRow):
+        def __init__(self, title="", subtitle="", **kw):
+            super().__init__(activatable=False, **kw)
+            box = Gtk.Box(spacing=12, margin_start=12, margin_end=12, margin_top=8, margin_bottom=8)
+            self._prefix = Gtk.Box(spacing=6)
+            texts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, valign=Gtk.Align.CENTER)
+            self._title = Gtk.Label(xalign=0, wrap=True)
+            self._subtitle = Gtk.Label(xalign=0, wrap=True)
+            self._subtitle.add_css_class("dim-label")
+            texts.append(self._title)
+            texts.append(self._subtitle)
+            self._suffix = Gtk.Box(spacing=6)
+            for w in (self._prefix, texts, self._suffix):
+                box.append(w)
+            self.set_child(box)
+            self._activatable = None
+            self.set_title(title)
+            self.set_subtitle(subtitle)
+
+        def set_title(self, text):
+            self._title.set_text(text or "")
+
+        def get_title(self):
+            return self._title.get_text()
+
+        def set_subtitle(self, text):
+            self._subtitle.set_text(text or "")
+            self._subtitle.set_visible(bool(text))
+
+        def get_subtitle(self):
+            return self._subtitle.get_text()
+
+        def add_prefix(self, widget):
+            self._prefix.append(widget)
+
+        def add_suffix(self, widget):
+            self._suffix.append(widget)
+
+        def set_activatable_widget(self, widget):
+            self._activatable = widget
+            self.set_activatable(widget is not None)
+
+        def get_activatable_widget(self):
+            return self._activatable
+
+        def _on_activated(self):
+            if self._activatable is not None and self._activatable.get_sensitive():
+                self._activatable.activate()
+
+    class SwitchRow(ActionRow):
+        active = GObject.Property(type=bool, default=False)
+
+        def __init__(self, title="", subtitle="", active=False):
+            super().__init__(title, subtitle)
+            sw = Gtk.Switch(valign=Gtk.Align.CENTER, active=active)
+            self.props.active = active
+            sw.bind_property("active", self, "active", GObject.BindingFlags.BIDIRECTIONAL)
+            self.add_suffix(sw)
+            self.set_activatable_widget(sw)
+
+        def get_active(self):
+            return self.props.active
+
+        def set_active(self, value):
+            self.props.active = value
+
+    class ComboRow(ActionRow):
+        selected = GObject.Property(type=int, default=0)
+
+        def __init__(self, title="", subtitle="", model=None):
+            super().__init__(title, subtitle)
+            dd = Gtk.DropDown(model=model, valign=Gtk.Align.CENTER)
+            dd.bind_property("selected", self, "selected",
+                             GObject.BindingFlags.BIDIRECTIONAL | GObject.BindingFlags.SYNC_CREATE)
+            self.add_suffix(dd)
+
+        def get_selected(self):
+            return self.props.selected
+
+        def set_selected(self, index):
+            self.props.selected = index
+
+    class SpinRow(ActionRow):
+        value = GObject.Property(type=float, default=0.0)
+
+        def __init__(self, title="", subtitle="", adjustment=None, digits=0):
+            super().__init__(title, subtitle)
+            spin = Gtk.SpinButton(adjustment=adjustment, digits=digits, valign=Gtk.Align.CENTER)
+            spin.bind_property("value", self, "value",
+                               GObject.BindingFlags.BIDIRECTIONAL | GObject.BindingFlags.SYNC_CREATE)
+            self.add_suffix(spin)
+
+        def get_value(self):
+            return self.props.value
+
+    class EntryRow(ActionRow):
+        __gsignals__ = {"apply": (GObject.SignalFlags.RUN_FIRST, None, ())}
+
+        def __init__(self, title="", text="", show_apply_button=True):
+            super().__init__(title)
+            self._entry = Gtk.Entry(text=text, hexpand=True, valign=Gtk.Align.CENTER)
+            self._entry.connect("activate", lambda *_: self.emit("apply"))
+            self.add_suffix(self._entry)
+            if show_apply_button:
+                ok = Gtk.Button(icon_name="object-select-symbolic", valign=Gtk.Align.CENTER,
+                                tooltip_text="Appliquer")
+                ok.connect("clicked", lambda *_: self.emit("apply"))
+                self.add_suffix(ok)
+
+        def get_text(self):
+            return self._entry.get_text()
+
+    class ExpanderRow(Gtk.ListBoxRow):
+        def __init__(self, title="", subtitle=""):
+            super().__init__(activatable=False)
+            label = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            t = Gtk.Label(label=title, xalign=0)
+            label.append(t)
+            if subtitle:
+                s = Gtk.Label(label=subtitle, xalign=0, wrap=True)
+                s.add_css_class("dim-label")
+                label.append(s)
+            self._list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+            self._list.connect("row-activated", lambda _l, row: row._on_activated())
+            exp = Gtk.Expander(label_widget=label, child=self._list, margin_start=12, margin_end=12,
+                               margin_top=8, margin_bottom=8)
+            self.set_child(exp)
+
+        def add_row(self, row):
+            self._list.append(row)
+
+        def _on_activated(self):
+            pass
+
+
+if not HAVE_ADW:
+    Adw = _Compat
 
 CONFIG_PATH = os.path.join(
     os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "bdex-framegen.conf"
@@ -507,8 +753,15 @@ def detect_games():
         if not args:
             continue
         exe = [a for a in args if a.lower().endswith(".exe")]  # Proton: the game's .exe
-        name = layer_name(exe[0] if exe else args[0])
-        if name and not NOT_GAMES & ({layer_name(a) for a in args[:2]} | {name}):
+        first = args[0]
+        if " " in first and not os.path.exists(first):
+            first = first.split(" ", 1)[0]   # Electron & co. rewrite argv as one string
+        name = layer_name(exe[0] if exe else first)
+        try:
+            args.append(os.readlink(f"/proc/{p}/exe"))   # the binary, for NOT_GAMES
+        except OSError:
+            pass
+        if name and not NOT_GAMES & ({layer_name(a) for a in args[:2] + args[-1:]} | {name}):
             out.append((int(p), name))
     return out
 
@@ -575,9 +828,13 @@ class Window(Adw.ApplicationWindow):
                           tooltip_text="Copier les options de lancement Steam équivalentes (par jeu)")
         menu.connect("clicked", self.on_copy)
         header.pack_end(menu)
-        box.append(header)
+        if HAVE_ADW:
+            box.append(header)
+        else:
+            self.set_titlebar(header)
 
-        scroller = Gtk.ScrolledWindow(vexpand=True)
+        # No horizontal scrolling: long texts wrap to the window's width.
+        scroller = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
         box.append(scroller)
         page = Adw.PreferencesPage()
         scroller.set_child(page)
