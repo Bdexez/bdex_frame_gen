@@ -21,8 +21,12 @@ struct Config {
     bool  enabled       = false;  // the layer is now always loaded (no enable_environment);
                                   // it stays a pure pass-through until turned on by the
                                   // config file ([*] or a [game] section) or BDEX_FG=1.
-    bool  requireApp    = false;  // generate only while the control panel runs with frame generation started
-                                  // (its session file, platformAppSessionActive); set by the panel. BDEX_FG=1 bypasses it.
+    bool  requireApp    = false;  // the control panel decides, like the Windows launcher: every game is armed (virtual
+                                  // swapchain, frames passed through) and generates only once « Démarrer » targets it
+                                  // (platformAppSession); set by the panel. BDEX_FG=1 bypasses it.
+    bool  appTargeted   = false;  // require_app, runtime: the panel's session targets this process
+    uint64_t rebuildGen = 0;      // require_app, runtime: bumped when the panel changes settings that size the
+                                  // output stage; the swapchains rebuild it (like a resize)
     bool  antiCheatDisabled = false;  // forced off by platformAntiCheatPresent() (multiplayer
                                       // anti-cheat running); wins over enabled, file and env.
     bool  autoTune      = true;   // pick the quality preset from the detected GPU (until the user sets a preset or a flow option)
@@ -129,6 +133,12 @@ struct Config {
     static std::string filePath();  // BDEX_FG_CONFIG, else the platform's config file
     // Copies the settings that can change while a game runs (see config.cpp).
     void applyLive(const Config& fresh);
+    // require_app: `fresh` with the settings fixed at swapchain / device
+    // creation (render scale, present mode, extensions...) taken from this
+    // one — what a rebuild of the output stage can apply.
+    Config keepingCreationSettings(Config fresh) const;
+    // Whether the options that size the output stage are equal.
+    bool sameOutputSettings(const Config& o) const;
     // Same, starting from product defaults instead of Config{} (the capture
     // app defaults to extrapolation, still overridable by the file and env).
     static Config loadWithDefaults(Config defaults, const std::string& extraProcess = "");

@@ -72,4 +72,32 @@ for run in interpolate extrapolate interpolate:state extrapolate:state extrapola
     echo "$run: the GPU budget did not walk the quality ladder"; grep "gpu budget" "$LOG"; status=1
   fi
 done
+
+# "panel": the control panel's session (require_app), like the Windows
+# launcher — the game starts armed, « Démarrer » targets it, the options
+# change while it runs (multiplier, mode, HUD: the output stage is rebuilt),
+# « Arrêter » stops it. A process named bdex-framegen-gui stands in for the panel.
+PANEL_DIR="$(mktemp -d)"
+printf '[*]\nenabled = 1\nrequire_app = 1\nmultiplier = 2\noverlay = 2\n' > "$PANEL_DIR/conf"
+bash -c 'exec -a bdex-framegen-gui sleep 120' & panel=$!
+echo "$panel 0" > "$PANEL_DIR/app.session"
+env VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true \
+  BDEX_FG_CONFIG="$PANEL_DIR/conf" BDEX_FG_STATUS_DIR="$PANEL_DIR" BDEX_FG_LOG=2 \
+  timeout 120 "$DEMO" --fps 30 --deterministic --frames 400 --duration 40 >"$LOG" 2>&1 &
+demo=$!
+sleep 3; echo "$panel $(pgrep -n -P $demo)" > "$PANEL_DIR/app.session"  # the demo, child of timeout
+sleep 3; sed -i 's/multiplier = 2/multiplier = 4/; s/overlay = 2/overlay = 0/' "$PANEL_DIR/conf"
+sleep 3; echo 'mode = extrapolate' >> "$PANEL_DIR/conf"
+sleep 3; echo "$panel 0" > "$PANEL_DIR/app.session"
+wait $demo; rc=$?
+kill $panel 2>/dev/null
+n=$(grep -cE "VUID-|SYNC-" "$LOG")
+echo "panel: demo exit $rc, $n validation message(s)"
+if [ "$n" -gt 0 ]; then grep -E "VUID-|SYNC-" "$LOG" | head -20; status=1; fi
+if [ "$rc" -ne 0 ]; then tail -20 "$LOG"; status=1; fi
+for want in "generation target changed (frame generation resumed)" "rebuilt (x4 interpolate, generation on)" \
+            "rebuilt (x4 extrapolate, generation on)" "generation target changed (frame generation paused)"; do
+  if ! grep -qF "$want" "$LOG"; then echo "panel: missing '$want'"; grep "control panel" "$LOG"; status=1; fi
+done
+rm -rf "$PANEL_DIR"
 exit $status

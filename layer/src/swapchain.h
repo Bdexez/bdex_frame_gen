@@ -112,6 +112,7 @@ private:
     // current extent when it no longer matches; application thread, mutex_ held.
     void followSurface();
     void applyGpuBudget();  // gpu_budget: re-evaluates the quality level about once a second
+    void rebuildOutput();   // require_app: the control panel changed the output stage's settings
     std::unique_ptr<FrameGen> makeFrameGen(bool& generating);
     void createVirtualImages(const VkSwapchainCreateInfoKHR& appInfo, bool forGeneration);
     void createSlots(std::vector<FrameSlot>& slots, uint32_t count, bool withSemaphore, VkCommandPool pool,
@@ -239,6 +240,7 @@ private:
     uint32_t statsRepeats_ = 0;  // repeated-frame counter at the last statistics line (dedup)
     GpuBudget budget_;           // gpu_budget governor
     clock::time_point budgetAt_{};
+    uint64_t outputGen_ = 0;     // Config::rebuildGen the output stage was built with (require_app)
     int flowScaleFactor_ = 1;    // flow resolution divisor multiplier of the current output stage (gpu_budget)
     int dynMult_ = 0;               // target_fps: current dynamic multiplier (0 = not chosen yet)
     int chooseMultiplier();

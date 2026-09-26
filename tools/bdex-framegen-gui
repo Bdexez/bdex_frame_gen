@@ -3,13 +3,14 @@
 
 The layer is an *implicit* Vulkan layer: once installed it loads into every
 Vulkan game automatically and stays a pure pass-through until it is turned on.
-This window is where you turn it on — like Lossless Scaling: open it, choose
-the games (all Vulkan games or a list) and the quality options, press
-"Lancer", then launch your games normally through Steam. Frame generation
-only runs while this window is open and started (`require_app`, which the
-panel always writes): nothing happens at boot or with the panel closed, and
-closing it (or "Arrêter") pauses the generation in running games. No Steam
-launch options to edit.
+This window works like the Windows launcher: launch your game normally
+(Steam...), pick it in "Jeux détectés", set the options, press "Démarrer" —
+frame generation starts in the running game, "Arrêter" stops it, and the
+options apply live. The panel always writes `enabled = 1` and `require_app =
+1`: every Vulkan game is armed (the layer takes its swapchain and passes the
+frames through) and only the game this window targets generates frames;
+nothing happens with the window closed. Upscaling changes what the game
+renders, so it applies to games started while this window is open.
 
 Everything here is stored in the layer's config file
 (~/.config/bdex-framegen.conf); the layer reads it on its own, so changes take
@@ -170,20 +171,6 @@ def _combo_index(table, value, default=0):
     return default
 
 
-def game_name(text):
-    """Section name for a game, from a path/command or a bare name."""
-    if not text:
-        return ""
-    try:
-        first = shlex.split(text)[0]
-    except ValueError:
-        first = text.split()[0] if text.split() else text
-    base = os.path.basename(first).strip()
-    if base.lower().endswith(".exe"):
-        base = base[:-4]
-    return base
-
-
 # ---------------------------------------------------------------------------
 # Config file: a tiny INI reader/writer that preserves keys the UI does not
 # manage, so hand-written tuning in the file survives a save.
@@ -275,7 +262,6 @@ class ConfigFile:
 
 class Options:
     def __init__(self):
-        self.master = False          # [*] enabled: apply to every Vulkan game
         self.generate = True
         self.preset = "auto"
         self.multiplier = 2
@@ -296,7 +282,6 @@ class Options:
         def flag(key, default=False):
             return g.get(key, "1" if default else "0").lower() in ("1", "true", "on", "yes")
 
-        self.master = flag("enabled")
         self.preset = g.get("preset", "auto").lower()
         try:
             self.multiplier = int(float(g.get("multiplier", "2")))
@@ -335,8 +320,8 @@ class Options:
         """Update the managed keys in `glob` in place, keeping unknown ones."""
         for k in GLOBAL_KEYS:
             glob.pop(k, None)
-        glob["enabled"] = "1" if self.master else "0"
-        glob["require_app"] = "1"   # generation only while this panel is started
+        glob["enabled"] = "1"       # every game armed ...
+        glob["require_app"] = "1"   # ... generating only where this panel's « Démarrer » targets
         glob["preset"] = self.preset
         glob["multiplier"] = str(self.multiplier if self.generate else 1)
         if self.generate:
@@ -426,35 +411,26 @@ def status_dir():
 
 
 def session_path():
-    """The session file the layer checks for require_app (platformAppSessionActive)."""
+    """The session file the layer reads for require_app (platformAppSession)."""
     return os.path.join(status_dir(), "app.session")
 
 
-def session_pid():
-    """Process id of the panel whose session is running, or None."""
-    try:
-        with open(session_path()) as f:
-            pid = int(f.read().split()[0])
-        with open(f"/proc/{pid}/cmdline", "rb") as f:
-            return pid if b"bdex-framegen" in f.read() else None
-    except (OSError, ValueError, IndexError):
-        return None
-
-
-def start_session():
+def write_session(target=0):
+    """"<panel pid> <target pid>": the panel is open; `target` generates frames."""
     os.makedirs(status_dir(), mode=0o700, exist_ok=True)
     tmp = session_path() + ".tmp"
     with open(tmp, "w") as f:
-        f.write(f"{os.getpid()}\n")
+        f.write(f"{os.getpid()} {target}\n")
     os.replace(tmp, session_path())
 
 
-def stop_session(only_ours=True):
-    if only_ours and session_pid() not in (None, os.getpid()):
-        return  # another panel window started it
+def remove_session():
     try:
+        with open(session_path()) as f:
+            if int(f.read().split()[0]) != os.getpid():
+                return  # another panel owns it
         os.remove(session_path())
-    except OSError:
+    except (OSError, ValueError, IndexError):
         pass
 
 
@@ -495,10 +471,11 @@ def read_running():
     return out
 
 
-# Vulkan programs that are not games: the layer loads into them too.
+# Vulkan programs that are not games: the layer loads into them too (keep in
+# sync with platformIsNonGame in layer/src/platform.cpp).
 NOT_GAMES = {"steam", "steamwebhelper", "gamescope", "gamescopereaper", "chrome", "chromium",
              "firefox", "librewolf", "brave", "zen", "electron", "discord", "vesktop", "code",
-             "obs", "vulkaninfo", "bdex-framegen-gui"}
+             "obs", "vulkaninfo", "vkcube", "bdex-framegen-gui"}
 
 
 def layer_name(arg):
@@ -509,15 +486,17 @@ def layer_name(arg):
 
 def detect_games():
     """Running programs the layer is loaded into — every Vulkan program, native or
-    through Proton (DXVK / VKD3D) — minus known non-games: [(pid, name)]."""
+    through Proton (DXVK / VKD3D) — minus known non-games and GTK 4 applications
+    (drawn with Vulkan; platformIsDesktopApp): [(pid, name)]."""
     out, me = [], os.getpid()
     for p in os.listdir("/proc"):
         if not p.isdigit() or int(p) == me:
             continue
         try:
             with open(f"/proc/{p}/maps", "rb") as f:
-                if b"libVkLayer_bdex_framegen" not in f.read():
-                    continue
+                maps = f.read()
+            if b"libVkLayer_bdex_framegen" not in maps or b"libgtk-4.so" in maps:
+                continue
             with open(f"/proc/{p}/cmdline", "rb") as f:
                 args = [a.decode(errors="replace") for a in f.read().split(b"\0") if a.strip()]
         except OSError:
@@ -526,7 +505,7 @@ def detect_games():
             continue
         exe = [a for a in args if a.lower().endswith(".exe")]  # Proton: the game's .exe
         name = layer_name(exe[0] if exe else args[0])
-        if name and name not in NOT_GAMES:
+        if name and not NOT_GAMES & ({layer_name(a) for a in args[:2]} | {name}):
             out.append((int(p), name))
     return out
 
@@ -538,6 +517,8 @@ def describe_entry(e):
             return None
         return f"Couche inactive : {e.get('reason', e.get('state', ''))}"
     state = e.get("state", "")
+    if state == "ready":
+        return "Prêt — sélectionne-le puis « Démarrer »"
     if state == "pass-through":
         return f"Transparente — {e.get('reason', 'raison inconnue')}"
     parts = []
@@ -601,8 +582,6 @@ class Window(Adw.ApplicationWindow):
         self._build_session(page)
         self._build_status(page)
         self._build_running(page)
-        self._build_activation(page)
-        self._build_games(page)
         self._build_framegen(page)
         self._build_hud(page)
         self._build_upscale(page)
@@ -611,13 +590,20 @@ class Window(Adw.ApplicationWindow):
 
         self._loading = False
         self.refresh_sensitivity()
-        # The layer only honours the session once require_app is in the file.
-        if self.cfg.glob.get("require_app") != "1":
+        # Every game armed, the session decides (require_app): written once.
+        if self.cfg.glob.get("require_app") != "1" or self.cfg.glob.get("enabled") != "1":
             self.save()
+        self.target = None     # (pid, name) where « Démarrer » started the generation
+        self.selected = None   # (pid, name) chosen in « Jeux détectés »
+        try:
+            write_session(0)   # open: upscaling applies to games started from now
+        except OSError as e:
+            self.toast(f"Session impossible : {e}")
+        self._refresh_running()
         self.connect("close-request", self._on_close)
 
     def _on_close(self, *_):
-        stop_session()
+        remove_session()       # the targeted game stops generating
         return False
 
     # -- sections ----------------------------------------------------------
@@ -632,34 +618,44 @@ class Window(Adw.ApplicationWindow):
         self.session_btn.connect("clicked", self.on_session)
         self.session_row.add_suffix(self.session_btn)
         g.add(self.session_row)
-        self._refresh_session()
 
     def _refresh_session(self):
-        on = session_pid() is not None
-        self.session_row.set_title("Framegen lancé" if on else "Framegen arrêté")
-        self.session_row.set_subtitle(
-            "Actif dans les jeux démarrés maintenant. Fermer cette fenêtre ou « Arrêter » "
-            "met la génération en pause dans les jeux en cours." if on else
-            "Choisis tes réglages puis clique « Lancer », avant de démarrer le jeu. "
-            "Rien ne tourne tant que le framegen n'est pas lancé.")
+        on = self.target is not None
+        if on:
+            self.session_row.set_title(f"Génération en cours : {self.target[1]}")
+            self.session_row.set_subtitle("Les réglages s'appliquent en direct. « Arrêter » ou fermer "
+                                          "cette fenêtre coupe la génération.")
+        else:
+            self.session_row.set_title("Framegen arrêté")
+            self.session_row.set_subtitle(
+                f"Jeu sélectionné : {self.selected[1]} — clique « Démarrer »." if self.selected else
+                "Lance ton jeu, sélectionne-le dans « Jeux détectés », puis « Démarrer ».")
         self.session_icon.set_from_icon_name("media-playback-start-symbolic" if on
                                              else "media-playback-stop-symbolic")
-        self.session_btn.set_label("Arrêter" if on else "Lancer")
+        self.session_btn.set_label("Arrêter" if on else "Démarrer")
+        self.session_btn.set_sensitive(on or self.selected is not None)
         for c in ("suggested-action", "destructive-action"):
             self.session_btn.remove_css_class(c)
         self.session_btn.add_css_class("destructive-action" if on else "suggested-action")
 
-    def on_session(self, _btn):
+    def _set_target(self, target):
         try:
-            if session_pid() is not None:
-                stop_session(only_ours=False)
-            else:
-                self.save()   # the layer reads the settings shown here
-                start_session()
+            if target:
+                self.save()   # the game reads the options shown here
+            write_session(target[0] if target else 0)
         except OSError as e:
             self.toast(f"Échec : {e}")
+            return
+        self.target = target
         self._refresh_session()
-        self._refresh_running()
+
+    def on_session(self, _btn):
+        self._set_target(None if self.target else self.selected)
+        GLib.timeout_add(1500, self._refresh_after_switch)
+
+    def _refresh_after_switch(self):
+        self._refresh_running()   # the game's status follows within ~0.5 s
+        return False
 
     def _build_status(self, page):
         g = Adw.PreferencesGroup(title="État")
@@ -689,127 +685,67 @@ class Window(Adw.ApplicationWindow):
         g.add(gpu_row)
 
     def _build_running(self, page):
-        """The games running now (Vulkan programs the layer is loaded into), with
-        what the layer does in each; refreshed with the button, like the
-        Windows launcher's list."""
+        """The games running now (Vulkan programs the layer is loaded into), like
+        the Windows launcher's window list: pick one, then « Démarrer »."""
         self.running_group = Adw.PreferencesGroup(
             title="Jeux détectés",
-            description="Jeux Vulkan en cours (natifs ou via Proton). L'interrupteur active la "
-                        "génération pour ce jeu ; elle s'applique à son prochain lancement.")
+            description="Jeux Vulkan en cours (natifs ou via Proton). Sélectionne celui où "
+                        "générer des images, puis « Démarrer » en haut.")
         page.add(self.running_group)
         refresh = Gtk.Button(label="Actualiser la liste", valign=Gtk.Align.CENTER)
         refresh.connect("clicked", lambda *_: self._refresh_running())
         self.running_group.set_header_suffix(refresh)
         self.running_rows = []
-        self._refresh_running()
-        GLib.timeout_add_seconds(1, self._tick_session)
-
-    def _tick_session(self):
-        self._refresh_session()   # another panel window may have started/stopped it
-        return True               # keep the timer
-
-    def _detected_subtitle(self, name, entries, session):
-        lines = [d for d in (describe_entry(e) for e in entries) if d]
-        if lines:
-            return "\n".join(lines)
-        if entries:
-            return "Génération active"
-        if not session:
-            return "Framegen arrêté — clique « Lancer », puis relance le jeu"
-        if not (self.opt.master or name in self.cfg.enabled_games()):
-            return "Génération non activée pour ce jeu — active-la ici, puis relance le jeu"
-        return "Démarré avant « Lancer » ou avant son activation — relance le jeu"
 
     def _refresh_running(self):
         for row in self.running_rows:
             self.running_group.remove(row)
         self.running_rows = []
-        status = {pid: (process, entries) for pid, process, entries in read_running()}
-        games = {}   # name -> status entries (one row per game, first process wins)
-        for pid, name in detect_games():
-            games.setdefault(name, status.pop(pid, (name, []))[1])
-        for process, entries in status.values():   # published but not found in /proc
-            games.setdefault(process, entries)
+        status = {pid: entries for pid, _process, entries in read_running()}
+        games, seen = [], set()
+        for pid, name in sorted(detect_games(), key=lambda g: g[1]):
+            if name not in seen:
+                seen.add(name)
+                games.append((pid, name, status.get(pid, [])))
+        pids = {g[0] for g in games}
+        if self.target and self.target[0] not in pids:   # the game has exited
+            self._set_target(None)
+        if self.selected and self.selected[0] not in pids:
+            self.selected = None
+        if not self.selected and len(games) == 1:
+            self.selected = games[0][:2]
+        self._refresh_session()
         if not games:
             row = Adw.ActionRow(title="Aucun jeu en cours",
                                 subtitle="Lance un jeu Vulkan (natif ou via Proton), puis « Actualiser la liste »")
             self.running_group.add(row)
             self.running_rows.append(row)
             return
-        session = session_pid() is not None
-        enabled = self.cfg.enabled_games()
-        for name, entries in sorted(games.items()):
-            row = Adw.ActionRow(title=name, subtitle=self._detected_subtitle(name, entries, session))
-            sw = Gtk.Switch(valign=Gtk.Align.CENTER, active=self.opt.master or name in enabled,
-                            sensitive=not self.opt.master,
-                            tooltip_text="Générer pour ce jeu (au prochain lancement)")
-            sw.connect("notify::active", self.on_detected_toggle, name)
-            row.add_suffix(sw)
-            row.set_activatable_widget(sw)
+        group = None
+        for pid, name, entries in games:
+            lines = [d for d in (describe_entry(e) for e in entries) if d]
+            armed = any(e.get("kind") == "swapchain" for e in entries)
+            row = Adw.ActionRow(title=name, subtitle="\n".join(lines) if lines else
+                                "Lancé avant l'installation de cette version — relance le jeu")
+            radio = Gtk.CheckButton(valign=Gtk.Align.CENTER, sensitive=armed)
+            if group is None:
+                group = radio
+            else:
+                radio.set_group(group)
+            radio.set_active(self.selected is not None and self.selected[0] == pid)
+            radio.connect("toggled", self.on_pick, (pid, name))
+            row.add_prefix(radio)
+            row.set_activatable_widget(radio)
             self.running_group.add(row)
             self.running_rows.append(row)
 
-    def on_detected_toggle(self, sw, _p, name):
-        on = sw.get_active()
-        if name in self.game_rows:
-            self.game_rows[name].get_activatable_widget().set_active(on)  # saves
-        elif on:
-            self._commit_game(name)
-
-    def _build_activation(self, page):
-        g = Adw.PreferencesGroup(
-            title="Activation",
-            description="Aucune option de lancement Steam nécessaire : clique « Lancer » en haut, "
-                        "puis lance tes jeux normalement.")
-        page.add(g)
-        self.master_row = Adw.SwitchRow(
-            title="Activer pour tous les jeux Vulkan",
-            subtitle="Sinon, la génération ne s'applique qu'aux jeux de la liste ci-dessous")
-        self.master_row.set_active(self.opt.master)
-        self.master_row.connect("notify::active", self.on_change)
-        g.add(self.master_row)
-
-    def _build_games(self, page):
-        self.games_group = Adw.PreferencesGroup(
-            title="Jeux",
-            description="Jeux pour lesquels activer la génération quand l'interrupteur global est éteint.")
-        page.add(self.games_group)
-        add_btn = Gtk.Button(icon_name="list-add-symbolic", valign=Gtk.Align.CENTER,
-                             tooltip_text="Ajouter un jeu")
-        add_btn.add_css_class("flat")
-        add_btn.connect("clicked", self.on_add_game)
-        self.games_group.set_header_suffix(add_btn)
-        self.game_rows = {}
-        for name in [g[0] for g in self.cfg.games]:
-            self._add_game_row(name)
-        self._refresh_games_placeholder()
-
-    def _add_game_row(self, name):
-        if name in self.game_rows:
+    def on_pick(self, radio, game):
+        if not radio.get_active():
             return
-        row = Adw.ActionRow(title=name)
-        sw = Gtk.Switch(valign=Gtk.Align.CENTER,
-                        active=name in self.cfg.enabled_games())
-        sw.connect("notify::active", self.on_game_toggle, name)
-        row.add_suffix(sw)
-        remove = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER,
-                            tooltip_text="Retirer")
-        remove.add_css_class("flat")
-        remove.connect("clicked", self.on_remove_game, name)
-        row.add_suffix(remove)
-        row.set_activatable_widget(sw)
-        self.games_group.add(row)
-        self.game_rows[name] = row
-
-    def _refresh_games_placeholder(self):
-        if not self.game_rows and not hasattr(self, "_placeholder"):
-            self._placeholder = Adw.ActionRow(
-                title="Aucun jeu",
-                subtitle="Ajoute un jeu avec « + », ou active l'interrupteur global au-dessus.")
-            self.games_group.add(self._placeholder)
-        elif self.game_rows and hasattr(self, "_placeholder"):
-            self.games_group.remove(self._placeholder)
-            del self._placeholder
+        self.selected = game
+        if self.target and self.target != game:
+            self._set_target(game)   # generating: move it to the chosen game
+        self._refresh_session()
 
     def _build_framegen(self, page):
         g = Adw.PreferencesGroup(title="Génération d'images",
@@ -931,7 +867,6 @@ class Window(Adw.ApplicationWindow):
 
     def sync(self):
         o = self.opt
-        o.master = self.master_row.get_active()
         o.generate = self.gen_row.get_active()
         o.preset = PRESETS[self.preset_row.get_selected()][1]
         o.multiplier = self.mult_row.get_selected() + 2
@@ -964,17 +899,13 @@ class Window(Adw.ApplicationWindow):
         for exp, needs_gen in self.section_rows.values():
             exp.set_sensitive(o.generate or not needs_gen)
         self.pause_row.set_sensitive(o.generate)
-        self.games_group.set_sensitive(not o.master)
 
     def on_change(self, *_):
         if self._loading:
             return
-        master = self.opt.master
         self.sync()
         self.refresh_sensitivity()
         self.save()
-        if self.opt.master != master:
-            self._refresh_running()   # the per-game switches follow the global one
 
     def save(self):
         self.opt.write_into(self.cfg.glob)
@@ -985,46 +916,6 @@ class Window(Adw.ApplicationWindow):
 
     def toast(self, text):
         self.toasts.add_toast(Adw.Toast.new(text))
-
-    # -- games -------------------------------------------------------------
-
-    def on_game_toggle(self, sw, _p, name):
-        if self._loading:
-            return
-        self.cfg.set_game(name, sw.get_active())
-        self.save()
-
-    def on_remove_game(self, _btn, name):
-        row = self.game_rows.pop(name, None)
-        if row:
-            self.games_group.remove(row)
-        self.cfg.remove_game(name)
-        self._refresh_games_placeholder()
-        self.save()
-
-    def on_add_game(self, _btn):
-        dialog = Gtk.FileDialog(title="Choisir l'exécutable du jeu")
-        dialog.open(self, None, self._game_chosen)
-
-    def _game_chosen(self, dialog, result):
-        try:
-            f = dialog.open_finish(result)
-        except GLib.Error:
-            return
-        if f:
-            self._commit_game(game_name(f.get_path()))
-
-    def _commit_game(self, name):
-        if not name:
-            return
-        if name in self.game_rows:
-            self.toast(f"« {name} » est déjà dans la liste.")
-            return
-        self.cfg.set_game(name, True)
-        self._add_game_row(name)
-        self._refresh_games_placeholder()
-        self.save()
-        self.toast(f"« {name} » ajouté et activé.")
 
     # -- header actions ----------------------------------------------------
 
@@ -1067,11 +958,11 @@ class Window(Adw.ApplicationWindow):
 
 class App(Adw.Application):
     def __init__(self):
-        super().__init__(application_id="dev.bdex.framegen.Gui",
-                         flags=Gio.ApplicationFlags.NON_UNIQUE)
+        # One window: the session file has a single owner.
+        super().__init__(application_id="dev.bdex.framegen.Gui")
 
     def do_activate(self):
-        Window(self).present()
+        (self.get_active_window() or Window(self)).present()
 
 
 if __name__ == "__main__":

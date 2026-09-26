@@ -181,24 +181,31 @@ void DeviceData::pollConfig() {
         const auto t = std::filesystem::last_write_time(path, ec);
         if (!ec) stamp = static_cast<int64_t>(t.time_since_epoch().count());
     }
-    // require_app: closing the control panel (or "Arrêter") pauses the
-    // generation in running games, starting it again resumes it.
-    const bool session = !config.requireApp || platformAppSessionActive();
-    if (configStamp == -1) filePaused = config.paused;  // first poll: the config loaded at creation
+    // require_app: « Démarrer » / « Arrêter » in the control panel start and
+    // stop the generation in this process (Config::load reads the session).
+    bool targeted = config.appTargeted;
+    if (config.requireApp) {
+        const AppSession s = platformAppSession();
+        targeted = s.target != 0 && s.target == platformPid();
+    }
     const bool fileChanged = configStamp != -1 && stamp != configStamp;
     configStamp = stamp;
-    if (!fileChanged && session == appSession) return;
+    if (!fileChanged && targeted == config.appTargeted) return;
+    Config fresh = Config::load();
+    fresh.autoConfigure(props, memProps);
     const bool wasPaused = config.paused;
-    if (fileChanged) {
-        Config fresh = Config::load();
-        fresh.autoConfigure(props, memProps);
+    Config next = config.keepingCreationSettings(fresh);
+    if (config.requireApp && !next.sameOutputSettings(config)) {
+        // Multiplier, mode, flow, HUD...: the swapchains rebuild their output
+        // stage (VirtualSwapchain::present), as the panel applies them live.
+        ++next.rebuildGen;
+        config = next;
+    } else {
         config.applyLive(fresh);
-        filePaused = config.paused;
+        config.appTargeted = fresh.appTargeted;
     }
-    appSession = session;
-    config.paused = filePaused || !session;
     ++configVersion;
-    BDEX_INFO("%s%s", fileChanged ? "config file changed: live settings reloaded" : "control panel session changed",
+    BDEX_INFO("%s%s", fileChanged ? "config file changed: live settings reloaded" : "control panel: generation target changed",
               config.paused != wasPaused ? (config.paused ? " (frame generation paused)" : " (frame generation resumed)") : "");
 }
 

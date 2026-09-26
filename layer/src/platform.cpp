@@ -248,28 +248,57 @@ std::string platformStatusDir() {
 #endif
 }
 
-bool platformAppSessionActive() {
+AppSession platformAppSession() {
+    AppSession s;
     const std::string dir = platformStatusDir();
-    if (dir.empty()) return false;
+    if (dir.empty()) return s;
 #ifdef _WIN32
     std::ifstream in(dir + "\\app.session");
 #else
     std::ifstream in(dir + "/app.session");
 #endif
-    long pid = 0;
-    if (!(in >> pid) || pid <= 0) return false;
+    long panel = 0, target = 0;
+    if (!(in >> panel) || panel <= 0) return s;
+    if (!(in >> target)) target = 0;
 #ifdef _WIN32
-    HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(pid));
-    if (!h) return false;
-    const bool alive = WaitForSingleObject(h, 0) == WAIT_TIMEOUT;
+    HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(panel));
+    if (!h) return s;
+    s.open = WaitForSingleObject(h, 0) == WAIT_TIMEOUT;
     CloseHandle(h);
-    return alive;
 #else
     // Alive and still the control panel (not a recycled process id).
-    std::ifstream cmd("/proc/" + std::to_string(pid) + "/cmdline", std::ios::binary);
+    std::ifstream cmd("/proc/" + std::to_string(panel) + "/cmdline", std::ios::binary);
     const std::string line((std::istreambuf_iterator<char>(cmd)), std::istreambuf_iterator<char>());
-    return line.find("bdex-framegen") != std::string::npos;
+    s.open = line.find("bdex-framegen") != std::string::npos;
 #endif
+    if (s.open) s.target = target;
+    return s;
+}
+
+bool platformIsDesktopApp() {
+#ifdef _WIN32
+    return false;
+#else
+    // GTK 4 draws its windows with Vulkan: every GTK 4 application loads the
+    // layer, and no game links it.
+    std::ifstream in("/proc/self/maps");
+    std::string line;
+    while (std::getline(in, line))
+        if (line.find("libgtk-4.so") != std::string::npos) return true;
+    return false;
+#endif
+}
+
+bool platformIsNonGame(const std::string& name) {
+    // Keep in sync with NOT_GAMES in tools/bdex-framegen-gui.
+    static const char* const kNonGames[] = {
+        "steam", "steamwebhelper", "gamescope", "gamescopereaper", "chrome", "chromium",
+        "firefox", "librewolf", "brave", "zen", "electron", "discord", "vesktop", "code",
+        "obs", "vulkaninfo", "vkcube", "bdex-framegen-gui",
+    };
+    for (const char* n : kNonGames)
+        if (name == n) return true;
+    return false;
 }
 
 std::string platformCacheDir() {

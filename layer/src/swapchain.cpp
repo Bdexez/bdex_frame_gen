@@ -47,6 +47,7 @@ VirtualSwapchain::VirtualSwapchain(DeviceData& dev, const VkSwapchainCreateInfoK
         createSlots(workerSlots_, kWorkerSlots, true, workerPool_, false, dev_.asyncCompute);
         generating_ = wantGeneration;
         fg_ = makeFrameGen(generating_);
+        outputGen_ = cfg_.rebuildGen;
         worker_ = std::thread([this] { workerLoop(); });
         feedback_ = dev_.presentFeedback && !throwaway_;
         if (feedback_) fbThread_ = std::thread([this] { feedbackLoop(); });
@@ -74,6 +75,7 @@ void VirtualSwapchain::publishStatus(int multiplier) {
     e.kind = "swapchain";
     const bool on = generating_ && !cfg_.paused;
     e.state = on ? "generating" : generating_ ? "paused" : "pass-through";
+    if (cfg_.requireApp && !cfg_.appTargeted) e.state = "ready";  // armed, waiting for « Démarrer »
     if (!generating_) e.reason = genFailReason_.empty() ? "frame generation off for this swapchain" : genFailReason_;
     e.mode = cfg_.extrapolate ? "extrapolate" : "interpolate";
     e.multiplier = on ? multiplier : 1;
@@ -185,7 +187,8 @@ void VirtualSwapchain::createReal(const VkSwapchainCreateInfoKHR& appInfo) {
         // We present `multiplier` frames per game frame: with too few images
         // the acquire of the real frame blocks behind the generated ones
         // still queued in the presentation engine, which delays it.
-        const uint32_t mult = static_cast<uint32_t>(std::max(1, cfg_.multiplier));
+        // (require_app: the control panel may raise it to x4 while the game runs.)
+        const uint32_t mult = static_cast<uint32_t>(cfg_.requireApp ? 4 : std::max(1, cfg_.multiplier));
         uint32_t want = std::max(appInfo.minImageCount, 2u + mult);
         if (caps.maxImageCount) want = std::min(want, caps.maxImageCount);
         ci.minImageCount = std::max(want, caps.minImageCount);
@@ -705,6 +708,33 @@ void VirtualSwapchain::applyGpuBudget() {
               gpuMs, 100.0 * cfg_.gpuBudget, frameIntervalMs_, before, level, fg_->flowScale());
 }
 
+// require_app: the control panel changed a setting that sizes the output
+// stage (multiplier, mode, flow, HUD...) or started / stopped the generation
+// here: rebuild it like applyGpuBudget does (one frame without generation).
+// Called under mutex_ from present().
+void VirtualSwapchain::rebuildOutput() {
+    outputGen_ = cfg_.rebuildGen;
+    {
+        std::unique_lock<std::mutex> wlock(workerMutex_);
+        waitWorkerIdle(wlock);
+    }
+    waitQueuesIdle();
+    bool generating = cfg_.enabled && cfg_.debug != Config::Debug::Passthrough && cfg_.multiplier > 1 && !throwaway_;
+    try {
+        auto fg = makeFrameGen(generating);
+        fg_ = std::move(fg);
+        fg_->setQualityLevel(budget_.level());
+        generating_ = generating;
+        historyLost_ = true;
+        dynMult_ = 0;
+    } catch (const VkError& e) {
+        BDEX_WARN("control panel: output stage not rebuilt (%s)", e.what());
+        return;
+    }
+    BDEX_INFO("control panel: output stage rebuilt (x%d %s, generation %s)", cfg_.multiplier,
+              cfg_.extrapolate ? "extrapolate" : "interpolate", generating_ && !cfg_.paused ? "on" : "paused");
+}
+
 VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& info, bool consumeWaitSemaphores) {
     dev_.pollConfig();
     dev_.snapshotConfig(cfg_, cfgVersion_);
@@ -723,6 +753,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     acquireCv_.notify_all();
 
     if (surfaceChanged_.exchange(false)) followSurface();
+    if (cfg_.rebuildGen != outputGen_) rebuildOutput();
     if (cfg_.gpuBudget > 0.f && generating_) applyGpuBudget();
 
     // The previous job must have been fully submitted by the worker before
