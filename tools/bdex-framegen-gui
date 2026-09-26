@@ -459,7 +459,7 @@ def stop_session(only_ours=True):
 
 
 def read_running():
-    """Live status of the running games: [(process, [entry dict, ...])]; stale files skipped."""
+    """Live status of the running games: [(pid, process, [entry dict, ...])]; stale files skipped."""
     out = []
     try:
         names = sorted(os.listdir(status_dir()))
@@ -491,7 +491,43 @@ def read_running():
             except OSError:
                 pass
             continue
-        out.append((head.get("process", "?"), entries))
+        out.append((pid, head.get("process", "?"), entries))
+    return out
+
+
+# Vulkan programs that are not games: the layer loads into them too.
+NOT_GAMES = {"steam", "steamwebhelper", "gamescope", "gamescopereaper", "chrome", "chromium",
+             "firefox", "librewolf", "brave", "zen", "electron", "discord", "vesktop", "code",
+             "obs", "vulkaninfo", "bdex-framegen-gui"}
+
+
+def layer_name(arg):
+    """A process's name as the layer matches [sections] (normalizeName in platform.cpp)."""
+    base = arg.replace("\\", "/").rsplit("/", 1)[-1].strip().lower()
+    return base.split(".", 1)[0]
+
+
+def detect_games():
+    """Running programs the layer is loaded into — every Vulkan program, native or
+    through Proton (DXVK / VKD3D) — minus known non-games: [(pid, name)]."""
+    out, me = [], os.getpid()
+    for p in os.listdir("/proc"):
+        if not p.isdigit() or int(p) == me:
+            continue
+        try:
+            with open(f"/proc/{p}/maps", "rb") as f:
+                if b"libVkLayer_bdex_framegen" not in f.read():
+                    continue
+            with open(f"/proc/{p}/cmdline", "rb") as f:
+                args = [a.decode(errors="replace") for a in f.read().split(b"\0") if a.strip()]
+        except OSError:
+            continue
+        if not args:
+            continue
+        exe = [a for a in args if a.lower().endswith(".exe")]  # Proton: the game's .exe
+        name = layer_name(exe[0] if exe else args[0])
+        if name and name not in NOT_GAMES:
+            out.append((int(p), name))
     return out
 
 
@@ -623,6 +659,7 @@ class Window(Adw.ApplicationWindow):
         except OSError as e:
             self.toast(f"Échec : {e}")
         self._refresh_session()
+        self._refresh_running()
 
     def _build_status(self, page):
         g = Adw.PreferencesGroup(title="État")
@@ -652,33 +689,72 @@ class Window(Adw.ApplicationWindow):
         g.add(gpu_row)
 
     def _build_running(self, page):
-        """What the layer is doing in the games running now (refreshed every second)."""
+        """The games running now (Vulkan programs the layer is loaded into), with
+        what the layer does in each; refreshed with the button, like the
+        Windows launcher's list."""
         self.running_group = Adw.PreferencesGroup(
-            title="En cours",
-            description="Jeux lancés avec la couche active : cadence, écran mesuré, latence, "
-                        "et la raison quand elle laisse passer les images sans les générer.")
+            title="Jeux détectés",
+            description="Jeux Vulkan en cours (natifs ou via Proton). L'interrupteur active la "
+                        "génération pour ce jeu ; elle s'applique à son prochain lancement.")
         page.add(self.running_group)
+        refresh = Gtk.Button(label="Actualiser la liste", valign=Gtk.Align.CENTER)
+        refresh.connect("clicked", lambda *_: self._refresh_running())
+        self.running_group.set_header_suffix(refresh)
         self.running_rows = []
         self._refresh_running()
-        GLib.timeout_add_seconds(1, self._refresh_running)
+        GLib.timeout_add_seconds(1, self._tick_session)
+
+    def _tick_session(self):
+        self._refresh_session()   # another panel window may have started/stopped it
+        return True               # keep the timer
+
+    def _detected_subtitle(self, name, entries, session):
+        lines = [d for d in (describe_entry(e) for e in entries) if d]
+        if lines:
+            return "\n".join(lines)
+        if entries:
+            return "Génération active"
+        if not session:
+            return "Framegen arrêté — clique « Lancer », puis relance le jeu"
+        if not (self.opt.master or name in self.cfg.enabled_games()):
+            return "Génération non activée pour ce jeu — active-la ici, puis relance le jeu"
+        return "Démarré avant « Lancer » ou avant son activation — relance le jeu"
 
     def _refresh_running(self):
-        self._refresh_session()   # another panel window may have started/stopped it
         for row in self.running_rows:
             self.running_group.remove(row)
         self.running_rows = []
-        games = read_running()
+        status = {pid: (process, entries) for pid, process, entries in read_running()}
+        games = {}   # name -> status entries (one row per game, first process wins)
+        for pid, name in detect_games():
+            games.setdefault(name, status.pop(pid, (name, []))[1])
+        for process, entries in status.values():   # published but not found in /proc
+            games.setdefault(process, entries)
         if not games:
-            row = Adw.ActionRow(title="Aucun jeu en cours", subtitle="Lance un jeu Vulkan (ou via Proton)")
+            row = Adw.ActionRow(title="Aucun jeu en cours",
+                                subtitle="Lance un jeu Vulkan (natif ou via Proton), puis « Actualiser la liste »")
             self.running_group.add(row)
             self.running_rows.append(row)
-            return True
-        for process, entries in games:
-            lines = [d for d in (describe_entry(e) for e in entries) if d]
-            row = Adw.ActionRow(title=process, subtitle="\n".join(lines) or "Couche chargée")
+            return
+        session = session_pid() is not None
+        enabled = self.cfg.enabled_games()
+        for name, entries in sorted(games.items()):
+            row = Adw.ActionRow(title=name, subtitle=self._detected_subtitle(name, entries, session))
+            sw = Gtk.Switch(valign=Gtk.Align.CENTER, active=self.opt.master or name in enabled,
+                            sensitive=not self.opt.master,
+                            tooltip_text="Générer pour ce jeu (au prochain lancement)")
+            sw.connect("notify::active", self.on_detected_toggle, name)
+            row.add_suffix(sw)
+            row.set_activatable_widget(sw)
             self.running_group.add(row)
             self.running_rows.append(row)
-        return True  # keep the timer
+
+    def on_detected_toggle(self, sw, _p, name):
+        on = sw.get_active()
+        if name in self.game_rows:
+            self.game_rows[name].get_activatable_widget().set_active(on)  # saves
+        elif on:
+            self._commit_game(name)
 
     def _build_activation(self, page):
         g = Adw.PreferencesGroup(
@@ -893,9 +969,12 @@ class Window(Adw.ApplicationWindow):
     def on_change(self, *_):
         if self._loading:
             return
+        master = self.opt.master
         self.sync()
         self.refresh_sensitivity()
         self.save()
+        if self.opt.master != master:
+            self._refresh_running()   # the per-game switches follow the global one
 
     def save(self):
         self.opt.write_into(self.cfg.glob)
