@@ -119,6 +119,7 @@ layout(push_constant) uniform PC {
     int temporal;      // temporal prediction at the coarsest level: 0 off, 1 forward pass, 2 backward pass
     float zeroBiasContrast; // gradient energy at which the zero bias is fully applied (0 = absolute bias)
     float chromaWeight;     // weight of the chroma SAD in the chroma re-ranking (0 = off)
+    int chromaHistory;      // previous pair's flow in prevFlow for the chroma check: 0 none, 1 forward, 2 backward pass
 } pc;
 
 #define CHROMA_GATE 0.01   // luma SAD (mean per pixel) within which candidates are re-ranked on chroma
@@ -439,8 +440,23 @@ void main() {
         // one that the true displacement removes), not just shave noise.
         int bi = bestIdx;
         float bc = sCost2[bi] + chromaW * (0.5 * sCsad[bi] - 0.002);
+        // Temporal check: this block's motion one pair earlier (like the
+        // temporal prediction). A true isoluminant motion keeps its course,
+        // while a pattern aliasing in chroma (stripes scrolling faster than
+        // their period) matches a different alias every pair: a challenger
+        // far from a known previous motion is refused. Without a previous
+        // motion (none yet, or it was ~0) anything goes, so a motion can start.
+        vec2 hist = vec2(0.0);
+        if (pc.chromaHistory != 0) {
+            vec2 hp = (vec2(blk) + 0.5) * float(BS);
+            vec2 b = texture(prevFlow, hp / vec2(pc.size)).xy;
+            hist = pc.chromaHistory == 1 ? -b : texture(prevFlow, (hp + b) / vec2(pc.size)).xy;
+        }
+        bool anyCourse = length(hist) < 1.0;
         for (int c = 0; c < total; ++c) {
             if (sSad[c] > minSad + CHROMA_GATE) continue;
+            if (!anyCourse && c != bestIdx && distance(vec2(c >= ncand ? ivec2(0) : base + ivec2(c % W, c / W) - R), hist) > max(2.0, 0.5 * length(hist)))
+                continue;
             float cc = sCost2[c] + chromaW * sCsad[c];
             if (cc < bc) { bc = cc; bi = c; }
         }

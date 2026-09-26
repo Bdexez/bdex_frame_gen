@@ -13,7 +13,7 @@ namespace bdex {
 namespace {
 
 struct DownsamplePC { int32_t size[2]; int32_t fromColor; int32_t transfer; };
-struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; float gradWeight; float censusWeight; float censusMargin; float rotWeight; int32_t temporal; float zeroBiasContrast; float chromaWeight; };
+struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; float gradWeight; float censusWeight; float censusMargin; float rotWeight; int32_t temporal; float zeroBiasContrast; float chromaWeight; int32_t chromaHistory; };
 struct SizePC { int32_t size[2]; };
 struct ReducePC { int32_t size[2]; int32_t tiles; };
 struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; int32_t subpixel; };
@@ -823,10 +823,11 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
                    {(int32_t)lv.blocks.width, (int32_t)lv.blocks.height},
                    l + 1 < levels_ ? cfg.searchFine : cfg.searchRadius, l + 1 < levels_ ? 1 : 0, cfg.smoothness, cfg.zeroBias,
                    cfg.gradWeight, cfg.censusWeight, cfg.censusMargin, cfg.rotWeight, 0, cfg.zeroBiasContrast,
-                   chroma_ ? cfg.chromaWeight : 0.f};
+                   chroma_ ? cfg.chromaWeight : 0.f, 0};
         const bool temporal = cfg.temporalPrediction && flowValid_;
         for (uint32_t dir = 0; dir < 2; ++dir) {
             pc.temporal = temporal ? static_cast<int32_t>(dir + 1) : 0;
+            pc.chromaHistory = flowValid_ ? static_cast<int32_t>(dir + 1) : 0;
             vt.CmdPushConstants(cmd, blockMatch_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
             vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, blockMatch_.layout, 0, 1, &dsMatch_[parity][dir][l], 0, nullptr);
             dispatchGated(cmd, 3 * l, lv.blocks.width, lv.blocks.height);
