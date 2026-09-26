@@ -76,6 +76,9 @@ public:
         uint32_t repeats = 0; // repeated frames detected since the output stage was built
     };
     bool readState(State& out) const;
+    // Mean matching cost of the last computed flow (the scene-cut input),
+    // read without waiting: a frame or two old. Negative when unavailable.
+    float lastMeanCost() const;
     // Copies output image `output` into `dst` (UNDEFINED -> PRESENT_SRC).
     void recordCopyOutput(VkCommandBuffer cmd, uint32_t output, VkImage dst);
     // Copies source `src` (PRESENT_SRC) into `dst` (UNDEFINED -> PRESENT_SRC).

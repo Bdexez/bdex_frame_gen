@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(bdex_framegen VERSION 0.5.3 LANGUAGES C CXX)
+project(bdex_framegen VERSION 0.5.4 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

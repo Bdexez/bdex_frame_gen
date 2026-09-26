@@ -117,6 +117,10 @@ quick_read() {
         paused) echo "  → génération en pause (raccourci --toggle ou paused=1)" ;;
         pass-through) echo "  → pas de génération sur cette swapchain (raison dans le statut détaillé plus bas)" ;;
       esac
+      if [ "$state" = generating ] && awk -v o="${ofps:-0}" -v r="${rhz:-0}" 'BEGIN { exit !(r > 0 && o > r * 1.1) }'; then
+        echo "  → ${ofps} images/s envoyées pour un écran à ${rhz} Hz : le compositeur en jette l'excédent ; le jeu tourne déjà"
+        echo "    près de la fréquence de l'écran, ×$mult n'apporte presque rien (plafonner le jeu : fps_limit, ou multiplicateur Auto)"
+      fi
       if [ "$state" = generating ] && [ "$mult" = 1 ]; then
         echo "  → ×1 : le jeu ($gfps fps) atteint déjà la fréquence que la couche croit être celle de l'écran (${rhz} Hz) ;"
         echo "    en « Auto », rien n'est généré. Si l'écran est plus rapide, la détection est fausse : tester ×2 fixe dans le panneau"
@@ -135,6 +139,23 @@ quick_read() {
     done
   done
   [ "$found" = 1 ] || echo "aucun jeu ne publie d'état : jeu non lancé, ou couche non chargée dans le jeu (bdex-framegen --check)"
+  # The scene-cut fallback: generated frames replaced by the real one are
+  # displayed but show nothing new (x2 then looks exactly like x1).
+  local log="$2" cut
+  if [ -n "$log" ] && [ -f "$log" ]; then
+    cut="$(grep -o 'scene cut: [0-9]*% duplicated, [0-9]*% faded (cost [0-9.]*' "$log" | tail -1)"
+    if [ -n "$cut" ]; then
+      echo "dernière mesure : $cut)"
+      local dup fade
+      dup="$(echo "$cut" | sed -E 's/scene cut: ([0-9]+)%.*/\1/')"
+      fade="$(echo "$cut" | sed -E 's/.*, ([0-9]+)% faded.*/\1/')"
+      if [ $(( dup + fade )) -ge 30 ]; then
+        echo "  → ${dup} % des images générées sont une simple copie de l'image réelle (repli « changement de scène »), ${fade} % à moitié :"
+        echo "    le mouvement est jugé trop incertain, la génération ne montre rien de nouveau. Tester dans [jeu] :"
+        echo "    scene_cut_low = 0.3 et scene_cut_high = 0.6 (relu à chaud)"
+      fi
+    fi
+  fi
 }
 
 # Everything a bug report needs, in one file to attach to an issue.
@@ -146,7 +167,10 @@ report() {
   {
     echo "== bdex-framegen diagnostic report, $(date -u '+%Y-%m-%d %H:%M UTC')"
     echo; echo "== lecture rapide (à faire pendant que le jeu tourne, après « Démarrer »)"
-    quick_read "$sdir"
+    log="$(grep -hE '^\s*log_file\s*=' "$cfg" 2>/dev/null | tail -1 | cut -d= -f2- | xargs || true)"
+    log="${BDEX_FG_LOG_FILE:-$log}"
+    log="${log/#\~/$HOME}"
+    quick_read "$sdir" "$log"
     echo; echo "== system"
     uname -srm
     grep -h '^PRETTY_NAME' /etc/os-release 2>/dev/null || true
@@ -157,6 +181,12 @@ report() {
         grep -E "bdex-fg|VK_LAYER_BDEX|deviceName|driverName|driverInfo|apiVersion|deviceType" | head -40
     else
       echo "vulkaninfo not found (install vulkan-tools)"
+    fi
+    echo; echo "== Vulkan layer order (application at the top, driver at the bottom)"
+    if command -v vulkaninfo >/dev/null; then
+      ENABLE_VK_LAYER_VALVE_steam_overlay_1=1 BDEX_FG_STATS=0 VK_LOADER_DEBUG=layer vulkaninfo --summary 2>&1 |
+        sed -n '/vkCreateDevice layer callstack/,/<Device>/p' | grep -E '^\[Vulkan Loader\] [A-Z]+: +(VK_LAYER|<)' |
+        sed -E 's/^\[Vulkan Loader\] [A-Z]+: +/  /' | awk '!seen[$0]++' | head -20
     fi
     echo; echo "== installed manifests"
     for d in /usr/share/vulkan/implicit_layer.d /etc/vulkan/implicit_layer.d \
@@ -201,10 +231,7 @@ report() {
     [ "$found" = 1 ] || echo "(none)"
     echo; echo "== config file ($cfg)"
     if [ -f "$cfg" ]; then cat "$cfg"; else echo "(none)"; fi
-    log="$(grep -hE '^\s*log_file\s*=' "$cfg" 2>/dev/null | tail -1 | cut -d= -f2- | xargs || true)"
-    log="${BDEX_FG_LOG_FILE:-$log}"
     if [ -n "$log" ]; then
-      log="${log/#\~/$HOME}"
       echo; echo "== last 200 lines of $log"
       tail -n 200 "$log" 2>/dev/null || echo "(unreadable)"
     fi

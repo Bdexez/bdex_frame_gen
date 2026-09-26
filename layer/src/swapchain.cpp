@@ -1003,6 +1003,15 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
 
     if (cfg_.stats) {
         statsAppFrames_ += 1;
+        if (interpolate) {
+            const float cost = fg_->lastMeanCost();
+            if (cost >= 0.f) {
+                ++statsGen_;
+                statsCostSum_ += cost;
+                if (cost >= cfg_.sceneCutHigh) ++statsCutFull_;
+                else if (cost > cfg_.sceneCutLow) ++statsCutFade_;
+            }
+        }
         statsCpuMs_ += std::chrono::duration<double, std::milli>(clock::now() - t0).count();
         const auto now = clock::now();
         const double elapsed = std::chrono::duration<double>(now - statsStart_).count();
@@ -1010,7 +1019,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             const uint64_t out = statsOutFrames_.exchange(0);
             const uint64_t delayUs = statsRealDelayUs_.exchange(0);
             const uint64_t skipped = statsSkipped_.exchange(0);
-            char skip[256] = "";
+            char skip[384] = "";
             int len = 0;
             if (skipped) len = snprintf(skip, sizeof(skip), ", %llu predicted frame(s) skipped", static_cast<unsigned long long>(skipped));
             if (feedback_) {
@@ -1038,6 +1047,17 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
                 snprintf(skip + len, sizeof(skip) - size_t(len), ", %u repeated frame(s)", st.repeats - statsRepeats_);
                 statsRepeats_ = st.repeats;
             }
+            if (statsGen_) {
+                // Generated frames the scene-cut test replaced by the real
+                // frame: they are displayed, but show nothing new.
+                len = int(strlen(skip));
+                snprintf(skip + len, sizeof(skip) - size_t(len),
+                         ", scene cut: %u%% duplicated, %u%% faded (cost %.3f, thresholds %.2f/%.2f)",
+                         statsCutFull_ * 100 / statsGen_, statsCutFade_ * 100 / statsGen_, statsCostSum_ / statsGen_,
+                         cfg_.sceneCutLow, cfg_.sceneCutHigh);
+            }
+            statsGen_ = statsCutFull_ = statsCutFade_ = 0;
+            statsCostSum_ = 0.0;
             BDEX_INFO("game %.1f fps -> output %.1f fps (x%.2f), present call %.2f ms, real frame delayed %.1f ms%s%s",
                       statsAppFrames_ / elapsed, out / elapsed, statsAppFrames_ ? double(out) / statsAppFrames_ : 0.0,
                       statsAppFrames_ ? statsCpuMs_ / statsAppFrames_ : 0.0,
