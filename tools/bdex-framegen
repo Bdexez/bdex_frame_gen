@@ -63,7 +63,7 @@ report() {
     echo; echo "== environment"
     env | grep -E '^(BDEX_FG|VK_|PROTON_|DXVK_|VKD3D_|MESA_|RADV_|__GL)' | sort || true
     echo; echo "== running games (live status)"
-    sdir="${BDEX_FG_STATUS_DIR:-${XDG_RUNTIME_DIR:+$XDG_RUNTIME_DIR/bdex-framegen}}"
+    sdir="${BDEX_FG_STATUS_DIR:-${HOME:+$HOME/.cache/bdex-framegen/run}}"
     sdir="${sdir:-/tmp/bdex-framegen-$(id -u)}"
     found=0
     for f in "$sdir"/*.status; do
