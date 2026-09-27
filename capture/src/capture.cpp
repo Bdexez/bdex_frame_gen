@@ -2,7 +2,7 @@
 #include "log.h"
 
 #include <d3d11.h>
-#include <dxgi1_2.h>
+#include <dxgi1_6.h>
 
 #include <unknwn.h>
 #include <inspectable.h>
@@ -63,6 +63,10 @@ struct Grave {
 
 struct Capture::Impl {
     HWND target = nullptr;
+    bool hdr = false;  // scRGB FP16 capture (see start)
+    wgdx::DirectXPixelFormat pixelFormat() const {
+        return hdr ? wgdx::DirectXPixelFormat::R16G16B16A16Float : wgdx::DirectXPixelFormat::B8G8R8A8UIntNormalized;
+    }
 
     winrt::com_ptr<ID3D11Device> device;
     winrt::com_ptr<ID3D11DeviceContext> context;
@@ -114,7 +118,7 @@ struct Capture::Impl {
             desc.Height = contentH;
             desc.MipLevels = 1;
             desc.ArraySize = 1;
-            desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+            desc.Format = hdr ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_B8G8R8A8_UNORM;
             desc.SampleDesc = {1, 0};
             desc.Usage = D3D11_USAGE_DEFAULT;
             desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
@@ -224,8 +228,7 @@ DWORD WINAPI Capture::Impl::threadMain(void* p) {
                 // Grow the pool to the new content size; frames keep flowing
                 // in the new surfaces from the next callback on.
                 s->poolSize = last;
-                s->pool.Recreate(s->winrtDevice,
-                                 wgdx::DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, last);
+                s->pool.Recreate(s->winrtDevice, s->pixelFormat(), 2, last);
                 LOGI("frame pool recreated at %dx%d", last.Width, last.Height);
             }
         }
@@ -238,10 +241,34 @@ DWORD WINAPI Capture::Impl::threadMain(void* p) {
 
 Capture::~Capture() { stop(); }
 
-bool Capture::start(HWND target, const LUID* luid) {
+bool Capture::displayIsHdr(HWND window) {
+    const HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+    try {
+        winrt::com_ptr<IDXGIFactory1> factory;
+        winrt::check_hresult(CreateDXGIFactory1(__uuidof(IDXGIFactory1), factory.put_void()));
+        for (UINT a = 0;; ++a) {
+            winrt::com_ptr<IDXGIAdapter1> adapter;
+            if (factory->EnumAdapters1(a, adapter.put()) == DXGI_ERROR_NOT_FOUND) break;
+            for (UINT o = 0;; ++o) {
+                winrt::com_ptr<IDXGIOutput> output;
+                if (adapter->EnumOutputs(o, output.put()) == DXGI_ERROR_NOT_FOUND) break;
+                auto output6 = output.try_as<IDXGIOutput6>();
+                if (!output6) continue;
+                DXGI_OUTPUT_DESC1 d{};
+                if (FAILED(output6->GetDesc1(&d)) || d.Monitor != monitor) continue;
+                return d.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+            }
+        }
+    } catch (winrt::hresult_error const&) {
+    }
+    return false;
+}
+
+bool Capture::start(HWND target, const LUID* luid, bool hdr) {
     stop();
     impl_ = new Impl();
     impl_->target = target;
+    impl_->hdr = hdr;
     try {
         // Multi-threaded apartment: the free-threaded frame pool calls back
         // from the thread pool. Re-entering with the same mode is a no-op.
@@ -294,7 +321,7 @@ bool Capture::start(HWND target, const LUID* luid) {
         auto size = impl_->item.Size();
         impl_->poolSize = size;
         impl_->pool = wgc::Direct3D11CaptureFramePool::CreateFreeThreaded(
-            impl_->winrtDevice, wgdx::DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size);
+            impl_->winrtDevice, impl_->pixelFormat(), 2, size);
         auto wake = impl_->frameEvent;
         impl_->arrived = impl_->pool.FrameArrived(
             winrt::auto_revoke, [wake](auto&&, auto&&) { SetEvent(wake.get()); });

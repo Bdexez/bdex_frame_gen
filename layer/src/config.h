@@ -41,6 +41,7 @@ struct Config {
     float sharpness     = 0.0f;   // contrast-adaptive sharpening after upscaling, 0 = off .. 1 = strong
     int   overlayMode   = 0;      // on-screen fps HUD: 0 off, 1 fps, 2 fps+framegen, 3 +1% low, 4 +0.1% low
     int   presentMode   = -2;     // VkPresentModeKHR override; -1 = keep the game's; -2 = auto (fifo -> mailbox)
+    int   captureHdr    = -1;     // capture app: -1 auto (HDR when the game's display is in HDR mode), 0 SDR, 1 HDR if possible
     bool  presentFeedback = true; // measure when frames are really displayed (VK_KHR_present_wait, where supported): refresh rate, drops, vblank-aligned pacing
     bool  pacing        = true;   // sleep-based pacing when the present mode is not FIFO
     Debug debug         = Debug::None;

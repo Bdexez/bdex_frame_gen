@@ -59,6 +59,15 @@ public:
     // (Re)creates the swapchain at the overlay size (the display extent).
     bool setSize(uint32_t w, uint32_t h);
 
+    // HDR: the whole chain in scRGB (FP16 capture, D3D11 ring, import,
+    // history, an EXTENDED_SRGB_LINEAR swapchain), for a game on an HDR
+    // display. hdrCapable() says whether this GPU, driver and overlay surface
+    // can do it; setHdr() is called before the first setSize() and before the
+    // capture starts (which must use the matching format).
+    bool hdrCapable() const { return hdrCapable_; }
+    void setHdr(bool on);
+    bool hdr() const { return hdr_; }
+
     // A new captured frame: import if needed, copy into the history, run the
     // analysis / flow / synthesis. `consumed` tells whether a submit acquired
     // and released the frame's keyed mutex (main forwards it to
@@ -152,7 +161,10 @@ private:
 
     VkSwapchainKHR swapchain_ = VK_NULL_HANDLE;
     Capture* cap_ = nullptr;
-    VkFormat scFormat_ = VK_FORMAT_B8G8R8A8_UNORM;
+    VkFormat scFormat_ = VK_FORMAT_B8G8R8A8_UNORM;   // also the capture ring / import / history format
+    VkColorSpaceKHR scColorSpace_ = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    bool hdrCapable_ = false;
+    bool hdr_ = false;
     VkPresentModeKHR presentMode_ = VK_PRESENT_MODE_FIFO_KHR;
     bool preferFifo_ = false;
     std::vector<VkImage> scImages_;

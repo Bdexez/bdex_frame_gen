@@ -405,8 +405,13 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
     bdex::VkCtx vk;
     bdex::Capture cap;
     if (!vk.init(overlay, o.gpu, fifo, cfg)) return 1;
+    // HDR when the game's display is in HDR mode (capture_hdr = auto) or when
+    // forced, and the GPU / overlay surface can carry scRGB end to end.
+    const bool wantHdr = cfg.captureHdr == 1 || (cfg.captureHdr < 0 && bdex::Capture::displayIsHdr(target));
+    if (wantHdr && !vk.hdrCapable()) LOGW("HDR display, but no scRGB path on this GPU/driver: capturing in SDR");
+    vk.setHdr(wantHdr);
     LUID luid{};
-    if (!cap.start(target, vk.luid(luid) ? &luid : nullptr)) return 1;
+    if (!cap.start(target, vk.luid(luid) ? &luid : nullptr, vk.hdr())) return 1;
     vk.setCapture(&cap);
 
     ShowWindow(overlay, SW_SHOWNOACTIVATE);

@@ -8,6 +8,18 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-25)
 
+- **HDR in the Windows capture app.** It captured and presented in BGRA8,
+  flattening HDR games to SDR. When the game's monitor is in HDR mode
+  (DXGI output colour space PQ/BT.2020; `capture_hdr = auto`, the default)
+  and the GPU can import FP16 D3D11 textures and the overlay surface offers
+  scRGB, the whole chain runs in scRGB: WGC frame pool and D3D11 ring in
+  `R16G16B16A16_FLOAT`, Vulkan import and history in FP16, an
+  `EXTENDED_SRGB_LINEAR` overlay swapchain (`VK_EXT_swapchain_colorspace`),
+  and the engine on its HDR matching path. Any missing link keeps SDR, as
+  before (logged). `capture_hdr = 0` forces SDR, `1` HDR where possible; the
+  launcher gains the choice. Not run on hardware (no Windows machine here):
+  `vkctx.cpp`, `main.cpp` and `launcher.cpp` were syntax-checked with MinGW,
+  `capture.cpp` (C++/WinRT) is left to the Windows CI.
 - **Present feedback: the layer measures when frames are really
   displayed.** Where the device supports `VK_KHR_present_id` and
   `VK_KHR_present_wait` (still hidden from the game), the layer enables them
