@@ -64,6 +64,13 @@ other option of `bdex-framegen.conf` (`%APPDATA%\bdex-framegen\`) or the
 `BDEX_FG_*` environment apply. The GPU is the discrete one by default
 (`--gpu n` to choose; the list is logged at start), and the D3D11 capture
 device is created on the same adapter.
+**HDR.** When the game's monitor is in HDR mode (Windows "Use HDR"), the
+capture runs in scRGB end to end — FP16 capture, an scRGB overlay — so HDR
+games keep their highlights; the log says `colour: HDR (scRGB, FP16)`. If the
+GPU or driver cannot carry FP16 from D3D11 to Vulkan, or the overlay has no
+scRGB format, it stays in SDR as before. `capture_hdr = 0` forces SDR, `1`
+HDR where possible (launcher: "Couleur HDR"). Not yet run on HDR hardware.
+
 For capture, `mode` defaults to extrapolation, then the config file and
 `BDEX_FG_MODE` take precedence. An explicit `--mode` wins over those settings
 and over `--preset`; the mode selected in the launcher wins over all of them.
