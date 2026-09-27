@@ -76,6 +76,7 @@ layout(push_constant) uniform PC {
     int timing;              // > 0: t is cost.t[timing - 1] (content time), pc.t only tells the mode
     int localCut;            // > 0: scene cut from the localCut^2 tile grid instead of the frame mean
     float accel;             // extrapolation: weight of the second-order (acceleration) term, 0 = constant velocity
+    int hudLatency;          // HUD level 5: measured present-to-screen latency, ms (-1 unknown)
 } pc;
 
 // Photometric error between two samples, on the scale the thresholds below
@@ -369,6 +370,6 @@ void main() {
         if (p.x > pc.size.x / 2) c = cur;
         if (abs(p.x - pc.size.x / 2) < 2) c = vec4(1.0, 0.0, 1.0, 1.0);
     }
-    if (pc.hudMode != 0) { vec3 hc; if (hudPixel(p, pc.hudMode, pc.hudGame, pc.hudOut, pc.hudLow1, pc.hudLow01, hc)) c = vec4(hc, 1.0); }
+    if (pc.hudMode != 0) { vec3 hc; if (hudPixel(p, pc.hudMode, pc.hudGame, pc.hudOut, pc.hudLow1, pc.hudLow01, pc.hudLatency, hc)) c = vec4(hc, 1.0); }
     store(p, c);
 }

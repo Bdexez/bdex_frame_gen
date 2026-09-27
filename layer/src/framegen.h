@@ -91,8 +91,9 @@ public:
     bool packReal() const { return packReal_; }
     // Current frame-rate figures for the on-screen HUD (fps and the 1% / 0.1%
     // lows).
-    void setHud(int gameFps, int outFps, int low1, int low01) {
-        hudGame_ = gameFps; hudOut_ = outFps; hudLow1_ = low1; hudLow01_ = low01;
+    // `latencyMs`: measured present-to-screen latency (HUD level 5), -1 unknown.
+    void setHud(int gameFps, int outFps, int low1, int low01, int latencyMs = -1) {
+        hudGame_ = gameFps; hudOut_ = outFps; hudLow1_ = low1; hudLow01_ = low01; hudLatency_ = latencyMs;
     }
 
     // Debug frame dumping: records a copy of the image that was just written
@@ -166,7 +167,7 @@ private:
     bool sharpen_ = false;      // contrast-adaptive sharpening pass after upscaling
     int  hudMode_ = 0;          // on-screen fps HUD detail level (0 = off)
     bool packReal_ = false;     // real frame goes through the internal packed image (upscaling or HUD)
-    int hudGame_ = 0, hudOut_ = 0, hudLow1_ = 0, hudLow01_ = 0;
+    int hudGame_ = 0, hudOut_ = 0, hudLow1_ = 0, hudLow01_ = 0, hudLatency_ = -1;
     OutputEncoding enc_;
     int levels_ = 0;
     float flowScale_ = 1.f;

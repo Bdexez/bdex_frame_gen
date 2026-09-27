@@ -143,7 +143,8 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
         if (v == "framegen" || v == "fg" || v == "on" || v == "true" || v == "yes") { overlayMode = 2; return true; }
         if (v == "low" || v == "1low" || v == "lows")                       { overlayMode = 3; return true; }
         if (v == "full" || v == "detailed" || v == "all")                   { overlayMode = 4; return true; }
-        return parseInt(v, overlayMode, 0, 4);   // explicit level 0..4
+        if (v == "latency" || v == "ms")                                    { overlayMode = 5; return true; }
+        return parseInt(v, overlayMode, 0, 5);   // explicit level 0..5
     }
     if (key == "upscale_filter") {
         const std::string v = lower(value);

@@ -8,6 +8,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-25)
 
+- **Measured latency, game present to screen.** With present feedback, each
+  real frame's display time is compared with the game's present call: the
+  statistics line reports `present-to-screen N ms` (demo on an RTX 3060 Ti:
+  interpolation 16.2 ms, extrapolation 9.2 ms — the real-frame hold shows)
+  and HUD level 5 (`hud = latency`) adds it in cyan. Where the driver cannot
+  report display times the HUD shows `--ms` and nothing else changes. The
+  former "real frame delayed" figure only counted CPU submission time.
 - **HDR in the Windows capture app.** It captured and presented in BGRA8,
   flattening HDR games to SDR. When the game's monitor is in HDR mode
   (DXGI output colour space PQ/BT.2020; `capture_hdr = auto`, the default)
