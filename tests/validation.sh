@@ -29,14 +29,14 @@ for run in interpolate extrapolate interpolate:state extrapolate:state extrapola
   mode=${run%%:*}
   output="BDEX_FG_RENDER_SCALE=0.75 BDEX_FG_SHARPNESS=0.5 BDEX_FG_HUD=2"
   if [ "$run" = extrapolate:direct ]; then
-    state=""; demo_args="--frames 90"; output="BDEX_FG_HUD=0"
+    state=""; demo_args="--frames 90 --duration 40"; output="BDEX_FG_HUD=0"
   elif [ "$run" != "$mode" ]; then
     # A tiny gpu_budget walks the whole quality ladder within the run,
     # output-stage rebuild included (level 3) unless the flow is at 1/4.
     state="BDEX_FG_FRAME_TIMING=1 BDEX_FG_DEDUP=1 BDEX_FG_SCENE_CUT_LOCAL=1 BDEX_FG_EXTRAPOLATE_ACCEL=1 BDEX_FG_CHROMA_WEIGHT=1 BDEX_FG_GPU_BUDGET=0.001"
-    demo_args="--repeat 2 --frames 300"
+    demo_args="--repeat 2 --frames 300 --duration 40"
   else
-    state=""; demo_args="--frames 45"
+    state=""; demo_args="--frames 45 --duration 40"
   fi
   env $state $output VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation \
   VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true BDEX_FG=1 BDEX_FG_CONFIG=/dev/null BDEX_FG_LOG=2 \

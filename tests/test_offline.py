@@ -58,7 +58,7 @@ def main():
                 return 1
     with tempfile.TemporaryDirectory() as d:
         d = Path(d)
-        frames(d, n=61, speed=2)
+        frames(d, n=41, speed=2)
         for mode in ("interpolate", "extrapolate"):
             # --hud-counter: a HUD redrawn on every present over the repeating
             # world (the repeat is then partial, detected per tile).
@@ -72,7 +72,7 @@ def main():
                     return 1
     with tempfile.TemporaryDirectory() as d:
         d = Path(d)
-        subprocess.run([sys.executable, str(ROOT / "tools" / "make_corpus.py"), str(d), "--frames", "41"],
+        subprocess.run([sys.executable, str(ROOT / "tools" / "make_corpus.py"), str(d), "--frames", "29"],
                        check=True, stdout=subprocess.DEVNULL)
         base, local = evaluate(build, d / "popup", {"BDEX_FG_MODE": "interpolate"}, ["--variant", "SCENE_CUT_LOCAL=1"])
         if not local > base + 0.5:

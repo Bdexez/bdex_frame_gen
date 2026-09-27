@@ -3,7 +3,7 @@
 // can be exercised without a game.
 //
 //   bdex_demo [--fps N] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]
-//             [--deterministic] [--speed X] [--srgb] [--cut N] [--repeat N]
+//             [--deterministic] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]
 //
 // Run it with BDEX_FG=1 (and VK_LAYER_PATH pointing at the build tree if the
 // layer is not installed) to see the generated frames.
@@ -41,6 +41,7 @@ struct Options {
     float speed = 1.0f;          // animation speed multiplier
     long cutEvery = 0;           // switch scene every N frames (0 = never), to test scene cut handling
     long repeat = 1;             // present every image N times (e.g. 2: 30 fps content in a 60 fps loop)
+    double duration = 0.0;       // also stop after this many seconds (0 = no limit): bounds tests on slow drivers
 };
 
 struct PushConstants {
@@ -455,6 +456,7 @@ void Demo::run() {
     const auto period = std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(1.0 / opt_.fps));
     auto next = clock::now();
     auto statT = clock::now();
+    const auto runStart = statT;
     uint32_t statFrames = 0;
     while (!glfwWindowShouldClose(window_)) {
         glfwPollEvents();
@@ -465,6 +467,7 @@ void Demo::run() {
         drawFrame();
         ++statFrames;
         if (opt_.frames >= 0 && frameCount_ >= static_cast<uint32_t>(opt_.frames)) break;
+        if (opt_.duration > 0.0 && std::chrono::duration<double>(clock::now() - runStart).count() >= opt_.duration) break;
         const auto now = clock::now();
         if (std::chrono::duration<double>(now - statT).count() >= 2.0) {
             char title[128];
@@ -520,6 +523,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--cut") o.cutEvery = atol(value().c_str());
         else if (a == "--speed") o.speed = atof(value().c_str());
         else if (a == "--repeat") o.repeat = std::max(1L, atol(value().c_str()));
+        else if (a == "--duration") o.duration = std::max(0.0, atof(value().c_str()));
         else if (a == "--size") {
             std::string v = value();
             if (sscanf(v.c_str(), "%dx%d", &o.width, &o.height) != 2) throw std::runtime_error("bad --size");
@@ -531,7 +535,7 @@ Options parseArgs(int argc, char** argv) {
             else throw std::runtime_error("bad --mode");
         } else if (a == "-h" || a == "--help") {
             printf("usage: bdex_demo [--fps N] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]\n"
-                   "                 [--deterministic] [--ignore-resize] [--speed X] [--srgb] [--cut N] [--repeat N]\n");
+                   "                 [--deterministic] [--ignore-resize] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]\n");
             exit(0);
         } else {
             throw std::runtime_error("unknown option " + a);

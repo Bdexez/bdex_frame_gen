@@ -96,6 +96,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed (2026-09-25)
 
+- **Linux CI timeouts on slow runners.** GitHub's runners run lavapipe at
+  ~2.4 fps under the sanitizers and the validation layers: the `offline`
+  test (grown with the new schedule checks) passed its 120 s, the
+  integration demo its 60 s, and the validation "state" runs (300 frames)
+  their 120 s. The demo gains `--duration S` and every test run is bounded
+  in time (40 s); `offline` uses shorter sequences and a 900 s limit.
+  `tools/ci/run.sh` accepts `BDEX_CI_CPUS=n` to replay on a runner-sized
+  container; on one CPU all jobs pass (ASan integration stops at 41 s).
+
 - **Command pools were shared between threads.** Every virtual swapchain
   recorded its synthesis (game's presenting thread) and its copies (worker
   thread) in command buffers from the device's single pool, which Vulkan
