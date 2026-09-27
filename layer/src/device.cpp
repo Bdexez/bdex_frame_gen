@@ -176,13 +176,21 @@ void DeviceData::pollConfig() {
     fresh.autoConfigure(props, memProps);
     const bool wasPaused = config.paused;
     config.applyLive(fresh);
+    ++configVersion;
     BDEX_INFO("config file changed: live settings reloaded%s", config.paused != wasPaused
                   ? (config.paused ? " (frame generation paused)" : " (frame generation resumed)") : "");
 }
 
-VkResult DeviceData::allocateCommandBuffer(VkCommandBuffer* cmd) {
+void DeviceData::snapshotConfig(Config& out, uint64_t& version) {
+    std::lock_guard<std::mutex> lock(configMutex);
+    if (version == configVersion) return;
+    out = config;
+    version = configVersion;
+}
+
+VkResult DeviceData::allocateCommandBuffer(VkCommandBuffer* cmd, VkCommandPool pool) {
     VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-    ai.commandPool = cmdPool;
+    ai.commandPool = pool ? pool : cmdPool;
     ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     ai.commandBufferCount = 1;
     VkResult r = vt.AllocateCommandBuffers(device, &ai, cmd);

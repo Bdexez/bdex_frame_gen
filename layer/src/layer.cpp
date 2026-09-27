@@ -502,7 +502,9 @@ VKAPI_ATTR VkResult VKAPI_CALL DeviceWaitIdle(VkDevice device) {
 VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR* pCreateInfo,
                                                   const VkAllocationCallbacks* pAllocator, VkSwapchainKHR* pSwapchain) {
     DeviceData* dev = getDevice(dispatchKey(device));
-    const Config& cfg = dev->config;
+    Config cfg;  // a copy: another thread's present may be reloading the live settings
+    uint64_t cfgVersion = UINT64_MAX;
+    dev->snapshotConfig(cfg, cfgVersion);
     bool virtualise = dev->layerUsable && cfg.enabled && pAllocator == nullptr;
     if (virtualise && pCreateInfo->imageArrayLayers != 1) { BDEX_WARN("multi-layer swapchain: passing through"); virtualise = false; }
     if (virtualise && (pCreateInfo->flags & VK_SWAPCHAIN_CREATE_PROTECTED_BIT_KHR)) { BDEX_WARN("protected swapchain: passing through"); virtualise = false; }

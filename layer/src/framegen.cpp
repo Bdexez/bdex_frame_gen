@@ -47,21 +47,23 @@ uint32_t divUp(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
 } // namespace
 
 FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, VkExtent2D displayExtent, uint32_t outputs,
-                   const std::vector<VkImage>& sources, VkColorSpaceKHR colorSpace, int flowScaleFactor)
-    : dev_(dev), format_(format), extent_(renderExtent), displayExtent_(displayExtent), outputs_(outputs),
+                   const std::vector<VkImage>& sources, VkColorSpaceKHR colorSpace, int flowScaleFactor,
+                   const Config* config)
+    : dev_(dev), cfgp_(config ? config : &dev.config), format_(format), extent_(renderExtent),
+      displayExtent_(displayExtent), outputs_(outputs),
       flowScaleFactor_(std::clamp(flowScaleFactor, 1, 4)) {
     upscaling_ = displayExtent_.width != extent_.width || displayExtent_.height != extent_.height;
-    hudMode_ = dev.config.overlayMode;
-    dedup_ = outputs_ > 0 && dev.config.dedup;
-    chroma_ = outputs_ > 0 && dev.config.chromaWeight > 0.f;
-    dupReal_ = dedup_ && dev.config.extrapolate;
+    hudMode_ = (*cfgp_).overlayMode;
+    dedup_ = outputs_ > 0 && (*cfgp_).dedup;
+    chroma_ = outputs_ > 0 && (*cfgp_).chromaWeight > 0.f;
+    dupReal_ = dedup_ && (*cfgp_).extrapolate;
     // The real frame is resampled into an internal packed image when upscaling,
     // when the HUD must be drawn on it, or when a repeated frame may have to
     // be replaced by an extrapolated one (otherwise it is copied straight).
     packReal_ = upscaling_ || hudMode_ > 0 || dupReal_;
     // The CAS pass needs a linear rgba16f intermediate it can both write and
     // sample with filtering; skip sharpening if the driver cannot provide it.
-    sharpen_ = upscaling_ && dev.config.sharpness > 0.f &&
+    sharpen_ = upscaling_ && (*cfgp_).sharpness > 0.f &&
                dev.formatSupports(VK_FORMAT_R16G16B16A16_SFLOAT,
                                   VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
                                       VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT);
@@ -96,7 +98,7 @@ FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, Vk
         static const char* filt[] = {"bilinear", "Catmull-Rom", "Lanczos-2"};
         BDEX_INFO("upscaling %ux%u -> %ux%u (%.0f%%, %s%s)", extent_.width, extent_.height, displayExtent_.width,
                   displayExtent_.height, 100.0 * extent_.width / displayExtent_.width,
-                  filt[std::clamp(dev_.config.upscaleFilter, 0, 2)],
+                  filt[std::clamp((*cfgp_).upscaleFilter, 0, 2)],
                   sharpen_ ? ", CAS sharpening" : "");
     }
 }
@@ -180,7 +182,7 @@ void FrameGen::createPipelines() {
 }
 
 void FrameGen::createResources() {
-    const Config& cfg = dev_.config;
+    const Config& cfg = (*cfgp_);
     const VkImageUsageFlags storageSampled = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 
     if (!dev_.formatSupports(format_, VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
@@ -751,7 +753,7 @@ void FrameGen::dispatchGated(VkCommandBuffer cmd, uint32_t entry, uint32_t x, ui
 void FrameGen::recordFrameState(VkCommandBuffer cmd, const FrameTiming& timing) {
     timingActive_ = false;
     gate_ = false;
-    if (outputs_ == 0 || (!dev_.config.frameTiming && !dedup_ && !timing.haveDisplay)) return;
+    if (outputs_ == 0 || (!(*cfgp_).frameTiming && !dedup_ && !timing.haveDisplay)) return;
     auto& vt = dev_.vt;
     const Level& l0 = levels_v_[0];
     const bool reset = timing.reset || !(timing.sinceLastMs > 0.0);
@@ -762,9 +764,9 @@ void FrameGen::recordFrameState(VkCommandBuffer cmd, const FrameTiming& timing) 
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, frameState_.layout, 0, 1, &dsState_, 0, nullptr);
     FrameStatePC pc{{(int32_t)l0.size.width, (int32_t)l0.size.height}, 0, timing.multiplier,
                     float(timing.sinceLastMs), float(timing.intervalMs),
-                    (reset ? kStateReset : 0) | (dedup ? kStateDedup : 0) | (dev_.config.extrapolate ? kStateExtrap : 0) |
+                    (reset ? kStateReset : 0) | (dedup ? kStateDedup : 0) | ((*cfgp_).extrapolate ? kStateExtrap : 0) |
                         (timing.haveDisplay ? kStateDisplay : 0) |
-                        (dev_.config.frameTiming || dedup_ ? kStateContent : 0),
+                        ((*cfgp_).frameTiming || dedup_ ? kStateContent : 0),
                     static_cast<int32_t>(gateFull_.size() / 4),
                     // A few differing pixels (a blinking cursor, dithering) still count as a repeat.
                     std::max(4u, l0.size.width * l0.size.height / 16384u),
@@ -963,7 +965,7 @@ void FrameGen::recordUpscaleReal(VkCommandBuffer cmd, uint32_t cur, int prev) {
     vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, upscale_.pipeline);
     UpscalePC pc{{(int32_t)displayExtent_.width, (int32_t)displayExtent_.height},
                  {(int32_t)extent_.width, (int32_t)extent_.height},
-                 enc_.encoding, std::clamp(dev_.config.upscaleFilter, 0, 2),
+                 enc_.encoding, std::clamp((*cfgp_).upscaleFilter, 0, 2),
                  hudMode_, hudGame_, hudOut_, hudLow1_, hudLow01_};
     vt.CmdPushConstants(cmd, upscale_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, upscale_.layout, 0, 1, &dsUpscale_[cur], 0, nullptr);
@@ -983,7 +985,7 @@ void FrameGen::recordUpscaleReal(VkCommandBuffer cmd, uint32_t cur, int prev) {
 void FrameGen::recordCas(VkCommandBuffer cmd, VkDescriptorSet set) {
     auto& vt = dev_.vt;
     vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cas_.pipeline);
-    CasPC pc{{(int32_t)displayExtent_.width, (int32_t)displayExtent_.height}, enc_.encoding, dev_.config.sharpness};
+    CasPC pc{{(int32_t)displayExtent_.width, (int32_t)displayExtent_.height}, enc_.encoding, (*cfgp_).sharpness};
     vt.CmdPushConstants(cmd, cas_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cas_.layout, 0, 1, &set, 0, nullptr);
     vt.CmdDispatch(cmd, divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), 1);
@@ -1070,7 +1072,7 @@ double FrameGen::takeGpuMs() {
 }
 
 Config FrameGen::effectiveConfig() const {
-    Config c = dev_.config;
+    Config c = (*cfgp_);
     if (qualityLevel_ >= 1) {
         c.pixelVectors = false;
         c.subpixel = false;
@@ -1087,7 +1089,7 @@ Config FrameGen::effectiveConfig() const {
 }
 
 std::string FrameGen::profileReport() {
-    if (!queryPool_ || !dev_.config.profile) return "";
+    if (!queryPool_ || !(*cfgp_).profile) return "";
     static const char* names[StageCount] = {"analysis", "flow", "interp", "copy"};
     char buf[256];
     std::string out = " | gpu ms:";

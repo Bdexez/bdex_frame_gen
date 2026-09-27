@@ -27,7 +27,7 @@ public:
     // to 4): the gpu_budget governor's coarsest levels.
     FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, VkExtent2D displayExtent, uint32_t outputs,
              const std::vector<VkImage>& sources, VkColorSpaceKHR colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
-             int flowScaleFactor = 1);
+             int flowScaleFactor = 1, const Config* config = nullptr);
     ~FrameGen();
     FrameGen(const FrameGen&) = delete;
     FrameGen& operator=(const FrameGen&) = delete;
@@ -156,6 +156,9 @@ private:
                        VkPipelineStageFlags srcStage, VkImage dst);
 
     DeviceData& dev_;
+    // The settings this instance reads (dev_.config by default; a virtual
+    // swapchain passes its own snapshot, see DeviceData::snapshotConfig).
+    const Config* cfgp_;
     VkFormat format_;
     VkExtent2D extent_;         // render resolution (source images, flow pyramid)
     VkExtent2D displayExtent_;  // presented resolution (== extent_ unless upscaling)

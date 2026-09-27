@@ -96,6 +96,22 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed (2026-09-25)
 
+- **Command pools were shared between threads.** Every virtual swapchain
+  recorded its synthesis (game's presenting thread) and its copies (worker
+  thread) in command buffers from the device's single pool, which Vulkan
+  requires to be used by one thread at a time; with two swapchains, four
+  threads did. The new `multithread_config` test (two swapchains, two
+  presenting threads on two queues, the config file rewritten under them)
+  crashed in the driver or hung; each swapchain now owns one pool per
+  thread and the device pool (stage construction) is serialised. The test
+  passes; it skips where a queue family has fewer than two queues.
+- **Live config reload raced with other presenting threads.** A present
+  reloading the config file rewrote the device's settings while another
+  swapchain's present (or its synthesis recording) read them. Each virtual
+  swapchain now works on a snapshot refreshed under the config mutex at
+  the start of its present (`DeviceData::snapshotConfig`), the engine reads
+  that snapshot, and the worker thread only reads values carried by its job.
+
 - **`rot_weight` read outside its shared-memory tile** (undefined, run-to-run
   varying output): rotated candidates were placed with their absolute
   displacement instead of relative to the coarse prediction the tile is
