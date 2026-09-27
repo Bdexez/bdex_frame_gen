@@ -142,6 +142,20 @@ struct Capture::Impl {
     // (content grew past the pool's surfaces).
     bool onFrame(wgc::Direct3D11CaptureFrame const& frame) {
         const auto dequeuedAt = std::chrono::steady_clock::now();
+        // SystemRelativeTime is on the QPC clock (100 ns units): its age now
+        // dates the frame on our clock without assuming the clocks' epochs.
+        auto contentAt = dequeuedAt;
+        try {
+            LARGE_INTEGER qpc, freq;
+            QueryPerformanceCounter(&qpc);
+            QueryPerformanceFrequency(&freq);
+            const double nowTicks = double(qpc.QuadPart) * 1e7 / double(freq.QuadPart);
+            const double ageMs = (nowTicks - double(frame.SystemRelativeTime().count())) / 1e4;
+            if (ageMs >= 0.0 && ageMs < 250.0)
+                contentAt = dequeuedAt - std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                             std::chrono::duration<double, std::milli>(ageMs));
+        } catch (winrt::hresult_error const&) {
+        }
         auto size = frame.ContentSize();
         if (size.Width <= 0 || size.Height <= 0) return false;
         bool growPool = size.Width > poolSize.Width || size.Height > poolSize.Height;
@@ -192,7 +206,7 @@ struct Capture::Impl {
             ring[pending.front().slot].busy = false;
             pending.erase(pending.begin());
         }
-        pending.push_back({sl.shared, contentW, contentH, slot, generation, dequeuedAt});
+        pending.push_back({sl.shared, contentW, contentH, slot, generation, dequeuedAt, contentAt});
         SetEvent(dataEvent);
 
         ++captured;
