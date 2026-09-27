@@ -1,6 +1,7 @@
 // Vulkan layer entry points: instance/device lifecycle, dispatch and the
 // swapchain hooks that route through VirtualSwapchain.
 #include "config.h"
+#include "status.h"
 #include "device.h"
 #include "dispatch.h"
 #include "log.h"
@@ -417,6 +418,15 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
         pi.queueFamilyIndex = data->queueFamily;
         if (data->vt.CreateCommandPool(*pDevice, &pi, nullptr, &data->cmdPool) == VK_SUCCESS) data->layerUsable = true;
     }
+    if (data->config.enabled || data->config.antiCheatDisabled) {
+        StatusEntry e;
+        e.kind = "device";
+        e.state = data->config.antiCheatDisabled ? "anti-cheat" : data->layerUsable ? "active" : "inactive";
+        if (data->config.antiCheatDisabled) e.reason = "a multiplayer anti-cheat is running: the layer stays off";
+        else if (!data->layerUsable) e.reason = !hasSwapchainExt ? "the device does not use VK_KHR_swapchain" : "no usable queue";
+        e.device = data->props.deviceName;
+        statusSet(statusKey(*pDevice), e);
+    }
     BDEX_INFO("device '%s': layer %s (queue family %u index %u, %s%s)", data->props.deviceName,
               data->layerUsable ? "active" : "inactive", data->queueFamily, data->queueIndex,
               data->queueShared ? "shared with the application" : "private",
@@ -445,6 +455,7 @@ VKAPI_ATTR void VKAPI_CALL DestroyDevice(VkDevice device, const VkAllocationCall
         if (!data->swapchains.empty()) BDEX_WARN("%zu swapchain(s) still alive at device destruction", data->swapchains.size());
         data->swapchains.clear();
     }
+    statusRemove(statusKey(device));
     if (data->cmdPool) data->vt.DestroyCommandPool(device, data->cmdPool, nullptr);
     data->vt.DestroyDevice(device, pAllocator);
 }
@@ -506,11 +517,17 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device, const VkSwapc
     uint64_t cfgVersion = UINT64_MAX;
     dev->snapshotConfig(cfg, cfgVersion);
     bool virtualise = dev->layerUsable && cfg.enabled && pAllocator == nullptr;
-    if (virtualise && pCreateInfo->imageArrayLayers != 1) { BDEX_WARN("multi-layer swapchain: passing through"); virtualise = false; }
-    if (virtualise && (pCreateInfo->flags & VK_SWAPCHAIN_CREATE_PROTECTED_BIT_KHR)) { BDEX_WARN("protected swapchain: passing through"); virtualise = false; }
+    // Why this swapchain is passed through, for the control panel (status.h).
+    std::string reason = !dev->layerUsable ? "no usable queue on this device"
+                         : !cfg.enabled   ? "frame generation disabled"
+                         : pAllocator     ? "custom allocator"
+                                          : "";
+    if (virtualise && pCreateInfo->imageArrayLayers != 1) { BDEX_WARN("multi-layer swapchain: passing through"); virtualise = false; reason = "multi-layer swapchain"; }
+    if (virtualise && (pCreateInfo->flags & VK_SWAPCHAIN_CREATE_PROTECTED_BIT_KHR)) { BDEX_WARN("protected swapchain: passing through"); virtualise = false; reason = "protected swapchain"; }
     if (virtualise && !encodingForFormat(pCreateInfo->imageFormat).supported) {
         BDEX_WARN("swapchain format %d not supported: passing through", static_cast<int>(pCreateInfo->imageFormat));
         virtualise = false;
+        reason = "swapchain format " + std::to_string(static_cast<int>(pCreateInfo->imageFormat)) + " not supported";
     }
     if (virtualise && !(pCreateInfo->flags & VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR)) {
         // Check the usages promised to the application before creating our
@@ -530,11 +547,13 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device, const VkSwapc
             BDEX_WARN("swapchain image usage 0x%x cannot be preserved in virtual images: passing through",
                       pCreateInfo->imageUsage);
             virtualise = false;
+            reason = "image usage not available on plain images";
         }
     }
     if (virtualise && !dev->ensurePresentQueue(pCreateInfo->surface)) {
         BDEX_WARN("no compute queue can present to this surface: passing through");
         virtualise = false;
+        reason = "no compute queue can present to this surface";
     }
     if (pCreateInfo->oldSwapchain) {
         if (VirtualSwapchain* old = dev->findSwapchain(pCreateInfo->oldSwapchain)) old->retire();
@@ -549,11 +568,26 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device, const VkSwapc
             return VK_SUCCESS;
         } catch (const VkError& e) {
             BDEX_ERR("virtual swapchain creation failed (%s): passing through", e.what());
+            reason = std::string("virtual swapchain creation failed: ") + e.what();
         } catch (const std::exception& e) {
             BDEX_ERR("virtual swapchain creation failed (%s): passing through", e.what());
+            reason = std::string("virtual swapchain creation failed: ") + e.what();
         }
     }
-    return dev->vt.CreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
+    const VkResult r = dev->vt.CreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
+    // Reported only where frame generation was wanted: a disabled layer
+    // (every other Vulkan program) leaves no status file behind.
+    if (r == VK_SUCCESS && (cfg.enabled || cfg.antiCheatDisabled)) {
+        StatusEntry e;
+        e.kind = "swapchain";
+        e.state = "pass-through";
+        e.reason = cfg.antiCheatDisabled ? "anti-cheat detected" : reason;
+        e.width = pCreateInfo->imageExtent.width;
+        e.height = pCreateInfo->imageExtent.height;
+        e.device = dev->props.deviceName;
+        statusSet(statusKey(*pSwapchain), e);
+    }
+    return r;
 }
 
 VKAPI_ATTR void VKAPI_CALL DestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapchain, const VkAllocationCallbacks* pAllocator) {
@@ -568,6 +602,7 @@ VKAPI_ATTR void VKAPI_CALL DestroySwapchainKHR(VkDevice device, VkSwapchainKHR s
                 dev->swapchains.erase(it);
             }
         }
+        statusRemove(statusKey(swapchain));
         if (vs) {
             vs.reset();  // waits for pending work and destroys the real swapchain
             return;

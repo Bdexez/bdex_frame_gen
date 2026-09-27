@@ -8,6 +8,17 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-25)
 
+- **Live status in the control panel.** Each process where the layer is
+  enabled publishes a small status file (`$XDG_RUNTIME_DIR/bdex-framegen/
+  <pid>.status`, `%TEMP%\bdex-framegen` on Windows, `BDEX_FG_STATUS_DIR` to
+  move or disable it), rewritten atomically at most once a second and
+  removed on exit: per swapchain its state (generating, paused,
+  pass-through), game and output fps, multiplier and mode, measured refresh
+  rate and latency, `gpu_budget` level — and **why** it passes frames
+  through (format, image usage, queue, anti-cheat, creation failure…),
+  which used to take a log file. The GTK panel gains an "En cours" section
+  refreshed every second; stale files of crashed games are cleaned up.
+  Disabled processes (every other Vulkan program) write nothing.
 - **Measured latency, game present to screen.** With present feedback, each
   real frame's display time is compared with the game's present call: the
   statistics line reports `present-to-screen N ms` (demo on an RTX 3060 Ti:

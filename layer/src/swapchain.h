@@ -141,6 +141,9 @@ private:
     double fbLatencySum_ = 0.0;         // fbMutex_: statistics window
     uint32_t fbLatencyCount_ = 0;
     double displayLatencyMs();          // -1 when unknown
+    void publishStatus(int multiplier);  // status.h entry for the control panel (present thread)
+    std::chrono::steady_clock::time_point statusAt_{};
+    std::string genFailReason_;         // why generation is unavailable on this swapchain (status)
     bool fbStop_ = false, fbBusy_ = false;
     std::atomic<bool> fbPaused_{false};
     bool fbEverDisplayed_ = false;

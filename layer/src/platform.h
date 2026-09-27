@@ -33,4 +33,11 @@ std::string platformExpandPath(const std::string& in);
 // `foundName` (optional) with the matching process name.
 bool platformAntiCheatPresent(std::string* foundName);
 
+// Directory of the per-process live status files (status.h): Linux
+// $XDG_RUNTIME_DIR/bdex-framegen (else /tmp/bdex-framegen-<uid>), Windows
+// %TEMP%\bdex-framegen; BDEX_FG_STATUS_DIR overrides it, an empty value
+// disables the files. "" when no location is known.
+std::string platformStatusDir();
+long platformPid();
+
 } // namespace bdex

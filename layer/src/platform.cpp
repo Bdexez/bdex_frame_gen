@@ -187,6 +187,26 @@ std::string platformExpandPath(const std::string& in) {
 #endif
 }
 
+std::string platformStatusDir() {
+    if (const char* p = std::getenv("BDEX_FG_STATUS_DIR")) return p;
+#ifdef _WIN32
+    const char* tmp = std::getenv("TEMP");
+    if (tmp && *tmp) return std::string(tmp) + "\\bdex-framegen";
+    return "";
+#else
+    if (const char* x = std::getenv("XDG_RUNTIME_DIR"); x && *x) return std::string(x) + "/bdex-framegen";
+    return "/tmp/bdex-framegen-" + std::to_string(static_cast<long>(getuid()));
+#endif
+}
+
+long platformPid() {
+#ifdef _WIN32
+    return static_cast<long>(GetCurrentProcessId());
+#else
+    return static_cast<long>(getpid());
+#endif
+}
+
 bool platformAntiCheatPresent(std::string* foundName) {
 #ifdef _WIN32
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);

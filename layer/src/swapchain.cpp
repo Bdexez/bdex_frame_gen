@@ -1,4 +1,5 @@
 #include "swapchain.h"
+#include "status.h"
 #include "log.h"
 #include "vk_util.h"
 
@@ -52,6 +53,7 @@ VirtualSwapchain::VirtualSwapchain(DeviceData& dev, const VkSwapchainCreateInfoK
     }
     statsStart_ = clock::now();
     dumping_ = !cfg_.dumpDir.empty();
+    publishStatus(cfg_.multiplier);
     static uint32_t nextDumpId = 0;
     dumpId_ = nextDumpId++;
     BDEX_INFO("swapchain %ux%u format %d: %zu virtual images, %zu real images, present mode %s, generation %s",
@@ -59,7 +61,29 @@ VirtualSwapchain::VirtualSwapchain(DeviceData& dev, const VkSwapchainCreateInfoK
               presentModeName(presentMode_), generating_ ? "on" : "off");
 }
 
-VirtualSwapchain::~VirtualSwapchain() { destroyAll(); }
+VirtualSwapchain::~VirtualSwapchain() {
+    statusRemove(statusKey(this));
+    destroyAll();
+}
+
+void VirtualSwapchain::publishStatus(int multiplier) {
+    StatusEntry e;
+    e.kind = "swapchain";
+    const bool on = generating_ && !cfg_.paused;
+    e.state = on ? "generating" : generating_ ? "paused" : "pass-through";
+    if (!generating_) e.reason = genFailReason_.empty() ? "frame generation off for this swapchain" : genFailReason_;
+    e.mode = cfg_.extrapolate ? "extrapolate" : "interpolate";
+    e.multiplier = on ? multiplier : 1;
+    e.gameFps = frameIntervalMs_ > 0.05 ? 1000.0 / frameIntervalMs_ : 0.0;
+    e.outFps = e.gameFps * e.multiplier;
+    e.refreshHz = displayHz();
+    e.latencyMs = displayLatencyMs();
+    e.budgetLevel = budget_.level();
+    e.width = displayExtent_.width;
+    e.height = displayExtent_.height;
+    e.device = dev_.props.deviceName;
+    statusSet(statusKey(this), e);
+}
 
 // Builds the output stage for the current render / display extents. On entry
 // `generating` says whether frame generation is wanted; on return, whether it
@@ -74,6 +98,7 @@ std::unique_ptr<FrameGen> VirtualSwapchain::makeFrameGen(bool& generating) {
                                               flowScaleFactor_, &cfg_);
         } catch (const VkError& e) {
             BDEX_WARN("frame generation unavailable for this swapchain (%s); passing frames through", e.what());
+            genFailReason_ = std::string("frame generation unavailable: ") + e.what();
             generating = false;
         }
     }
@@ -704,6 +729,10 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     const bool interpolate = generating_ && haveHistory && mult > 1;
     historyLost_ = false;
     const int prev = prevIndex_;
+    if (t0 - statusAt_ >= std::chrono::seconds(1)) {  // the control panel's live view
+        statusAt_ = t0;
+        publishStatus(mult);
+    }
     if (cfg_.overlayMode > 0) {
         if (dt > 0.5 && dt < 500.0) updateHudLows(dt);
         const int gfps = frameIntervalMs_ > 0.05 ? static_cast<int>(1000.0 / frameIntervalMs_ + 0.5) : 0;
