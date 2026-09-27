@@ -20,7 +20,7 @@ struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t c
 struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; float occlusionStrength; float staticGuard; float extrapHold; int32_t splat; int32_t pixelVectors; int32_t transfer; int32_t timing; int32_t localCut; float accel; };
 struct UpscalePC { int32_t outSize[2]; int32_t srcSize[2]; uint32_t encoding; int32_t filter; int32_t hudMode; int32_t hudGame; int32_t hudOut; int32_t hudLow1; int32_t hudLow01; };
 struct SplatPC { int32_t size[2]; float s; float flowScale; float flowInvSize[2]; int32_t timing; float accel; };
-struct FrameStatePC { int32_t size[2]; int32_t mode; int32_t multiplier; float sinceLastMs; float intervalMs; int32_t flags; int32_t gateCount; uint32_t dupMaxPixels; };
+struct FrameStatePC { int32_t size[2]; int32_t mode; int32_t multiplier; float sinceLastMs; float intervalMs; int32_t flags; int32_t gateCount; uint32_t dupMaxPixels; float displayMs[4]; };
 struct CasPC { int32_t size[2]; uint32_t encoding; float sharpness; };
 
 constexpr uint32_t kBlockSize = 8;
@@ -40,7 +40,7 @@ constexpr uint32_t kGateEntries = 24;
 constexpr uint32_t kCutTiles = 8;  // scene_cut_local grid (tileCost[64] in the state)
 static_assert(kStateGateActive + kGateEntries * 12 <= kStateTileDiff);
 static_assert(kStateTileDiff + 65 * 4 <= kStateSize);
-enum { kStateReset = 1, kStateDedup = 2, kStateExtrap = 4 };
+enum { kStateReset = 1, kStateDedup = 2, kStateExtrap = 4, kStateDisplay = 8, kStateContent = 16 };
 
 uint32_t divUp(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
 
@@ -751,7 +751,7 @@ void FrameGen::dispatchGated(VkCommandBuffer cmd, uint32_t entry, uint32_t x, ui
 void FrameGen::recordFrameState(VkCommandBuffer cmd, const FrameTiming& timing) {
     timingActive_ = false;
     gate_ = false;
-    if (outputs_ == 0 || (!dev_.config.frameTiming && !dedup_)) return;
+    if (outputs_ == 0 || (!dev_.config.frameTiming && !dedup_ && !timing.haveDisplay)) return;
     auto& vt = dev_.vt;
     const Level& l0 = levels_v_[0];
     const bool reset = timing.reset || !(timing.sinceLastMs > 0.0);
@@ -762,10 +762,13 @@ void FrameGen::recordFrameState(VkCommandBuffer cmd, const FrameTiming& timing) 
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, frameState_.layout, 0, 1, &dsState_, 0, nullptr);
     FrameStatePC pc{{(int32_t)l0.size.width, (int32_t)l0.size.height}, 0, timing.multiplier,
                     float(timing.sinceLastMs), float(timing.intervalMs),
-                    (reset ? kStateReset : 0) | (dedup ? kStateDedup : 0) | (dev_.config.extrapolate ? kStateExtrap : 0),
+                    (reset ? kStateReset : 0) | (dedup ? kStateDedup : 0) | (dev_.config.extrapolate ? kStateExtrap : 0) |
+                        (timing.haveDisplay ? kStateDisplay : 0) |
+                        (dev_.config.frameTiming || dedup_ ? kStateContent : 0),
                     static_cast<int32_t>(gateFull_.size() / 4),
                     // A few differing pixels (a blinking cursor, dithering) still count as a repeat.
-                    std::max(4u, l0.size.width * l0.size.height / 16384u)};
+                    std::max(4u, l0.size.width * l0.size.height / 16384u),
+                    {timing.displayMs[0], timing.displayMs[1], timing.displayMs[2], timing.displayMs[3]}};
     if (dedup) {
         vt.CmdFillBuffer(cmd, stateBuf_.buffer, kStateDiffCount, 4, 0);
         vt.CmdFillBuffer(cmd, stateBuf_.buffer, kStateTileDiff, 64 * 4, 0);

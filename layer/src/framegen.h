@@ -51,6 +51,12 @@ public:
         double intervalMs = 0.0;   // smoothed frame interval the pacing spreads the outputs over
         int multiplier = 2;        // frames presented for this real frame
         bool reset = false;        // no usable previous frame (first frame, history lost)
+        // Predicted display times (ms after the present call) of the
+        // generated outputs [0..2] and of the real frame [3], from the
+        // measured refresh grid; without it (haveDisplay false) the pacing's
+        // nominal schedule is assumed.
+        bool haveDisplay = false;
+        float displayMs[4] = {};
     };
     // Per-frame state pass (frame_state.comp): duplicate detection (dedup)
     // and the content-time t of every output (frame_timing, dedup). Call it

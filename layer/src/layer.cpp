@@ -343,7 +343,59 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
     ci.queueCreateInfoCount = static_cast<uint32_t>(qcis.size());
     ci.pQueueCreateInfos = qcis.data();
 
-    VkResult r = createDevice(physDev, &ci, pAllocator, pDevice);
+    // Present feedback for the layer's own swapchains: VK_KHR_present_id +
+    // VK_KHR_present_wait tell when each frame is really displayed. They stay
+    // hidden from the game (which hangs with them under VKD3D-Proton, see
+    // isHiddenPresentExtension); enabled only where the device supports both
+    // and the game did not ask for them, and dropped again if device creation
+    // fails with them.
+    std::vector<const char*> exts(pCreateInfo->ppEnabledExtensionNames,
+                                  pCreateInfo->ppEnabledExtensionNames + pCreateInfo->enabledExtensionCount);
+    VkPhysicalDevicePresentIdFeaturesKHR presentIdFeat{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR};
+    VkPhysicalDevicePresentWaitFeaturesKHR presentWaitFeat{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR};
+    bool feedback = false;
+    {
+        VkPhysicalDeviceProperties pp{};
+        inst->vt.GetPhysicalDeviceProperties(physDev, &pp);
+        if (data->config.enabled && data->config.presentFeedback && data->config.hidePresentExt && hasSwapchainExt &&
+            !requestedHiddenPresentExt && inst->apiVersion >= VK_API_VERSION_1_1 &&
+            pp.apiVersion >= VK_API_VERSION_1_1 && inst->vt.GetPhysicalDeviceFeatures2) {
+            uint32_t n = 0;
+            inst->vt.EnumerateDeviceExtensionProperties(physDev, nullptr, &n, nullptr);
+            std::vector<VkExtensionProperties> avail(n);
+            inst->vt.EnumerateDeviceExtensionProperties(physDev, nullptr, &n, avail.data());
+            bool hasId = false, hasWait = false;
+            for (const auto& e : avail) {
+                hasId |= strcmp(e.extensionName, VK_KHR_PRESENT_ID_EXTENSION_NAME) == 0;
+                hasWait |= strcmp(e.extensionName, VK_KHR_PRESENT_WAIT_EXTENSION_NAME) == 0;
+            }
+            if (hasId && hasWait) {
+                presentIdFeat.pNext = &presentWaitFeat;
+                VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+                f2.pNext = &presentIdFeat;
+                inst->vt.GetPhysicalDeviceFeatures2(physDev, &f2);
+                feedback = presentIdFeat.presentId && presentWaitFeat.presentWait;
+            }
+        }
+    }
+    VkResult r = VK_ERROR_INITIALIZATION_FAILED;
+    if (feedback) {
+        VkDeviceCreateInfo fci = ci;
+        std::vector<const char*> fexts = exts;
+        fexts.push_back(VK_KHR_PRESENT_ID_EXTENSION_NAME);
+        fexts.push_back(VK_KHR_PRESENT_WAIT_EXTENSION_NAME);
+        fci.enabledExtensionCount = static_cast<uint32_t>(fexts.size());
+        fci.ppEnabledExtensionNames = fexts.data();
+        presentIdFeat.presentId = VK_TRUE;
+        presentWaitFeat.presentWait = VK_TRUE;
+        presentIdFeat.pNext = &presentWaitFeat;
+        presentWaitFeat.pNext = const_cast<void*>(fci.pNext);
+        fci.pNext = &presentIdFeat;
+        r = createDevice(physDev, &fci, pAllocator, pDevice);
+        if (r != VK_SUCCESS) BDEX_WARN("device creation with present feedback failed (%s); retrying without", vkResultName(r));
+        else data->presentFeedback = true;
+    }
+    if (!data->presentFeedback) r = createDevice(physDev, &ci, pAllocator, pDevice);
     if (r != VK_SUCCESS) return r;
 
     data->device = *pDevice;
@@ -365,9 +417,10 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
         pi.queueFamilyIndex = data->queueFamily;
         if (data->vt.CreateCommandPool(*pDevice, &pi, nullptr, &data->cmdPool) == VK_SUCCESS) data->layerUsable = true;
     }
-    BDEX_INFO("device '%s': layer %s (queue family %u index %u, %s)", data->props.deviceName,
+    BDEX_INFO("device '%s': layer %s (queue family %u index %u, %s%s)", data->props.deviceName,
               data->layerUsable ? "active" : "inactive", data->queueFamily, data->queueIndex,
-              data->queueShared ? "shared with the application" : "private");
+              data->queueShared ? "shared with the application" : "private",
+              data->presentFeedback ? ", present feedback" : "");
     if (!hasSwapchainExt) BDEX_DBG("VK_KHR_swapchain not enabled on this device");
 
     std::lock_guard<std::mutex> lock(g_mapMutex);

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <functional>
 
 namespace bdex {
@@ -37,6 +38,8 @@ VirtualSwapchain::VirtualSwapchain(DeviceData& dev, const VkSwapchainCreateInfoK
         generating_ = wantGeneration;
         fg_ = makeFrameGen(generating_);
         worker_ = std::thread([this] { workerLoop(); });
+        feedback_ = dev_.presentFeedback && !throwaway_;
+        if (feedback_) fbThread_ = std::thread([this] { feedbackLoop(); });
     } catch (...) {
         destroyAll();
         throw;
@@ -205,6 +208,12 @@ void VirtualSwapchain::followSurface() {
         std::lock_guard<std::mutex> qlock(dev_.queueMutex(dev_.queue));
         dev_.vt.QueueWaitIdle(dev_.queue);
     }
+    // The feedback thread must not wait on the swapchain being replaced.
+    struct FeedbackPause {
+        VirtualSwapchain& s;
+        explicit FeedbackPause(VirtualSwapchain& v) : s(v) { s.pauseFeedback(); }
+        ~FeedbackPause() { s.resumeFeedback(); }
+    } feedbackPause(*this);
 
     const VkExtent2D old = displayExtent_;
     displayExtent_ = cur;
@@ -358,6 +367,15 @@ void VirtualSwapchain::retire() {
 void VirtualSwapchain::destroyAll() {
     auto& vt = dev_.vt;
     VkDevice d = dev_.device;
+    if (fbThread_.joinable()) {  // it may be waiting on real_: stop it first
+        {
+            std::lock_guard<std::mutex> lock(fbMutex_);
+            fbStop_ = true;
+        }
+        fbPaused_ = true;
+        fbCv_.notify_all();
+        fbThread_.join();
+    }
     if (worker_.joinable()) {
         {
             std::lock_guard<std::mutex> wlock(workerMutex_);
@@ -546,8 +564,10 @@ void VirtualSwapchain::updateHudLows(double dtMs) {
 int VirtualSwapchain::chooseMultiplier() {
     const int maxMult = std::max(1, dev_.config.multiplier);
     if (dev_.config.paused) return 1;
-    if (dev_.config.targetFps <= 0.f) return maxMult;
-    const double ratio = dev_.config.targetFps * frameIntervalMs_ / 1000.0;
+    // auto: the measured refresh rate; unknown (no feedback, VRR): fixed.
+    const double target = dev_.config.targetFps < 0.f ? displayHz() : double(dev_.config.targetFps);
+    if (target <= 0.0) return maxMult;
+    const double ratio = target * frameIntervalMs_ / 1000.0;
     if (dynMult_ == 0) dynMult_ = std::clamp(static_cast<int>(ratio + 0.5), 1, maxMult);
     else if (ratio >= dynMult_ + 0.65) dynMult_ = std::min(maxMult, static_cast<int>(ratio + 0.5));
     else if (ratio <= dynMult_ - 0.65) dynMult_ = std::max(1, static_cast<int>(ratio + 0.5));
@@ -561,9 +581,14 @@ int VirtualSwapchain::chooseMultiplier() {
 // spins briefly for precision; after a late frame the schedule restarts from
 // now instead of letting the game burst to catch up.
 void VirtualSwapchain::limitFrameRate() {
+    // auto: the refresh rate divided by the multiplier (60 on 120 Hz at x2),
+    // once the present feedback knows it; no cap until then.
+    const double fps = dev_.config.fpsLimit < 0.f ? displayHz() / std::max(1, dev_.config.multiplier)
+                                                  : double(dev_.config.fpsLimit);
+    if (fps <= 0.0) return;
     std::lock_guard<std::mutex> lk(limitMutex_);
     const auto interval = std::chrono::duration_cast<clock::duration>(
-        std::chrono::duration<double>(1.0 / dev_.config.fpsLimit));
+        std::chrono::duration<double>(1.0 / fps));
     auto now = clock::now();
     if (limitNext_ > now) {
         const auto coarse = limitNext_ - std::chrono::microseconds(1500);
@@ -620,7 +645,7 @@ void VirtualSwapchain::applyGpuBudget() {
 
 VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& info, bool consumeWaitSemaphores) {
     dev_.pollConfig();
-    if (dev_.config.fpsLimit > 0.f) limitFrameRate();  // before mutex_: never block acquire while sleeping
+    if (dev_.config.fpsLimit != 0.f) limitFrameRate();  // before mutex_: never block acquire while sleeping
     std::lock_guard<std::mutex> lock(mutex_);
     const auto t0 = clock::now();
     const VkSemaphore* appWaits = consumeWaitSemaphores ? info.pWaitSemaphores : nullptr;
@@ -691,6 +716,26 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         timing.intervalMs = frameIntervalMs_;
         timing.multiplier = interpolate ? mult : 1;
         timing.reset = !haveHistory || !(dt > 0.5 && dt < 500.0);
+        // Measured refresh grid: predict where each of this present's frames
+        // lands (the pacing presents frame k for the refresh after
+        // start + I*k/m; frame 0 goes out as soon as the GPU work is done,
+        // about now), so frame_timing places the content on real display times.
+        double lastMs, periodMs;
+        if (interpolate && feedback_ && displayGrid(lastMs, periodMs)) {
+            const double now = msOf(t0);
+            auto land = [&](double ms) { return lastMs + std::ceil((ms - lastMs) / periodMs) * periodMs; };
+            double at[4] = {};
+            for (int k = 0; k < mult && k < 4; ++k)
+                at[k] = (k == 0 ? land(now + 1.0) : land(now + frameIntervalMs_ * k / mult)) - now;
+            timing.haveDisplay = true;
+            if (dev_.config.extrapolate) {  // real first, then outputs 1..m-1
+                timing.displayMs[3] = float(at[0]);
+                for (int i = 1; i < mult; ++i) timing.displayMs[i - 1] = float(at[i]);
+            } else {                        // outputs first, the real frame last
+                for (int i = 1; i < mult; ++i) timing.displayMs[i - 1] = float(at[i - 1]);
+                timing.displayMs[3] = float(at[mult - 1]);
+            }
+        }
         fg_->recordFrameState(slot.cmd, timing);
         fg_->profileMark(slot.cmd, slotIdx, FrameGen::StageAnalysis);
         if (interpolate) {
@@ -831,9 +876,21 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             const uint64_t out = statsOutFrames_.exchange(0);
             const uint64_t delayUs = statsRealDelayUs_.exchange(0);
             const uint64_t skipped = statsSkipped_.exchange(0);
-            char skip[128] = "";
+            char skip[256] = "";
             int len = 0;
             if (skipped) len = snprintf(skip, sizeof(skip), ", %llu predicted frame(s) skipped", static_cast<unsigned long long>(skipped));
+            if (feedback_) {
+                std::lock_guard<std::mutex> lock(fbMutex_);
+                const double hz = displayClock_.refreshHz();
+                char buf[96];
+                const int k = hz > 0.0 ? snprintf(buf, sizeof buf, ", display %.1f Hz", hz)
+                                       : snprintf(buf, sizeof buf, ", display without fixed refresh");
+                if (k > 0 && len + k < int(sizeof(skip))) { memcpy(skip + len, buf, size_t(k) + 1); len += k; }
+                const uint64_t replaced = fbReplaced_ - statsReplaced_;
+                statsReplaced_ = fbReplaced_;
+                if (replaced) len += snprintf(skip + len, sizeof(skip) - size_t(len), ", %llu frame(s) replaced before display",
+                                             static_cast<unsigned long long>(replaced));
+            }
             // dedup: read without waiting (the counter is at most a few frames old).
             FrameGen::State st;
             if (dev_.config.dedup && fg_->readState(st)) {
@@ -929,6 +986,88 @@ void VirtualSwapchain::runJob(const Job& job) {
     markSubmitted();
 }
 
+// ---------------------------------------------------------------------------
+// Present feedback
+// ---------------------------------------------------------------------------
+
+// Waits for each presented id in turn. vkWaitForPresentKHR returns once that
+// frame *or a later one* is displayed, so an id that completes right after
+// its predecessor (well within a refresh) means the predecessor was replaced
+// before being shown (mailbox), and the display time belongs to this one.
+void VirtualSwapchain::feedbackLoop() {
+    for (;;) {
+        uint64_t id;
+        {
+            std::unique_lock<std::mutex> lock(fbMutex_);
+            fbCv_.wait(lock, [this] { return fbStop_ || (!fbPaused_ && !fbPending_.empty()); });
+            if (fbStop_) return;
+            id = fbPending_.front();
+            fbPending_.pop_front();
+            fbBusy_ = true;
+        }
+        VkResult r = VK_TIMEOUT;
+        // Short waits so a pause (swapchain re-creation) is honoured quickly;
+        // a frame not shown within ~0.5 s (minimised window) is given up.
+        for (int k = 0; k < 25 && r == VK_TIMEOUT && !fbPaused_; ++k)
+            r = dev_.vt.WaitForPresentKHR(dev_.device, real_, id, 20'000'000ull);
+        const double now = msOf(clock::now());
+        bool quit = false;
+        {
+            std::lock_guard<std::mutex> lock(fbMutex_);
+            fbBusy_ = false;
+            if (r >= 0 && r != VK_TIMEOUT) {
+                fbEverDisplayed_ = true;
+                if (fbLastMs_ > 0.0 && now - fbLastMs_ < 0.5) {
+                    ++fbReplaced_;
+                } else {
+                    displayClock_.add(now);
+                    fbLastMs_ = now;
+                }
+            } else if (r == VK_TIMEOUT && !fbPaused_ && !fbEverDisplayed_ && ++fbTimeouts_ >= 30) {
+                // Nothing ever reported displayed: the driver or compositor
+                // does not implement present waits usefully here.
+                BDEX_INFO("present feedback unavailable on this surface; disabled");
+                feedback_ = false;
+                quit = true;
+            }
+        }
+        fbIdleCv_.notify_all();
+        if (quit) return;
+    }
+}
+
+void VirtualSwapchain::pauseFeedback() {
+    if (!fbThread_.joinable()) return;
+    std::unique_lock<std::mutex> lock(fbMutex_);
+    fbPaused_ = true;
+    fbPending_.clear();
+    fbIdleCv_.wait(lock, [this] { return !fbBusy_; });
+}
+
+void VirtualSwapchain::resumeFeedback() {
+    if (!fbThread_.joinable()) return;
+    {
+        std::lock_guard<std::mutex> lock(fbMutex_);
+        fbPaused_ = false;
+        fbLastMs_ = 0.0;
+        presentCounter_ = 0;  // ids restart with the new swapchain (the worker is idle here)
+    }
+    fbCv_.notify_all();
+}
+
+double VirtualSwapchain::displayHz() {
+    std::lock_guard<std::mutex> lock(fbMutex_);
+    return displayClock_.refreshHz();
+}
+
+bool VirtualSwapchain::displayGrid(double& lastMs, double& periodMs) {
+    std::lock_guard<std::mutex> lock(fbMutex_);
+    if (!displayClock_.valid()) return false;
+    lastMs = displayClock_.lastMs();
+    periodMs = displayClock_.periodMs();
+    return true;
+}
+
 // Submits the synthesis the application thread recorded but left to the
 // worker (Job::synthSlot), right after the real frame went out.
 VkResult VirtualSwapchain::submitDeferredSynthesis(const Job& job) {
@@ -964,8 +1103,18 @@ VkResult VirtualSwapchain::presentOne(const Job& job, int index, const std::func
     // delaying the real frame behind it.
     if (index > 0 && dev_.config.pacing && presentMode_ != VK_PRESENT_MODE_FIFO_KHR &&
         presentMode_ != VK_PRESENT_MODE_FIFO_RELAXED_KHR) {
-        const auto target = job.start + std::chrono::duration_cast<clock::duration>(
-                                            std::chrono::duration<double, std::milli>(job.intervalMs * index / job.frames));
+        auto target = job.start + std::chrono::duration_cast<clock::duration>(
+                                      std::chrono::duration<double, std::milli>(job.intervalMs * index / job.frames));
+        // With a known refresh grid (present feedback, fixed refresh), aim
+        // at the refresh this frame should show on and present well before
+        // it: a present landing just after a refresh would slip a whole
+        // period (judder). Unknown grid (VRR, no feedback): as scheduled.
+        double lastMs, periodMs;
+        if (feedback_ && displayGrid(lastMs, periodMs)) {
+            const double land = lastMs + std::ceil((msOf(target) - lastMs) / periodMs) * periodMs;
+            target = clock::time_point(std::chrono::duration_cast<clock::duration>(
+                std::chrono::duration<double, std::milli>(land - 0.3 * periodMs)));
+        }
         std::unique_lock<std::mutex> wlock(workerMutex_);
         if (job.realFirst) {
             if (workerCv_.wait_until(wlock, target, [this] { return !jobs_.empty() || stop_; })) return VK_EVENT_RESET;
@@ -1016,9 +1165,17 @@ VkResult VirtualSwapchain::presentOne(const Job& job, int index, const std::func
     pi.pSwapchains = &real_;
     pi.pImageIndices = &ri;
     const void** tail = &pi.pNext;
+    uint64_t feedbackId = 0;
     if (real && job.presentId) {
         presentId.swapchainCount = 1;
         presentId.pPresentIds = &job.presentId;
+        *tail = &presentId;
+        tail = &presentId.pNext;
+    } else if (feedback_ && !job.presentId) {
+        // Our own ids (the game cannot use present ids: they are hidden).
+        feedbackId = ++presentCounter_;
+        presentId.swapchainCount = 1;
+        presentId.pPresentIds = &feedbackId;
         *tail = &presentId;
         tail = &presentId.pNext;
     }
@@ -1052,6 +1209,13 @@ VkResult VirtualSwapchain::presentOne(const Job& job, int index, const std::func
             static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(clock::now() - job.start).count()),
             std::memory_order_relaxed);
     r = dev_.vt.QueuePresentKHR(dev_.queue, &pi);
+    if (feedbackId && r >= 0) {
+        {
+            std::lock_guard<std::mutex> lock(fbMutex_);
+            if (!fbPaused_) fbPending_.push_back(feedbackId);
+        }
+        fbCv_.notify_one();
+    }
     if (r == VK_SUCCESS && suboptimal) r = VK_SUBOPTIMAL_KHR;
     return r;
 }

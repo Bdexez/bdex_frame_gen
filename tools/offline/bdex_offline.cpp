@@ -28,6 +28,10 @@
 //                   spikes of a variable-timestep game
 //   --dup N         the game presents each image N times (e.g. 2: 30 fps
 //                   content in a 60 fps loop); combines with --jitter
+//   --refresh HZ    the display has a fixed refresh: frames show on its grid
+//                   where the layer's pacing puts them, and each is scored
+//                   against the content of that moment; --refresh-known also
+//                   gives the engine the grid (as the present feedback does)
 //   --hud-counter   draw a patch that changes on every present (64x16 at
 //                   8,8: exclude it from the scores) — a HUD or cursor over a
 //                   world that --dup repeats
@@ -209,7 +213,8 @@ int main(int argc, char** argv) {
     uint64_t seed = 1;
     bool verbose = false, steadyContent = false;
     int benchReps = 1;
-    bool hudCounter = false;
+    bool hudCounter = false, refreshKnown = false;
+    double refreshHz = 0.0;
     std::string fmtName = "rgba8", csName = "srgb";
     float renderScale = 1.f;
     for (int i = 3; i < argc; ++i) {
@@ -229,12 +234,14 @@ int main(int argc, char** argv) {
         else if (a == "--steady-content") steadyContent = true;
         else if (a == "--bench" && i + 1 < argc) benchReps = std::max(1, atoi(argv[++i]));
         else if (a == "--hud-counter") hudCounter = true;
+        else if (a == "--refresh" && i + 1 < argc) refreshHz = atof(argv[++i]);
+        else if (a == "--refresh-known") refreshKnown = true;
         else { fprintf(stderr, "unknown argument %s\n", a.c_str()); return 2; }
     }
     if (mult < 2 || mult > 4) die("--multiplier must be 2, 3 or 4");
     if (!(jitter >= 0.0 && jitter < 1.0)) die("--jitter must be in [0, 1)");
     if (dupCount < 1 || dupCount > 8) die("--dup must be 1..8");
-    const bool schedule = jitter > 0.0 || dupCount > 1 || spacing > 0.0;
+    const bool schedule = jitter > 0.0 || dupCount > 1 || spacing > 0.0 || refreshHz > 0.0;
     if (spacing <= 0.0) spacing = mult;
     if (spacing < 1.0) die("--spacing must be >= 1");
 
@@ -458,6 +465,26 @@ int main(int argc, char** argv) {
                 intervalMs = intervalMs > 0.0 ? intervalMs * 0.8 + timing.sinceLastMs * 0.2 : timing.sinceLastMs;
             }
             timing.intervalMs = intervalMs;
+            // --refresh: every frame of this present shows on a fixed refresh
+            // grid (phase 0), where the layer's pacing puts it: frame k for
+            // the refresh after present + I*k/m, frame 0 right after the GPU
+            // work (1 ms). at[] is in input-frame units, relative to now.
+            double at[4] = {};
+            const int realIdx = extrap ? 0 : mult - 1;
+            if (refreshHz > 0.0 && generate) {
+                const double pu = 1000.0 / refreshHz / msPerFrame, now = sched[k].time;
+                const double Iu = intervalMs / msPerFrame;
+                for (int j = 0; j < mult; ++j) {
+                    const double want = now + (j == 0 ? 1.0 / msPerFrame : Iu * j / mult);
+                    at[j] = std::ceil(want / pu) * pu - now;
+                }
+                if (refreshKnown) {  // what the layer passes once its present feedback knows the grid
+                    timing.haveDisplay = true;
+                    timing.displayMs[3] = float(at[realIdx] * msPerFrame);
+                    for (int i = 1; i < mult; ++i)
+                        timing.displayMs[i - 1] = float(at[extrap ? i : i - 1] * msPerFrame);
+                }
+            }
             const bool dumpReal = schedule && fg.packReal();
             dev.immediate([&](VkCommandBuffer cmd) {
                 // Upload into the history image and hand it over the way a
@@ -526,8 +553,11 @@ int main(int argc, char** argv) {
                 const std::string curPath = fs::absolute(frames[fi]).string();
                 for (int i = 1; i < mult; ++i) {
                     size_t gt;
-                    const double content = schedule ? (extrap ? now + I * i / mult : now - I * (mult - i) / mult)
-                                                     : double(extrap ? fi + i : fi - mult + i);
+                    // With a refresh grid each frame shows the content of its
+                    // display time; the real frame shows `now`.
+                    const double content = refreshHz > 0.0 ? now + at[extrap ? i : i - 1] - at[realIdx]
+                                           : schedule ? (extrap ? now + I * i / mult : now - I * (mult - i) / mult)
+                                                      : double(extrap ? fi + i : fi - mult + i);
                     if (!truth(content, gt)) continue;
                     char name[64];
                     snprintf(name, sizeof name, "gen_%04zu_%d.ppm", k, i);

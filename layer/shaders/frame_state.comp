@@ -65,11 +65,14 @@ layout(push_constant) uniform PC {
     int flags;
     int gateCount;
     uint dupMaxPixels;   // at most this many differing pixels = a repeat
+    float displayMs[4];  // FLAG_DISPLAY: predicted display times of outputs 0..2 and the real frame [3]
 } pc;
 
 #define FLAG_RESET 1   // no usable previous frame: restart the clock
 #define FLAG_DEDUP 2   // detect repeats (the previous pair's flow is valid to keep)
 #define FLAG_EXTRAP 4  // extrapolation display model
+#define FLAG_DISPLAY 8 // displayMs holds the measured-refresh prediction instead of the nominal schedule
+#define FLAG_CONTENT 16 // content timing (frame_timing / dedup): measured intervals; else the nominal one
 
 shared uint sCount;
 shared uint sTile[64];
@@ -124,16 +127,29 @@ void main() {
         agePrev = min(agePrev, ageLast + 1000.0);  // a long pause is not an interval
     }
     float interval = max(agePrev - ageLast, 0.5);
+    // Display correction alone (a known refresh grid, frame_timing and dedup
+    // off): the content is assumed evenly timed, as by the fixed t.
+    float ageT = ageLast;
+    if ((pc.flags & FLAG_CONTENT) == 0) { interval = I; ageT = 0.0; }
     int m = max(pc.multiplier, 1);
     bool extrap = (pc.flags & FLAG_EXTRAP) != 0;
     for (int i = 1; i < 4; ++i) {
         float t = 0.0;
         if (i < m) {
-            // Written as the fixed i/m plus a correction, so that a steady
-            // game (interval == I, no repeat) gets exactly the fixed t.
-            float f = float(i) / float(m);
-            if (extrap) t = 1.0 + clamp(f + ((I - interval) * f + ageLast) / interval, 0.0, 1.0);
-            else t = clamp(f + ((interval - I) * (1.0 - f) + ageLast) / interval, 0.0, 1.0);
+            if ((pc.flags & FLAG_DISPLAY) != 0) {
+                // Each frame shows the content of its own display time: the
+                // real frame shows "now", so an output displayed d ms after
+                // it shows now + d (d < 0 before it, interpolation).
+                float d = pc.displayMs[i - 1] - pc.displayMs[3];
+                if (extrap) t = 1.0 + clamp((d + ageT) / interval, 0.0, 1.0);
+                else t = clamp(1.0 + (d + ageT) / interval, 0.0, 1.0);
+            } else {
+                // Written as the fixed i/m plus a correction, so that a steady
+                // game (interval == I, no repeat) gets exactly the fixed t.
+                float f = float(i) / float(m);
+                if (extrap) t = 1.0 + clamp(f + ((I - interval) * f + ageLast) / interval, 0.0, 1.0);
+                else t = clamp(f + ((interval - I) * (1.0 - f) + ageLast) / interval, 0.0, 1.0);
+            }
         }
         st.t[i - 1] = t;
     }

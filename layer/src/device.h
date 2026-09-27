@@ -75,6 +75,7 @@ struct DeviceData {
 
     VkCommandPool cmdPool = VK_NULL_HANDLE;
     bool hasSwapchainMaintenance1 = false;
+    bool presentFeedback = false;  // VK_KHR_present_id/present_wait enabled for the layer's own swapchains (hidden from the game)
 
     std::mutex queueMapMutex;
     std::unordered_map<VkQueue, std::unique_ptr<std::mutex>> queueMutexes;

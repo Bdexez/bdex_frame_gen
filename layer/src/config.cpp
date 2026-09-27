@@ -154,6 +154,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
         return true;
     }
     if (key == "pacing")                      return parseBool(value, pacing);
+    if (key == "present_feedback")            return parseBool(value, presentFeedback);
     if (key == "log" || key == "log_level")   return parseInt(value, logLevel, 0, 3);
     if (key == "log_file")                    { logFile = platformExpandPath(value); return true; }
     if (key == "scene_cut_low")               return parseFloat(value, sceneCutLow, 0.f, 1.f);
@@ -175,8 +176,15 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "frame_timing")                return parseBool(value, frameTiming);
     if (key == "dedup")                       return parseBool(value, dedup);
     if (key == "paused" || key == "pause")    return parseBool(value, paused);
-    if (key == "target_fps")                  return parseFloat(value, targetFps, 0.f, 1000.f);
-    if (key == "fps_limit" || key == "fps_cap") return parseFloat(value, fpsLimit, 0.f, 1000.f);
+    // "auto" (-1): from the refresh rate the present feedback measures.
+    if (key == "target_fps") {
+        if (lower(value) == "auto") { targetFps = -1.f; return true; }
+        return parseFloat(value, targetFps, 0.f, 1000.f);
+    }
+    if (key == "fps_limit" || key == "fps_cap") {
+        if (lower(value) == "auto") { fpsLimit = -1.f; return true; }
+        return parseFloat(value, fpsLimit, 0.f, 1000.f);
+    }
     if (key == "gpu_budget")                  return parseFloat(value, gpuBudget, 0.f, 1.f);
     if (key == "pixel_vectors")               return parseBool(value, pixelVectors);
     if (key == "subpixel")                    return parseBool(value, subpixel);
@@ -361,8 +369,8 @@ std::string Config::describe() const {
     if (extrapolateSplat) o << " extrapolate_splat=1";
     if (extrapolateHold > 0.f) o << " extrapolate_hold=" << extrapolateHold;
     if (extrapolateAccel > 0.f) o << " extrapolate_accel=" << extrapolateAccel;
-    if (targetFps > 0.f) o << " target_fps=" << targetFps;
-    if (fpsLimit > 0.f) o << " fps_limit=" << fpsLimit;
+    if (targetFps != 0.f) o << " target_fps=" << (targetFps < 0.f ? std::string("auto") : std::to_string(targetFps));
+    if (fpsLimit != 0.f) o << " fps_limit=" << (fpsLimit < 0.f ? std::string("auto") : std::to_string(fpsLimit));
     if (gpuBudget > 0.f) o << " gpu_budget=" << gpuBudget;
     if (pixelVectors) o << " pixel_vectors=1";
     if (subpixel) o << " subpixel=1";
