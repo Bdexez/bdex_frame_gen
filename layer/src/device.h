@@ -72,6 +72,24 @@ struct DeviceData {
     uint32_t queueIndex = 0;
     bool queueShared = false;
     bool layerUsable = false;  // false: everything passes straight through
+    // async_compute: a private queue of a compute-only family for the
+    // synthesis (see VirtualSwapchain); `queue` keeps copies and presents.
+    bool asyncCompute = false;
+    VkQueue computeQueue = VK_NULL_HANDLE;
+    uint32_t computeFamily = 0;
+    uint32_t computeIndex = 0;
+    // The families the layer's own resources are shared between (one, or
+    // both queues' under async_compute: concurrent sharing, no ownership
+    // transfers).
+    // GPU timestamps are valid on every queue the layer records on.
+    bool timestampsUsable() const {
+        for (uint32_t f : layerFamilies())
+            if (f >= families.size() || families[f].timestampValidBits == 0) return false;
+        return true;
+    }
+    std::vector<uint32_t> layerFamilies() const {
+        return asyncCompute ? std::vector<uint32_t>{queueFamily, computeFamily} : std::vector<uint32_t>{queueFamily};
+    }
 
     VkCommandPool cmdPool = VK_NULL_HANDLE;
     bool hasSwapchainMaintenance1 = false;

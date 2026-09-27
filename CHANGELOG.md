@@ -8,6 +8,20 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-25)
 
+- **`async_compute` (opt-in): the synthesis on a compute-only queue.** Where
+  the device has a compute-only queue family with a free queue, the layer
+  takes one for the synthesis and keeps copies and presents on its
+  presentation queue: resources are shared concurrently between the two
+  families, each present waits its own semaphore from the synthesis (or,
+  deferred, from the game), each copy signals one the next synthesis waits
+  before rewriting what it read, semaphores of skipped or failed presents
+  are consumed, and both queues are drained before anything is destroyed or
+  rebuilt. Timestamps are only used where every family supports them. The
+  validation test gains two async runs (0 messages). Measured on an RTX
+  3060 Ti: the driver runs that queue at half speed (flow 1.25 → 2.5 ms)
+  and the demo drops from 432 to ~315 fps, so it stays off by default; it
+  is meant for GPUs whose compute engines overlap graphics (AMD), to be
+  measured there.
 - **Live status in the control panel.** Each process where the layer is
   enabled publishes a small status file (`$XDG_RUNTIME_DIR/bdex-framegen/
   <pid>.status`, `%TEMP%\bdex-framegen` on Windows, `BDEX_FG_STATUS_DIR` to

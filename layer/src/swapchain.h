@@ -68,6 +68,16 @@ private:
         VkSemaphore acquireSem = VK_NULL_HANDLE;  // used by the worker's slots only
         uint64_t generation = 0;
         bool submitted = false;
+        // async_compute (DeviceData::asyncCompute), synthesis slots: one
+        // semaphore per worker present that reads the synthesis (the k-th
+        // present of the job waits synthDone[k]); for a deferred synthesis the
+        // game's semaphores are consumed on the presentation queue and passed
+        // on to the real copy (realIn) and to the synthesis (synthIn).
+        VkSemaphore synthDone[4] = {};
+        VkSemaphore realIn = VK_NULL_HANDLE, synthIn = VK_NULL_HANDLE;
+        // async_compute, worker slots: signalled by the copy, waited by the
+        // next synthesis before it overwrites the images the copy read.
+        VkSemaphore copyDone = VK_NULL_HANDLE;
     };
     // One application present, handed to the worker thread.
     struct Job {
@@ -88,6 +98,11 @@ private:
         // already submitted by the application thread.
         int synthSlot = -1;
         bool pacing = true;          // the pacing setting, carried so the worker never reads the config
+        // async_compute: the synthesis slot whose semaphores this job's
+        // presents wait (-1 = single queue, queue order suffices), and, for
+        // a deferred synthesis, the copy semaphores it must wait.
+        int asyncSlot = -1;
+        std::vector<VkSemaphore> synthWaits;
     };
 
     void createReal(const VkSwapchainCreateInfoKHR& appInfo);
@@ -99,7 +114,8 @@ private:
     void applyGpuBudget();  // gpu_budget: re-evaluates the quality level about once a second
     std::unique_ptr<FrameGen> makeFrameGen(bool& generating);
     void createVirtualImages(const VkSwapchainCreateInfoKHR& appInfo, bool forGeneration);
-    void createSlots(std::vector<FrameSlot>& slots, uint32_t count, bool withSemaphore, VkCommandPool pool);
+    void createSlots(std::vector<FrameSlot>& slots, uint32_t count, bool withSemaphore, VkCommandPool pool,
+                     bool asyncSynthesis = false, bool asyncCopy = false);
     void destroySlots(std::vector<FrameSlot>& slots, VkCommandPool pool);
     void destroyAll();
     FrameSlot& nextSlot(std::vector<FrameSlot>& slots, uint32_t& cursor);
@@ -184,6 +200,12 @@ private:
     // slots, one for the worker's (both used to share the device's pool).
     VkCommandPool appPool_ = VK_NULL_HANDLE;
     VkCommandPool workerPool_ = VK_NULL_HANDLE;
+    // async_compute: copy-done semaphores of submitted worker presents not yet
+    // waited by a synthesis (workerMutex_).
+    std::vector<VkSemaphore> pendingCopyDone_;
+    bool lastCopySubmitted_ = false;      // worker: presentOne submitted its copy
+    VkResult submitOn(VkQueue queue, const VkSubmitInfo& si, VkFence fence);
+    void waitQueuesIdle();
     std::vector<FrameSlot> slots_;        // application thread: synthesis submissions
     std::vector<FrameSlot> workerSlots_;  // worker thread: copy + present submissions
     uint32_t slotCursor_ = 0;
