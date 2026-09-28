@@ -16,6 +16,7 @@ bdex_add_shaders(bdex_layer_shaders
     shaders/splat.comp
     shaders/frame_state.comp
     shaders/downsample_chroma.comp
+    shaders/flow_temporal.comp
     shaders/interpolate.comp:u32
     shaders/interpolate.comp:u64:OUT_64
     shaders/interpolate.comp:sharp:SHARP

@@ -269,6 +269,7 @@ const ExtraOpt kExtra[] = {
     {"frame_timing", L"Suivre le temps réel des images du jeu (saccades)", kCheck, "0"},
     {"dedup", L"Détecter les images répétées (cinématiques 30 i/s)", kCheck, "0"},
     {"extrapolate_accel", L"Extrapolation : accélération (0–1)", kNumber, "0"},
+    {"flow_temporal", L"Stabilisation temporelle du mouvement (0–1)", kNumber, "0"},
     {"static_guard", L"Protection du HUD statique (0–1)", kNumber, "0"},
     {"temporal_prediction", L"Prédiction temporelle (panoramiques rapides)", kCheck, "0"},
     {"occlusion_strength", L"Gestion des occlusions (0–1)", kNumber, "0"},

@@ -1,0 +1,71 @@
+#version 450
+// Temporal stabilisation of the finest flow (flow_temporal). Each pair's
+// flow is measured from scratch, so where the matching is ambiguous (flat
+// areas, repeated texture, low contrast) it can pick a different, equally
+// good vector from one pair to the next, and the generated frames shimmer.
+// The same content's motion one pair earlier is known (the previous
+// backward flow, prevBwd): where it is close to the new vector and explains
+// the pair about as well — its SAD within a tolerance of the new one's — it
+// is kept instead. A real change of motion makes the old vector match worse
+// and the new measurement stands; unambiguous content is left untouched.
+//   forward F(q), q in prev:  the content at q moved by -prevBwd(q) the pair before;
+//   backward B(p), p in cur:  the content was at p + B(p) in prev, where the
+//                             previous backward flow is prevBwd(p + B(p)).
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0, rg32f) uniform image2D flowFwd;   // finest level, in place
+layout(binding = 1, rg32f) uniform image2D flowBwd;
+layout(binding = 2) uniform sampler2D prevBwd;        // previous pair's finest backward flow
+layout(binding = 3) uniform sampler2D lumaPrev;       // finest luma of the pair
+layout(binding = 4) uniform sampler2D lumaCur;
+
+layout(push_constant) uniform PC {
+    ivec2 size;       // flow grid (texels)
+    ivec2 luma;       // finest luma resolution
+    int block;        // level pixels per flow texel
+    float strength;   // 0..1: SAD tolerance granted to the previous vector
+} pc;
+
+float sadAt(sampler2D refTex, sampler2D tgtTex, ivec2 origin, vec2 d) {
+    // 8x8 window centred on the block (4x4 blocks) or the block itself (8x8).
+    int m = (8 - pc.block) / 2;
+    ivec2 di = ivec2(round(d));
+    float s = 0.0;
+    for (int y = -m; y < pc.block + m; ++y)
+        for (int x = -m; x < pc.block + m; ++x) {
+            ivec2 q = origin + ivec2(x, y);
+            float r = texelFetch(refTex, clamp(q, ivec2(0), pc.luma - 1), 0).r;
+            float t = texelFetch(tgtTex, clamp(q + di, ivec2(0), pc.luma - 1), 0).r;
+            s += abs(r - t);
+        }
+    return s;
+}
+
+// The previous vector replaces the current one when close (within 2 px)
+// and not clearly worse at explaining the pair.
+vec2 stabilise(vec2 cur, vec2 prev, sampler2D refTex, sampler2D tgtTex, ivec2 origin) {
+    prev = round(prev);
+    if (all(equal(prev, round(cur))) || distance(prev, cur) > 2.0) return cur;
+    float sc = sadAt(refTex, tgtTex, origin, cur);
+    float sp = sadAt(refTex, tgtTex, origin, prev);
+    // Relative tolerance, plus about one 8-bit code per pixel of noise.
+    float tol = pc.strength * (0.25 * sc + 64.0 / 255.0);
+    return sp <= sc + tol ? prev : cur;
+}
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, pc.size))) return;
+    vec2 extent = vec2(pc.size * pc.block);          // level pixels covered
+    ivec2 origin = p * pc.block;
+    vec2 pos = vec2(origin) + 0.5 * float(pc.block); // texel centre, level pixels
+    vec2 F = imageLoad(flowFwd, p).xy;
+    vec2 B = imageLoad(flowBwd, p).xy;
+    vec2 prevF = -texture(prevBwd, pos / extent).xy;
+    vec2 prevB = texture(prevBwd, (pos + B) / extent).xy;
+    // Fractional vectors (subpixel) are left alone: the SAD is integer-shift.
+    if (all(equal(F, round(F)))) F = stabilise(F, prevF, lumaPrev, lumaCur, origin);
+    if (all(equal(B, round(B)))) B = stabilise(B, prevB, lumaCur, lumaPrev, origin);
+    imageStore(flowFwd, p, vec4(F, 0.0, 0.0));
+    imageStore(flowBwd, p, vec4(B, 0.0, 0.0));
+}

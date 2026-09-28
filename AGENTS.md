@@ -255,6 +255,13 @@ x2/x3/x4), sauf le correctif HDR (les chemins SDR restent identiques).
   qui force `packReal_`). Les formules de t retombent exactement sur i/m à
   cadence régulière (écrites « i/m + correction »).
 - **`scene_cut_local`** : grille 8×8 dans `reduce_cost` (groupes 1..64).
+- **`flow_temporal`** (2026-09-25) : passe `flow_temporal.comp` après le flow
+  du niveau 0, avant `reduce_cost` ; réutilise la copie `prevBwd_` (comme
+  `extrapolate_accel`) et les lumas du niveau 0 (un set par parité). Choix
+  vérifié par SAD (ancien vecteur gardé s'il est à ≤ 2 px et à tolérance
+  près du SAD du nouveau) ; les vecteurs fractionnaires (`subpixel`) ne sont
+  pas touchés. Le mélange pondéré a été essayé et perd 0,5 dB (retard sur
+  les vrais changements de mouvement) — ne pas y revenir.
 - **`extrapolate_accel`** : copie du flow arrière fin précédent (`prevBwd_`,
   usage TRANSFER_SRC sur le flow du niveau 0) ; estimateur moyenné 3×3
   bilatéral, porte de cohérence, trajectoire entière dans l'image. Chaque
