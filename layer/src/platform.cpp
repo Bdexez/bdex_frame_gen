@@ -199,6 +199,19 @@ std::string platformStatusDir() {
 #endif
 }
 
+std::string platformCacheDir() {
+    if (const char* p = std::getenv("BDEX_FG_CACHE_DIR")) return p;
+#ifdef _WIN32
+    const char* app = std::getenv("LOCALAPPDATA");
+    if (app && *app) return std::string(app) + "\\bdex-framegen";
+    return "";
+#else
+    if (const char* x = std::getenv("XDG_CACHE_HOME"); x && *x) return std::string(x) + "/bdex-framegen";
+    if (const char* h = std::getenv("HOME"); h && *h) return std::string(h) + "/.cache/bdex-framegen";
+    return "";
+#endif
+}
+
 long platformPid() {
 #ifdef _WIN32
     return static_cast<long>(GetCurrentProcessId());

@@ -38,6 +38,11 @@ bool platformAntiCheatPresent(std::string* foundName);
 // %TEMP%\bdex-framegen; BDEX_FG_STATUS_DIR overrides it, an empty value
 // disables the files. "" when no location is known.
 std::string platformStatusDir();
+// Directory for small persistent caches (online_tune decisions): Linux
+// $XDG_CACHE_HOME/bdex-framegen (else ~/.cache/bdex-framegen), Windows
+// %LOCALAPPDATA%\bdex-framegen; BDEX_FG_CACHE_DIR overrides it, an empty
+// value disables the cache. "" when no location is known.
+std::string platformCacheDir();
 long platformPid();
 
 } // namespace bdex
