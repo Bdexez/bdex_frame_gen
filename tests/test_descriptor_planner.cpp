@@ -4,7 +4,9 @@
 using namespace bdex;
 
 namespace {
-VkDescriptorSetLayout fakeLayout(uintptr_t v) { return reinterpret_cast<VkDescriptorSetLayout>(v); }
+// Non-dispatchable handles are pointers on 64-bit targets and uint64_t on
+// 32-bit ones: a C-style cast converts to either.
+VkDescriptorSetLayout fakeLayout(uintptr_t v) { return (VkDescriptorSetLayout)(v); }
 const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 const VkDescriptorType SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
 const VkDescriptorType SB = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
