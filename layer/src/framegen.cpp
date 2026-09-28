@@ -36,21 +36,20 @@ static std::string onlineTuneCachePath(const Config& cfg) {
     return dir + "/online-tune-" + name + (cfg.extrapolate ? "-extrapolate" : "-interpolate") + ".txt";
 }
 
-// online_tune candidates: flow options measured non-negative on average
-// that the self-evaluation can rate (they change the motion field; synthesis
-// and resource-sizing options cannot be tried this way). An option the user
-// set is left alone: it is not a candidate. The self-evaluation predicts the
-// next frame, i.e. rates the flow the way extrapolation uses it; sub-pixel
-// vectors are only tried there: on a 3.25 px/frame pan they win 2 dB in
-// extrapolation, as the measure says, but lose 0.9 dB interpolated (the
-// half-way bilinear resampling blurs).
+// online_tune candidates come from the option registry (config.cpp, the
+// Tune column): flow options measured non-negative on average that the
+// self-evaluation can rate (they change the motion field; synthesis and
+// resource-sizing options cannot be tried this way). The self-evaluation
+// predicts the next frame, i.e. rates the flow the way extrapolation uses
+// it; sub-pixel vectors are only tried there: on a 3.25 px/frame pan they
+// win 2 dB in extrapolation, as the measure says, but lose 0.9 dB
+// interpolated (the half-way bilinear resampling blurs). An option the user
+// set is left alone: it is not a candidate.
 static std::shared_ptr<OnlineTune> createOnlineTune(const Config& cfg) {
-    std::vector<OnlineTune::Candidate> all = {{"zero_bias_contrast", "0.1"}, {"temporal_prediction", "1"}};
-    if (cfg.extrapolate) all.push_back({"subpixel", "1"});
-    all.push_back({"flow_temporal", "1"});
     std::vector<OnlineTune::Candidate> candidates;
     const std::string mine = cfg.describe();
-    for (const auto& c : all) {
+    for (const auto& [key, trial] : cfg.tuneCandidates()) {
+        const OnlineTune::Candidate c{key, trial};
         Config off = cfg;
         off.apply(c.key, "0");
         if (off.describe() == mine) candidates.push_back(c);

@@ -2,6 +2,7 @@
 #include <vulkan/vulkan.h>
 
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace bdex {
@@ -131,6 +132,11 @@ struct Config {
     static std::vector<std::string> processNames();
     static bool sectionMatches(const std::string& section, const std::vector<std::string>& names);
     std::string describe() const;
+    // Every key Config::apply understands (with their aliases if `aliases`),
+    // from the option registry in config.cpp.
+    static std::vector<std::string> optionKeys(bool aliases = true);
+    // online_tune candidates for this mode, in trial order: (key, trial value).
+    std::vector<std::pair<std::string, std::string>> tuneCandidates() const;
 };
 
 const char* presentModeName(int mode);

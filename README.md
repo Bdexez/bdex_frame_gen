@@ -269,18 +269,21 @@ them).
 
 | Key | Default | Description |
 |---|:---:|---|
-| `BDEX_FG` | – | `1` enables the layer, `0` disables it |
+| `BDEX_FG` / `ENABLED` | – | `1` enables the layer, `0` disables it |
 | `MULTIPLIER` | `2` | frames displayed per rendered frame: 2, 3 or 4 |
 | `MODE` | `interpolate` | `extrapolate` predicts the next frame from the last two: no added latency, more artefacts on abrupt motion |
 | `PRESET` | `auto` | `auto` picks `performance` for integrated/small GPUs and `balanced` for discrete GPUs with at least 2 GiB of VRAM; or force `quality` (full-resolution flow, ~3× the cost), `balanced`, `performance` (quarter-resolution flow, ~2× cheaper), `latency` (extrapolation + x2 for minimal input lag) |
-| `FLOW_SCALE` | `auto` | resolution divisor of the flow: `1`, `2`, `4`; `auto` keeps the flow around 0.5 Mpixel |
+| `FLOW_SCALE` / `FULLRES` | `auto` / – | resolution divisor of the flow: `1`, `2`, `4`; `auto` keeps the flow around 0.5 Mpixel; `FULLRES=1` is `FLOW_SCALE=1` |
 | `LEVELS` | `4` | flow pyramid levels (1–6) |
 | `SEARCH` / `SEARCH_FINE` | `4` / `2` | search radius at the coarsest level / at the finer levels (1–4) |
-| `RENDER_SCALE` | `1.0` | render resolution / display resolution (`0.5`–`1.0`); below 1 the game renders smaller and every frame is upscaled to the display size. `UPSCALE=<ratio>` sets it as a ratio (e.g. `1.5`). Works on X11, Xwayland and native Wayland |
+| `RENDER_SCALE` / `UPSCALE` | `1.0` | render resolution / display resolution (`0.5`–`1.0`); below 1 the game renders smaller and every frame is upscaled to the display size. `UPSCALE=<ratio>` sets it as a ratio (e.g. `1.5`). Works on X11, Xwayland and native Wayland |
 | `UPSCALE_FILTER` | `lanczos` | upscaling reconstruction filter: `bilinear`, `bicubic` (Catmull-Rom) or `lanczos` (Lanczos-2) |
 | `SHARPNESS` | `0` | contrast-adaptive sharpening (CAS) after upscaling, `0` (off) to `1` (strong); applies to real and generated frames |
 | `UPSCALE_TEMPORAL` | `0` | Experimental, with `RENDER_SCALE` < 1 and frame generation on: flow-guided temporal upscaling. The real frame is upscaled into a display-size history, blended with the previous one carried along the measured motion (TAA-style: clamped to the current 3×3 neighbourhood, no history across scene cuts, outside the picture or where the forward flow does not lead back), and the generated frames are synthesised from these upscaled frames instead of bilinear samples of the small ones. The value is the history weight. Offline at `RENDER_SCALE=0.5`, real and generated frames scored, `0.05`: smooth pan +1.29 dB, sub-pixel pan +0.71 dB, HUD scene +0.16 dB (flicker −30 %), demo +0.06 dB, swinging camera +0.03 dB; at `0.75` within ±0.1 dB (HUD scene −0.13 dB). Most of the gain is the synthesis from the upscaled frames: games do not jitter their camera for us and the flow is integer, so a heavier accumulation blurs (`0.5`: −0.6 to −1.6 dB except smooth pans). `0.05` advised; about one display-size pass of GPU time. Read at start-up. |
 | `OVERLAY` | `0` | on-screen fps counter in the top-left of every frame (alias `HUD`). Level `0` off, `1` output fps, `2` `game > output`, `3` adds the `1%` low, `4` adds the `.1%` low, `5` adds the measured latency from the game's present to the screen (`--ms` where the driver cannot report display times, see `PRESENT_FEEDBACK`). Also accepts `off`/`fps`/`framegen`/`low`/`full`/`latency`. The lows are the game fps at the 99th / 99.9th percentile frame time |
+| `SMOOTHNESS` / `ZERO_BIAS` | `0.004` / `0.002` | block-matching penalties: per pixel of deviation from the coarse prediction / toward zero motion (keeps static HUDs still; see `ZERO_BIAS_CONTRAST`) |
+| `GRAD_WEIGHT` | `0` | opt-in gradient SAD term in the matching cost: fast motion +0.5 dB, normal −2.1 dB |
+| `REFINE_BIAS` | `0.5` | SAD bonus (over 64 px) for a block keeping its own flow in the 4×4 refinement |
 | `REFINE` / `REFINE_ALL` | `1` / `1` | 4×4 flow refinement pass, on every level or only the finest |
 | `FLOW_ITERATIONS` | `1` | fixed-point iterations of the flow lookup in the interpolation (0–3) |
 | `CENSUS_WEIGHT` / `CENSUS_MARGIN` | `0` / `0.05` | opt-in discrimination for the block matcher: when the runner-up scores within the margin of the winner, near-winners are re-ranked on census (rank-transform) Hamming distance. `census_weight=2` + `census_margin=1` buys ≈ +0.5 dB on fast motion at ≈ −1.5 dB on static/small-motion scenes; `0` is off (bit-for-bit) |
@@ -316,6 +319,9 @@ them).
 | `LOG` / `LOG_FILE` | `1` / – | verbosity 0–3, output file |
 | `DUMP` / `DUMP_FRAMES` | – / `24` | write the presented frames (PPM) into a directory |
 | `SHARED_QUEUE` | `0` | force sharing the game's queue (testing) |
+| `SYNC_PRESENT` | `0` | block the game's present call until the worker presented the frame (compatibility test) |
+| `HIDE_PRESENT_EXT` | `1` | hide the present-timing extensions (`swapchain_maintenance1`, `present_id`/`present_wait`) from the game: they would target the real swapchain, and VKD3D-Proton hangs otherwise |
+| `CAPTURE_HDR` | `auto` | Windows capture app: `auto` captures in scRGB HDR when the game's display is in HDR mode, `0` always SDR, `1` HDR if possible |
 
 ### Per-game settings
 

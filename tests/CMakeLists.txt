@@ -40,6 +40,11 @@ if(Python3_Interpreter_FOUND)
       set_tests_properties(formats PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
     endif()
   endif()
+  if(TARGET bdex_offline)
+    # The GUI, the launcher and the README name only options the engine
+    # knows, and the README documents all of them (no GPU, no numpy).
+    add_test(NAME option_keys COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_option_keys.py" "${CMAKE_BINARY_DIR}")
+  endif()
 endif()
 
 # End-to-end: runs the demo through the layer and checks the output frame

@@ -144,6 +144,14 @@ désactivent l'auto-tune. Voir `Config` dans `layer/src/config.h` pour la liste
 complète (multiplier 1-4, render_scale, upscale_filter, sharpness, scene cut
 0.05/0.09, overlay, debug=flow|split|passthrough, dump PPM…).
 
+**Ajouter une option** (depuis le 2026-09-25) : le membre dans `Config`,
+puis **une ligne** dans le registre `registry()` de `config.cpp` (`B`/`I`/`F` :
+clé, alias, bornes, `kLive` si relue à chaque image sans dimensionner de
+ressource, colonne `Tune` si `online_tune` peut l'essayer). Une syntaxe
+spéciale va dans `Config::apply` + `kCustomKeys`. Le test `option_keys`
+exige ensuite la clé dans le tableau du README et refuse toute clé inconnue
+dans la GUI / le launcher.
+
 ## 8. Produit Windows capture — architecture et pièges hardware
 
 Chaîne : `GraphicsCaptureItem` (WGC) → frame pool free-threaded → ring de 3

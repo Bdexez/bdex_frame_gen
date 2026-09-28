@@ -205,6 +205,15 @@ void check(VkResult r, const char* what) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    // --list-options [--canonical]: every configuration key the engine
+    // understands, aliases included unless --canonical (for
+    // tests/test_option_keys.py), no GPU needed.
+    for (int i = 1; i < argc; ++i)
+        if (std::string(argv[i]) == "--list-options") {
+            const bool canonical = i + 1 < argc && std::string(argv[i + 1]) == "--canonical";
+            for (const std::string& k : Config::optionKeys(!canonical)) printf("%s\n", k.c_str());
+            return 0;
+        }
     if (argc < 3) {
         fprintf(stderr, "usage: %s <in_dir> <out_dir> [--multiplier N] [--format F] [--colorspace C] [--render-scale S] [--gpu I] [--max-inputs N]\n", argv[0]);
         return 2;
