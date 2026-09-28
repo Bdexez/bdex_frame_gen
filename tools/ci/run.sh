@@ -4,6 +4,7 @@
 # change can be checked before pushing:
 #   tools/ci/run.sh            # the "build" job (tests, f2cec5f invariant, PSNR gates)
 #   tools/ci/run.sh asan|tsan  # one "sanitizers" job
+#   tools/ci/run.sh mingw      # the Windows C++ with MinGW, x64 and 32-bit x86 (catches Win32-only errors)
 #   BDEX_CI_CPUS=4 tools/ci/run.sh ...  # with a GitHub runner's CPU count
 # Needs Docker. Works on a copy of the working tree (tracked + untracked files).
 set -euo pipefail
@@ -11,6 +12,13 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 job="${1:-build}"
 work="$(mktemp -d)"
 trap 'docker run --rm -v "$work:/work" bdex-ci:24.04 rm -rf /work/src /work/baseline >/dev/null 2>&1; rm -rf "$work"' EXIT
+if [ "$job" = mingw ]; then
+  docker build -q -t bdex-ci-mingw:24.04 "$ROOT/tools/ci/mingw" >/dev/null
+  mkdir -p "$work/src"
+  (cd "$ROOT" && git ls-files -co --exclude-standard | grep -v '^build' | tar -cf - -T - | tar -xf - -C "$work/src")
+  exec docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$work:/work" bdex-ci-mingw:24.04 \
+    bash /work/src/tools/ci/mingw/check.sh
+fi
 docker build -q -t bdex-ci:24.04 "$ROOT/tools/ci" >/dev/null
 mkdir -p "$work/src" "$work/baseline"
 (cd "$ROOT" && git ls-files -co --exclude-standard | grep -v '^build' | tar -cf - -T - | tar -xf - -C "$work/src")
