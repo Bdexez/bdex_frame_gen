@@ -3,6 +3,8 @@
 add_executable(bdex_offline
   bdex_offline.cpp
   ../../layer/src/framegen.cpp
+  ../../layer/src/framegen_tune.cpp
+  ../../layer/src/framegen_output.cpp
   ../../layer/src/device.cpp
 )
 add_dependencies(bdex_offline bdex_layer_shaders)

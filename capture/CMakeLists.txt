@@ -14,6 +14,8 @@ add_executable(bdex_capture
   # depend on bdex_core and the generated shaders.h. platform.cpp joins for
   # platformConfigPath() (the launcher's config-file save).
   ../layer/src/framegen.cpp
+  ../layer/src/framegen_tune.cpp
+  ../layer/src/framegen_output.cpp
   ../layer/src/device.cpp
   ../layer/src/platform.cpp
 )
