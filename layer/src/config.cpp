@@ -184,6 +184,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "extrapolate_accel")           return parseFloat(value, extrapolateAccel, 0.f, 1.f);
     if (key == "flow_temporal")               return parseFloat(value, flowTemporal, 0.f, 1.f);
     if (key == "online_tune")                 return parseBool(value, onlineTune);
+    if (key == "upscale_temporal")            return parseFloat(value, upscaleTemporal, 0.f, 0.95f);
     if (key == "frame_timing")                return parseBool(value, frameTiming);
     if (key == "dedup")                       return parseBool(value, dedup);
     if (key == "paused" || key == "pause")    return parseBool(value, paused);
@@ -384,6 +385,7 @@ std::string Config::describe() const {
     if (extrapolateAccel > 0.f) o << " extrapolate_accel=" << extrapolateAccel;
     if (flowTemporal > 0.f) o << " flow_temporal=" << flowTemporal;
     if (onlineTune) o << " online_tune=1";
+    if (upscaleTemporal > 0.f) o << " upscale_temporal=" << upscaleTemporal;
     if (targetFps != 0.f) o << " target_fps=" << (targetFps < 0.f ? std::string("auto") : std::to_string(targetFps));
     if (fpsLimit != 0.f) o << " fps_limit=" << (fpsLimit < 0.f ? std::string("auto") : std::to_string(fpsLimit));
     if (gpuBudget > 0.f) o << " gpu_budget=" << gpuBudget;

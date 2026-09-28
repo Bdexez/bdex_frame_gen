@@ -255,6 +255,19 @@ x2/x3/x4), sauf le correctif HDR (les chemins SDR restent identiques).
   qui force `packReal_`). Les formules de t retombent exactement sur i/m à
   cadence régulière (écrites « i/m + correction »).
 - **`scene_cut_local`** : grille 8×8 dans `reduce_cost` (groupes 1..64).
+- **`upscale_temporal`** (2026-09-25) : `upscale_temporal.comp` écrit
+  `taaHist_[h]` (rgba16f, taille écran, ping-pong) une fois par image
+  (`recordTemporalUpscale`, appelé par la 1re synthèse ou par
+  `recordUpscaleReal` ; `frame_` compté dans `recordAcquireSources`, seul
+  appel présent dans tous les chemins, y compris pause). L'image réelle est
+  empaquetée 1:1 depuis l'historique ; les synthèses lisent
+  `dsInterpTaa_` (historiques précédent/courant) — `interpolate.comp` est
+  indépendant de la taille des sources. Mesure : le gain vient surtout de
+  la synthèse depuis l'upscale ; l'accumulation sans jitter du jeu et avec
+  un flux entier floute (poids 0,5 : −0,6 à −1,6 dB). Test aller-retour du
+  flux indispensable (bords : jusqu'à −4 dB sans).
+- **SSIM de `eval_sequence.py`** : corrigé le 2026-09-25 (sommes float64) ;
+  les SSIM antérieurs sur les replays pleine taille (demoN…) étaient faux.
 - **`online_tune`** (2026-09-25) : `self_eval.comp` au début de
   `recordFlow` (avant que le matching ne réécrive le flow) note le flow
   précédent sur l'image qui arrive (prédiction à vitesse constante vs

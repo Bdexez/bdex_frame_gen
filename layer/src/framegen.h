@@ -227,6 +227,22 @@ private:
     uint32_t tuneTag_ = 0;                    // tag of the flow in the flow images
     bool tuneTagValid_ = false;
     std::vector<std::pair<std::string, std::string>> tuneOverrides_;  // this frame's trial settings
+
+    // upscale_temporal (upscale_temporal.comp): the real frame upscaled and
+    // accumulated along the flow into a display-size history (ping-pong),
+    // which the real frame's output and the generated frames then sample.
+    void recordTemporalUpscale(VkCommandBuffer cmd, uint32_t cur);
+    bool taa_ = false;
+    Pass taaPass_;
+    AllocatedImage taaHist_[2];
+    std::vector<VkDescriptorSet> dsTaa_;          // [source * 2 + h]: writes taaHist_[h]
+    VkDescriptorSet dsUpscaleTaa_[2] = {};        // the real frame's output from taaHist_[h]
+    std::vector<VkDescriptorSet> dsInterpTaa_;    // [h * outputs + output]: prev taaHist_[1-h], cur taaHist_[h]
+    uint64_t frame_ = 0;                          // bumped by recordAcquireSources
+    uint64_t flowFrame_ = ~0ull;                  // frame whose recordFlow ran
+    uint64_t taaFrame_ = ~0ull;                   // frame whose history was written
+    uint32_t taaH_ = 0;                           // history written last
+    bool taaPrevValid_ = false;                   // taaHist_[1 - taaH_] holds the previous frame
     bool chroma_ = false;                         // chroma pyramid built (chroma_weight > 0 at creation)
     AllocatedImage chromaDummy_;                  // bound to the matcher's chroma slots when chroma_ is off
     std::vector<VkDescriptorSet> dsChromaSrc_[2]; // [parity] per source (level 0)

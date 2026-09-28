@@ -41,6 +41,8 @@ essai sur de vrais jeux :
 - [ ] `frame_timing` : gagnant sur un jeu à pas variable, −0,6 dB au pire sur
   pas fixe — à trancher par jeu (profil) ;
 - [ ] `extrapolate_accel` (extrapolation) : caméra qui accélère +1 à +2,7 dB ;
+- [ ] `upscale_temporal=0.05` avec `render_scale=0.5` : vérifier en jeu
+  (netteté des images générées, fantômes autour des HUD) ;
 - [ ] `online_tune=1` : vérifier les décisions sur de vrais jeux (journal
   `online_tune:`) et leur cohérence d'une session à l'autre ; le critère
   (prédiction de l'image suivante) note le mouvement, pas le scintillement ;

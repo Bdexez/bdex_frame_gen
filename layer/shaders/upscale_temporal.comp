@@ -1,0 +1,107 @@
+#version 450
+// Temporal upscaling (upscale_temporal), for render_scale < 1: the real frame
+// is upscaled spatially as by upscale.comp, then blended with the previous
+// upscaled frame carried along the motion the frame generation measured —
+// an accumulation like TAA upscalers, without the game's help (no jitter,
+// no depth, no engine motion vectors). Moving content brings samples of
+// other sub-pixel phases, which the accumulation turns into detail and
+// steadier edges; static content keeps its spatial upscale.
+//
+// Ghosting is held back as in TAA: the carried colour is clamped to the
+// range of the current frame's 3x3 source neighbourhood (mean +- 1.25
+// standard deviations, within its min/max), content from outside the
+// picture or across a scene cut has no history, nor content whose motion is
+// not confirmed by the forward flow (the forward vector at the previous
+// position must lead back: at picture borders and occlusions the matching
+// is wrong, and a textured neighbourhood is too wide a box to catch it),
+// and a repeated game frame (dedup) carries without motion. The result goes to a display-size
+// history image, which the real frame and the generated frames then read.
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0) uniform sampler2D srcTex;    // current real frame (render size)
+layout(binding = 1) uniform sampler2D histPrev;  // previous history (display size)
+layout(binding = 2) uniform sampler2D flowBwd;   // this pair's backward flow, finest level
+layout(binding = 3, rgba16f) uniform writeonly image2D histOut;
+layout(binding = 5) uniform sampler2D flowFwd;   // this pair's forward flow, finest level
+layout(std430, binding = 4) readonly buffer State {
+    float meanCost;  // scene-cut cost (reduce_cost.comp)
+    uint dup;        // the frame repeats the previous one (frame_state.comp)
+} st;
+
+layout(push_constant) uniform PC {
+    ivec2 outSize;
+    ivec2 srcSize;
+    vec2 flowInvSize;  // display pixels -> flow texture coordinates
+    float flowScale;   // flow units -> display pixels
+    float weight;      // history weight (0..1)
+    float cutLow;      // scene cut: no history above cutHigh, full below cutLow
+    float cutHigh;
+    int filterMode;    // 0 bilinear, 1 Catmull-Rom, 2 Lanczos-2
+    int hasHistory;    // histPrev holds the previous frame and the flow is this pair's
+    int useDup;        // st.dup is this frame's
+} pc;
+
+float cubic(float x) {
+    x = abs(x);
+    if (x < 1.0) return ((1.5 * x - 2.5) * x) * x + 1.0;
+    if (x < 2.0) return ((-0.5 * x + 2.5) * x - 4.0) * x + 2.0;
+    return 0.0;
+}
+const float PI = 3.14159265358979;
+float sinc(float x) { return x == 0.0 ? 1.0 : sin(PI * x) / (PI * x); }
+float lanczos2(float x) { x = abs(x); return x < 2.0 ? sinc(x) * sinc(0.5 * x) : 0.0; }
+
+// Separable 4x4 reconstruction at `sp` (texel-centre convention) of a
+// texture of `size` texels, with fetches on texel centres.
+vec4 resample(sampler2D tex, vec2 sp, ivec2 size, int mode) {
+    vec2 base = floor(sp);
+    vec2 f = sp - base;
+    vec2 inv = 1.0 / vec2(size);
+    vec4 acc = vec4(0.0);
+    float wsum = 0.0;
+    for (int dy = -1; dy <= 2; ++dy) {
+        float wy = mode == 2 ? lanczos2(float(dy) - f.y) : cubic(float(dy) - f.y);
+        for (int dx = -1; dx <= 2; ++dx) {
+            float w = (mode == 2 ? lanczos2(float(dx) - f.x) : cubic(float(dx) - f.x)) * wy;
+            acc += texture(tex, (base + vec2(dx, dy) + 0.5) * inv) * w;
+            wsum += w;
+        }
+    }
+    return acc / wsum;
+}
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, pc.outSize))) return;
+    vec2 uv = (vec2(p) + 0.5) / vec2(pc.outSize);
+    vec2 sp = uv * vec2(pc.srcSize) - 0.5;
+    vec4 c = pc.filterMode == 0 ? texture(srcTex, uv) : resample(srcTex, sp, pc.srcSize, pc.filterMode);
+
+    float w = pc.hasHistory != 0 ? pc.weight : 0.0;
+    if (w > 0.0) w *= 1.0 - smoothstep(pc.cutLow, pc.cutHigh, st.meanCost);
+    if (w > 0.0) {
+        bool repeat = pc.useDup != 0 && st.dup != 0u;
+        vec2 B = repeat ? vec2(0.0) : texture(flowBwd, (vec2(p) + 0.5) * pc.flowInvSize).xy;
+        vec2 hp = vec2(p) + 0.5 + B * pc.flowScale;  // where this content was in the previous frame
+        if (any(lessThan(hp, vec2(0.0))) || any(greaterThan(hp, vec2(pc.outSize)))) w = 0.0;
+        // Round trip in flow pixels (the flow is integer per block: one of slack).
+        if (!repeat) w *= 1.0 - smoothstep(0.75, 1.5, length(texture(flowFwd, hp * pc.flowInvSize).xy + B));
+        if (w > 0.0) {
+            vec4 h = resample(histPrev, hp - 0.5, pc.outSize, 1);
+            // Neighbourhood of the current frame around this position.
+            ivec2 s0 = ivec2(floor(sp + 0.5));
+            vec4 mn = vec4(1e30), mx = vec4(-1e30), m1 = vec4(0.0), m2 = vec4(0.0);
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx) {
+                    vec4 s = texelFetch(srcTex, clamp(s0 + ivec2(dx, dy), ivec2(0), pc.srcSize - 1), 0);
+                    mn = min(mn, s); mx = max(mx, s);
+                    m1 += s; m2 += s * s;
+                }
+            m1 /= 9.0;
+            vec4 sd = sqrt(max(m2 / 9.0 - m1 * m1, 0.0));
+            h = clamp(h, max(mn, m1 - 1.25 * sd), min(mx, m1 + 1.25 * sd));
+            c = mix(c, h, w);
+        }
+    }
+    imageStore(histOut, p, clamp(c, -65504.0, 65504.0));
+}

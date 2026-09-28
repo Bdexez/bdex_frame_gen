@@ -8,6 +8,23 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-25)
 
+- **`upscale_temporal` (opt-in): flow-guided temporal upscaling** for
+  `render_scale` < 1. A pass (`upscale_temporal.comp`) upscales the real
+  frame into a display-size rgba16f history (ping-pong) and blends in the
+  previous one carried along the backward flow, with TAA-style rejection
+  (3×3 neighbourhood clamp at mean ± 1.25σ, scene cut, off-picture, and a
+  forward/backward round-trip check — without it the wrong flow of
+  entering content smeared the border and cost up to 4 dB). The real
+  frame is packed from the history, and the generated frames are
+  synthesised from the two histories rather than from the small source
+  images. Measured at render scale 0.5 with `0.05`: +0.03 to +1.29 dB on
+  every sequence, flicker −30 % on the HUD scene; at 0.75 within ±0.1 dB
+  (HUD scene −0.13). Heavier accumulation loses (no camera jitter to
+  gather, integer flow). Default 0 byte-identical, with or without
+  upscaling; covered by the validation state runs.
+- `bdex_offline --score-real`: the real frames enter the manifest as the
+  engine outputs them, so `eval_sequence.py --offline-args "--render-scale
+  0.5 --score-real"` scores the upscaler too.
 - **`online_tune` (opt-in): per-game automatic choice of the motion
   options.** A new pass (`self_eval.comp`) rates the motion field on the
   game's own next frame: the previous pair's motion predicts it at
@@ -168,6 +185,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed (2026-09-25)
 
+- `eval_sequence.py`: SSIM was numerically wrong on large frames — the
+  integral images were summed in float32 (squared values reach ~1e11 on
+  2 Mpx), drowning the local variances in rounding noise: on the demo
+  replay `subpixel=1` showed SSIM −0.06 for a +0.10 dB PSNR gain; now
+  +0.0005. Summed in float64; earlier SSIM figures on full-size replays
+  (not the small corpus) are not reliable.
 - **Linux CI timeouts on slow runners.** GitHub's runners run lavapipe at
   ~2.4 fps under the sanitizers and the validation layers: the `offline`
   test (grown with the new schedule checks) passed its 120 s, the
