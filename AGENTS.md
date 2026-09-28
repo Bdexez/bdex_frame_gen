@@ -231,8 +231,9 @@ réintroduire) :
   Produit : `fps_limit`, `target_fps` (multiplicateur dynamique), `paused` +
   rechargement à chaud de la config, profils fournis `layer/profiles.conf`.
 - **Push constants** : plage de 96 octets (`kPushSize`), `static_assert` sur
-  `InterpPC`/`MatchPC`. Tout nouveau binding compte dans `createDescriptors`
-  (le pool sous-dimensionné donne VK_ERROR_OUT_OF_POOL_MEMORY → pass-through).
+  `InterpPC`/`MatchPC`. Depuis le 2026-09-25 les pools de descripteurs
+  s'ouvrent à la demande (`DescriptorPlanner`, enregistré par `makePass`) :
+  une passe déclare ses bindings et alloue, plus aucun total à tenir à jour.
 - **Bug corrigé** : tables globales jamais détruites (crash à la sortie des
   jeux sous Wayland quand le device n'est pas détruit).
 - **Tags** : v0.2.0+ ne sont plus ancêtres de `main` (réécriture d'historique).

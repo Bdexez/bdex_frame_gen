@@ -48,6 +48,7 @@ add_library(bdex_core STATIC
   src/vk_util.cpp
   src/budget.cpp
   src/online_tune.cpp
+  src/descriptor_planner.cpp
   src/display_clock.cpp
   src/status.cpp
 )

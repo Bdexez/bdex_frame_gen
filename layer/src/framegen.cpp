@@ -179,6 +179,7 @@ FrameGen::Pass FrameGen::makePass(const uint32_t* spv, size_t spvSize, const std
     li.bindingCount = static_cast<uint32_t>(b.size());
     li.pBindings = b.data();
     VK_CHECK(dev_.vt.CreateDescriptorSetLayout(dev_.device, &li, nullptr, &p.setLayout));
+    planner_.registerLayout(p.setLayout, bindings);
 
     VkPushConstantRange pcr{VK_SHADER_STAGE_COMPUTE_BIT, 0, kPushSize};
     VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
@@ -396,9 +397,22 @@ void FrameGen::createResources() {
     });
 }
 
+// Sets come from pools opened on demand: a pass declares its bindings
+// (makePass) and allocates, nothing counts the totals by hand.
 VkDescriptorSet FrameGen::allocSet(VkDescriptorSetLayout layout) {
+    std::vector<VkDescriptorPoolSize> sizes;
+    uint32_t maxSets = 0;
+    if (planner_.plan(layout, sizes, maxSets)) {
+        VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        pi.maxSets = maxSets;
+        pi.poolSizeCount = static_cast<uint32_t>(sizes.size());
+        pi.pPoolSizes = sizes.data();
+        VkDescriptorPool pool = VK_NULL_HANDLE;
+        VK_CHECK(dev_.vt.CreateDescriptorPool(dev_.device, &pi, nullptr, &pool));
+        pools_.push_back(pool);
+    }
     VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-    ai.descriptorPool = pool_;
+    ai.descriptorPool = pools_.back();
     ai.descriptorSetCount = 1;
     ai.pSetLayouts = &layout;
     VkDescriptorSet set = VK_NULL_HANDLE;
@@ -432,37 +446,6 @@ void FrameGen::createDescriptors() {
     const uint32_t L = static_cast<uint32_t>(levels_);
     const uint32_t O = outputs_;
     const uint32_t N = static_cast<uint32_t>(sources_.size());
-    const uint32_t nInterp = N * N * O;
-    const uint32_t gen = O > 0 ? 1 : 0;           // generation descriptor sets exist only with outputs
-    const uint32_t up = packReal_ ? N : 0;        // one upscale/copy set per source
-    const uint32_t cas = sharpen_ ? O + 1 : 0;    // one CAS set per generated output, plus the real frame
-    const uint32_t nReal = dupReal_ ? N * N : 0;  // extrapolated replacements of repeated real frames
-    const uint32_t nChroma = chroma_ ? 2 * N + 2 * L : 0;  // chroma pyramid sets (like the luma ones)
-    const uint32_t nSets = gen * (2 * N + 2 * L + 4 * L + 2 * L + 4 * L + 1 + nInterp + 1 + 1 + 2 + 2) + nReal + nChroma + up + cas;  // + splat, state, temporal
-    // Block-match sets (2 parities x 2 directions x L) hold two samplers each:
-    // the coarse prediction and the previous backward flow (temporal prediction).
-    // Block-match sets also hold the two chroma samplers (a dummy when off).
-    const uint32_t nCIS = gen * (2 * N + 2 * L + 4 * L * 4 + 5 * nInterp + 3 + 2 + 6 + 6) + 5 * nReal + nChroma + up + cas;  // + splat flows, state lumas, temporal
-    const uint32_t nSI = gen * (2 * N + 2 * L + 4 * L * 4 + 2 * L * 2 + 4 * L * 5 + 1 + nInterp * 2 + 1 + 4) + 2 * nReal + nChroma + up + cas;  // interp + splat map + temporal
-    const uint32_t nSB = gen * (1 + nInterp + 1 + 1 + 2) + nReal;  // reduce, interp, splat, state, self-eval
-    // upscale_temporal: 2N accumulation sets (4 samplers, the history, the
-    // state), 2 output sets, 2 * O synthesis sets sampling the history.
-    const uint32_t tN = taa_ ? 2 * N : 0, tO = taa_ ? 2 * O : 0, tU = taa_ ? 2 : 0;
-    std::vector<VkDescriptorPoolSize> sizes;
-    if (nCIS) sizes.push_back({VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nCIS});
-    if (nSI) sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nSI});
-    if (nSB) sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nSB});
-    VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    for (auto& sz : sizes) {
-        if (sz.type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) sz.descriptorCount += 4 * tN + tU + 5 * tO;
-        if (sz.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) sz.descriptorCount += tN + tU + 2 * tO;
-        if (sz.type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) sz.descriptorCount += tN + tO;
-    }
-    pi.maxSets = nSets + tN + tU + tO;
-    pi.poolSizeCount = static_cast<uint32_t>(sizes.size());
-    pi.pPoolSizes = sizes.data();
-    VK_CHECK(dev_.vt.CreateDescriptorPool(dev_.device, &pi, nullptr, &pool_));
-
     const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     const VkDescriptorType SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
 
@@ -644,8 +627,9 @@ void FrameGen::createDescriptors() {
 void FrameGen::destroyAll() {
     auto& vt = dev_.vt;
     VkDevice d = dev_.device;
-    if (pool_) vt.DestroyDescriptorPool(d, pool_, nullptr);
-    pool_ = VK_NULL_HANDLE;
+    for (VkDescriptorPool pool : pools_) vt.DestroyDescriptorPool(d, pool, nullptr);
+    pools_.clear();
+    planner_.reset();
     for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_, &splat_, &frameState_, &downChroma_, &temporal_, &selfEval_, &taaPass_}) {
         if (p->pipeline) vt.DestroyPipeline(d, p->pipeline, nullptr);
         if (p->layout) vt.DestroyPipelineLayout(d, p->layout, nullptr);

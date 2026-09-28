@@ -126,6 +126,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed (2026-09-25)
 
+- **Descriptor pools sized by construction.** `FrameGen` no longer keeps
+  hand-written totals of every pass's descriptors (each optional pass had to
+  add its sets to three formulas, and an undersized pool failed the
+  creation and left the swapchain in pass-through): `makePass` registers
+  what a set of its layout holds, and `allocSet` opens pools on demand
+  through `DescriptorPlanner` (unit-tested). Output byte-identical.
 - **Capture app: frame timing from the compositor's timestamps.** The
   capture interval (pacing, HUD) and the content interval (`frame_timing`,
   `dedup`) were measured when the capture thread dequeued each frame,
