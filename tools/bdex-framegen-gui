@@ -112,6 +112,12 @@ SECTIONS = [
                "(VKD3D-Proton) qui se figent ; ajoute de la latence."),
     ]),
     ("motion", "Qualité du mouvement", "Stabilité, contours, sous-pixel, coupures de scène…", True, [
+        switch("online_tune", "Réglage automatique par jeu",
+               "Pendant les premières secondes de jeu, essaie les options de mouvement ci-dessous (stabilité "
+               "adaptée au contraste, prédiction temporelle, sous-pixel en extrapolation, stabilisation "
+               "temporelle) en les comparant sur le jeu lui-même, garde celles qui prédisent mieux l'image "
+               "suivante, et s'en souvient pour ce jeu. Les options réglées à la main ne sont pas touchées. "
+               "Pris en compte au lancement du jeu."),
         spin("zero_bias_contrast", "Stabilité adaptée au contraste",
              "Rend la stabilité de l'image fixe relative au contraste : supprime les fondus fantômes sur les "
              "décors doux en mouvement rapide, sans déstabiliser le HUD. 0 = désactivé ; recommandé 0,1.",

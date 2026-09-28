@@ -82,6 +82,10 @@ TEST(config_apply_values) {
     CHECK(c.apply("DEDUP", "on") && c.dedup);
     CHECK(!c.sceneCutLocal && c.apply("scene_cut_local", "1") && c.sceneCutLocal);
     CHECK(c.apply("extrapolate_accel", "0.5") && c.extrapolateAccel == 0.5f);
+    CHECK(c.apply("flow_temporal", "1") && c.flowTemporal == 1.f);
+    CHECK(c.apply("flow_temporal", "2") && c.flowTemporal == 1.f);  // clamped
+    CHECK(c.apply("online_tune", "1") && c.onlineTune);
+    CHECK(c.describe().find(" online_tune=1") != std::string::npos);
     CHECK(c.apply("chroma_weight", "1") && c.chromaWeight == 1.f);
     CHECK(c.apply("gpu_budget", "0.3") && c.gpuBudget == 0.3f);
     CHECK(c.apply("target_fps", "auto") && c.targetFps < 0.f);
@@ -271,4 +275,10 @@ TEST(config_expand_log_file) {
     if (const char* h = std::getenv("HOME"))
         CHECK(platformExpandPath("~/bdex-fg.log") == std::string(h) + "/bdex-fg.log");
 #endif
+}
+
+TEST(config_tune_name) {
+    // The online_tune cache key: the game a capture runs for, else this process.
+    CHECK(Config::load("C:\\Games\\Skyrim.exe").tuneName == "skyrim");
+    CHECK(!Config::load().tuneName.empty());
 }
