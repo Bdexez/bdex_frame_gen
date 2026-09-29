@@ -8,6 +8,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-25)
 
+- **`online_tune` rates stability too.** The self-evaluation also sums the
+  flow's change from one pair to the next for the same content, relative to
+  the motion; an option is kept for a prediction gain that does not
+  destabilise the flow (+5 % at most), or for a clearly steadier flow
+  (−10 %) that does not hurt the prediction. The prediction error alone
+  cannot see flicker: `flow_temporal`, which lowers it, was always dropped;
+  on the demo it is now kept (flow change −16 %). Decisions and caches carry
+  the stability (older caches still read).
 - **`hud_mask` (opt-in): learned static-overlay mask.** An `FgPass`
   (`hud_mask.comp`) counts per render pixel the real frames it stayed
   unchanged while the camera moved; past the threshold (24 advised) every

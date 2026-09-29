@@ -68,7 +68,8 @@ uint32_t OnlineTune::nextFlow(std::vector<std::pair<std::string, std::string>>& 
     return tag;
 }
 
-void OnlineTune::addSample(uint32_t tag, double mcSum, double zeroSum, double count) {
+void OnlineTune::addSample(uint32_t tag, double mcSum, double zeroSum, double count, double flowChange,
+                           double flowMagnitude, double flowCount) {
     if (tag & kSkip || !(count > 0.0)) return;
     std::lock_guard<std::mutex> lock(mutex_);
     const size_t cand = (tag >> 24) & 0x7f;
@@ -81,6 +82,11 @@ void OnlineTune::addSample(uint32_t tag, double mcSum, double zeroSum, double co
     b.mc += mcSum;
     b.zero += zeroSum;
     ++b.samples;
+    if (flowCount > 0.0) {
+        b.change += flowChange;
+        b.magnitude += flowMagnitude;
+        b.flowSamples += flowCount;
+    }
     decideLocked();
 }
 
@@ -88,7 +94,7 @@ void OnlineTune::decideLocked() {
     // Complete pairs: both blocks over (the trial has moved past them) and
     // with enough frames in motion.
     const int minSamples = kBlockFrames / 2;
-    std::vector<double> gains;
+    std::vector<double> gains, steadier;
     for (size_t p = 0; p + 1 < blocks_.size(); p += 2) {
         const Block& a = blocks_[p];
         const Block& b = blocks_[p + 1];
@@ -101,15 +107,32 @@ void OnlineTune::decideLocked() {
         // relative changes of a near-perfect prediction are noise that
         // looks large (0.003 -> 0.006 is +100 % and invisible).
         gains.push_back(rOff - rOn);
+        // Stability: the mean change relative to the motion (+1 flow pixel,
+        // so still content does not divide by zero).
+        if (off.flowSamples > 0.0 && onb.flowSamples > 0.0) {
+            const double sOff = off.change / (off.magnitude + off.flowSamples);
+            const double sOn = onb.change / (onb.magnitude + onb.flowSamples);
+            if (sOff > 0.0) steadier.push_back((sOff - sOn) / sOff);
+        }
     }
     if (int(gains.size()) < kPairs) return;
     double mean = 0.0;
     int positive = 0;
     for (double g : gains) { mean += g; positive += g > 0.0; }
     mean /= double(gains.size());
+    double stab = 0.0;
+    int steadierPairs = 0;
+    for (double g : steadier) { stab += g; steadierPairs += g > 0.0; }
+    const bool measuredStability = int(steadier.size()) * 2 >= kPairs;
+    if (!steadier.empty()) stab /= double(steadier.size());
     Decision& d = decisions_[current_];
     d.gain = mean;
-    d.kept = mean >= kMinGain && positive * 4 >= int(gains.size()) * 3;
+    d.stability = measuredStability ? stab : 0.0;
+    const bool predicts = mean >= kMinGain && positive * 4 >= int(gains.size()) * 3 &&
+                          (!measuredStability || stab >= -kMaxStabilityLoss);
+    const bool steadies = measuredStability && stab >= kMinStability &&
+                          steadierPairs * 4 >= int(steadier.size()) * 3 && mean >= -kMinGain / 2;
+    d.kept = predicts || steadies;
     decided_[current_] = true;
     advanceLocked();
 }
@@ -127,7 +150,7 @@ std::string OnlineTune::serialize() const {
     for (size_t i = 0; i < decisions_.size(); ++i)
         if (decided_[i])
             o << decisions_[i].key << ' ' << decisions_[i].value << ' ' << (decisions_[i].kept ? "kept" : "dropped")
-              << ' ' << decisions_[i].gain << '\n';
+              << ' ' << decisions_[i].gain << ' ' << decisions_[i].stability << '\n';
     return o.str();
 }
 
@@ -141,12 +164,15 @@ bool OnlineTune::deserialize(const std::string& text) {
         std::string key, value, verdict;
         double gain = 0.0;
         if (!(l >> key >> value >> verdict >> gain)) continue;
+        double stability = 0.0;
+        l >> stability;  // absent in caches from before the stability measure
         if (verdict != "kept" && verdict != "dropped") continue;
         for (size_t i = 0; i < candidates_.size(); ++i) {
             // A cached verdict for another trial value does not apply.
             if (candidates_[i].key != key || candidates_[i].value != value) continue;
             decisions_[i].kept = verdict == "kept";
             decisions_[i].gain = gain;
+            decisions_[i].stability = stability;
             decided_[i] = true;
             any = true;
         }
@@ -165,9 +191,14 @@ std::string OnlineTune::summary() const {
     for (size_t i = 0; i < decisions_.size(); ++i) {
         if (!decided_[i]) continue;
         // The gain is a decrease of the error: shown as the error change.
-        snprintf(buf, sizeof(buf), "%s%s=%s %s (%+.1f %%)", out.empty() ? "" : ", ", decisions_[i].key.c_str(),
+        snprintf(buf, sizeof(buf), "%s%s=%s %s (%+.1f %%", out.empty() ? "" : ", ", decisions_[i].key.c_str(),
                  decisions_[i].value.c_str(), decisions_[i].kept ? "kept" : "dropped", -100.0 * decisions_[i].gain);
         out += buf;
+        if (decisions_[i].stability != 0.0) {
+            snprintf(buf, sizeof(buf), ", flow change %+.0f %%", -100.0 * decisions_[i].stability);
+            out += buf;
+        }
+        out += ")";
     }
     return out;
 }
