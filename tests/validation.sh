@@ -52,14 +52,19 @@ status=0
 # "probe": online_tune's synthesis probe (flow copies, composed flows, a
 # synthesis of its own, the comparison), from the primed cache above.
 for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hybrid:state extrapolate:direct \
-           interpolate:async extrapolate:async interpolate:probe extrapolate:probe hybrid:adaptive; do
+           interpolate:async extrapolate:async interpolate:probe extrapolate:probe hybrid:adaptive interpolate:x8; do
   mode=${run%%:*}
+  mult=3
   output="BDEX_FG_RENDER_SCALE=0.75 BDEX_FG_SHARPNESS=0.5 BDEX_FG_HUD=2"
   if [ "$run" = extrapolate:direct ]; then
     state=""; demo_args="--frames 90 --duration 40"; output="BDEX_FG_HUD=0"
   elif [ "${run#*:}" = probe ]; then
     state="BDEX_FG_ONLINE_TUNE=1 BDEX_FG_CACHE_DIR=$TUNE_CACHE BDEX_FG_HUD_MASK=24"; demo_args="--frames 120 --duration 40"
     output="BDEX_FG_RENDER_SCALE=0.75 BDEX_FG_HUD=2"
+  elif [ "${run#*:}" = x8 ]; then
+    # Eight frames a present: more than most surfaces let the worker hold
+    # acquired at once, so part of them go through the staging images.
+    state=""; mult=8; demo_args="--frames 40 --duration 40"
   elif [ "${run#*:}" = adaptive ]; then
     # 30 fps into 75: 2, 3, 2, 3... frames a game frame, one output period apart.
     state="BDEX_FG_ADAPTIVE=1 BDEX_FG_TARGET_FPS=75"; demo_args="--frames 60 --duration 40"
@@ -75,7 +80,7 @@ for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hy
   fi
   env $state $output VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation \
   VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true BDEX_FG=1 BDEX_FG_CONFIG=/dev/null BDEX_FG_LOG=2 \
-  BDEX_FG_MODE=$mode BDEX_FG_MULTIPLIER=3 \
+  BDEX_FG_MODE=$mode BDEX_FG_MULTIPLIER=$mult \
   BDEX_FG_ZERO_BIAS_CONTRAST=0.1 BDEX_FG_SUBPIXEL=1 BDEX_FG_PIXEL_VECTORS=1 BDEX_FG_EXTRAPOLATE_SPLAT=1 \
   BDEX_FG_TEMPORAL_PREDICTION=1 BDEX_FG_STATIC_GUARD=1 BDEX_FG_OCCLUSION_STRENGTH=1 \
     timeout 120 "$DEMO" --fps 30 --deterministic $demo_args >"$LOG" 2>&1

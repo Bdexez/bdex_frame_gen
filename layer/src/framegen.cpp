@@ -626,6 +626,8 @@ void FrameGen::destroyAll() {
     hasStaticMask_ = false;
     synthSets_.clear();
     if (outReal_.image) dev_.destroyImage(outReal_);
+    for (auto& s : stage_) dev_.destroyImage(s);
+    stage_.clear();
     for (auto& s : sharp_) dev_.destroyImage(s);
     sharp_.clear();
     if (sharpReal_.image) dev_.destroyImage(sharpReal_);
@@ -865,7 +867,8 @@ void FrameGen::recordFrameState(VkCommandBuffer cmd, const FrameTiming& timing) 
                     static_cast<int32_t>(gateFull_.size() / 4),
                     // A few differing pixels (a blinking cursor, dithering) still count as a repeat.
                     std::max(4u, l0.size.width * l0.size.height / 16384u),
-                    {timing.displayMs[0], timing.displayMs[1], timing.displayMs[2], timing.displayMs[3]},
+                    {timing.displayMs[0], timing.displayMs[1], timing.displayMs[2], timing.displayMs[3],
+                     timing.displayMs[4], timing.displayMs[5], timing.displayMs[6], timing.displayMs[7]},
                     timing.realPos >= 0 ? timing.realPos : FrameOrder::of(*cfgp_, timing.multiplier).real};
     if (dedup) {
         vt.CmdFillBuffer(cmd, stateBuf_.buffer, kStateDiffCount, 4, 0);
@@ -1103,6 +1106,62 @@ void FrameGen::recordSynthesisImpl(VkCommandBuffer cmd, const Pass& pipe, VkDesc
     dispatch();
     // Make the previous output copy (worker submission) precede this overwrite.
     memoryBarrier(cmd);
+}
+
+void FrameGen::ensureStaging(uint32_t count) {
+    while (stage_.size() < count) {
+        AllocatedImage img = dev_.createImage(enc_.storageFormat, displayExtent_,
+                                              VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, false);
+        dev_.immediate([&](VkCommandBuffer cmd) {
+            VkImageMemoryBarrier b = imageBarrier(img.image, 0, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                                                  VK_IMAGE_LAYOUT_GENERAL);
+            dev_.vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr,
+                                       0, nullptr, 1, &b);
+        });
+        stage_.push_back(img);
+    }
+}
+
+void FrameGen::recordStage(VkCommandBuffer cmd, bool real, uint32_t output, uint32_t source, uint32_t slot) {
+    auto& vt = dev_.vt;
+    const VkImage dst = stage_[slot].image;
+    // The staging image's previous reader (its copy to a swapchain image)
+    // precedes this submission on the queue: an execution dependency.
+    VkImageMemoryBarrier pre[2];
+    uint32_t n = 0;
+    pre[n++] = imageBarrier(dst, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
+                            VK_IMAGE_LAYOUT_GENERAL);
+    VkImage src;
+    VkImageLayout srcLayout = VK_IMAGE_LAYOUT_GENERAL;
+    const bool fromSource = real && !packReal_;
+    if (fromSource) {  // the application's image, as recordCopySource
+        src = sources_[source].image;
+        srcLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        pre[n++] = imageBarrier(src, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                                VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    } else {           // written by the synthesis (queue order, or its semaphore)
+        src = real ? outReal_.image : out_[output].image;
+        pre[n++] = imageBarrier(src, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
+                                VK_IMAGE_LAYOUT_GENERAL);
+    }
+    vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
+                          n, pre);
+    VkImageCopy region{};
+    region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.extent = {displayExtent_.width, displayExtent_.height, 1};
+    vt.CmdCopyImage(cmd, src, srcLayout, dst, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+    if (fromSource) {
+        VkImageMemoryBarrier post = imageBarrier(src, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT,
+                                                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0,
+                              nullptr, 1, &post);
+    }
+}
+
+void FrameGen::recordCopyStaged(VkCommandBuffer cmd, uint32_t slot, VkImage dst) {
+    copyToPresent(cmd, stage_[slot].image, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_TRANSFER_WRITE_BIT,
+                  VK_PIPELINE_STAGE_TRANSFER_BIT, dst);
 }
 
 void FrameGen::recordCopyOutput(VkCommandBuffer cmd, uint32_t output, VkImage dst) {

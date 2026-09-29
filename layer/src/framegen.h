@@ -57,11 +57,11 @@ public:
         int realPos = -1;          // display position of the real frame (frame_order.h); -1 = from the mode
         bool reset = false;        // no usable previous frame (first frame, history lost)
         // Predicted display times (ms after the present call) of the
-        // generated outputs [0..2] and of the real frame [3], from the
+        // generated outputs [0..6] and of the real frame [7], from the
         // measured refresh grid; without it (haveDisplay false) the pacing's
         // nominal schedule is assumed.
         bool haveDisplay = false;
-        float displayMs[4] = {};
+        float displayMs[8] = {};
     };
     // Per-frame state pass (frame_state.comp): duplicate detection (dedup)
     // and the content-time t of every output (frame_timing, dedup). Call it
@@ -72,7 +72,7 @@ public:
     // has completed. Returns false when no state pass was recorded.
     struct State {
         uint32_t dup = 0;     // the frame repeated the previous one
-        float t[4] = {};      // t of each output slot, [3] = the real frame's slot
+        float t[8] = {};      // t of each output slot, [7] = the real frame's slot
         float intervalMs = 0; // content interval used
         uint32_t repeats = 0; // repeated frames detected since the output stage was built
     };
@@ -88,6 +88,15 @@ public:
     void collectMeanCost(uint32_t slot);
     // Copies output image `output` into `dst` (UNDEFINED -> PRESENT_SRC).
     void recordCopyOutput(VkCommandBuffer cmd, uint32_t output, VkImage dst);
+    // Staging for the worker (VirtualSwapchain::runJob): a frame of a present
+    // copied into an internal image right away, when the real swapchain
+    // cannot hand out an image for every frame at once, then from there to
+    // its swapchain image when it is presented. `real`: the real frame (the
+    // packed image, or source `source`), else generated output `output`.
+    // ensureStaging (application thread, between frames) allocates `count`.
+    void ensureStaging(uint32_t count);
+    void recordStage(VkCommandBuffer cmd, bool real, uint32_t output, uint32_t source, uint32_t slot);
+    void recordCopyStaged(VkCommandBuffer cmd, uint32_t slot, VkImage dst);
     // Copies source `src` (PRESENT_SRC) into `dst` (UNDEFINED -> PRESENT_SRC).
     // When upscaling, `dst` receives the upscaled real frame instead (prepared
     // by recordUpscaleReal in the synthesis command buffer).
@@ -206,13 +215,14 @@ private:
     std::vector<Level> levels_v_;
     std::vector<AllocatedImage> out_;
     AllocatedImage outReal_;  // upscaled real frame (display size, packed); only when upscaling_
+    std::vector<AllocatedImage> stage_;  // worker staging (ensureStaging), output storage format, display size
     std::vector<AllocatedImage> sharp_;  // linear rgba16f pre-sharpen, per output; only when sharpen_
     AllocatedImage sharpReal_;           // linear rgba16f pre-sharpen real frame; only when sharpen_
     uint32_t outputs_ = 0;
     AllocatedBuffer stateBuf_;  // frame state: scene-cut cost, content clock, t per output, gated dispatches
     std::vector<AllocatedBuffer> dumpBuf_;
     VkQueryPool queryPool_ = VK_NULL_HANDLE;
-    static constexpr uint32_t kProfileSlots = 12;  // application slots + worker slots
+    static constexpr uint32_t kProfileSlots = 20;  // application slots + worker slots
     // The worker thread collects its copy slots' timestamps while the
     // application thread collects and reports the others.
     std::mutex profileMutex_;

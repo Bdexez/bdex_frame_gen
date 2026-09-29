@@ -251,7 +251,7 @@ int main(int argc, char** argv) {
         else if (a == "--refresh-known") refreshKnown = true;
         else { fprintf(stderr, "unknown argument %s\n", a.c_str()); return 2; }
     }
-    if (mult < 2 || mult > 4) die("--multiplier must be 2, 3 or 4");
+    if (mult < 2 || mult > 8) die("--multiplier must be 2 to 8");
     if (!(jitter >= 0.0 && jitter < 1.0)) die("--jitter must be in [0, 1)");
     if (dupCount < 1 || dupCount > 8) die("--dup must be 1..8");
     const bool schedule = jitter > 0.0 || dupCount > 1 || spacing > 0.0 || refreshHz > 0.0;
@@ -485,7 +485,7 @@ int main(int argc, char** argv) {
             // grid (phase 0), where the layer's pacing puts it: frame k for
             // the refresh after present + I*k/m, frame 0 right after the GPU
             // work (1 ms). at[] is in input-frame units, relative to now.
-            double at[4] = {};
+            double at[8] = {};
             const int realIdx = order.real;
             if (refreshHz > 0.0 && generate) {
                 const double pu = 1000.0 / refreshHz / msPerFrame, now = sched[k].time;
@@ -496,7 +496,7 @@ int main(int argc, char** argv) {
                 }
                 if (refreshKnown) {  // what the layer passes once its present feedback knows the grid
                     timing.haveDisplay = true;
-                    timing.displayMs[3] = float(at[realIdx] * msPerFrame);
+                    timing.displayMs[7] = float(at[realIdx] * msPerFrame);
                     for (int i = 1; i < mult; ++i)
                         timing.displayMs[i - 1] = float(at[order.position(i - 1)] * msPerFrame);
                 }
@@ -603,7 +603,7 @@ int main(int argc, char** argv) {
                 FrameGen::State st;
                 if (verbose && fg.readState(st))
                     fprintf(stderr, "present %zu: content %zu time %.1f dup %u t %.3f %.3f %.3f real %.3f\n", k, fi,
-                            now, st.dup, st.t[0], st.t[1], st.t[2], st.t[3]);
+                            now, st.dup, st.t[0], st.t[1], st.t[2], st.t[7]);
             }
             prev = cur;
             parity ^= 1;

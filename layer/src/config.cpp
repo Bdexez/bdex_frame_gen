@@ -180,7 +180,7 @@ OptionDef F(const char* k, const char* a, float Config::*m, float lo, float hi, 
 const std::vector<OptionDef>& registry() {
     static const std::vector<OptionDef> defs = {
     B("enabled", "enable", &Config::enabled),
-    I("multiplier", "mult", &Config::multiplier, 1, 4),
+    I("multiplier", "mult", &Config::multiplier, 1, 8),
     I("levels", nullptr, &Config::levels, 1, 6),
     B("low_latency", "lowlatency", &Config::lowLatency),
     I("max_frame_latency", "frame_latency", &Config::maxFrameLatency, 0, 3, kLive),

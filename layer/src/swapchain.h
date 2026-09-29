@@ -73,7 +73,7 @@ private:
         // present of the job waits synthDone[k]); for a deferred synthesis the
         // game's semaphores are consumed on the presentation queue and passed
         // on to the real copy (realIn) and to the synthesis (synthIn).
-        VkSemaphore synthDone[4] = {};
+        VkSemaphore synthDone[8] = {};  // (fg::kMaxFrames)
         VkSemaphore realIn = VK_NULL_HANDLE, synthIn = VK_NULL_HANDLE;
         // async_compute, worker slots: signalled by the copy, waited by the
         // next synthesis before it overwrites the images the copy read.
@@ -135,8 +135,13 @@ private:
         bool real = false;               // the application's frame (else a generated one)
         VkFence fence = VK_NULL_HANDLE;  // the copy's submission: signalled once the frame is ready
     };
-    // Acquires a real image and submits the copy of frame `index` of the job.
-    VkResult submitCopy(const Job& job, int index, Copied& out);
+    // Acquires a real image and submits the copy of frame `index` of the job
+    // (from staging image `staged` when >= 0, see submitStage).
+    VkResult submitCopy(const Job& job, int index, Copied& out, int staged = -1);
+    // Copies frame `index` of the job into staging image `slot` at once: for
+    // the frames the real swapchain cannot give an image to yet (acquireAhead_).
+    VkResult submitStage(const Job& job, int index, uint32_t slot);
+    void prepareStaging();  // the staging images the current output stage may need
     // Presents a copied frame (present ids, feedback, statistics).
     VkResult presentCopied(const Job& job, const Copied& c);
     // The pacing origin: waits for the GPU to finish the submission of

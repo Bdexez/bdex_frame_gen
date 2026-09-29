@@ -170,7 +170,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("frames", help="directory of consecutive .ppm frames")
     ap.add_argument("--build", default=str(ROOT / "build"), help="build directory (default: ./build)")
-    ap.add_argument("--multiplier", type=int, default=2, choices=(2, 3, 4))
+    ap.add_argument("--multiplier", type=int, default=2, choices=range(2, 9))
     ap.add_argument("--variant", action="append", default=[],
                     help="KEY=VALUE[,KEY=VALUE...] BDEX_FG_* overrides to compare with the defaults (repeatable)")
     ap.add_argument("--exclude", action="append", default=[],

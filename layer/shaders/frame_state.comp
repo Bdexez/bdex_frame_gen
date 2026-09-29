@@ -49,7 +49,7 @@ layout(std430, binding = 2) buffer State {
     float interval;   // content interval between them (ms)
     uint repeats;     // repeated frames detected so far (statistics)
     float histDiff;   // scene_hist.comp: how far the brightness distribution moved (scene_cut_hist)
-    float t[4];       // per output slot; [3] = the real frame's slot (extrapolated duplicate)
+    float t[8];       // per output slot (up to 7 generated frames); [7] = the real frame's slot (extrapolated duplicate)
     float tileCost[64];
     uvec4 gateFull[24];     // dispatch size, w = 1: runs only on duplicates
     uint gateActive[72];    // VkDispatchIndirectCommand per entry
@@ -66,7 +66,7 @@ layout(push_constant) uniform PC {
     int flags;
     int gateCount;
     uint dupMaxPixels;   // at most this many differing pixels = a repeat
-    float displayMs[4];  // FLAG_DISPLAY: predicted display times of outputs 0..2 and the real frame [3]
+    float displayMs[8];  // FLAG_DISPLAY: predicted display times of outputs 0..6 and the real frame [7]
     int realPos;         // display position of the real frame among the m (frame_order.h): outputs before it are
                          // interpolated, those after it extrapolated (m-1 = interpolation, 0 = extrapolation)
 } pc;
@@ -135,7 +135,7 @@ void main() {
     float ageT = ageLast;
     if ((pc.flags & FLAG_CONTENT) == 0) { interval = I; ageT = 0.0; }
     int m = max(pc.multiplier, 1);
-    for (int i = 1; i < 4; ++i) {
+    for (int i = 1; i < 8; ++i) {
         float t = 0.0;
         // Output i (1-based) shows at display position j; before the real
         // frame it is interpolated, after it extrapolated (frame_order.h).
@@ -146,7 +146,7 @@ void main() {
                 // Each frame shows the content of its own display time: the
                 // real frame shows "now", so an output displayed d ms after
                 // it shows now + d (d < 0 before it, interpolation).
-                float d = pc.displayMs[i - 1] - pc.displayMs[3];
+                float d = pc.displayMs[i - 1] - pc.displayMs[7];
                 if (extrap) t = 1.0 + clamp((d + ageT) / interval, 0.0, 1.0);
                 else t = clamp(1.0 + (d + ageT) / interval, 0.0, 1.0);
             } else {
@@ -160,7 +160,7 @@ void main() {
         }
         st.t[i - 1] = t;
     }
-    st.t[3] = 1.0 + clamp(ageLast / interval, 0.0, 1.0);
+    st.t[7] = 1.0 + clamp(ageLast / interval, 0.0, 1.0);
     st.dup = dup ? 1u : 0u;
     if (dup) st.repeats += 1u;
     st.ageLast = ageLast;

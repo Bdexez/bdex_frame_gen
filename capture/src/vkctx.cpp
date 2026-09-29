@@ -647,8 +647,8 @@ int VkCtx::synthesize(const Capture::Frame& f, bool& consumed) {
         // own display time for its content time (frame_state.comp).
         const FrameOrder order = FrameOrder::of(cfg, mult);
         timing.haveDisplay = true;
-        timing.displayMs[3] = float(1.0 + periodMs * order.real);
-        for (int o = 0; o + 1 < mult && o < 3; ++o) timing.displayMs[o] = float(1.0 + periodMs * order.position(o));
+        timing.displayMs[7] = float(1.0 + periodMs * order.real);
+        for (int o = 0; o + 1 < mult && o < 7; ++o) timing.displayMs[o] = float(1.0 + periodMs * order.position(o));
     }
     fg_->recordFrameState(cb, timing);
     if (interpolate) {

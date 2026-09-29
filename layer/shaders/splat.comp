@@ -17,7 +17,7 @@ layout(binding = 1) uniform sampler2D flowBwd;  // cur -> prev
 layout(binding = 2, r32ui) uniform uimage2D splatMap;
 layout(std430, binding = 3) readonly buffer State {
     float meanCost; uint dup; uint diffCount; float ageLast; float agePrev; float interval; uint repeats; float histDiff;
-    float t[4];
+    float t[8];
 } st;
 layout(binding = 4) uniform sampler2D prevBwd;  // previous pair's backward flow (extrapolate_accel)
 
