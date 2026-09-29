@@ -630,6 +630,7 @@ void applyScopeToChoice(const std::vector<std::pair<std::string, std::string>>& 
         const std::string& k = p.first;
         const std::string v = lower(trim(p.second));
         if (k == "multiplier" || k == "mult") c.multiplier = std::clamp(toI(v, c.multiplier), 1, 4);
+        else if (k == "adaptive") c.adaptive = v == "1" || v == "true" || v == "on" || v == "yes";
         else if (k == "mode") {
             c.hybrid = v == "hybrid";
             c.extrapolate = !c.hybrid && v.rfind("interp", 0) != 0;  // else extrapolate
@@ -678,7 +679,7 @@ void fillFromChoice(Ui& ui) {
     for (int i = 1; i < static_cast<int>(std::size(kPresetVals)); ++i)
         if (c.preset == kPresetVals[i]) p = i;
     SendMessageW(ui.preset, CB_SETCURSEL, p, 0);
-    SendMessageW(ui.mult, CB_SETCURSEL, std::clamp(c.multiplier, 2, 4) - 2, 0);
+    SendMessageW(ui.mult, CB_SETCURSEL, c.adaptive ? 3 : std::clamp(c.multiplier, 2, 4) - 2, 0);
     SendMessageW(ui.mode, CB_SETCURSEL, c.extrapolate ? 0 : c.hybrid ? 2 : 1, 0);
     SendMessageW(ui.size, CB_SETCURSEL, c.fit ? 1 : (c.scale != 1.f ? 2 : 0), 0);
     wchar_t buf[32];
@@ -722,6 +723,7 @@ void fillFromChoice(Ui& ui) {
 void persist(const LaunchChoice& c) {
     std::vector<std::pair<std::string, std::string>> kv;
     kv.emplace_back("multiplier", std::to_string(c.multiplier));
+    kv.emplace_back("adaptive", c.adaptive ? "1" : "0");
     kv.emplace_back("mode", c.extrapolate ? "extrapolate" : c.hybrid ? "hybrid" : "interpolate");
     kv.emplace_back("upscale_filter",
                     kFilterVals[0] == c.filter ? "lanczos" : kFilterVals[1] == c.filter ? "bicubic" : "bilinear");
@@ -773,7 +775,9 @@ void gather(Ui& ui) {
     c.target = (was >= 0 && was < static_cast<int>(ui.windows.size())) ? ui.windows[was].hwnd
                                                                        : nullptr;
     const bool on = SendMessageW(ui.gen, BM_GETCHECK, 0, 0) == BST_CHECKED;
-    c.multiplier = on ? sel(ui.mult) + 2 : 1;
+    // « Adaptatif » (4th entry): up to x4, filling the monitor's refresh rate.
+    c.adaptive = on && sel(ui.mult) == 3;
+    c.multiplier = on ? (c.adaptive ? 4 : sel(ui.mult) + 2) : 1;
     c.preset = kPresetVals[sel(ui.preset)];
     c.extrapolate = sel(ui.mode) == 0;
     c.hybrid = sel(ui.mode) == 2;
@@ -942,7 +946,7 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
         for (const wchar_t* s : kPresets)
             SendMessageW(ui->preset, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
-        for (const wchar_t* s : {L"x2", L"x3", L"x4"})
+        for (const wchar_t* s : {L"x2", L"x3", L"x4", L"Adaptatif (fréquence de l'écran)"})
             SendMessageW(ui->mult, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
         for (const wchar_t* s : {L"Extrapolation (latence minimale)", L"Interpolation (défaut, moins d'artefacts)",
                                  L"Hybride (×3/×4 : latence divisée par 2 à 3)"})

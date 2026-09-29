@@ -649,8 +649,26 @@ int VirtualSwapchain::chooseMultiplier() {
     // auto: the refresh rate (measured, else the control panel's); unknown:
     // x2, the output a display is the least likely to overflow (auto usually
     // comes with multiplier = 4, the ceiling, not a choice).
-    const double target = cfg_.targetFps < 0.f ? displayHz() : double(cfg_.targetFps);
-    if (target <= 0.0) return cfg_.targetFps < 0.f ? std::min(2, maxMult) : maxMult;
+    // (adaptive without a target: the refresh rate, like auto)
+    const bool autoTarget = cfg_.targetFps < 0.f || (cfg_.adaptive && cfg_.targetFps == 0.f);
+    const double target = autoTarget ? displayHz() : double(cfg_.targetFps);
+    adaptivePeriodMs_ = 0.0;
+    if (target <= 0.0) return autoTarget ? std::min(2, maxMult) : maxMult;
+    if (cfg_.adaptive) {
+        // As many frames as fit at the target rate, the fraction carried over
+        // (50 fps on 144 Hz: 3, 3, 2, 3, 3, 2...), spaced one output period
+        // apart (the display's refresh when target_fps is auto): every
+        // refresh shows a new frame — the whole refresh rate, not the largest
+        // whole multiple under it (x2 = 100 fps there). Past the ceiling
+        // (the game too slow) or under one frame (faster than the target),
+        // nothing is carried.
+        adaptivePeriodMs_ = 1000.0 / target;
+        adaptiveAcc_ += frameIntervalMs_ / adaptivePeriodMs_;
+        const int n = std::clamp(static_cast<int>(adaptiveAcc_), 1, maxMult);
+        adaptiveAcc_ = std::clamp(adaptiveAcc_ - n, 0.0, 0.999);
+        if (n < 2) adaptivePeriodMs_ = 0.0;
+        return n;
+    }
     dynMult_ = dynamicMultiplier(dynMult_, target * frameIntervalMs_ / 1000.0, maxMult);
     return dynMult_;
 }
@@ -868,13 +886,23 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         // lands (the pacing presents frame k for the refresh after
         // start + I*k/m; frame 0 goes out as soon as the GPU work is done,
         // about now), so frame_timing places the content on real display times.
+        // Adaptive: the frames are one output period apart, not spread over
+        // the game's interval — they always need their display times (the
+        // fixed i/m would be wrong), predicted on the grid when it is known.
         double lastMs, periodMs;
-        if (interpolate && feedback_ && displayGrid(lastMs, periodMs)) {
+        const bool adaptive = interpolate && adaptivePeriodMs_ > 0.0;
+        const double spacing = adaptive ? adaptivePeriodMs_ : frameIntervalMs_ / mult;
+        const bool grid = interpolate && feedback_ && displayGrid(lastMs, periodMs);
+        if (grid || adaptive) {
             const double now = msOf(t0);
-            auto land = [&](double ms) { return lastMs + std::ceil((ms - lastMs) / periodMs) * periodMs; };
+            auto land = [&](double ms) {
+                return grid ? lastMs + std::ceil((ms - lastMs) / periodMs) * periodMs : ms;
+            };
             double at[4] = {};
-            for (int k = 0; k < mult && k < 4; ++k)
-                at[k] = (k == 0 ? land(now + 1.0) : land(now + frameIntervalMs_ * k / mult)) - now;
+            for (int k = 0; k < mult && k < 4; ++k) at[k] = land(now + 1.0 + spacing * k) - now;
+            if (!adaptive)  // (historical: frame k at the refresh after start + I*k/m, frame 0 right after the GPU)
+                for (int k = 0; k < mult && k < 4; ++k)
+                    at[k] = (k == 0 ? land(now + 1.0) : land(now + frameIntervalMs_ * k / mult)) - now;
             timing.haveDisplay = true;
             timing.displayMs[3] = float(at[order.real]);
             for (int o = 0; o + 1 < mult && o < 3; ++o) timing.displayMs[o] = float(at[order.position(o)]);
@@ -1010,6 +1038,9 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     job.start = t0;
     job.frameStartMs = lastReturnMs_;
     job.intervalMs = frameIntervalMs_;
+    // Adaptive: one output period between the frames (paceTarget spreads
+    // intervalMs / frames).
+    if (interpolate && adaptivePeriodMs_ > 0.0) job.intervalMs = adaptivePeriodMs_ * mult;
     job.pacing = cfg_.pacing;
     if (deferSynthesis) job.synthSlot = static_cast<int>(slotIdx);
     job.slot = static_cast<int>(slotIdx);

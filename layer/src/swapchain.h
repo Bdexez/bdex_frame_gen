@@ -287,6 +287,8 @@ private:
     uint64_t outputGen_ = 0;     // Config::rebuildGen the output stage was built with (require_app)
     int flowScaleFactor_ = 1;    // flow resolution divisor multiplier of the current output stage (gpu_budget)
     int dynMult_ = 0;               // target_fps: current dynamic multiplier (0 = not chosen yet)
+    double adaptiveAcc_ = 0.0;      // adaptive: fractional frames carried over to the next game frame
+    double adaptivePeriodMs_ = 0.0; // adaptive: output period of this present (0 = not adaptive)
     int chooseMultiplier();
 
     // On-screen HUD: a rolling window of raw game frame intervals (ms) feeds the

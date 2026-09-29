@@ -64,6 +64,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Adaptive multiplier** (`adaptive = 1`, « Adaptatif » in the control
+  panel and the capture launcher): every game frame gets as many frames as
+  fit at the target rate — `target_fps`, or the display's refresh rate — the
+  fraction carried over to the next one, each synthesised at its own display
+  time and presented one output period apart. 50 fps on 144 Hz: 3, 3, 2, 3…
+  frames, **144 fps displayed** instead of the 100 of the largest whole
+  multiple (measured through the layer); works with every mode (hybrid:
+  139.7 fps displayed, 12.4 ms present-to-screen). `multiplier` is the
+  ceiling. The capture app reads the refresh rate of the overlay's monitor.
 - **`mode = hybrid`** (x3/x4): one interpolated frame, then the real frame,
   then predicted ones. The real frame is shown 1/m of a frame late instead
   of (m − 1)/m — at x4, a quarter of a frame instead of three quarters —

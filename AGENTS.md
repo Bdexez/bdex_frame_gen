@@ -141,6 +141,14 @@ après (t ∈ (1,2)) ; une seule définition pour la couche, la capture et
 `frame_state.comp` reçoit `realPos` (interp/extrap décidé par sortie). Le
 worker : positions ≤ real copiées d'emblée, prédites après la réelle
 paresseuses et annulables (`Job::realIndex`).
+**Adaptatif** (`adaptive`, 2026-09-29) : `chooseMultiplier` accumule
+I/P (P = 1000/cible, cible = `target_fps` ou la fréquence de l'écran) et
+rend n = partie entière (1..multiplier), le reste reporté ; `present()`
+donne alors les temps d'affichage nominaux (k·P, sur la grille si connue)
+à `frame_state` (t par temps d'affichage, obligatoire : le i/m fixe serait
+faux) et `job.intervalMs = n·P` (le pacing espace de P). 50 i/s → 144 Hz :
+144,0 i/s affichées. Même logique dans `VkCtx::synthesize` (capture), avec
+la fréquence du moniteur de l'overlay (`monitorHz`).
 `max_frame_latency` (1 par défaut, seulement en génération) : `present()`
 attend, hors `mutex_`, la fence du slot de l'image N−1. Banc sans fenêtre :
 gamescope `--backend headless` a le retour d'affichage (present_wait) mais
