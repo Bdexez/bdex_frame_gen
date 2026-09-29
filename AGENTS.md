@@ -160,7 +160,16 @@ faux) et `job.intervalMs = n·P` (le pacing espace de P). 50 i/s → 144 Hz :
 144,0 i/s affichées. Même logique dans `VkCtx::synthesize` (capture), avec
 la fréquence du moniteur de l'overlay (`monitorHz`).
 `max_frame_latency` (1 par défaut, seulement en génération) : `present()`
-attend, hors `mutex_`, la fence du slot de l'image N−1. Banc sans fenêtre :
+attend, hors `mutex_`, la fence du slot de l'image N−1. Puis
+**`latency_limiter`** (défaut 1, `syncFrameStart`) : la durée de cette
+attente W = l'avance du jeu sur le GPU ; retenue += ½·(W − marge), marge
+1 ms + 5 % de I, divisée par 2 dès que W ≈ 0 (GPU peut-être au repos),
+plafond ¾·I, sommeil puis attente active ½ ms. Mesuré 4K lourd non
+plafonné : image→écran 27 → 18 ms, jeu 95 → 102 i/s (l'appel `present`
+passait 5,4 ms bloqué ailleurs) ; léger et plafonné : identiques. Stats :
+`next frame held N ms`. `frame-to-screen` part du retour de `present()`,
+donc un jeu qui a son propre limiteur (sommeil après `present`) y compte
+ce sommeil. Banc sans fenêtre :
 gamescope `--backend headless` a le retour d'affichage (present_wait) mais
 tourne sans `CAP_SYS_NICE` (compositeur affamé par nos longs dispatchs) — le
 cas « lourd » de référence est 4K preset quality + pixel_vectors + bicubic à

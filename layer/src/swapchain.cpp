@@ -1107,6 +1107,10 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             char skip[640] = "";
             int len = 0;
             if (skipped) len = snprintf(skip, sizeof(skip), ", %llu predicted frame(s) skipped", static_cast<unsigned long long>(skipped));
+            if (statsStartDelayMs_ > 0.0 && statsAppFrames_ && len < int(sizeof(skip)))
+                len += snprintf(skip + len, sizeof(skip) - size_t(len), ", next frame held %.1f ms",
+                                statsStartDelayMs_ / statsAppFrames_);
+            statsStartDelayMs_ = 0.0;
             if (feedback_) {
                 std::lock_guard<std::mutex> fbLock(fbMutex_);
                 const double hz = displayClock_.refreshHz();
@@ -1183,9 +1187,42 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         if (fs.generation == u.generation && fs.submitted) latencyFence = fs.fence;
     }
     lock.unlock();
-    if (latencyFence) dev_.vt.WaitForFences(dev_.device, 1, &latencyFence, VK_TRUE, 100'000'000ull);
+    if (latencyFence) {
+        const auto w0 = clock::now();
+        dev_.vt.WaitForFences(dev_.device, 1, &latencyFence, VK_TRUE, 100'000'000ull);
+        if (cfg_.latencyLimiter) syncFrameStart(std::chrono::duration<double, std::milli>(clock::now() - w0).count());
+    } else {
+        startDelayMs_ = 0.0;
+    }
     lastReturnMs_ = msOf(clock::now());
     return pending;  // VK_SUCCESS or VK_SUBOPTIMAL_KHR from an earlier real present
+}
+
+// latency_limiter, after max_frame_latency's wait: the GPU has just finished
+// the previous frame and still has this one to do (the game's rendering and
+// our synthesis). The game's next frame only has to reach the GPU when that
+// work ends; returning at once lets the game read its input a GPU frame
+// earlier than needed, and that input waits in the queue. How long the game
+// just waited for the GPU tells by how much it was early: the delay moves
+// toward that (keeping a slack for the game's frame-time jitter), and halves
+// as soon as the game finds the GPU done — it may have left it idle. A
+// GPU-bound game then begins each frame just in time: the same frame rate,
+// with fresher input (like Reflex or Anti-Lag). A game that is not GPU-bound
+// never waits here and gets no delay.
+void VirtualSwapchain::syncFrameStart(double waitedMs) {
+    const double interval = frameIntervalMs_;
+    const double slack = 1.0 + 0.05 * interval;
+    if (waitedMs < 0.05) startDelayMs_ *= 0.5;
+    else startDelayMs_ += 0.5 * (waitedMs - slack);
+    startDelayMs_ = std::clamp(startDelayMs_, 0.0, 0.75 * interval);
+    if (startDelayMs_ < 0.25) return;
+    statsStartDelayMs_ += startDelayMs_;
+    // Sleep, then spin the last half millisecond (timer slack).
+    const auto until = clock::now() + std::chrono::duration_cast<clock::duration>(
+                                          std::chrono::duration<double, std::milli>(startDelayMs_));
+    const auto coarse = until - std::chrono::microseconds(500);
+    if (coarse > clock::now()) std::this_thread::sleep_until(coarse);
+    while (clock::now() < until) std::this_thread::yield();
 }
 
 // ---------------------------------------------------------------------------

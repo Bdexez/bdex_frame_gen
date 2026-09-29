@@ -106,6 +106,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   definition shared by the layer, the capture app and `bdex_offline`
   (`frame_order.h`); interpolation and extrapolation are unchanged bit for
   bit.
+- **`latency_limiter`** (default on, with `max_frame_latency`): when the GPU
+  is the bottleneck, the game's present returns just in time for its next
+  frame to reach the GPU as it frees up — the game reads its input later
+  for the same frame on screen, like Reflex or Anti-Lag, in every Vulkan
+  game. Steered by how long the game waits for the GPU, with a slack for
+  its frame-time jitter; a game that is not GPU-bound is never held.
+  Measured, GPU-bound demo at 4K x2: frame-to-screen 27 → 18 ms, game
+  95 → 102 fps; light and capped runs unchanged. The statistics line shows
+  the hold (`next frame held N ms`).
 - `max_frame_latency` (default 1 while generating): the game's present
   returns once the GPU has finished its previous frame, like a driver's
   low-latency mode. A GPU-bound game otherwise queues frames ahead, each a
