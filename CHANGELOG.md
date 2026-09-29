@@ -33,6 +33,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   surrounding block vectors and the looked-up one disagree by half a pixel or
   more — the same frames, for about half the added synthesis time.
 
+- **Scene cuts per region by default on discrete GPUs** (`scene_cut_local`,
+  with the automatic preset, where `pixel_vectors` is): a menu or overlay
+  opening over part of the picture falls back to the real frame there
+  instead of being warped — +1.4 dB, flicker −6.4 on a pause menu over a
+  panning scene. Each tile now needs its own histogram evidence
+  (`scene_cut_hist`), which removed its loss on very fast motion (−0.18 dB
+  before, 0.00 now); elsewhere within ±0.01 dB.
+
 - **Predicted frames splat forward and fill revealed areas by default on
   discrete GPUs** (`extrapolate_splat`, `reveal_fill`, with the automatic
   preset; extrapolation and hybrid modes): measured x3, extrapolation demo

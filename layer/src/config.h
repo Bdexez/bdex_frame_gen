@@ -95,9 +95,10 @@ struct Config {
     bool  pixelVectors  = false;  // interpolation: per-pixel choice among neighbouring blocks' vectors (on by default on discrete GPUs, see pixelVectorsAuto)
     // Options the GPU auto-tuning turns on for discrete GPUs unless the user
     // set them (autoConfigure leaves those alone): bits of kAuto*.
-    enum : uint32_t { kAutoPixelVectors = 1, kAutoSplat = 2, kAutoRevealFill = 4 };
+    enum : uint32_t { kAutoPixelVectors = 1, kAutoSplat = 2, kAutoRevealFill = 4, kAutoLocalCut = 8 };
     uint32_t autoOptionsSet = 0;
     bool  pixelVectorsAuto = false; // runtime: pixel_vectors turned on by autoConfigure; FrameGen drops it where the synthesis would cost too much (display pixels x generated frames above 4K x2)
+    bool  sceneCutLocalAuto = false; // runtime: scene_cut_local turned on by autoConfigure; dropped with pixelVectorsAuto (it needs the full synthesis variant)
     bool  subpixel      = false;  // parabolic sub-pixel fit of the finest flow (opt-in; off = bit-for-bit)
     float staticGuard   = 0.0f;   // opt-in per-pixel static guard: pixels identical in both frames (3x3) keep the current frame, so static HUD/UI over moving content does not smear with the block's motion (0 = off, bit-for-bit)
     bool  refine        = true;   // flow refinement pass (better motion boundaries, costs GPU time)
