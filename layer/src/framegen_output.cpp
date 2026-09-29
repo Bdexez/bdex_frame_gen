@@ -1,5 +1,6 @@
-// FrameGen: the real frame's output stage — spatial or temporal
-// (upscale_temporal) upscaling, the HUD, the dedup replacement and CAS.
+// FrameGen: the real frame's output stage — spatial upscaling (or what an
+// optional pass provides, e.g. upscale_temporal), the HUD, the dedup
+// replacement and CAS.
 #include "framegen.h"
 #include "framegen_internal.h"
 #include "vk_util.h"
@@ -10,44 +11,19 @@ namespace bdex {
 
 using namespace fg;
 
-void FrameGen::recordTemporalUpscale(VkCommandBuffer cmd, uint32_t cur) {
-    if (taaFrame_ == frame_) return;  // once per frame (synthesis or real output first)
-    auto& vt = dev_.vt;
-    const Config cfg = effectiveConfig();
-    taaPrevValid_ = taaFrame_ + 1 == frame_;
-    const bool history = taaPrevValid_ && flowFrame_ == frame_;
-    taaH_ = taaFrame_ == ~0ull ? 0 : 1 - taaH_;
-    taaFrame_ = frame_;
-    const Level& fine = levels_v_[0];
-    const float sx = float(displayExtent_.width) / float(extent_.width);
-    const float sy = float(displayExtent_.height) / float(extent_.height);
-    const float blk = float(fine.refined ? kFineBlock : kBlockSize);
-    TaaPC pc{{(int32_t)displayExtent_.width, (int32_t)displayExtent_.height},
-             {(int32_t)extent_.width, (int32_t)extent_.height},
-             {1.f / (fine.fine.width * blk * flowScale_ * sx), 1.f / (fine.fine.height * blk * flowScale_ * sy)},
-             flowScale_ * sx, cfg.upscaleTemporal, cfg.sceneCutLow, cfg.sceneCutHigh,
-             std::clamp(cfg.upscaleFilter, 0, 2), history ? 1 : 0, timingActive_ && dedup_ ? 1 : 0};
-    vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, taaPass_.pipeline);
-    vt.CmdPushConstants(cmd, taaPass_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
-    vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, taaPass_.layout, 0, 1, &dsTaa_[cur * 2 + taaH_], 0, nullptr);
-    vt.CmdDispatch(cmd, divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), 1);
-    memoryBarrier(cmd);
-}
-
 void FrameGen::recordUpscaleReal(VkCommandBuffer cmd, uint32_t cur, int prev) {
     auto& vt = dev_.vt;
-    // With upscale_temporal the real frame is the accumulated history, only
-    // packed (and given the HUD) at 1:1.
-    if (taa_) recordTemporalUpscale(cmd, cur);
-    const VkExtent2D src = taa_ ? displayExtent_ : extent_;
+    // A pass may provide the frame to pack (upscale_temporal: its history).
+    VkDescriptorSet set = dsUpscale_[cur];
+    VkExtent2D src = extent_;
+    for (auto& p : passes_) p->realOutput(*this, cmd, cur, set, src);
     vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, upscale_.pipeline);
     UpscalePC pc{{(int32_t)displayExtent_.width, (int32_t)displayExtent_.height},
                  {(int32_t)src.width, (int32_t)src.height},
                  enc_.encoding, std::clamp((*cfgp_).upscaleFilter, 0, 2),
                  hudMode_, hudGame_, hudOut_, hudLow1_, hudLow01_, hudLatency_};
     vt.CmdPushConstants(cmd, upscale_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
-    vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, upscale_.layout, 0, 1,
-                             taa_ ? &dsUpscaleTaa_[taaH_] : &dsUpscale_[cur], 0, nullptr);
+    vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, upscale_.layout, 0, 1, &set, 0, nullptr);
     vt.CmdDispatch(cmd, divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), 1);
     // Order the CAS pass / the worker's copy after this write.
     memoryBarrier(cmd);
