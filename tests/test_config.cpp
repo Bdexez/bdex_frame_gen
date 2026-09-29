@@ -1,4 +1,5 @@
 #include "config.h"
+#include "frame_order.h"
 #include "platform.h"
 #include "test.h"
 
@@ -29,8 +30,9 @@ TEST(config_apply_values) {
     CHECK(c.apply("present_mode", "mailbox") && c.presentMode == VK_PRESENT_MODE_MAILBOX_KHR);
     CHECK(c.apply("present_mode", "app") && c.presentMode == -1);
     CHECK(c.apply("present_mode", "auto") && c.presentMode == -2);
-    CHECK(c.apply("mode", "extrapolate") && c.extrapolate);
-    CHECK(c.apply("mode", "interpolate") && !c.extrapolate);
+    CHECK(c.apply("mode", "extrapolate") && c.extrapolate && !c.hybrid);
+    CHECK(c.apply("mode", "hybrid") && c.hybrid && !c.extrapolate && std::string(c.modeName()) == "hybrid");
+    CHECK(c.apply("mode", "interpolate") && !c.extrapolate && !c.hybrid);
     CHECK(!c.apply("mode", "guess"));
     CHECK(c.apply("flow_scale", "4") && c.flowScale == 4);
     CHECK(!c.apply("flow_scale", "3"));
@@ -371,4 +373,34 @@ TEST(config_preset_enhanced) {
           c.extrapolateSplat && c.flowScale == 0);
     // A later explicit option still wins over the preset.
     CHECK(c.apply("pixel_vectors", "0") && !c.pixelVectors);
+}
+
+// The order of a present's frames on screen and their synthesis times: the
+// pure modes keep their historical values exactly (i/m, 1 + i/m), hybrid
+// puts one interpolated frame first, then the real one, then predictions.
+TEST(frame_order_positions_and_times) {
+    using bdex::FrameOrder;
+    bdex::Config c;
+    for (int m = 2; m <= 4; ++m) {
+        c.extrapolate = false;
+        c.hybrid = false;
+        const FrameOrder in = FrameOrder::of(c, m);
+        CHECK(in.real == m - 1);
+        for (int i = 1; i < m; ++i) CHECK(in.t(i - 1) == 0.f + float(i) / float(m) && !in.predicted(i - 1));
+        c.extrapolate = true;
+        const FrameOrder ex = FrameOrder::of(c, m);
+        CHECK(ex.real == 0);
+        for (int i = 1; i < m; ++i) CHECK(ex.t(i - 1) == 1.f + float(i) / float(m) && ex.predicted(i - 1));
+    }
+    c.extrapolate = false;
+    c.hybrid = true;
+    CHECK(FrameOrder::of(c, 2).real == 1 && FrameOrder::of(c, 2).t(0) == 0.5f);  // x2: interpolation
+    const FrameOrder h4 = FrameOrder::of(c, 4);
+    CHECK(h4.real == 1);
+    CHECK(h4.position(0) == 0 && h4.position(1) == 2 && h4.position(2) == 3);
+    CHECK(h4.t(0) == 0.75f && h4.t(1) == 1.25f && h4.t(2) == 1.5f);
+    CHECK(!h4.predicted(0) && h4.predicted(1) && h4.predicted(2));
+    const FrameOrder h3 = FrameOrder::of(c, 3);
+    CHECK(h3.t(0) == 2.f / 3.f && h3.t(1) == 1.f + 1.f / 3.f);
+    CHECK(FrameOrder::of(c, 1).real == 0);  // a lone real frame
 }

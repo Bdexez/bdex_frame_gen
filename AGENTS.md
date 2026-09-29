@@ -133,6 +133,14 @@ défaut (`present_queue`, `DeviceData::splitQueue`) : synthèse sur
 `queue` — le blit de présentation (X11/Xwayland) attendait sinon la synthèse
 suivante. Le signal d'acquisition du jeu part sur la file de synthèse
 (garde l'ordre GPU « synthèse N avant l'image N+1 du jeu »).
+**Ordre des images** (`frame_order.h`, `FrameOrder`) : m positions par
+image du jeu, la réelle en `real` (m−1 interpolation, 0 extrapolation,
+1 **hybride**), sortie o en position o avant la réelle (t ∈ (0,1)) ou o+1
+après (t ∈ (1,2)) ; une seule définition pour la couche, la capture et
+`bdex_offline`, écrite pour redonner i/m et 1+i/m bit à bit.
+`frame_state.comp` reçoit `realPos` (interp/extrap décidé par sortie). Le
+worker : positions ≤ real copiées d'emblée, prédites après la réelle
+paresseuses et annulables (`Job::realIndex`).
 `max_frame_latency` (1 par défaut, seulement en génération) : `present()`
 attend, hors `mutex_`, la fence du slot de l'image N−1. Banc sans fenêtre :
 gamescope `--backend headless` a le retour d'affichage (present_wait) mais

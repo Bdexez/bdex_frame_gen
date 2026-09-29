@@ -14,7 +14,7 @@ struct SplatPC { int32_t size[2]; float s; float flowScale; float flowInvSize[2]
 class ExtrapolateSplatPass : public FgPass {
 public:
     const char* name() const override { return "extrapolate_splat"; }
-    bool active(const Config& cfg) const override { return cfg.extrapolate && cfg.extrapolateSplat; }
+    bool active(const Config& cfg) const override { return (cfg.extrapolate || cfg.hybrid) && cfg.extrapolateSplat; }
 
     void create(FgContext& ctx) override {
         const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,

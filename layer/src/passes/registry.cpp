@@ -29,7 +29,7 @@ std::vector<std::unique_ptr<FgPass>> createOptionalPasses(const Config& cfg, Dev
     passes.push_back(makeExtrapolateAccelPass());
     // The splat key packs the source index in 23 bits (4K fits). Also made
     // when online_tune may try it.
-    if (cfg.extrapolate && (cfg.extrapolateSplat || cfg.onlineTune) &&
+    if ((cfg.extrapolate || cfg.hybrid) && (cfg.extrapolateSplat || cfg.onlineTune) &&
         uint64_t(display.width) * display.height <= (1ull << 23))
         passes.push_back(makeExtrapolateSplatPass());
     // Before upscale_temporal: its synthesis sets are made with the mask bound.

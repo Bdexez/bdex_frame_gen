@@ -20,8 +20,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Each setting, the modes it acts in, extra bdex_offline arguments.
+# Each setting, the modes it acts in (i interpolate, e extrapolate, h hybrid),
+# extra bdex_offline arguments.
 SETTINGS = [
+    # Hybrid (frame_order.h) at x4: one interpolated output, then predictions.
+    ("zero_bias_contrast=0.02", "h", ["--multiplier", "4"]),
+    ("frame_timing=1,dedup=1,extrapolate_splat=1,extrapolate_accel=1,reveal_fill=1", "h", ["--multiplier", "4"]),
     ("zero_bias_contrast=0.1", "ie"), ("temporal_prediction=1", "ie"), ("subpixel=1", "ie"),
     ("subpixel_lk=2", "ie"), ("flow_temporal=1", "ie"), ("pixel_vectors=1", "i"),
     ("pixel_vectors=1,synth_bicubic=1", "i"), ("synth_bicubic=1", "ie"), ("occlusion_strength=1", "i"),
@@ -83,7 +87,7 @@ def main():
                 k, v = kv.split("=")
                 env["BDEX_FG_" + k.upper()] = v
             for mode in modes:
-                env["BDEX_FG_MODE"] = "interpolate" if mode == "i" else "extrapolate"
+                env["BDEX_FG_MODE"] = {"i": "interpolate", "e": "extrapolate", "h": "hybrid"}[mode]
                 hashes = []
                 for run in (0, 1):
                     out = tmp / f"run{run}"

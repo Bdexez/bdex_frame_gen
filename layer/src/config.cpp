@@ -89,7 +89,7 @@ bool Config::applyPreset(const std::string& name) {
         // (no half-frame hold), x2 keeps the least work on the critical path,
         // balanced flow otherwise. Mailbox (the default present mode) completes
         // the picture; measured added hold ~0.1 ms vs ~8.4 ms for interpolation.
-        extrapolate = true; multiplier = 2;
+        extrapolate = true; hybrid = false; multiplier = 2;
         flowScale = 0; refineAll = true; flowIterations = 1; levels = 4; searchRadius = 4; searchFine = 2;
     } else {
         return false;
@@ -350,8 +350,9 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     }
     if (key == "mode") {
         const std::string v = lower(value);
-        if (v == "interpolate" || v == "interp") extrapolate = false;
-        else if (v == "extrapolate" || v == "extrap" || v == "lowlatency") extrapolate = true;
+        if (v == "interpolate" || v == "interp") extrapolate = hybrid = false;
+        else if (v == "extrapolate" || v == "extrap" || v == "lowlatency") { extrapolate = true; hybrid = false; }
+        else if (v == "hybrid") { extrapolate = false; hybrid = true; }
         else return false;
         return true;
     }
@@ -558,7 +559,7 @@ bool Config::sameOutputSettings(const Config& o) const {
         if (d.i && this->*(d.i) != o.*(d.i)) return false;
         if (d.f && this->*(d.f) != o.*(d.f)) return false;
     }
-    return extrapolate == o.extrapolate && flowScale == o.flowScale && upscaleFilter == o.upscaleFilter &&
+    return extrapolate == o.extrapolate && hybrid == o.hybrid && flowScale == o.flowScale && upscaleFilter == o.upscaleFilter &&
            overlayMode == o.overlayMode && debug == o.debug;
 }
 
@@ -615,7 +616,7 @@ std::string Config::describe() const {
     static const char* dbg[] = {"none", "flow", "split", "passthrough"};
     std::ostringstream o;
     o << "enabled=" << enabled << " multiplier=" << multiplier << " levels=" << levels
-      << " mode=" << (extrapolate ? "extrapolate" : "interpolate") << " flow_scale=" << (flowScale ? std::to_string(flowScale) : "auto") << " search=" << searchRadius << "/" << searchFine << " refine=" << refine
+      << " mode=" << modeName() << " flow_scale=" << (flowScale ? std::to_string(flowScale) : "auto") << " search=" << searchRadius << "/" << searchFine << " refine=" << refine
       << " present_mode=" << presentModeName(presentMode) << " pacing=" << pacing
       << " debug=" << dbg[static_cast<int>(debug)] << " log=" << logLevel;
     if (gradWeight > 0.f) o << " grad_weight=" << gradWeight;

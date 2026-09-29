@@ -37,6 +37,17 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`mode = hybrid`** (x3/x4): one interpolated frame, then the real frame,
+  then predicted ones. The real frame is shown 1/m of a frame late instead
+  of (m − 1)/m — at x4, a quarter of a frame instead of three quarters —
+  and the predictions reach at most (m − 2)/m ahead instead of (m − 1)/m.
+  Offline on the demo (normal and fast): x4 −1.3 to −2.4 dB from
+  interpolation, against −3.0 to −4.7 dB for extrapolation; x3 −1.0 to
+  −1.4 dB, against −3.4 to −4.4 dB. In the control panel, the capture
+  launcher and `bdex_capture --mode hybrid`. The frame order is one
+  definition shared by the layer, the capture app and `bdex_offline`
+  (`frame_order.h`); interpolation and extrapolation are unchanged bit for
+  bit.
 - `max_frame_latency` (default 1 while generating): the game's present
   returns once the GPU has finished its previous frame, like a driver's
   low-latency mode. A GPU-bound game otherwise queues frames ahead, each a
