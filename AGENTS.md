@@ -205,6 +205,17 @@ supplémentaire garantit la stabilité des HUD statiques. Le coût exporté
 (`costOut`) est le SAD luma du gagnant — les seuils de cut de scène sont
 calibrés dessus, ne pas y exporter le coût gonflé par le gradient.
 
+**Depuis 0.6, `zero_bias_cap=0.006` est le défaut** (le biais cesse de
+croître au-delà de 3 px : panoramique +2,7 dB, balayage +2,4, occlusions
++0,7 ; un bonus *constant* (plafond 0,002) gagnait davantage sur le très
+rapide mais perdait 0,14 dB sur la démo `--speed 2`). Branche uniforme dans
+la variante allégée, l'expression historique dans le `else` : `cap=0` est
+identique bit à bit (vérifié sur NVIDIA ; l'invariant CI le fixe à 0).
+`scene_cut_hist=0.05` (défaut) : la réduction du coût (`reduce_cost.comp`)
+ramène le coût moyen vers `scene_cut_low` tant que l'histogramme de luma
+(`scene_hist.comp`, EMD 1-D sur un niveau grossier) n'a pas bougé — coupures
+≥ 0,18, grain / mouvement < 0,02 ; placée là pour ne pas toucher la variante
+allégée de la synthèse (le contenu normal reste identique bit à bit).
 **Depuis 0.4.0, `zero_bias_contrast=0.02` est le défaut** (A/B hors ligne :
 jamais < −0,01 dB, gratuit en GPU) ; le « chemin historique » de l'invariant
 est donc `zero_bias_contrast=0` (posé par `check_matcher_invariant.py`).

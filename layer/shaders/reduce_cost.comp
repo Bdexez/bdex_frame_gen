@@ -8,16 +8,21 @@
 layout(local_size_x = 256) in;
 
 layout(binding = 0, r32f) uniform readonly image2D costImg;
-// The head of the frame state (frame_state.comp): meanCost and tileCost.
-layout(std430, binding = 1) writeonly buffer Out {
+// The head of the frame state (frame_state.comp): meanCost, histDiff (from
+// scene_hist.comp) and tileCost.
+layout(std430, binding = 1) buffer Out {
     float meanCost;
-    uint head[11];
+    uint head1[6];
+    float histDiff;
+    uint head2[4];
     float tileCost[64];
 } outBuf;
 
 layout(push_constant) uniform PC {
     ivec2 size;
-    int tiles;   // 0: global mean only; else the side of the tile grid (<= 8)
+    int tiles;       // 0: global mean only; else the side of the tile grid (<= 8)
+    float cutHist;   // scene_cut_hist: histogram distance at which a cut fully counts (0 = off)
+    float cutLow;    // scene_cut_low: where the fallback starts
 } pc;
 
 shared float sSum[256];
@@ -35,7 +40,20 @@ void main() {
             if (tid < s) sSum[tid] += sSum[tid + s];
             barrier();
         }
-        if (tid == 0u) outBuf.meanCost = sSum[0] / float(max(n, 1));
+        if (tid == 0u) {
+            float mean = sSum[0] / float(max(n, 1));
+            // scene_cut_hist: a high flow cost alone is not a cut — noise,
+            // film grain and fast complex motion raise it too, and the
+            // fallback to the real frame then fades the whole picture (a
+            // ghost) or repeats it. A cut to another scene also moves the
+            // brightness distribution (measured: cuts 0.18+, grain and fast
+            // motion under 0.02): above scene_cut_low, the cost counts only
+            // as far as the histogram moved. (Here rather than in the
+            // synthesis, whose lean variant stays untouched.)
+            if (pc.cutHist > 0.0 && mean > pc.cutLow)
+                mean = pc.cutLow + (mean - pc.cutLow) * smoothstep(0.5 * pc.cutHist, pc.cutHist, outBuf.histDiff);
+            outBuf.meanCost = mean;
+        }
         return;
     }
     int k = int(wg) - 1;

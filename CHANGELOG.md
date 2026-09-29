@@ -6,6 +6,33 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Scene cuts need evidence beyond the flow cost** (`scene_cut_hist`,
+  default 0.05): the fallback to the real frame (a fade of the whole picture,
+  then a duplicate) also requires the brightness distribution to move — the
+  earth mover's distance between the two frames' luma histograms, computed on
+  a coarse pyramid level. Noise, film grain, foliage and fast motion raise
+  the flow cost like a cut does, not the histogram: measured, real cuts 0.18
+  and up, grain and fast motion under 0.02. Heavy grain: +0.11 dB, flicker
+  −0.5 to −0.7, cuts still caught; normal content unchanged bit for bit (the
+  gate lives in the cost reduction: the synthesis shader is untouched).
+- **The zero-motion bias is capped** (`zero_bias_cap`, default 0.006, i.e.
+  3 px at the default 0.002 per pixel): proportional to the displacement, it
+  charged a true 16 px motion eight times a 2 px jitter, which broke fast
+  pans (the free zero-motion candidate won, the picture cross-faded) while a
+  static HUD only needs moving to cost something. Offline vs uncapped:
+  smooth pan +2.7 dB, swing +2.4, occlusions +0.7, very fast demo +0.1, the
+  demo and the HUD scene within ±0.06 dB. `0` restores the previous matcher
+  bit for bit (the CI invariant pins both to 0).
+
+- **Per-pixel vectors at motion boundaries by default on discrete GPUs**
+  (`pixel_vectors`, with the automatic preset, up to 4K x2 / 1440p x3 /
+  1080p x4 of synthesis work): offline, demo +0.3 dB, very fast demo +0.6,
+  HUD scene +0.7, occlusions +2.9 dB. They are now tried only where the four
+  surrounding block vectors and the looked-up one disagree by half a pixel or
+  more — the same frames, for about half the added synthesis time.
+
 ### Fixed
 
 - **Generated frames were lost whenever the GPU was busy.** The frames of a

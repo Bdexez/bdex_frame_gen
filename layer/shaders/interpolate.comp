@@ -40,7 +40,7 @@ layout(std430, binding = 5) readonly buffer Cost {
     float agePrev;
     float interval;
     uint repeats;
-    uint pad1;
+    float histDiff;   // scene_hist.comp (scene_cut_hist)
     float t[4];
     float tileCost[64];  // scene_cut_local grid (reduce_cost.comp)
 } cost;
@@ -338,13 +338,25 @@ void main() {
         // the four are equal, one evaluation instead of four, same output
         // (6.1 -> 2.1 ms on a 1.7 Mpx frame). With bilinear samples the test
         // costs more than it saves.
+        // Only where it can matter: where the four vectors agree with each
+        // other and with the one the lookup settled on (within half a display
+        // pixel), trying them gives the same trajectory back, for 16 fetches
+        // a pixel — most of a frame. (F must be in the test: the fixed-point
+        // lookup reads the flow at its previous estimate, so four equal
+        // vectors around pf can still disagree with F where it has not
+        // converged — leaving F out lost 1.4 dB on the occlusion scene.)
         ivec2 fts = textureSize(flowFwd, 0);
         ivec2 f0 = ivec2(floor(pf * pc.flowInvSize * vec2(fts) - 0.5));
         vec2 triedF[4];
+        vec2 lo = F, hi = F;
         for (int k = 0; k < 4; ++k) {
-            ivec2 ft = clamp(f0 + ivec2(k & 1, k >> 1), ivec2(0), fts - 1);
-            vec2 Fk = texelFetch(flowFwd, ft, 0).xy * pc.flowScale;
-            triedF[k] = Fk;
+            triedF[k] = texelFetch(flowFwd, clamp(f0 + ivec2(k & 1, k >> 1), ivec2(0), fts - 1), 0).xy * pc.flowScale;
+            lo = min(lo, triedF[k]);
+            hi = max(hi, triedF[k]);
+        }
+        bool boundaryF = any(greaterThan(hi - lo, vec2(0.5)));
+        for (int k = 0; k < 4 && boundaryF; ++k) {
+            vec2 Fk = triedF[k];
             if (pc.bicubic != 0) {
                 bool seen = all(equal(Fk, F));
                 for (int j = 0; j < k; ++j) seen = seen || all(equal(Fk, triedF[j]));
@@ -358,10 +370,16 @@ void main() {
         ivec2 bts = textureSize(flowBwd, 0);
         ivec2 b0 = ivec2(floor(pb * pc.flowInvSize * vec2(bts) - 0.5));
         vec2 triedB[4];
+        lo = B;
+        hi = B;
         for (int k = 0; k < 4; ++k) {
-            ivec2 bt = clamp(b0 + ivec2(k & 1, k >> 1), ivec2(0), bts - 1);
-            vec2 Bk = texelFetch(flowBwd, bt, 0).xy * pc.flowScale;
-            triedB[k] = Bk;
+            triedB[k] = texelFetch(flowBwd, clamp(b0 + ivec2(k & 1, k >> 1), ivec2(0), bts - 1), 0).xy * pc.flowScale;
+            lo = min(lo, triedB[k]);
+            hi = max(hi, triedB[k]);
+        }
+        bool boundaryB = any(greaterThan(hi - lo, vec2(0.5)));
+        for (int k = 0; k < 4 && boundaryB; ++k) {
+            vec2 Bk = triedB[k];
             if (pc.bicubic != 0) {
                 bool seen = all(equal(Bk, B));
                 for (int j = 0; j < k; ++j) seen = seen || all(equal(Bk, triedB[j]));

@@ -48,7 +48,7 @@ layout(std430, binding = 2) buffer State {
     float agePrev;    // ms since the previous distinct image first appeared
     float interval;   // content interval between them (ms)
     uint repeats;     // repeated frames detected so far (statistics)
-    uint pad1;
+    float histDiff;   // scene_hist.comp: how far the brightness distribution moved (scene_cut_hist)
     float t[4];       // per output slot; [3] = the real frame's slot (extrapolated duplicate)
     float tileCost[64];
     uvec4 gateFull[24];     // dispatch size, w = 1: runs only on duplicates

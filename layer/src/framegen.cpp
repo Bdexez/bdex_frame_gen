@@ -149,6 +149,7 @@ void FrameGen::createPipelines() {
         else if (enc_.is64) interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS}, true);
         else                interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS}, true);
         frameState_ = makePass(frame_state_comp, frame_state_comp_size, {CIS, CIS, SB});
+        sceneHist_ = makePass(scene_hist_comp, scene_hist_comp_size, {CIS, CIS, SB});
         if (chroma_) downChroma_ = makePass(downsample_chroma_comp, downsample_chroma_comp_size, {CIS, SI});
     }
     if (packReal_) {
@@ -220,7 +221,7 @@ void FrameGen::createResources() {
                                                       VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
         stateReadback_ = dev_.createBuffer(kStateHead, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
         VK_CHECK(dev_.vt.MapMemory(dev_.device, stateReadback_.memory, 0, VK_WHOLE_SIZE, 0, &stateMapped_));
-        meanCostBuf_ = dev_.createBuffer(kProfileSlots * sizeof(float), VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
+        meanCostBuf_ = dev_.createBuffer(kProfileSlots * 2 * sizeof(float), VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
         void* cost = nullptr;
         VK_CHECK(dev_.vt.MapMemory(dev_.device, meanCostBuf_.memory, 0, VK_WHOLE_SIZE, 0, &cost));
         meanCostMapped_ = static_cast<const float*>(cost);
@@ -451,6 +452,12 @@ void FrameGen::createDescriptors() {
     dsReduce_ = allocSet(reduce_.setLayout);
     writeImage(dsReduce_, 0, SI, levels_v_[0].cost[0].view);
     writeBuffer(dsReduce_, 1, stateBuf_.buffer);
+    // scene_cut_hist: a coarse level is plenty for a histogram (~30 k pixels at 1080p).
+    histLevel_ = std::min(2, levels_ - 1);
+    dsSceneHist_ = allocSet(sceneHist_.setLayout);
+    writeImage(dsSceneHist_, 0, CIS, levels_v_[histLevel_].pyr[0].view);
+    writeImage(dsSceneHist_, 1, CIS, levels_v_[histLevel_].pyr[1].view);
+    writeBuffer(dsSceneHist_, 2, stateBuf_.buffer);
     dsState_ = allocSet(frameState_.setLayout);
     writeImage(dsState_, 0, CIS, levels_v_[0].pyr[0].view);
     writeImage(dsState_, 1, CIS, levels_v_[0].pyr[1].view);
@@ -585,7 +592,8 @@ void FrameGen::destroyAll() {
     for (VkDescriptorPool pool : pools_) vt.DestroyDescriptorPool(d, pool, nullptr);
     pools_.clear();
     planner_.reset();
-    for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_, &frameState_, &downChroma_}) {
+    for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_, &frameState_, &downChroma_,
+                    &sceneHist_}) {
         if (p->pipeline) vt.DestroyPipeline(d, p->pipeline, nullptr);
         if (p->lean) vt.DestroyPipeline(d, p->lean, nullptr);
         if (p->layout) vt.DestroyPipelineLayout(d, p->layout, nullptr);
@@ -650,12 +658,12 @@ void FrameGen::recordDump(VkCommandBuffer cmd, uint32_t which, uint32_t cur) {
         VK_CHECK(vt.MapMemory(dev_.device, dumpBuf_[which].memory, 0, VK_WHOLE_SIZE, 0, &dumpMapped_[which]));
     }
     if (outputs_ > 0 && !costReadback_.buffer) {
-        costReadback_ = dev_.createBuffer(16, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
+        costReadback_ = dev_.createBuffer(32, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
         VK_CHECK(vt.MapMemory(dev_.device, costReadback_.memory, 0, VK_WHOLE_SIZE, 0, &costMapped_));
     }
     memoryBarrier(cmd);
     if (which < outputs_) {
-        VkBufferCopy bc{0, 0, 16};
+        VkBufferCopy bc{0, 0, 32};
         vt.CmdCopyBuffer(cmd, stateBuf_.buffer, costReadback_.buffer, 1, &bc);
     }
     VkBufferImageCopy region{};
@@ -696,7 +704,9 @@ static float pqDecodeNits(float e) {  // SMPTE ST 2084 EOTF: code value -> nits
 
 bool FrameGen::writeDump(const std::string& path, uint32_t which) {
     if (!dumpMapped_[which]) return false;
-    if (which < outputs_ && costMapped_) BDEX_DBG("%s: mean matching cost %.4f", path.c_str(), *static_cast<const float*>(costMapped_));
+    if (which < outputs_ && costMapped_)
+        BDEX_DBG("%s: mean matching cost %.4f, histogram distance %.4f", path.c_str(), static_cast<const float*>(costMapped_)[0],
+                 static_cast<const float*>(costMapped_)[7]);
     const uint32_t enc = enc_.encoding & 0xffu;
     FILE* f = fopen(path.c_str(), "wb");
     if (!f) return false;
@@ -882,7 +892,16 @@ void FrameGen::recordFrameState(VkCommandBuffer cmd, const FrameTiming& timing) 
 void FrameGen::collectMeanCost(uint32_t slot) {
     if (!meanCostMapped_ || slot >= kProfileSlots || !costWritten_[slot]) return;
     costWritten_[slot] = false;
-    lastCost_ = meanCostMapped_[slot];
+    lastCost_ = meanCostMapped_[slot * 2];
+    lastHistDiff_ = meanCostMapped_[slot * 2 + 1];
+}
+
+float FrameGen::lastCutWeight() const {
+    if (lastCost_ < 0.f) return -1.f;
+    // The mean cost is the effective one (scene_cut_hist applied by reduce_cost.comp).
+    const Config& cfg = *cfgp_;
+    const float t = std::clamp((lastCost_ - cfg.sceneCutLow) / std::max(cfg.sceneCutHigh - cfg.sceneCutLow, 1e-6f), 0.f, 1.f);
+    return t * t * (3.f - 2.f * t);
 }
 
 bool FrameGen::readState(State& out) const {
@@ -929,7 +948,7 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity, int costSlot) {
                    {(int32_t)lv.blocks.width, (int32_t)lv.blocks.height},
                    l + 1 < levels_ ? cfg.searchFine : cfg.searchRadius, l + 1 < levels_ ? 1 : 0, cfg.smoothness, cfg.zeroBias,
                    cfg.gradWeight, cfg.censusWeight, cfg.censusMargin, cfg.rotWeight, 0, cfg.zeroBiasContrast,
-                   chromaWeight, 0};
+                   chromaWeight, 0, cfg.zeroBiasCap};
         const bool temporal = cfg.temporalPrediction && flowValid_;
         for (uint32_t dir = 0; dir < 2; ++dir) {
             pc.temporal = temporal ? static_cast<int32_t>(dir + 1) : 0;
@@ -965,9 +984,21 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity, int costSlot) {
 
     const Level& fine = levels_v_[0];
     for (auto& p : passes_) p->fineFlow(*this, cmd, parity, cfg);
+    if (cfg.sceneCutHist > 0.f) {
+        // How far the brightness distribution moved (scene_hist.comp): the
+        // scene-cut evidence the flow cost cannot give.
+        const Level& hl = levels_v_[histLevel_];
+        vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, sceneHist_.pipeline);
+        SizePC hpc{{(int32_t)hl.size.width, (int32_t)hl.size.height}};
+        vt.CmdPushConstants(cmd, sceneHist_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(hpc), &hpc);
+        vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, sceneHist_.layout, 0, 1, &dsSceneHist_, 0, nullptr);
+        vt.CmdDispatch(cmd, 1, 1, 1);
+        memoryBarrier(cmd);
+    }
     vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, reduce_.pipeline);
     const uint32_t tiles = cfg.sceneCutLocal ? kCutTiles : 0;
-    ReducePC rpc{{(int32_t)fine.blocks.width, (int32_t)fine.blocks.height}, (int32_t)tiles};
+    ReducePC rpc{{(int32_t)fine.blocks.width, (int32_t)fine.blocks.height}, (int32_t)tiles, cfg.sceneCutHist,
+                 cfg.sceneCutLow};
     vt.CmdPushConstants(cmd, reduce_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(rpc), &rpc);
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, reduce_.layout, 0, 1, &dsReduce_, 0, nullptr);
     dispatchGated(cmd, gateReduce_, 1 + tiles * tiles, 1);
@@ -976,8 +1007,10 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity, int costSlot) {
         // The mean cost for the statistics (scene-cut fallback rate), in
         // this slot's word: read by collectMeanCost after its fence.
         stateBarrier(cmd);
-        VkBufferCopy bc{0, VkDeviceSize(costSlot) * sizeof(float), 4};
-        vt.CmdCopyBuffer(cmd, stateBuf_.buffer, meanCostBuf_.buffer, 1, &bc);
+        // Its mean cost and histogram distance (words 0 and 7 of the state).
+        VkBufferCopy bc[2] = {{0, VkDeviceSize(costSlot) * 2 * sizeof(float), 4},
+                              {28, VkDeviceSize(costSlot) * 2 * sizeof(float) + 4, 4}};
+        vt.CmdCopyBuffer(cmd, stateBuf_.buffer, meanCostBuf_.buffer, 2, bc);
         costWritten_[costSlot] = true;
         VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
         mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -1162,6 +1195,11 @@ double FrameGen::takeGpuMs() {
 
 Config FrameGen::effectiveConfig() const {
     Config c = (*cfgp_);
+    // pixel_vectors turned on by the GPU auto-tuning: not where the synthesis
+    // would cost too much — display pixels x generated frames above 4K x2
+    // (e.g. 4K x3, 1440p x4: several milliseconds a game frame).
+    if (c.pixelVectorsAuto && double(displayExtent_.width) * displayExtent_.height * outputs_ > 8.3e6)
+        c.pixelVectors = false;
     for (const auto& p : passes_) p->overrideConfig(c);
     if (qualityLevel_ >= 1) {
         c.pixelVectors = false;

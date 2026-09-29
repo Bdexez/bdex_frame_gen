@@ -148,6 +148,8 @@ private:
     // When frame k of the job goes out, from the GPU completion `origin`.
     clock::time_point paceTarget(const Job& job, clock::time_point origin, int k);
     double lastPresentMs_ = 0.0;   // worker: last present call
+    uint32_t surfaceMinImages_ = 1;  // the surface's minImageCount when the real swapchain was made
+    int acquireAhead_ = 1;           // real images the worker may hold acquired at once (imageCount - minImageCount + 1)
     double lastLandMs_ = 0.0;      // worker: refresh the last present was due to show on (known grid only)
     bool cancelPredicted_ = false; // workerMutex_: a newer real frame arrived (extrapolation drops its predictions)
     VkResult submitDeferredSynthesis(const Job& job);

@@ -42,6 +42,10 @@ def render(build, dump):
         "BDEX_FG_GRAD_WEIGHT": "0",
         # The default since 0.4, absent from the baseline: off for the historical path.
         "BDEX_FG_ZERO_BIAS_CONTRAST": "0",
+        # Likewise (0.6): the histogram gate of the scene-cut fallback, the
+        # capped zero bias.
+        "BDEX_FG_SCENE_CUT_HIST": "0",
+        "BDEX_FG_ZERO_BIAS_CAP": "0",
         "BDEX_FG_HUD": "0",
         "BDEX_FG_LOG": "0",
         "BDEX_FG_STATS": "0",
