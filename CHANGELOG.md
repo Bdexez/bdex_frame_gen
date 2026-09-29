@@ -130,6 +130,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed (2026-09-25)
 
+- **Optional passes behind one interface** (`fg_pass.h`): an opt-in GPU
+  feature is an `FgPass` in `layer/src/passes/` with `create`/`destroy` and
+  named pipeline hooks, seeing the engine only through `FgContext`;
+  `passes/registry.cpp` lists them in hook order. `flow_temporal`,
+  `online_tune` (self-evaluation) and `upscale_temporal` moved there out of
+  `FrameGen` (~200 lines and five touch points each). The engine sources
+  are one CMake list (`BDEX_ENGINE_SOURCES`) shared by the layer,
+  `bdex_offline` and `bdex_capture`. Output byte-identical; the options
+  measure as before.
 - `framegen.cpp` split by feature: `framegen_tune.cpp` (self-evaluation and
   `online_tune`), `framegen_output.cpp` (the real frame's output stage:
   spatial / temporal upscaling, HUD, dedup replacement, CAS), and
