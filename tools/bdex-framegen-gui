@@ -126,6 +126,12 @@ SECTIONS = [
                "Choisit le mouvement pixel par pixel aux frontières d'objets : moins de bavures, "
                "synthèse ~2× plus coûteuse."),
         switch("subpixel", "Mouvement sous-pixel", "Affine le mouvement au-delà du pixel entier."),
+        spin("subpixel_lk", "Sous-pixel précis (Lucas-Kanade)",
+             "Affine chaque vecteur par Lucas-Kanade (nombre d'itérations, 2 conseillé) ; ~0,1 ms. En "
+             "interpolation, à combiner avec l'échantillonnage bicubique. 0 = désactivé.", 0, 4, 1, 0, 0),
+        switch("synth_bicubic", "Échantillonnage bicubique",
+               "La synthèse lit les images en Catmull-Rom au lieu de bilinéaire : garde le détail quand le "
+               "mouvement tombe entre deux pixels (à combiner avec le sous-pixel). ~0,6 ms."),
         spin("grad_weight", "Netteté du mouvement rapide",
              "Cale le suivi sur les contours plutôt que la seule luminosité : réduit le déchirement "
              "en mouvement rapide, au prix d'un peu de fidélité sur l'image fixe. 0 = désactivé ; essayer 1.",

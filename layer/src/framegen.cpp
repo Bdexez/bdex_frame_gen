@@ -977,7 +977,8 @@ void FrameGen::recordSynthesis(VkCommandBuffer cmd, VkDescriptorSet set, float t
                 {1.f / (fine.fine.width * blk * flowScale_ * sx),
                  1.f / (fine.fine.height * blk * flowScale_ * sy)},
                 cfg.flowIterations, hudMode_, hudGame_, hudOut_, hudLow1_, hudLow01_, cfg.occlusionStrength, cfg.staticGuard, cfg.extrapolateHold, splat ? 1 : 0, cfg.pixelVectors ? 1 : 0, enc_.transfer,
-                timing, cfg.sceneCutLocal ? (int32_t)kCutTiles : 0, t > 1.f ? accelThisFrame_ : 0.f, hudLatency_};
+                timing, cfg.sceneCutLocal ? (int32_t)kCutTiles : 0, t > 1.f ? accelThisFrame_ : 0.f, hudLatency_,
+                cfg.synthBicubic ? 1 : 0};
     vt.CmdPushConstants(cmd, interp_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, interp_.layout, 0, 1, &set, 0, nullptr);
     dispatch();

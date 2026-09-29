@@ -19,6 +19,7 @@ bdex_add_shaders(bdex_layer_shaders
     shaders/flow_temporal.comp
     shaders/self_eval.comp
     shaders/upscale_temporal.comp
+    shaders/flow_lk.comp
     shaders/interpolate.comp:u32
     shaders/interpolate.comp:u64:OUT_64
     shaders/interpolate.comp:sharp:SHARP
@@ -70,6 +71,7 @@ set(BDEX_ENGINE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/flow_temporal.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/online_tune.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/temporal_upscale.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/subpixel_lk.cpp
 )
 set(BDEX_ENGINE_SOURCES ${BDEX_ENGINE_SOURCES} PARENT_SCOPE)
 

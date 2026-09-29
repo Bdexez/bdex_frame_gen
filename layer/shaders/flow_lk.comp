@@ -1,0 +1,82 @@
+#version 450
+// Sub-pixel flow by Lucas-Kanade (subpixel_lk). Block matching finds whole
+// flow pixels; each finest flow vector is refined here by a few Gauss-Newton
+// steps of the brightness-constancy fit over an 8x8 window around its
+// block: with g the gradient of the reference image and r the residual
+// target(x + d) - ref(x), the update solves (sum g g^T) delta = -sum g r
+// (inverse-compositional form: the gradient matrix is computed once, on the
+// reference). The refined vector is kept only where the fit is well posed
+// (enough texture in both directions: smallest eigenvalue of the matrix),
+// stays within one pixel of the matched one, and lowers the window's SAD —
+// else the whole-pixel vector stands (flat areas, occlusions, aperture).
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0, rg32f) uniform image2D flowFwd;   // finest level, in place
+layout(binding = 1, rg32f) uniform image2D flowBwd;
+layout(binding = 2) uniform sampler2D lumaPrev;       // finest luma of the pair
+layout(binding = 3) uniform sampler2D lumaCur;
+
+layout(push_constant) uniform PC {
+    ivec2 size;       // flow texels
+    ivec2 luma;       // luma resolution
+    int block;        // luma pixels per flow texel
+    int iterations;   // Gauss-Newton steps (1..4)
+    float minEigen;   // well-posedness threshold (per window pixel, luma units^2)
+} pc;
+
+#define WIN 8
+
+float at(sampler2D t, ivec2 q) { return texelFetch(t, clamp(q, ivec2(0), pc.luma - 1), 0).r; }
+float bil(sampler2D t, vec2 x) { return texture(t, x / vec2(pc.luma)).r; }
+
+vec2 refine(sampler2D refTex, sampler2D tgtTex, ivec2 origin, vec2 d0) {
+    // Window: the block, centred in 8x8 (4x4 blocks: 2 pixels of margin).
+    ivec2 w0 = origin - ivec2((WIN - pc.block) / 2);
+    float gxx = 0.0, gxy = 0.0, gyy = 0.0;
+    vec2 g[WIN * WIN];
+    float r0[WIN * WIN];
+    for (int y = 0; y < WIN; ++y)
+        for (int x = 0; x < WIN; ++x) {
+            ivec2 q = w0 + ivec2(x, y);
+            vec2 gr = 0.5 * vec2(at(refTex, q + ivec2(1, 0)) - at(refTex, q - ivec2(1, 0)),
+                                 at(refTex, q + ivec2(0, 1)) - at(refTex, q - ivec2(0, 1)));
+            g[y * WIN + x] = gr;
+            r0[y * WIN + x] = at(refTex, q);
+            gxx += gr.x * gr.x; gxy += gr.x * gr.y; gyy += gr.y * gr.y;
+        }
+    float tr = gxx + gyy, det = gxx * gyy - gxy * gxy;
+    float lmin = 0.5 * (tr - sqrt(max(tr * tr - 4.0 * det, 0.0)));
+    if (lmin < pc.minEigen * float(WIN * WIN) || det <= 0.0) return d0;
+    mat2 inv = mat2(gyy, -gxy, -gxy, gxx) / det;
+    vec2 d = d0;
+    for (int it = 0; it < pc.iterations; ++it) {
+        vec2 b = vec2(0.0);
+        for (int y = 0; y < WIN; ++y)
+            for (int x = 0; x < WIN; ++x) {
+                vec2 c = vec2(w0 + ivec2(x, y)) + 0.5;
+                b += g[y * WIN + x] * (bil(tgtTex, c + d) - r0[y * WIN + x]);
+            }
+        d -= inv * b;
+        if (any(greaterThan(abs(d - d0), vec2(1.0)))) return d0;  // left the matched pixel: not this minimum
+    }
+    // Keep it only if it explains the window better.
+    float s0 = 0.0, s1 = 0.0;
+    for (int y = 0; y < WIN; ++y)
+        for (int x = 0; x < WIN; ++x) {
+            vec2 c = vec2(w0 + ivec2(x, y)) + 0.5;
+            float r = r0[y * WIN + x];
+            s0 += abs(bil(tgtTex, c + d0) - r);
+            s1 += abs(bil(tgtTex, c + d) - r);
+        }
+    return s1 < s0 ? d : d0;
+}
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, pc.size))) return;
+    ivec2 origin = p * pc.block;
+    vec2 F = imageLoad(flowFwd, p).xy;
+    vec2 B = imageLoad(flowBwd, p).xy;
+    imageStore(flowFwd, p, vec4(refine(lumaPrev, lumaCur, origin, F), 0.0, 0.0));
+    imageStore(flowBwd, p, vec4(refine(lumaCur, lumaPrev, origin, B), 0.0, 0.0));
+}
