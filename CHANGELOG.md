@@ -33,6 +33,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   surrounding block vectors and the looked-up one disagree by half a pixel or
   more — the same frames, for about half the added synthesis time.
 
+- **Predicted frames splat forward and fill revealed areas by default on
+  discrete GPUs** (`extrapolate_splat`, `reveal_fill`, with the automatic
+  preset; extrapolation and hybrid modes): measured x3, extrapolation demo
+  +0.9 dB, fast +1.2, very fast +0.35, pan +1.2, HUD +0.7; hybrid +0.2 to
+  +0.6; occlusions −0.02, swing +0.02.
+
 ### Fixed
 
 - **Generated frames were lost whenever the GPU was busy.** The frames of a
