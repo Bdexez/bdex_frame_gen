@@ -1230,11 +1230,19 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
 // GPU-bound game then begins each frame just in time: the same frame rate,
 // with fresher input (like Reflex or Anti-Lag). A game that is not GPU-bound
 // never waits here and gets no delay.
+// The slack follows the game's jitter: it grows by half each time the game
+// comes back late (after the GPU went idle) and shrinks by 1 % a frame
+// otherwise — a few percent of late frames at equilibrium (at least 1 ms +
+// 5 % of a frame). Measured, 4K x2 with the GPU busy with our synthesis:
+// frame-to-screen 26.8 -> 18.3 ms, 97 -> 101 game fps; with the CPU busy
+// elsewhere (wake-ups late) it still cost 6 % of the frame rate. Holding
+// only part of the wait was worse on both counts (0.6: 20.9 ms, 0.3: 24.8).
 void VirtualSwapchain::syncFrameStart(double waitedMs) {
     const double interval = frameIntervalMs_;
-    const double slack = 1.0 + 0.05 * interval;
-    if (waitedMs < 0.05) startDelayMs_ *= 0.5;
-    else startDelayMs_ += 0.5 * (waitedMs - slack);
+    const bool late = waitedMs < 0.05;
+    startSlackMs_ = std::clamp(startSlackMs_ * (late ? 1.5 : 0.99), 1.0 + 0.05 * interval, 0.3 * interval);
+    if (late) startDelayMs_ *= 0.5;
+    else startDelayMs_ += 0.5 * (waitedMs - startSlackMs_);
     startDelayMs_ = std::clamp(startDelayMs_, 0.0, 0.75 * interval);
     if (startDelayMs_ < 0.25) return;
     statsStartDelayMs_ += startDelayMs_;
