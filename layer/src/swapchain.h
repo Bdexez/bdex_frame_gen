@@ -66,6 +66,10 @@ private:
         VkCommandBuffer cmd = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
         VkSemaphore acquireSem = VK_NULL_HANDLE;  // used by the worker's slots only
+        // Synthesis slots of a deferred extrapolation: signalled when the
+        // game's frame is rendered (Job::ready), before the synthesis runs.
+        VkFence readyFence = VK_NULL_HANDLE;
+        bool readySubmitted = false;
         uint64_t generation = 0;
         bool submitted = false;
         // async_compute (DeviceData::asyncCompute), synthesis slots: one
@@ -100,6 +104,11 @@ private:
         // not wait for the analysis, flow and synthesis on the queue. -1 =
         // already submitted by the application thread.
         int synthSlot = -1;
+        // Signals once this present's first frame can be shown (its synthesis,
+        // or for a deferred one the game's rendering): the predicted frames of
+        // the job before it that are still waiting then become obsolete.
+        VkFence ready = VK_NULL_HANDLE;
+        int staging = 0;             // staging images there were at the present (FrameGen::stagingCount)
         bool pacing = true;          // the pacing setting, carried so the worker never reads the config
         // async_compute: the synthesis slot whose semaphores this job's
         // presents wait (-1 = single queue, queue order suffices), and, for
@@ -139,14 +148,15 @@ private:
     // (from staging image `staged` when >= 0, see submitStage).
     VkResult submitCopy(const Job& job, int index, Copied& out, int staged = -1);
     // Copies frame `index` of the job into staging image `slot` at once: for
-    // the frames the real swapchain cannot give an image to yet (acquireAhead_).
+    // the frames the real swapchain cannot give an image to yet (acquireAhead_)
+    // and predicted frames the next synthesis would rewrite before their time.
     VkResult submitStage(const Job& job, int index, uint32_t slot);
     void prepareStaging();  // the staging images the current output stage may need
     // Presents a copied frame (present ids, feedback, statistics).
     VkResult presentCopied(const Job& job, const Copied& c);
     // The pacing origin: waits for the GPU to finish the submission of
     // `fence`, and returns when it did in `doneAt`. `cancellable`: returns
-    // false as soon as a newer real frame cancels the predicted frames.
+    // false as soon as the predicted frames become obsolete (predictedCancelled).
     bool waitGpu(VkFence fence, bool cancellable, clock::time_point& doneAt);
     bool predictedCancelled();
     bool waitUntilOrCancelled(clock::time_point target);  // false: cancelled first
@@ -156,7 +166,11 @@ private:
     uint32_t surfaceMinImages_ = 1;  // the surface's minImageCount when the real swapchain was made
     int acquireAhead_ = 1;           // real images the worker may hold acquired at once (imageCount - minImageCount + 1)
     double lastLandMs_ = 0.0;      // worker: refresh the last present was due to show on (known grid only)
-    bool cancelPredicted_ = false; // workerMutex_: a newer real frame arrived (extrapolation drops its predictions)
+    // workerMutex_: the application thread needs the synthesis outputs a
+    // deferred extrapolation job still reads (lazyOutputs_) — its next
+    // synthesis is not deferred: the job drops its predicted frames.
+    bool cancelPredicted_ = false;
+    bool lazyOutputs_ = false;     // workerMutex_: a job copies predicted frames straight from the outputs, later
     VkResult submitDeferredSynthesis(const Job& job);
 
     // Present feedback (DeviceData::presentFeedback): every present of the

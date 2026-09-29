@@ -95,6 +95,7 @@ public:
     // packed image, or source `source`), else generated output `output`.
     // ensureStaging (application thread, between frames) allocates `count`.
     void ensureStaging(uint32_t count);
+    uint32_t stagingCount() const { return static_cast<uint32_t>(stage_.size()); }
     void recordStage(VkCommandBuffer cmd, bool real, uint32_t output, uint32_t source, uint32_t slot);
     void recordCopyStaged(VkCommandBuffer cmd, uint32_t slot, VkImage dst);
     // Copies source `src` (PRESENT_SRC) into `dst` (UNDEFINED -> PRESENT_SRC).

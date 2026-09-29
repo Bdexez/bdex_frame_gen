@@ -125,9 +125,19 @@ du slot de synthèse (`waitGpu`), puis seuls les `vkQueuePresentKHR` sont
 temporisés (`paceTarget` : origine + I·k/m, espacement ≥ ½ créneau avec la
 présentation précédente, grille d'affichage si connue). Extrapolation =
 réelle tout de suite, puis prédites paresseuses calées sur la fence de la
-copie réelle ; un nouveau `present()` lève `cancelPredicted_` et les
-prédites en attente sont abandonnées (avant, `present()` attendait leur
-soumission : l'annulation ne se déclenchait jamais). **Deux files** par
+copie réelle. **Abandon des prédites** (depuis le 2026-09-29, 2e passe) :
+seulement quand la *première image du present suivant est prête sur le GPU*
+(`Job::ready` = fence du slot de synthèse, ou `FrameSlot::readyFence` de la
+soumission vide d'une extrapolation différée ; `predictedCancelled` /
+`waitUntilOrCancelled` la surveillent) — pas à l'appel de `present()` :
+un jeu limité par le GPU appelle `present(N+1)` une image avant la fin de
+son rendu, et toutes les prédites tombaient (hybride ×3 : 116 i/s affichées
+au lieu de 283). Les prédites de l'hybride (et de l'extrapolation empaquetée)
+passent par les **images de transit** dès le début du job, qui est alors
+« soumis » : `present(N+1)` n'attend plus le cadencement de la réelle (le jeu
+tombait de 95 à 58 i/s). Extrapolation différée : prédites copiées à leur
+heure depuis les sorties (`lazyOutputs_`) ; si la synthèse suivante n'est
+pas différée, `present()` lève `cancelPredicted_` et attend. **Deux files** par
 défaut (`present_queue`, `DeviceData::splitQueue`) : synthèse sur
 `computeQueue` (2e file de la même famille), copies + présentations sur
 `queue` — le blit de présentation (X11/Xwayland) attendait sinon la synthèse
@@ -174,6 +184,12 @@ gamescope `--backend headless` a le retour d'affichage (present_wait) mais
 tourne sans `CAP_SYS_NICE` (compositeur affamé par nos longs dispatchs) — le
 cas « lourd » de référence est 4K preset quality + pixel_vectors + bicubic à
 66 i/s (GPU ~62 %), stats `displayed N fps` / `replaced before display`.
+`bdex_demo --gpu-load N` (N dessins de la scène par image) simule un jeu
+limité par son propre rendu — mais alors gamescope headless compose au
+rythme du jeu (affiché = FPS du jeu, quoi qu'on fasse, même sans
+génération) : ce cas ne se juge pas côté affichage sur ce banc. Seul le cas
+où **notre** synthèse domine (démo non plafonnée `--fps 1000`, réglages
+lourds, 4K) laisse gamescope composer à ~200 Hz.
 
 ### Passes optionnelles (`fg_pass.h`, depuis le 2026-09-25)
 

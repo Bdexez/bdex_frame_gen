@@ -4,6 +4,7 @@
 //
 //   bdex_demo [--fps N] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]
 //             [--deterministic] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]
+//             [--gpu-load N]
 //
 // Run it with BDEX_FG=1 (and VK_LAYER_PATH pointing at the build tree if the
 // layer is not installed) to see the generated frames.
@@ -42,6 +43,7 @@ struct Options {
     long cutEvery = 0;           // switch scene every N frames (0 = never), to test scene cut handling
     long repeat = 1;             // present every image N times (e.g. 2: 30 fps content in a 60 fps loop)
     double duration = 0.0;       // also stop after this many seconds (0 = no limit): bounds tests on slow drivers
+    long gpuLoad = 1;            // draw the scene this many times a frame (same image): a GPU-bound game
 };
 
 struct PushConstants {
@@ -415,7 +417,7 @@ void Demo::drawFrame() {
     PushConstants pc{{float(extent_.width), float(extent_.height)}, float(animTime_ * opt_.speed), shown,
                      opt_.cutEvery > 0 ? uint32_t((shown / opt_.cutEvery) & 1) : 0u};
     vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
-    vkCmdDraw(cmd, 3, 1, 0, 0);
+    for (long i = 0; i < opt_.gpuLoad; ++i) vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
 
@@ -523,6 +525,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--cut") o.cutEvery = atol(value().c_str());
         else if (a == "--speed") o.speed = atof(value().c_str());
         else if (a == "--repeat") o.repeat = std::max(1L, atol(value().c_str()));
+        else if (a == "--gpu-load") o.gpuLoad = std::clamp(atol(value().c_str()), 1L, 1000L);
         else if (a == "--duration") o.duration = std::max(0.0, atof(value().c_str()));
         else if (a == "--size") {
             std::string v = value();
@@ -535,7 +538,8 @@ Options parseArgs(int argc, char** argv) {
             else throw std::runtime_error("bad --mode");
         } else if (a == "-h" || a == "--help") {
             printf("usage: bdex_demo [--fps N] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]\n"
-                   "                 [--deterministic] [--ignore-resize] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]\n");
+                   "                 [--deterministic] [--ignore-resize] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]\n"
+                   "                 [--gpu-load N]\n");
             exit(0);
         } else {
             throw std::runtime_error("unknown option " + a);

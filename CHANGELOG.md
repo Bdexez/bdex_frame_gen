@@ -66,6 +66,16 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 - Extrapolation: a real frame arriving early now drops the predicted frames
   still waiting (they are obsolete). The present used to wait for them first,
   holding the new real frame back by up to (m − 1)/m of a frame.
+- **Hybrid and extrapolation showed a GPU-bound game at x1.** The predicted
+  frames still waiting were dropped as soon as the game *called* its next
+  present — but a GPU-bound game calls it a frame before its rendering ends,
+  and the predicted frames are ready before that. They are now dropped only
+  once the next present's first frame is ready on the GPU. Hybrid's (and a
+  packed extrapolation's) predicted frames are copied into staging images at
+  once, so the game's next present no longer waits for the real frame's
+  pacing either. Measured, 4K x3 hybrid, GPU-bound: 116 → 283 frames
+  displayed a second (all), game 58 → 94 fps, frame-to-screen 34.5 → 25.5 ms
+  (18.3 ms with `latency_limiter`); interpolation unchanged.
 - The refresh rate learned from the displayed frames could be a fraction of
   the real one: with every other frame replaced, the displayed intervals all
   span two refreshes (seen: « 115 Hz » on a display that showed 200 fps).
