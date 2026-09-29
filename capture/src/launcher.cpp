@@ -263,6 +263,7 @@ const ExtraOpt kExtra[] = {
     {"zero_bias_contrast", L"Stabilité adaptée au contraste (0,1 recommandé)", kNumber, "0"},
     {"pixel_vectors", L"Contours d'objets (synthèse ~2× plus coûteuse)", kCheck, "0"},
     {"subpixel", L"Mouvement sous-pixel", kCheck, "0"},
+    {"hud_mask", L"Masque de HUD appris (images stables, 24 conseillé)", kNumber, "0"},
     {"subpixel_lk", L"Sous-pixel précis Lucas-Kanade (0–4, 2 conseillé)", kNumber, "0"},
     {"synth_bicubic", L"Échantillonnage bicubique (avec le sous-pixel)", kCheck, "0"},
     {"extrapolate_splat", L"Extrapolation par projection (moins d'images doubles)", kCheck, "0"},

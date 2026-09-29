@@ -122,7 +122,11 @@ il note le flux avant qu'on le réécrive), la source dans
 `BDEX_ENGINE_SOURCES` (`layer/CMakeLists.txt`, liste unique pour la couche,
 `bdex_offline` et `bdex_capture`), l'option dans le registre de `config.cpp`.
 Migrées : `flow_temporal`, `online_tune`, `upscale_temporal` ; nouvelle :
-`subpixel_lk` (Lucas-Kanade). Mesure clé : en interpolation le sous-pixel
+`subpixel_lk` (Lucas-Kanade), `hud_mask` (masque appris : n'apprend que
+sous mouvement de caméra — 25 % des pixels changés ; à 1 %, la démo à
+caméra fixe perdait 0,3 dB en extrapolation). La synthèse a un binding 8
+« masque statique » générique (`FgContext::setStaticMask`, 1×1 à zéro
+sinon). Mesure clé : en interpolation le sous-pixel
 (LK ou parabolique) ne paie qu'avec `synth_bicubic` — c'est le bilinéaire
 de la synthèse qui floute, pas la précision du vecteur. Restent dans
 `FrameGen` (liées au shader de synthèse lui-même) : `extrapolate_splat`,

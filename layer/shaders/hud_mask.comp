@@ -1,0 +1,37 @@
+#version 450
+// Learned static-overlay mask (hud_mask). Per render pixel, the number of
+// consecutive real frames it stayed unchanged *while the camera moved* (a
+// quarter of the pixels changed in the previous pair): HUD elements,
+// minimaps, crosshairs reach dozens, moving content almost never does. With
+// a fixed camera nothing is learned: a still background that an object then
+// crosses is not an overlay (counting any motion — 1 % of the pixels — cost
+// 0.3 dB in extrapolation on the demo's fixed-camera scene, the objects cut
+// where they crossed long-still background). Any change resets the count. The synthesis
+// keeps pixels past the threshold exactly as in the real frame instead of
+// moving them with the flow (block flows drag overlay edges along with the
+// content behind them).
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0) uniform sampler2D prevSrc;  // previous real frame (render size)
+layout(binding = 1) uniform sampler2D curSrc;   // current real frame
+layout(binding = 2, r32f) uniform image2D mask; // frames unchanged (while the picture moved)
+layout(std430, binding = 3) buffer Counts { uint changed[2]; } cnt;
+
+layout(push_constant) uniform PC {
+    ivec2 size;
+    int slot;        // counter written this frame; the other holds the previous pair's
+    uint moving;     // changed pixels above which the previous pair counts as camera motion
+} pc;
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, pc.size))) return;
+    vec3 d = abs(texelFetch(prevSrc, p, 0).rgb - texelFetch(curSrc, p, 0).rgb);
+    // Two 8-bit codes of tolerance: dithering and compression noise.
+    bool changed = max(d.r, max(d.g, d.b)) > 2.0 / 255.0;
+    if (changed) atomicAdd(cnt.changed[pc.slot], 1u);
+    bool moving = cnt.changed[1 - pc.slot] > pc.moving;
+    float s = imageLoad(mask, p).r;
+    s = changed ? 0.0 : (moving ? min(s + 1.0, 1000.0) : s);
+    imageStore(mask, p, vec4(s, 0.0, 0.0, 0.0));
+}

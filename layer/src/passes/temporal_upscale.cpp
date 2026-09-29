@@ -51,7 +51,7 @@ public:
     void frameBegin(FgContext&) override { ++frame_; }
     void flowBegin(FgContext&, VkCommandBuffer, uint32_t) override { flowFrame_ = frame_; }
 
-    VkDescriptorSet synthesisInputs(FgContext& ctx, VkCommandBuffer cmd, uint32_t cur, uint32_t output) override {
+    VkDescriptorSet synthesisInputs(FgContext& ctx, VkCommandBuffer cmd, uint32_t, uint32_t cur, uint32_t output) override {
         // Synthesise from the accumulated history of both frames, so the
         // generated frames match the real ones (else they alternate between
         // accumulated and plain upscale).

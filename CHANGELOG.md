@@ -8,6 +8,17 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-25)
 
+- **`hud_mask` (opt-in): learned static-overlay mask.** An `FgPass`
+  (`hud_mask.comp`) counts per render pixel the real frames it stayed
+  unchanged while the camera moved; past the threshold (24 advised) every
+  synthesis keeps the pixel as in the real frame. The synthesis gained a
+  generic "static mask" binding (1×1 zero image when off) that a pass
+  provides through `FgContext::setStaticMask`. Learning only under camera
+  motion (a quarter of the pixels changing) was measured necessary: with
+  any motion counting, the demo's fixed-camera scene lost 0.3 dB in
+  extrapolation (still background taken for an overlay). HUD scene +0.91 dB
+  interpolated, +0.61 dB extrapolated (where `static_guard` does nothing);
+  scenes without overlay unchanged. Default 0 byte-identical.
 - **`subpixel_lk` and `synth_bicubic` (opt-in): accurate sub-pixel motion.**
   `subpixel_lk` (an `FgPass`, `flow_lk.comp`) refines each finest vector by
   Lucas-Kanade — Gauss-Newton steps over an 8×8 window, kept only where the

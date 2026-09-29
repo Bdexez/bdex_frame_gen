@@ -231,6 +231,11 @@ private:
     bool repeatFlagValid() const override { return timingActive_ && dedup_; }
     VkDescriptorSet synthesisSet(VkImageView prev, VkImageView cur, uint32_t output) override;
     VkDescriptorSet realOutputSet(VkImageView src) override;
+    void setStaticMask(VkImageView view) override;
+    AllocatedImage maskDummy_;               // 1x1 zero: the static mask without hud_mask
+    VkImageView staticMask_ = VK_NULL_HANDLE;
+    bool hasStaticMask_ = false;
+    std::vector<VkDescriptorSet> synthSets_;  // every synthesis set (binding 8 follows setStaticMask)
     bool chroma_ = false;                         // chroma pyramid built (chroma_weight > 0 at creation)
     AllocatedImage chromaDummy_;                  // bound to the matcher's chroma slots when chroma_ is off
     std::vector<VkDescriptorSet> dsChromaSrc_[2]; // [parity] per source (level 0)

@@ -134,9 +134,9 @@ void FrameGen::createPipelines() {
         reduce_ = makePass(reduce_cost_comp, reduce_cost_comp_size, {SI, SB});
         // With sharpening, the interpolation writes a linear rgba16f image that
         // the CAS pass then sharpens and packs; otherwise it packs directly.
-        if (sharpen_)       interp_ = makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS});
-        else if (enc_.is64) interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS});
-        else                interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS});
+        if (sharpen_)       interp_ = makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS});
+        else if (enc_.is64) interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS});
+        else                interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS});
         splat_ = makePass(splat_comp, splat_comp_size, {CIS, CIS, SI, SB, CIS});
         frameState_ = makePass(frame_state_comp, frame_state_comp_size, {CIS, CIS, SB});
         if (chroma_) downChroma_ = makePass(downsample_chroma_comp, downsample_chroma_comp_size, {CIS, SI});
@@ -236,6 +236,9 @@ void FrameGen::createResources() {
         prevBwd_ = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, levels_v_[0].fine,
                                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, true);
         if (!chroma_) chromaDummy_ = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, {1, 1}, VK_IMAGE_USAGE_SAMPLED_BIT, true);
+        // Bound as the synthesis's static mask until a pass provides one (hud_mask).
+        maskDummy_ = dev_.createImage(VK_FORMAT_R32_SFLOAT, {1, 1}, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, true);
+        staticMask_ = maskDummy_.view;
     }
 
     // (Offline and capture tools fill no queue families: assume timestamps.)
@@ -273,12 +276,18 @@ void FrameGen::createResources() {
         if (splatMap_.image) add(splatMap_);
         if (prevBwd_.image) add(prevBwd_);
         if (chromaDummy_.image) add(chromaDummy_);
+        if (maskDummy_.image) add(maskDummy_);
         if (packReal_) add(outReal_);
         for (auto& s : sharp_) add(s);
         if (sharpen_) add(sharpReal_);
         dev_.vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
                                    nullptr, static_cast<uint32_t>(barriers.size()), barriers.data());
+        if (maskDummy_.image) {
+            VkClearColorValue zero{};
+            VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            dev_.vt.CmdClearColorImage(cmd, maskDummy_.image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
+        }
         if (stateBuf_.buffer) {
             dev_.vt.CmdFillBuffer(cmd, stateBuf_.buffer, 0, VK_WHOLE_SIZE, 0);
             VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
@@ -453,6 +462,8 @@ void FrameGen::createDescriptors() {
                 writeBuffer(s, 5, stateBuf_.buffer);
                 writeImage(s, 6, SI, splatMap_.view);
                 writeImage(s, 7, CIS, prevBwd_.view);
+                writeImage(s, 8, CIS, staticMask_);
+                synthSets_.push_back(s);
                 dsInterp_.push_back(s);
             }
             if (dupReal_) {
@@ -465,6 +476,8 @@ void FrameGen::createDescriptors() {
                 writeBuffer(s, 5, stateBuf_.buffer);
                 writeImage(s, 6, SI, splatMap_.view);
                 writeImage(s, 7, CIS, prevBwd_.view);
+                writeImage(s, 8, CIS, staticMask_);
+                synthSets_.push_back(s);
                 dsInterpReal_.push_back(s);
             }
         }
@@ -517,7 +530,15 @@ VkDescriptorSet FrameGen::synthesisSet(VkImageView prev, VkImageView cur, uint32
     writeBuffer(s, 5, stateBuf_.buffer);
     writeImage(s, 6, SI, splatMap_.view);
     writeImage(s, 7, CIS, prevBwd_.view);
+    writeImage(s, 8, CIS, staticMask_);
+    synthSets_.push_back(s);
     return s;
+}
+
+void FrameGen::setStaticMask(VkImageView view) {
+    staticMask_ = view;
+    hasStaticMask_ = true;
+    for (VkDescriptorSet s : synthSets_) writeImage(s, 8, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, view);
 }
 
 VkDescriptorSet FrameGen::realOutputSet(VkImageView src) {
@@ -560,6 +581,10 @@ void FrameGen::destroyAll() {
     if (splatMap_.image) dev_.destroyImage(splatMap_);
     if (prevBwd_.image) dev_.destroyImage(prevBwd_);
     if (chromaDummy_.image) dev_.destroyImage(chromaDummy_);
+    if (maskDummy_.image) dev_.destroyImage(maskDummy_);
+    staticMask_ = VK_NULL_HANDLE;
+    hasStaticMask_ = false;
+    synthSets_.clear();
     if (outReal_.image) dev_.destroyImage(outReal_);
     for (auto& s : sharp_) dev_.destroyImage(s);
     sharp_.clear();
@@ -926,7 +951,7 @@ void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cu
     const uint32_t N = static_cast<uint32_t>(sources_.size());
     VkDescriptorSet set = dsInterp_[(prev * N + cur) * outputs_ + output];
     for (auto& p : passes_)
-        if (VkDescriptorSet alt = p->synthesisInputs(*this, cmd, cur, output)) set = alt;
+        if (VkDescriptorSet alt = p->synthesisInputs(*this, cmd, prev, cur, output)) set = alt;
     recordSynthesis(cmd, set, t, timingActive_ ? int32_t(output) + 1 : 0, false);
     if (sharpen_) recordCas(cmd, dsCas_[output]);  // sharp_[output] -> out_[output]
 }
@@ -978,7 +1003,7 @@ void FrameGen::recordSynthesis(VkCommandBuffer cmd, VkDescriptorSet set, float t
                  1.f / (fine.fine.height * blk * flowScale_ * sy)},
                 cfg.flowIterations, hudMode_, hudGame_, hudOut_, hudLow1_, hudLow01_, cfg.occlusionStrength, cfg.staticGuard, cfg.extrapolateHold, splat ? 1 : 0, cfg.pixelVectors ? 1 : 0, enc_.transfer,
                 timing, cfg.sceneCutLocal ? (int32_t)kCutTiles : 0, t > 1.f ? accelThisFrame_ : 0.f, hudLatency_,
-                cfg.synthBicubic ? 1 : 0};
+                cfg.synthBicubic ? 1 : 0, hasStaticMask_ ? float(cfg.hudMask) : 0.f};
     vt.CmdPushConstants(cmd, interp_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, interp_.layout, 0, 1, &set, 0, nullptr);
     dispatch();

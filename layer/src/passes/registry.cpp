@@ -9,6 +9,7 @@ std::unique_ptr<FgPass> makeFlowTemporalPass();
 std::unique_ptr<FgPass> makeOnlineTunePass();
 std::unique_ptr<FgPass> makeTemporalUpscalePass();
 std::unique_ptr<FgPass> makeSubpixelLkPass();
+std::unique_ptr<FgPass> makeHudMaskPass();
 
 std::vector<std::unique_ptr<FgPass>> createOptionalPasses(const Config& cfg, DeviceData& dev, uint32_t outputs,
                                                           bool upscaling) {
@@ -18,6 +19,8 @@ std::vector<std::unique_ptr<FgPass>> createOptionalPasses(const Config& cfg, Dev
     if (cfg.onlineTune) passes.push_back(makeOnlineTunePass());
     passes.push_back(makeFlowTemporalPass());  // flow_temporal can be switched on live
     passes.push_back(makeSubpixelLkPass());    // likewise; after flow_temporal (it keeps whole-pixel vectors only)
+    // Before upscale_temporal: its synthesis sets are made with the mask bound.
+    if (cfg.hudMask > 0) passes.push_back(makeHudMaskPass());
     // Needs a filterable rgba16f history.
     if (upscaling && cfg.upscaleTemporal > 0.f &&
         dev.formatSupports(VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT |
