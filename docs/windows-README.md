@@ -19,7 +19,9 @@ checklist in `windows-port.md` §3. Please report what happens.
    be overlaid — same limitation as Lossless Scaling).
 2. Double-click `bdex_capture.exe` (or run it with no arguments): a
    **launcher window** opens — pick the game's window in the list, set the
-   options (generation on/off, ×2/×3/×4, extrapolation/interpolation, quality
+   options (generation on/off, ×2 to ×8 or **Adaptatif** — as many frames per
+   captured frame as the monitor's refresh rate allows, 50 fps on 144 Hz
+   showing 144, not 100 —, interpolation/extrapolation/hybrid, quality
    preset, overlay size, upscale filter and sharpness, vsync, fps counter,
    and in the right-hand **Options avancées** column every other engine
    option: motion quality — contrast-relative stability (0.1 recommended),
@@ -38,7 +40,9 @@ checklist in `windows-port.md` §3. Please report what happens.
    centred on the monitor of) the game window, showing the game with
    generated frames in between: x2 by default, **interpolation** by default, as on Linux
    (extrapolation saves half a frame of latency but shows far more
-   artefacts at low frame rates). The fps HUD
+   artefacts at low frame rates; **hybrid**, at x3 and above, shows one
+   interpolated frame, the real one, then predictions — the real frame is only
+   1/m of a frame late, with far fewer artefacts than pure extrapolation). The fps HUD
    prints `capture > output`; the console logs `capture → shown → output`
    every 2 s.
 
@@ -49,6 +53,8 @@ checklist in `windows-port.md` §3. Please report what happens.
    bdex_capture.exe --title "Kenshi" --fit --hud 2    # by title, fill the monitor, fps HUD
    bdex_capture.exe --pid 1234 --multiplier 3         # by process id, x3
    bdex_capture.exe --title "Kenshi" --mode interpolate
+   bdex_capture.exe --title "Kenshi" --adaptive       # fill the monitor's refresh rate
+   bdex_capture.exe --title "Kenshi" --mode hybrid --multiplier 4
    bdex_capture.exe --hud 2                           # no --title/--pid: foreground, 5 s
    ```
 4. **Ctrl+Alt+Q** quits, and so does closing the game. **Ctrl+Alt+G**
