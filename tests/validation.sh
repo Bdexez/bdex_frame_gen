@@ -17,7 +17,14 @@ fi
 LOG="$(mktemp)"
 . "$(dirname "$0")/../tools/layer_env.sh"
 bdex_use_layer "$LAYER_DIR"
-trap 'rm -rf "$LOG" "$BDEX_LAYER_XDG"' EXIT
+# online_tune decisions for the flow options, so that the "probe" runs start
+# with the synthesis options (the held-out synthesis probe) at once.
+TUNE_CACHE="$(mktemp -d)"
+printf 'zero_bias_contrast 0.1 dropped 0 0\ntemporal_prediction 1 dropped 0 0\nflow_temporal 1 dropped 0 0\n' \
+  > "$TUNE_CACHE/online-tune-bdex_demo-interpolate.txt"
+printf 'zero_bias_contrast 0.1 dropped 0 0\ntemporal_prediction 1 dropped 0 0\nsubpixel 1 dropped 0 0\nflow_temporal 1 dropped 0 0\nsubpixel_lk 2 dropped 0 0\n' \
+  > "$TUNE_CACHE/online-tune-bdex_demo-extrapolate.txt"
+trap 'rm -rf "$LOG" "$BDEX_LAYER_XDG" "$TUNE_CACHE"' EXIT
 status=0
 # Second pass per mode: the per-frame state options (content-time t, repeated
 # frames, per-region scene cuts, acceleration, chroma, flow_temporal,
@@ -28,11 +35,17 @@ status=0
 # submits the synthesis after the real frame.
 # "async": the synthesis on a compute-only queue family (async_compute),
 # where the device has one — its cross-queue semaphores under sync validation.
-for run in interpolate extrapolate interpolate:state extrapolate:state extrapolate:direct interpolate:async extrapolate:async; do
+# "probe": online_tune's synthesis probe (flow copies, composed flows, a
+# synthesis of its own, the comparison), from the primed cache above.
+for run in interpolate extrapolate interpolate:state extrapolate:state extrapolate:direct interpolate:async extrapolate:async \
+           interpolate:probe extrapolate:probe; do
   mode=${run%%:*}
   output="BDEX_FG_RENDER_SCALE=0.75 BDEX_FG_SHARPNESS=0.5 BDEX_FG_HUD=2"
   if [ "$run" = extrapolate:direct ]; then
     state=""; demo_args="--frames 90 --duration 40"; output="BDEX_FG_HUD=0"
+  elif [ "${run#*:}" = probe ]; then
+    state="BDEX_FG_ONLINE_TUNE=1 BDEX_FG_CACHE_DIR=$TUNE_CACHE BDEX_FG_HUD_MASK=24"; demo_args="--frames 120 --duration 40"
+    output="BDEX_FG_RENDER_SCALE=0.75 BDEX_FG_HUD=2"
   elif [ "${run#*:}" = async ]; then
     state="BDEX_FG_ASYNC_COMPUTE=1 BDEX_FG_DEDUP=1 BDEX_FG_FLOW_TEMPORAL=1 BDEX_FG_ONLINE_TUNE=1 BDEX_FG_CACHE_DIR= BDEX_FG_HUD_MASK=24 BDEX_FG_SUBPIXEL_LK=2"; demo_args="--repeat 2 --frames 90 --duration 40"; output="BDEX_FG_HUD=0"
   elif [ "$run" != "$mode" ]; then

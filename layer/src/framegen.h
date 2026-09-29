@@ -144,6 +144,8 @@ private:
 
     void recordCas(VkCommandBuffer cmd, VkDescriptorSet set);
     void recordSynthesis(VkCommandBuffer cmd, VkDescriptorSet set, float t, int32_t timing, bool gated);
+    void recordSynthesisImpl(VkCommandBuffer cmd, const FgPipeline& pipe, VkDescriptorSet set, float t, int32_t timing,
+                             bool gated, const Config& cfg, bool hud);
     void createPipelines();
     void createResources();
     void createDescriptors();
@@ -223,6 +225,8 @@ private:
     VkBuffer stateBuffer() const override { return stateBuf_.buffer; }
     uint32_t sourceCount() const override { return static_cast<uint32_t>(sources_.size()); }
     VkImageView sourceView(uint32_t index) const override { return sources_[index].view; }
+    VkFormat sourceFormat() const override { return format_; }
+    VkImage sourceImage(uint32_t index) const override { return sources_[index].image; }
     VkExtent2D renderExtent() const override { return extent_; }
     VkExtent2D displayExtent() const override { return displayExtent_; }
     uint32_t outputs() const override { return outputs_; }
@@ -232,6 +236,11 @@ private:
     VkDescriptorSet synthesisSet(VkImageView prev, VkImageView cur, uint32_t output) override;
     VkDescriptorSet realOutputSet(VkImageView src) override;
     void setStaticMask(VkImageView view) override;
+    FgPipeline makeLinearSynthesisPipeline() override;
+    VkDescriptorSet synthesisSetFor(VkDescriptorSetLayout layout, VkImageView prev, VkImageView cur, VkImageView fwd,
+                                    VkImageView bwd, VkImageView out) override;
+    void recordSynthesisWith(VkCommandBuffer cmd, const FgPipeline& pipe, VkDescriptorSet set, float t,
+                             const Config& cfg) override;
     AllocatedImage maskDummy_;               // 1x1 zero: the static mask without hud_mask
     VkImageView staticMask_ = VK_NULL_HANDLE;
     bool hasStaticMask_ = false;

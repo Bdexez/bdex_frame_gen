@@ -10,9 +10,11 @@
 #include "online_tune.h"
 #include "platform.h"
 #include "shaders.h"
+#include "synthesis_probe.h"
 #include "vk_util.h"
 
 #include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -47,8 +49,8 @@ static std::string onlineTuneCachePath(const Config& cfg) {
 static std::shared_ptr<OnlineTune> createOnlineTune(const Config& cfg) {
     std::vector<OnlineTune::Candidate> candidates;
     const std::string mine = cfg.describe();
-    for (const auto& [key, trial] : cfg.tuneCandidates()) {
-        const OnlineTune::Candidate c{key, trial};
+    for (const auto& tc : cfg.tuneCandidates()) {
+        const OnlineTune::Candidate c{tc.key, tc.value, tc.synthesis};
         Config off = cfg;
         off.apply(c.key, "0");
         if (off.describe() == mine) candidates.push_back(c);
@@ -96,14 +98,22 @@ public:
             ctx.writeBuffer(e, 3, buf_.buffer);
             ctx.writeImage(e, 4, CIS, ctx.previousBackwardFlow());
         }
+        // Synthesis options are rated by the probe (synthesis_probe.h),
+        // built only if one of them is a candidate.
+        for (const auto& tc : ctx.baseConfig().tuneCandidates())
+            if (tc.synthesis) hasSynthesis_ = true;
+        if (hasSynthesis_) probe_.create(ctx, ctx.baseConfig().extrapolate, buf_.buffer);
     }
     void destroy(FgContext& ctx) override {
         DeviceData& dev = ctx.device();
         if (mapped_) dev.vt.UnmapMemory(dev.device, buf_.memory);
         mapped_ = nullptr;
+        if (hasSynthesis_) probe_.destroy(ctx);
         dev.destroyBuffer(buf_);
         ctx.destroyPipeline(pipe_);
     }
+
+    void frameBegin(FgContext&) override { probe_.frameBegin(); }
 
     void slotBegin(FgContext& ctx, uint32_t slot) override {
         collect(ctx, slot);
@@ -119,9 +129,37 @@ public:
         // frame whose previous one computed a flow.
         const bool hasPrev = copiedLastFrame_ && ctx.flowLastFrame();
         copiedLastFrame_ = ctx.flowLastFrame() && !tune_->done();
-        if (ctx.flowLastFrame() && tagValid_ && !tune_->done()) record(ctx, cmd, parity, hasPrev);
+        // A synthesis option on trial is rated by the probe instead.
+        synthesisTrial_ = hasSynthesis_ && tune_->trialIsSynthesis();
+        // Once decided, a lighter watch (every 8th frame) of the content for a change.
+        const bool watch = tune_->done() && (++watchCount_ % 8) == 0;
+        if (ctx.flowLastFrame() && tagValid_ && (watch || (!tune_->done() && !synthesisTrial_)))
+            record(ctx, cmd, parity, hasPrev);
         tag_ = tune_->nextFlow(overrides_);
         tagValid_ = true;
+        if (hasSynthesis_) probe_.flowBegin(ctx, cmd, synthesisTrial_);  // with this frame's settings
+    }
+
+    VkDescriptorSet synthesisInputs(FgContext& ctx, VkCommandBuffer cmd, uint32_t prev, uint32_t cur, uint32_t) override {
+        if (!hasSynthesis_) return VK_NULL_HANDLE;
+        const uint32_t slot = slot_;
+        const bool free = slot < kSlots && !pending_[slot];
+        if (free && synthesisTrial_) {
+            auto& vt = ctx.device().vt;
+            vt.CmdFillBuffer(cmd, buf_.buffer, VkDeviceSize(slot) * kSlotBytes, kSlotBytes, 0);
+            ctx.barrier(cmd);
+        }
+        if (probe_.measure(ctx, cmd, prev, cur, free ? slot : kSlots, synthesisTrial_) && free) {
+            VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+            ctx.device().vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1,
+                                               &mb, 0, nullptr, 0, nullptr);
+            pending_[slot] = true;
+            probeSample_[slot] = true;
+            tags_[slot] = tag_;
+        }
+        return VK_NULL_HANDLE;
     }
 
     // While trying, keep the previous pair's flow for the stability measure.
@@ -156,6 +194,7 @@ private:
         mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
         vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, nullptr, 0, nullptr);
         pending_[slot] = true;
+        probeSample_[slot] = false;
         tags_[slot] = tag_;
     }
 
@@ -163,8 +202,20 @@ private:
         if (slot >= kSlots || !pending_[slot]) return;
         pending_[slot] = false;
         const auto* w = static_cast<const uint32_t*>(mapped_) + slot * (kSlotBytes / 4);
-        if (w[2] > 0)
+        if (w[2] > 0 && !probeSample_[slot] &&
+            tune_->observe(w[1] / 4096.0 / double(w[2]), w[6] / 4096.0 / double(w[2]))) {
+            BDEX_INFO("online_tune: the content changed (motion or brightness) — trying the options again");
+            std::lock_guard<std::mutex> lock(ctx.device().onlineTuneMutex);
+            ctx.device().onlineTuneReported = 0;  // the new decisions are logged again
+        }
+        if (w[2] > 0 && probeSample_[slot]) {
+            // Probe: squared errors, compared as RMS (the scale of the
+            // self-evaluation's mean errors, weighted like PSNR).
+            const double n = double(w[2]);
+            tune_->addSample(tags_[slot], std::sqrt(w[0] / 4096.0 / n) * n, std::sqrt(w[1] / 4096.0 / n) * n, n);
+        } else if (w[2] > 0) {
             tune_->addSample(tags_[slot], w[0] / 4096.0, w[1] / 4096.0, double(w[2]), w[3] / 16.0, w[4] / 16.0, double(w[5]));
+        }
         report(ctx);
     }
 
@@ -198,10 +249,15 @@ private:
     void* mapped_ = nullptr;
     uint32_t slot_ = kSlots;            // slot of the command buffer being recorded
     bool pending_[kSlots]{};
+    bool probeSample_[kSlots]{};        // the slot holds a synthesis-probe measurement
     uint32_t tags_[kSlots]{};
     uint32_t tag_ = 0;                  // tag of the flow in the flow images
     bool tagValid_ = false;
     bool copiedLastFrame_ = false;      // the previous frame kept its predecessor's flow
+    uint32_t watchCount_ = 0;
+    bool hasSynthesis_ = false;         // synthesis options among the candidates: the probe exists
+    bool synthesisTrial_ = false;       // this frame, a synthesis option is on trial
+    SynthesisProbe probe_;
     std::vector<std::pair<std::string, std::string>> overrides_;  // this frame's trial settings
 };
 

@@ -106,7 +106,10 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
 namespace {
 
 enum class Kind { Bool, Int, Float };
-enum class Tune { Never, Always, Extrapolation };
+// online_tune candidates: flow options (rated by the self-evaluation) in
+// both modes or in extrapolation only; synthesis options (rated by the
+// probe: a held-out frame) in the mode where their code runs.
+enum class Tune { Never, Always, Extrapolation, SynthAlways, SynthInterpolation, SynthExtrapolation };
 constexpr unsigned kLive = 1;  // copied by Config::applyLive (read per frame, sizes nothing)
 
 struct OptionDef {
@@ -169,14 +172,14 @@ const std::vector<OptionDef>& registry() {
     F("census_margin", nullptr, &Config::censusMargin, 0.f, 1.f, kLive),
     F("rot_weight", nullptr, &Config::rotWeight, 0.f, 1.f, kLive),
     F("chroma_weight", nullptr, &Config::chromaWeight, 0.f, 8.f),
-    F("occlusion_strength", nullptr, &Config::occlusionStrength, 0.f, 1.f, kLive),
+    F("occlusion_strength", nullptr, &Config::occlusionStrength, 0.f, 1.f, kLive, Tune::SynthInterpolation, "1", 10),
     B("temporal_prediction", nullptr, &Config::temporalPrediction, kLive, Tune::Always, "1", 2),
-    B("extrapolate_splat", nullptr, &Config::extrapolateSplat),
+    B("extrapolate_splat", nullptr, &Config::extrapolateSplat, kLive, Tune::SynthExtrapolation, "1", 10),
     F("extrapolate_hold", nullptr, &Config::extrapolateHold, 0.f, 1.f, kLive),
-    F("extrapolate_accel", nullptr, &Config::extrapolateAccel, 0.f, 1.f, kLive),
+    F("extrapolate_accel", nullptr, &Config::extrapolateAccel, 0.f, 1.f, kLive, Tune::SynthExtrapolation, "1", 11),
     F("flow_temporal", nullptr, &Config::flowTemporal, 0.f, 1.f, kLive, Tune::Always, "1", 4),
     I("subpixel_lk", nullptr, &Config::subpixelLk, 0, 4, kLive, Tune::Extrapolation, "2", 5),
-    B("synth_bicubic", nullptr, &Config::synthBicubic, kLive),
+    B("synth_bicubic", nullptr, &Config::synthBicubic, kLive, Tune::SynthAlways, "1", 13),
     I("hud_mask", nullptr, &Config::hudMask, 0, 1000, kLive),
     B("online_tune", nullptr, &Config::onlineTune),
     F("upscale_temporal", nullptr, &Config::upscaleTemporal, 0.f, 0.95f),
@@ -184,8 +187,12 @@ const std::vector<OptionDef>& registry() {
     B("dedup", nullptr, &Config::dedup),
     B("paused", "pause", &Config::paused, kLive),
     F("gpu_budget", nullptr, &Config::gpuBudget, 0.f, 1.f),
-    B("pixel_vectors", nullptr, &Config::pixelVectors, kLive),
+    B("pixel_vectors", nullptr, &Config::pixelVectors, kLive, Tune::SynthInterpolation, "1", 11),
     B("subpixel", nullptr, &Config::subpixel, kLive, Tune::Extrapolation, "1", 3),
+    // Not an online_tune candidate: the probe rebuilds a frame from frames two
+    // apart, where an object crossing a pixel leaves it unchanged at both
+    // ends — static_guard's known failure, magnified (demo: +0.32 dB for real,
+    // +6.9 % error in the probe).
     F("static_guard", nullptr, &Config::staticGuard, 0.f, 1.f, kLive),
     B("refine", nullptr, &Config::refine),
     B("refine_all", nullptr, &Config::refineAll),
@@ -228,13 +235,19 @@ std::vector<std::string> Config::optionKeys(bool aliases) {
     return keys;
 }
 
-std::vector<std::pair<std::string, std::string>> Config::tuneCandidates() const {
+std::vector<Config::TuneCandidate> Config::tuneCandidates() const {
     std::vector<const OptionDef*> defs;
-    for (const auto& d : registry())
-        if (d.tune == Tune::Always || (d.tune == Tune::Extrapolation && extrapolate)) defs.push_back(&d);
+    for (const auto& d : registry()) {
+        const bool on = d.tune == Tune::Always || d.tune == Tune::SynthAlways ||
+                        ((d.tune == Tune::Extrapolation || d.tune == Tune::SynthExtrapolation) && extrapolate) ||
+                        (d.tune == Tune::SynthInterpolation && !extrapolate);
+        if (on) defs.push_back(&d);
+    }
     std::stable_sort(defs.begin(), defs.end(), [](const OptionDef* a, const OptionDef* b) { return a->tuneOrder < b->tuneOrder; });
-    std::vector<std::pair<std::string, std::string>> out;
-    for (const OptionDef* d : defs) out.emplace_back(d->key, d->trial);
+    std::vector<TuneCandidate> out;
+    for (const OptionDef* d : defs)
+        out.push_back({d->key, d->trial,
+                       d->tune == Tune::SynthAlways || d->tune == Tune::SynthInterpolation || d->tune == Tune::SynthExtrapolation});
     return out;
 }
 
