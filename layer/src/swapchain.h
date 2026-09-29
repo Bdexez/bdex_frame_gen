@@ -86,7 +86,10 @@ private:
         int frames = 1;              // presents to perform (multiplier, or 1)
         bool generated = false;      // frames-1 generated images in out_[]
         bool realFirst = false;      // extrapolation: the real frame goes out first
+        bool fifo = false;           // the real swapchain presents in FIFO: the display paces
+        int slot = -1;               // the synthesis slot (slots_) of this present
         clock::time_point start{};   // when the application presented
+        double frameStartMs = 0.0;   // when the application's previous present returned (it began this frame then)
         double intervalMs = 16.6;    // frame interval estimate for pacing
         int presentMode = -1;        // VkSwapchainPresentModeInfoEXT (-1 = none), applied to every present
         uint64_t presentId = 0;      // VkPresentIdKHR (0 = none), forwarded on the real frame
@@ -126,7 +129,27 @@ private:
     // Worker thread.
     void workerLoop();
     void runJob(const Job& job);
-    VkResult presentOne(const Job& job, int index, const std::function<void()>* onSubmitted);
+    // A frame of a job copied into a real swapchain image, not presented yet.
+    struct Copied {
+        uint32_t image = 0;              // real swapchain image
+        bool real = false;               // the application's frame (else a generated one)
+        VkFence fence = VK_NULL_HANDLE;  // the copy's submission: signalled once the frame is ready
+    };
+    // Acquires a real image and submits the copy of frame `index` of the job.
+    VkResult submitCopy(const Job& job, int index, Copied& out);
+    // Presents a copied frame (present ids, feedback, statistics).
+    VkResult presentCopied(const Job& job, const Copied& c);
+    // The pacing origin: waits for the GPU to finish the submission of
+    // `fence`, and returns when it did in `doneAt`. `cancellable`: returns
+    // false as soon as a newer real frame cancels the predicted frames.
+    bool waitGpu(VkFence fence, bool cancellable, clock::time_point& doneAt);
+    bool predictedCancelled();
+    bool waitUntilOrCancelled(clock::time_point target);  // false: cancelled first
+    // When frame k of the job goes out, from the GPU completion `origin`.
+    clock::time_point paceTarget(const Job& job, clock::time_point origin, int k);
+    double lastPresentMs_ = 0.0;   // worker: last present call
+    double lastLandMs_ = 0.0;      // worker: refresh the last present was due to show on (known grid only)
+    bool cancelPredicted_ = false; // workerMutex_: a newer real frame arrived (extrapolation drops its predictions)
     VkResult submitDeferredSynthesis(const Job& job);
 
     // Present feedback (DeviceData::presentFeedback): every present of the
@@ -150,13 +173,21 @@ private:
     std::condition_variable fbIdleCv_;  // the thread left vkWaitForPresentKHR
     struct FbEntry {
         uint64_t id;
-        double presentMs;  // the game's present call (msOf(job.start))
-        bool real;         // the real frame of that present (latency is measured on it)
+        double presentMs;     // the game's present call (msOf(job.start))
+        double frameStartMs;  // when the game began that frame (its previous present returned), 0 unknown
+        bool real;            // the real frame of that present (latency is measured on it)
     };
     std::deque<FbEntry> fbPending_;
     double fbLatencyMs_ = -1.0;         // fbMutex_: smoothed present-to-screen latency of real frames
     double fbLatencySum_ = 0.0;         // fbMutex_: statistics window
     uint32_t fbLatencyCount_ = 0;
+    double fbFrameLatencySum_ = 0.0;    // fbMutex_: frame start (input) to screen, statistics window
+    uint32_t fbFrameLatencyCount_ = 0;
+    uint64_t fbDisplayed_ = 0;          // fbMutex_: frames really displayed (not replaced)
+    uint64_t statsDisplayed_ = 0;
+    uint64_t hudDisplayed_ = 0;         // present thread: displayed-frame count at the last HUD rate update
+    clock::time_point hudRateAt_{};
+    int hudDisplayedFps_ = -1;          // displayed frames per second for the HUD, -1 unknown
     double displayLatencyMs();          // -1 when unknown
     void publishStatus(int multiplier);  // status.h entry for the control panel (present thread)
     std::chrono::steady_clock::time_point statusAt_{};
@@ -166,6 +197,7 @@ private:
     bool fbEverDisplayed_ = false;
     int fbTimeouts_ = 0;
     DisplayClock displayClock_;         // fbMutex_
+    double clockHintHz_ = 0.0;          // present thread: the panel's refresh rate given to displayClock_
     double fbLastMs_ = 0.0;             // fbMutex_: last completion
     uint64_t fbReplaced_ = 0;           // fbMutex_: frames replaced before being displayed (mailbox)
     uint64_t statsReplaced_ = 0;
@@ -231,6 +263,12 @@ private:
     VkResult pendingResult_ = VK_SUCCESS;  // surfaced to the application on its next call
 
     clock::time_point lastAppPresent_{};
+    double lastReturnMs_ = 0.0;  // when present() last returned to the game (its next frame began then)
+    // max_frame_latency: the synthesis slot (and its generation) of each of
+    // the last frames, newest last; present() waits for the GPU to finish
+    // the frame max_frame_latency presents back before it returns.
+    struct SlotUse { uint32_t slot; uint64_t generation; };
+    std::deque<SlotUse> recentSlots_;
     // fps_limit: next allowed application present (only the presenting
     // thread touches it, before mutex_ is taken, under limitMutex_).
     std::mutex limitMutex_;

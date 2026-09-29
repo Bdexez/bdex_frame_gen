@@ -72,9 +72,12 @@ struct DeviceData {
     uint32_t queueIndex = 0;
     bool queueShared = false;
     bool layerUsable = false;  // false: everything passes straight through
-    // async_compute: a private queue of a compute-only family for the
-    // synthesis (see VirtualSwapchain); `queue` keeps copies and presents.
+    // The synthesis on a private queue of its own (see VirtualSwapchain);
+    // `queue` keeps copies and presents. asyncCompute is set for both kinds:
+    // a compute-only family (the async_compute option), or splitQueue, a
+    // second queue of `queue`'s own family (present_queue, the default).
     bool asyncCompute = false;
+    bool splitQueue = false;
     VkQueue computeQueue = VK_NULL_HANDLE;
     uint32_t computeFamily = 0;
     uint32_t computeIndex = 0;
@@ -88,7 +91,8 @@ struct DeviceData {
         return true;
     }
     std::vector<uint32_t> layerFamilies() const {
-        return asyncCompute ? std::vector<uint32_t>{queueFamily, computeFamily} : std::vector<uint32_t>{queueFamily};
+        return asyncCompute && computeFamily != queueFamily ? std::vector<uint32_t>{queueFamily, computeFamily}
+                                                            : std::vector<uint32_t>{queueFamily};
     }
 
     VkCommandPool cmdPool = VK_NULL_HANDLE;

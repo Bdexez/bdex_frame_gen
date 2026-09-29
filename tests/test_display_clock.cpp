@@ -50,6 +50,42 @@ TEST(display_clock_rejects_variable_refresh) {
     CHECK(c.nextRefresh(123.0) == 123.0);
 }
 
+// Every other frame replaced before display: the displayed intervals all
+// span two refreshes. Alone, the clock takes that for a refresh grid at half
+// the rate; with the system's refresh rate as a hint it keeps the real one.
+TEST(display_clock_hint_resolves_skipped_refreshes) {
+    const double p = 1000.0 / 240.0;
+    uint32_t s = 5;
+    DisplayClock alone, hinted;
+    hinted.setHint(240.0);
+    for (int i = 0; i < 96; ++i) {
+        const double t = 50.0 + i * 2.0 * p + jitter(s, 0.15);
+        alone.add(t);
+        hinted.add(t);
+    }
+    CHECK(alone.valid() && std::fabs(alone.refreshHz() - 120.0) < 0.5);
+    CHECK(hinted.valid() && std::fabs(hinted.refreshHz() - 240.0) < 0.5);
+}
+
+// A hint the displayed frames contradict (another screen, a stale reading)
+// is ignored: the measured grid wins.
+TEST(display_clock_ignores_a_wrong_hint) {
+    DisplayClock c;
+    c.setHint(60.0);
+    uint32_t s = 11;
+    for (int i = 0; i < 96; ++i) c.add(i * (1000.0 / 144.0) + jitter(s, 0.15));
+    CHECK(c.valid() && std::fabs(c.refreshHz() - 144.0) < 0.5);
+    // ...and a variable-refresh display stays without a grid.
+    DisplayClock vrr;
+    vrr.setHint(144.0);
+    double t = 0.0;
+    for (int i = 0; i < 96; ++i) {
+        t += 7.0 + std::fabs(jitter(s, 6.0));
+        vrr.add(t);
+    }
+    CHECK(!vrr.valid());
+}
+
 // target_fps: the output never goes above the target (the refresh rate), where
 // a mailbox display drops frames unevenly; hysteresis at the boundaries.
 TEST(dynamic_multiplier_stays_under_the_target) {

@@ -33,6 +33,15 @@ class DisplayClock {
 public:
     void add(double displayedMs);      // one displayed frame (not a replaced one)
     void reset() { *this = DisplayClock{}; }
+    // The refresh rate the system reports for the display (the control
+    // panel reads it), 0 = unknown. The displayed frames alone cannot tell a
+    // refresh grid from a regular cadence that skips refreshes: when every
+    // other frame is replaced before display, each displayed interval spans
+    // two refreshes, and the grid they fit is half the refresh rate (seen:
+    // "115 Hz" on a compositor that showed 200 fps just before, which drove
+    // the « Auto » multiplier to x1). A period the intervals fit in whole
+    // multiples of the hint's is the hint's.
+    void setHint(double hz) { hintMs_ = hz > 0.0 ? 1000.0 / hz : 0.0; }
     bool valid() const { return periodMs_ > 0.0; }
     double periodMs() const { return periodMs_; }
     double refreshHz() const { return valid() ? 1000.0 / periodMs_ : 0.0; }
@@ -47,6 +56,7 @@ private:
     size_t head_ = 0;
     double last_ = 0.0;
     double periodMs_ = 0.0;
+    double hintMs_ = 0.0;
     int sinceEstimate_ = 0;
 };
 

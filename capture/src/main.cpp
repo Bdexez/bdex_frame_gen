@@ -516,6 +516,9 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
         ULONGLONG now = GetTickCount64();
         if (now - lastRectCheck >= 100) {
             lastRectCheck = now;
+            // A suboptimal present needs a new swapchain only if the window's
+            // size changed (some drivers report it continuously otherwise).
+            if (vk.takeSuboptimal() && vk.sizeChanged()) resizeToOverlay();
             bool iconic = IsIconic(target) != 0;
             if (iconic != hidden) {
                 ShowWindow(overlay, iconic ? SW_HIDE : SW_SHOWNOACTIVATE);
@@ -559,18 +562,31 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
         const double synthLatencyMs = std::chrono::duration<double, std::milli>(
             bdex::VkCtx::clock::now() - frame.dequeuedAt).count();
 
-        // Presentation of the job, paced like VirtualSwapchain::presentOne:
-        // with FIFO the display paces; otherwise spread the frames over the
-        // capture interval. A predicted frame is obsolete as soon as the next
-        // real frame has arrived: skip it rather than delay the real one.
+        // Presentation of the job, paced like the layer's worker
+        // (VirtualSwapchain::runJob): with FIFO the display paces; otherwise
+        // the frames are spread over the capture interval from when the GPU
+        // finished them — the synthesis (interpolation) or the real frame's
+        // copy (extrapolation) — not from their submission: the GPU is
+        // shared with the game and may end our work much later, and frames
+        // timed from the submission then reach the display together. A
+        // predicted frame is obsolete as soon as the next real frame has
+        // arrived: skip it rather than delay the real one.
         const bdex::VkCtx::Job job = vk.job();
+        const bool paced = cfg.pacing && !vk.fifo() && job.frames > 1;
+        Clock::time_point origin = job.start;
+        if (paced && !job.realFirst) origin = vk.waitSynthesis();
+        auto framePending = [](void* c) { return static_cast<bdex::Capture*>(c)->waitPending(0); };
         for (int i = 0; i < job.frames && g_running; ++i) {
             if (i > 0) {
-                if (cfg.pacing && !vk.fifo()) {
+                if (paced) {
+                    if (job.realFirst && i == 1) {
+                        origin = vk.waitLastCopy(framePending, &cap);
+                        if (cap.waitPending(0)) break;
+                    }
                     const auto target_t =
-                        job.start + std::chrono::duration_cast<Clock::duration>(
-                                        std::chrono::duration<double, std::milli>(
-                                            job.intervalMs * i / job.frames));
+                        origin + std::chrono::duration_cast<Clock::duration>(
+                                     std::chrono::duration<double, std::milli>(
+                                         job.intervalMs * i / job.frames));
                     if (job.realFirst) {
                         if (frameBefore(cap, target_t)) break;
                     } else {
