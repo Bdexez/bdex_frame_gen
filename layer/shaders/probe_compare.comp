@@ -1,0 +1,55 @@
+#version 450
+// online_tune's synthesis probe: the error of a frame the engine synthesised
+// (display size, linear rgba16f) against the real frame it stands for, next
+// to the error of a naive predictor — the cross-fade of the two frames it
+// was built from (interpolation) or the last one held (extrapolation). The
+// ratio rates the synthesis options on trial like the flow self-evaluation
+// rates the flow ones (same counters). Squared errors (sums in 1/4096 of a
+// squared luma unit), as PSNR weighs them: a synthesis option often fixes a
+// few badly wrong pixels (overlay edges) that a mean absolute error barely
+// sees — static_guard's +1 dB on a HUD scene measured -0.3 % in L1.
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0) uniform sampler2D probe;   // synthesised (display size)
+layout(binding = 1) uniform sampler2D truth;   // the real frame (render size)
+layout(binding = 2) uniform sampler2D refA;    // naive predictor: mix(refA, refB, blend)
+layout(binding = 3) uniform sampler2D refB;
+layout(binding = 4, std430) buffer Eval { uint v[]; } ev;
+
+layout(push_constant) uniform PC {
+    ivec2 size;      // display size
+    int slot;        // counters at v[slot * 8 ..]
+    int step;        // sampling stride
+    float blend;     // 0.5 cross-fade, 1 hold refB
+} pc;
+
+shared uint sE[256], sR[256], sN[256];
+
+float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+
+void main() {
+    ivec2 q = ivec2(gl_GlobalInvocationID.xy) * pc.step;
+    uint e = 0u, r = 0u, n = 0u;
+    if (all(lessThan(q, pc.size))) {
+        vec2 uv = (vec2(q) + 0.5) / vec2(pc.size);
+        float t = lum(texture(truth, uv).rgb);
+        float s = lum(texelFetch(probe, q, 0).rgb);
+        float naive = lum(mix(texture(refA, uv).rgb, texture(refB, uv).rgb, pc.blend));
+        float ds = min(abs(s - t), 1.0), dn = min(abs(naive - t), 1.0);
+        e = uint(ds * ds * 4096.0 + 0.5);
+        r = uint(dn * dn * 4096.0 + 0.5);
+        n = 1u;
+    }
+    uint i = gl_LocalInvocationIndex;
+    sE[i] = e; sR[i] = r; sN[i] = n;
+    barrier();
+    for (uint s = 128u; s > 0u; s >>= 1) {
+        if (i < s) { sE[i] += sE[i + s]; sR[i] += sR[i + s]; sN[i] += sN[i + s]; }
+        barrier();
+    }
+    if (i == 0u && sN[0] > 0u) {
+        atomicAdd(ev.v[pc.slot * 8 + 0], sE[0]);
+        atomicAdd(ev.v[pc.slot * 8 + 1], sR[0]);
+        atomicAdd(ev.v[pc.slot * 8 + 2], sN[0]);
+    }
+}
