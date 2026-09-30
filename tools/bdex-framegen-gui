@@ -732,13 +732,23 @@ FLATPAK_APPS = ("com.valvesoftware.Steam", "com.heroicgameslauncher.hgl", "net.l
                 "com.usebottles.bottles")
 
 
-def flatpak_apps():
-    """The ~/.var/app/<app> directories of the Flatpak launchers the layer is installed in."""
+# Snaps (Steam's on Ubuntu): their HOME is ~/snap/<name>/current, with the
+# layer's manifest in its .local/share.
+SNAP_APPS = ("steam",)
+
+
+def sandbox_dirs():
+    """(status dir, config file) inside each Flatpak or Snap launcher the layer
+    is installed in: the paths a game started there reads."""
     out = []
     for app in FLATPAK_APPS:
         d = os.path.expanduser(f"~/.var/app/{app}")
         if os.path.isfile(os.path.join(d, "data/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen.json")):
-            out.append(d)
+            out.append((os.path.join(d, ".cache", "bdex-framegen", "run"), os.path.join(d, "config", "bdex-framegen.conf")))
+    for app in SNAP_APPS:
+        d = os.path.expanduser(f"~/snap/{app}/current")
+        if os.path.isfile(os.path.join(d, ".local/share/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen.json")):
+            out.append((os.path.join(d, ".cache", "bdex-framegen", "run"), os.path.join(d, ".config", "bdex-framegen.conf")))
     return out
 
 
@@ -830,12 +840,9 @@ def auto_ceiling():
 
 def session_dirs():
     """Every status directory a game may read the session from: this user's,
-    and the one inside each Flatpak launcher (its sandbox home is its app
-    directory), so that a game started there sees the panel open."""
-    dirs = [status_dir()]
-    for d in flatpak_apps():
-        dirs.append(os.path.join(d, ".cache", "bdex-framegen", "run"))
-    return dirs
+    and the one inside each Flatpak or Snap launcher (its sandbox home is its
+    app directory), so that a game started there sees the panel open."""
+    return [status_dir()] + [run for run, _ in sandbox_dirs()]
 
 
 def write_session(target=0):
@@ -936,14 +943,14 @@ def read_status(pid):
 
 def mirror_config():
     """Copies the settings file where sandboxed games read theirs: each
-    Flatpak launcher's config directory, and any running game whose config
+    Flatpak or Snap launcher's config directory, and any running game whose config
     path is another file (its own XDG_CONFIG_HOME, BDEX_FG_CONFIG)."""
     try:
         with open(CONFIG_PATH, "rb") as f:
             data = f.read()
     except OSError:
         return
-    targets = [os.path.join(d, "config", "bdex-framegen.conf") for d in flatpak_apps()]
+    targets = [cfg for _, cfg in sandbox_dirs()]
     for pid, _name in detect_games():
         cfg = game_paths(pid)[1]
         if not same_file(cfg, CONFIG_PATH):
