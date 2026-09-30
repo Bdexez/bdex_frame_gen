@@ -17,10 +17,13 @@ add_executable(bdex_capture
   ../layer/src/platform.cpp
 )
 add_dependencies(bdex_capture bdex_layer_shaders)
+# layer/src before src: the engine's files in layer/src/passes/ include
+# "log.h" and must get the layer's (BDEX_INFO), not the capture app's —
+# capture files still find their own log.h first, in their own directory.
 target_include_directories(bdex_capture PRIVATE
-  src
+  "${CMAKE_SOURCE_DIR}/layer/src"
   "${CMAKE_BINARY_DIR}/layer/generated"
-  "${CMAKE_SOURCE_DIR}/layer/src")
+  src)
 # windowsapp: C++/WinRT activation (RoGetActivationFactory & co.);
 # dwmapi: extended frame bounds / cloaked state of the target window.
 target_link_libraries(bdex_capture PRIVATE bdex_core Vulkan::Vulkan d3d11 dxgi dwmapi windowsapp)

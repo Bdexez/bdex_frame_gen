@@ -290,6 +290,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed (2026-09-25)
 
+- Windows capture build: the engine files in `layer/src/passes/` got the
+  capture app's `log.h` (no `BDEX_INFO`) because `capture/src` came first
+  among `bdex_capture`'s include directories; `layer/src` now comes first.
+  `tools/ci/run.sh mingw` compiles the engine with that include order too.
 - `eval_sequence.py`: SSIM was numerically wrong on large frames — the
   integral images were summed in float32 (squared values reach ~1e11 on
   2 Mpx), drowning the local variances in rounding noise: on the demo
