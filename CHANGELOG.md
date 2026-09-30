@@ -6,6 +6,54 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### SteamOS / Steam Deck (gamescope)
+
+- **Game Mode without the control panel.** Game Mode runs one application
+  at a time, so the panel cannot stay open beside a game: its new « Mode
+  Jeu — sans le panneau » makes every game, or the selected one, generate
+  from its start with the panel's settings (`require_app = 0` in `[*]` or in
+  the game's section; `bdex-framegen --always-on [GAME]` / `--always-off`).
+  Turned on for every game this way, desktop programs stay excluded, as
+  under the panel — gamescope above all, Game Mode's compositor, which loads
+  the layer too (before, `[*] enabled = 1` alone enabled it everywhere).
+- **Steam's framerate limit.** The Quick Access Menu's limit caps what
+  gamescope shows, generated frames included: a 30 fps game at x2 under a
+  30 fps limit fell to 15 fps, 233 ms from present to screen, and after the
+  limit a queue kept 100 ms more for good. The layer now reads gamescope's
+  refresh cycle (its WSI layer answers `vkGetRefreshCycleDurationGOOGLE`:
+  the display's, or the limit's) and the limiter state
+  (`GAMESCOPE_LIMITER_FILE`). Under the limit it generates only up to it
+  (adaptive, on the game's own frame time when it waits for the display),
+  hands gamescope a frame once the previous one is on screen, and a game at
+  the limit waits for its previous frame to be shown, like DXVK there.
+  Measured in a headless gamescope 3.16 (SteamOS 3.9's): 30 fps kept,
+  19 ms (as DXVK / VKD3D-Proton, "frame limiter aware") to 66 ms (native
+  Vulkan) from present to screen; a 20 fps game under 30 is brought to 30,
+  a 40 fps one under 60 to 60; x2 again after the limit, no queue left.
+  gamescope never sends a swapchain it re-created (as its WSI layer forces
+  when the limit changes) the current cycle: the layer keeps each surface's
+  last one. The status (`--report`, the panel) shows the limit.
+- **gamescope's refresh rate** feeds *Auto* / *Adaptatif* at once. The
+  measured grid could not tell a 30 Hz display from a 60 Hz one presented to
+  every other refresh: after a limit, x1 stayed at 30 fps on 60 Hz.
+- **Presentation catch-up** (every system): a present whose game waited a
+  quarter of a frame for the worker, or after eight jobs in a row one refresh
+  or more late, shows its real frame alone — at the display's rate a queue
+  never drained by itself. Default frames unchanged (the CI's bit-for-bit
+  check and PSNR identical).
+- **The game's swapchain handle**: calls the layer passes through — HDR
+  metadata (the OLED Deck, HDR desktops), `VK_GOOGLE_display_timing`,
+  `VK_NV_low_latency2` (Reflex through dxvk-nvapi), `vkGetSwapchainCounterEXT`,
+  `vkSetLocalDimmingAMD` — reached a destroyed swapchain once the layer had
+  re-created its real one underneath (a window resized by Wine after a mode
+  change); they go to the current one. `vkWaitForPresent2KHR` returns at
+  once, as `vkWaitForPresentKHR` already did.
+- The control panel checked on SteamOS's versions — GTK 4.22, PyGObject
+  3.56, no libadwaita — and on Debian 12 and Ubuntu 22.04
+  (`tools/ci/panel-check.sh`, on a virtual display in a container). New
+  tests: `gamescope_limit` (Steam's limit in a headless gamescope, skipped
+  without one), `panel_logic` (the panel's config model).
+
 ### Compatibility
 
 - **The prebuilt archives load on far more systems.** Built on Ubuntu 20.04
