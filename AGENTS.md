@@ -70,7 +70,8 @@ tous les shaders de `layer/shaders/`.
   d'échec ; tags `v*` → GitHub Release (pré-release si suffixe `-`).
 - `.github/workflows/linux.yml` — build + tests unit/intégration (Xvfb,
   lavapipe) + gate qualité PSNR (échec sous 28,0 dB normal / 23,0 dB rapide) à
-  chaque push. Pièges runner (cf. §9) : paquet `glslc` (pas `glslc-tools`),
+  chaque push ; `distros` (build et démo dans 6 distributions) ; `package`
+  (archives x86_64/aarch64, vérifiées par `archive-check.sh` avant release). Pièges runner (cf. §9) : paquet `glslc` (pas `glslc-tools`),
   ICD lavapipe résolu par glob + vérifié `vulkaninfo`, couche enregistrée dans
   `implicit_layer.d` global.
 
@@ -88,7 +89,10 @@ bdex-framegen --tuned-profile [JEU] [--apply]           # décisions d'online_tu
 bdex-framegen --record DIR [N] -- <jeu>                 # enregistre N images réelles (corpus)
 tools/corpus_pack.py DIR out.tar.gz --name X            # séquence -> archive (release GitHub "corpus", notée en CI)
 tools/eval_sequence.py <dir_ppm> --variant KEY=VAL     # éval hors ligne (bdex_offline, sans fenêtre) sur séquence enregistrée
-tools/package-linux.sh [outdir] [version]              # archive Linux précompilée (CI : job `package`, Debian 12)
+tools/package-linux.sh [outdir] [version]              # archive Linux précompilée (sur la machine même)
+tools/ci/package-release.sh [outdir] [version]         # archives de release x86_64 + aarch64 (Docker, comme le job CI `package`)
+tools/ci/archive-check.sh ARCHIVE [image|suite...]     # installe une archive ailleurs : charge + génère x2 (vkcube, Xvfb)
+tools/ci/distro-check.sh [image...]                    # build + tests + démo dans d'autres distributions (job CI `distros`)
 ```
 
 Windows : **pas de machine Windows dans l'environnement** — le build MSVC, les
@@ -551,6 +555,83 @@ x2/x3/x4), sauf le correctif HDR (les chemins SDR restent identiques).
   `multithread_config` (deux files requises, sinon 77 — c'est le cas sous
   lavapipe). TSan local inutilisable avec le pilote NVIDIA (SEGV interne).
 
+### Compatibilité matériel / distributions (2026-09-30)
+
+- **Tests sans fenêtre** (demande utilisateur) : `ctest` complet ouvre la
+  démo sur l'écran de l'utilisateur (integration, validation, acquire,
+  multithread). En local : `ctest -R 'unit|matcher|eval_quality|offline|
+  corpus|formats|determinism|min_limits|option_keys'` directement, les tests
+  d'affichage dans `gamescope --backend headless -- env -u WAYLAND_DISPLAY
+  ctest -R 'integration|validation|acquire|multithread'`, ou Docker.
+- **Archives** (`tools/ci/package-release.sh`, job CI `package`) : SPIR-V
+  compilé par glslc sous Ubuntu 24.04 (le build testé), couches liées sous
+  Ubuntu 20.04 (glibc 2.31, GCC 10 via liens `/usr/local/bin`, CMake Kitware)
+  → x86_64 (64 + 32 bits, il faut `gcc-multilib` générique pour
+  `asm/errno.h`) et aarch64 en croisé (`tools/ci/aarch64-linux-gnu.cmake`,
+  conteneur séparé : multilib et croisé en conflit). Mesuré : glibc 2.29
+  (x86_64), 2.30 (arm64), contre 2.36 sous Debian 12 (`arc4random`,
+  `_dl_find_object`, pthread 2.34…). `package-linux.sh` échoue au-delà de
+  `BDEX_MAX_GLIBC` (readelf -V, toutes architectures). Les dépôts backports
+  de Debian 11 sont archivés : ne pas y revenir. `options_ui.json` d'une
+  compilation native pour le croisé (`BDEX_OPTIONS_JSON`).
+- **Sources** : GCC ≥ 10 (pas de `from_chars` flottant : flux en locale
+  classique), en-têtes Vulkan ≥ 1.3.204 (`layer/src/vk_compat.h` : blocs
+  EXT_surface/swapchain_maintenance1 recopiés si absents, `bdexNext` pour
+  les `pNext` non const de 1.3.239, `switch` entier sur `sType`), glslc
+  sinon glslangValidator (directive `GL_GOOGLE_include_directive` ajoutée :
+  SPIR-V de glslc identique octet pour octet), `BDEX_SPIRV_DIR`
+  (précompilé), `BDEX_VULKAN_INCLUDE_DIR`, pas de loader requis pour la
+  couche. `tools/ci/distro-check.sh [image…]` (job CI `distros`) : build
+  `-Werror` + tests sans GPU + la démo à travers la couche sur Xvfb +
+  lavapipe, dans chaque conteneur (Ubuntu 22.04 : chargeur 1.3.204, ×2,00).
+- **Petits GPU** : `checkPassLimits` (framegen.cpp) compare chaque passe aux
+  limites (images de stockage / échantillonnées / tampons par étage, taille
+  de groupe lue dans le SPIR-V) et lève `VK_ERROR_FEATURE_NOT_PRESENT` avec
+  la raison (repli en passage direct). `flow_refine` lit les lumas en
+  `sampler2D` (3 images de stockage, garanti 4). Matcher complet (~21 Ko de
+  mémoire partagée) seulement si ≥ 32 Ko (`matcherFull_`, sinon variante
+  allégée seule + termes optionnels à 0 dans `effectiveConfig`). Test
+  `min_limits` (bdex_offline `--limit-shared 16 --limit-storage-images 4`).
+- **Flatpak** (Steam, Heroic, Lutris, Bottles) : `packaging/linux/flatpak.sh`
+  copie couche + manifestes dans `~/.var/app/<app>/data` (XDG_DATA_HOME du
+  bac à sable, même chemin absolu dedans), profils et config ; le panneau
+  recopie la config (`mirror_config`), écrit la session dans les dossiers
+  de statut des applis (`~/.var/app/<app>/.cache/bdex-framegen/run`, HOME
+  du bac à sable avec `--persist=.`) et dans celui du jeu ciblé vu par
+  `/proc/<pid>/root` + son environnement, avec son PID interne (dernier
+  champ `NSpid`) ; `read_status` lit `<pid interne>.status` par la même vue.
+  Simulé avec bwrap (`--unshare-pid`, HOME remplacé) : détection, statut,
+  session, config OK. Snap non pris en charge.
+- **Archives vérifiées chez l'utilisateur** (`tools/ci/archive-check.sh`,
+  job `package`) : `install.sh` puis `vulkaninfo` (charge, device) et
+  `vkcube` 12 s sur Xvfb (`generation on` + dernier ratio ≥ 1,9) dans
+  Ubuntu 20.04/22.04/24.04, Debian 11/12, Fedora ; aarch64 : arbre Debian
+  arm64 (`debootstrap --foreign` + `dpkg-deb -x`, rien d'exécuté dedans)
+  lancé par `qemu-aarch64-static -L` dans un conteneur x86_64 — pas de
+  binfmt sur l'hôte. Pièges : qemu-user traduit `open()` vers l'arbre mais
+  pas `faccessat()` (le loader teste l'existence du manifeste avec) → couche
+  installée aux vrais chemins, `uname` factice pour `install.sh` ; le Mesa
+  20.3 de Debian 11 exige DRI3 pour présenter (Xvfb n'en a pas) → génération
+  non vérifiée là ; Ubuntu 20.04 (focal) *sans* focal-updates n'a pas
+  lavapipe ; `vulkaninfo` lancé par chemin complet écrit « USAGE:
+  /usr/bin/vulkaninfo ». Mesuré : ×2,00 partout ailleurs, arm64 compris
+  (Debian 12 arm64 émulé : 2,6 → 5,2 i/s, tous les shaders compilés par
+  lavapipe pour aarch64).
+- **Manifeste** : format **1.1.2** + `library_arch` (64/32). Mesuré par
+  version du loader : ≤ 1.2.162 (Ubuntu 20.04, Debian 11) avertissent
+  « invalid layer manifest file version » pour 1.2.0 *et* 1.2.1 ; ≥ 1.3.239
+  appliquent `library_arch` quel que soit le format (plus d'erreur « wrong
+  ELF class » pour la couche de l'autre largeur) ; 1.3.204 l'ignore. Ne pas
+  remonter le format (`register-layer.ps1` garde 1.2.0 : loaders Windows
+  récents).
+- **musl** (Alpine) : le crash de la démo et de `bdex_offline` venait de
+  lavapipe — LLVM compile nos shaders dans *ses* threads, 128 Ko de pile par
+  défaut sous musl (gdb : récursion `SimplifyDemandedBits`). Nos threads
+  n'y sont pour rien (essai de threads à 8 Mo : crash identique, retiré).
+  `distro-check.sh` précharge sous musl une bibliothèque qui appelle
+  `pthread_setattr_default_np` (8 Mo) : ×2,00. Les pilotes GPU ne compilent
+  pas avec LLVM ; ne rien changer dans la couche pour ça.
+
 ### CI Linux — pièges (2026-09-24)
 
 - Le loader d'Ubuntu 24.04 (1.3.275) **ignore `VK_IMPLICIT_LAYER_PATH`** (et
@@ -674,8 +755,10 @@ env BDEX_FG_PROFILE=1 BDEX_FG_LOG=2 bdex_demo --size 2560x1440
     GUI GTK est Linux-only) ; installateur.
 
 **Plateforme / infra**
-11. Packaging Linux (paquets distro / Flatpak pour la GUI) ; polish de
-    `windows-README.md` (section Windows dans le README principal).
+11. Packaging Linux : paquets distro (deb/rpm, AUR binaire), Flatpak du
+    panneau (faits : archives glibc 2.29/arm64 vérifiées en CI, couche dans
+    les lanceurs Flatpak) ; polish de `windows-README.md` (section Windows
+    dans le README principal).
 12. Piste phase 4 (optionnelle, fragile) : present-hook injection D3D11/12 en
     mode low-latency opt-in par jeu solo — jamais par défaut (anti-cheat).
 
