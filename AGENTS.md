@@ -126,7 +126,16 @@ Migrées : `flow_temporal`, `online_tune`, `upscale_temporal` ; nouvelle :
 sous mouvement de caméra — 25 % des pixels changés ; à 1 %, la démo à
 caméra fixe perdait 0,3 dB en extrapolation). La synthèse a un binding 8
 « masque statique » générique (`FgContext::setStaticMask`, 1×1 à zéro
-sinon). Mesure clé : en interpolation le sous-pixel
+sinon).
+**`online_tune` — sonde de synthèse** (`passes/synthesis_probe.*`) : note
+les options de synthèse sur une image que le jeu a rendue et que la
+synthèse n'a pas vue (interpolation : B reconstruite de A et C, flux
+composés ; extrapolation : C prédite de A et B). Erreur en RMS (le L1 ne
+voyait pas les gains concentrés, cf. `static_guard` / HUD). `static_guard`
+exclu (l'écart de deux images amplifie son défaut connu). Stabilité :
+dénominateur plancher 0,05, et un gain de prédiction ≥ 0,05 passe outre
+(caméra qui accélère). Redémarrage sur changement durable de mouvement ×3
+ou de luminosité ±0,2 (`OnlineTune::observe`). Mesure clé : en interpolation le sous-pixel
 (LK ou parabolique) ne paie qu'avec `synth_bicubic` — c'est le bilinéaire
 de la synthèse qui floute, pas la précision du vecteur. Restent dans
 `FrameGen` (liées au shader de synthèse lui-même) : `extrapolate_splat`,
