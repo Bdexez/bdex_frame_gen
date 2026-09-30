@@ -79,6 +79,22 @@ connected_outputs() {
 # « Lecture rapide »: what the report says about the usual causes of « no
 # generated frames » — Auto on a misdetected screen (x1), panel closed or
 # targeting another process, the game on another GPU than the screen.
+# The directories of the Flatpak game launchers the layer is installed in
+# (packaging/linux/flatpak.sh): `flatpak_dirs run` their status directories,
+# `flatpak_dirs config` their settings files, `flatpak_dirs` the app dirs.
+flatpak_dirs() {
+  local app d
+  for app in com.valvesoftware.Steam com.heroicgameslauncher.hgl net.lutris.Lutris com.usebottles.bottles; do
+    d="$HOME/.var/app/$app"
+    [ -f "$d/data/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen.json" ] || continue
+    case "${1:-}" in
+      run) echo "$d/.cache/bdex-framegen/run" ;;
+      config) echo "$d/config/bdex-framegen.conf" ;;
+      *) echo "$d" ;;
+    esac
+  done
+}
+
 quick_read() {
   local sdir="$1" sess="$1/app.session" panel_hz="" panel_target="" hz_desktop
   hz_desktop="$(screens | sed -n 's/.*@\([0-9.]*\).*/\1/p' | sort -g | tail -1)"
@@ -98,11 +114,20 @@ quick_read() {
   else
     echo "panneau : pas de session (panneau jamais ouvert, ou fermé proprement)"
   fi
-  local found=0 f
-  for f in "$sdir"/*.status; do
+  local found=0 f host_target="${panel_target:-0}"
+  # (Games in a Flatpak launcher write theirs in its sandbox, their pid being
+  # the one of its own namespace: compared with the session there.)
+  for f in "$sdir"/*.status $(flatpak_dirs run)/*.status; do
     [ -f "$f" ] || continue
     found=1
     local pid; pid="$(sed -n 's/^pid=//p' "$f" | head -1)"
+    local fdir; fdir="$(dirname "$f")"
+    panel_target="$host_target"
+    if [ "$fdir" != "$sdir" ]; then
+      panel_target=0
+      [ -f "$fdir/app.session" ] && { read -r _ panel_target _ < "$fdir/app.session" || true; }
+      echo "(jeu dans un Flatpak : $fdir)"
+    fi
     # One line per swapchain: state device multiplier game_fps output_fps refresh_hz
     awk -F= '
       /^\[/ { if (sc) print st "\t" dv "\t" m "\t" g "\t" o "\t" r; sc = ($0 ~ /^\[swapchain/); st = dv = m = g = o = r = "" }
@@ -207,6 +232,14 @@ report() {
              "${XDG_DATA_HOME:-$HOME/.local/share}/vulkan/implicit_layer.d"; do
       ls -l "$d"/*BDEX* 2>/dev/null || true
     done
+    for d in $(flatpak_dirs); do
+      echo "Flatpak $(basename "$d"):"; ls -l "$d"/data/vulkan/implicit_layer.d/*BDEX* 2>/dev/null || true
+    done
+    for app in com.valvesoftware.Steam com.heroicgameslauncher.hgl net.lutris.Lutris com.usebottles.bottles; do
+      if [ -d "$HOME/.var/app/$app" ] && [ ! -f "$HOME/.var/app/$app/data/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen.json" ]; then
+        echo "Flatpak $app: layer NOT installed there (run install.sh again)"
+      fi
+    done
     echo; echo "== environment"
     env | grep -E '^(BDEX_FG|VK_|PROTON_|DXVK_|VKD3D_|MESA_|RADV_|__GL)' | sort || true
     echo; echo "== screens"
@@ -228,9 +261,13 @@ report() {
     else
       echo "(none)"
     fi
+    for d in $(flatpak_dirs run); do
+      echo "-- Flatpak: $d/app.session"
+      if [ -f "$d/app.session" ]; then cat "$d/app.session"; else echo "(none)"; fi
+    done
     echo; echo "== running games (live status)"
     found=0
-    for f in "$sdir"/*.status; do
+    for f in "$sdir"/*.status $(flatpak_dirs run)/*.status; do
       [ -f "$f" ] || continue
       found=1; echo "-- $f"; cat "$f"
     done
@@ -245,6 +282,9 @@ report() {
     [ "$found" = 1 ] || echo "(none)"
     echo; echo "== config file ($cfg)"
     if [ -f "$cfg" ]; then cat "$cfg"; else echo "(none)"; fi
+    for f in $(flatpak_dirs config); do
+      if cmp -s "$cfg" "$f"; then echo "(same copy in $f)"; else echo "-- DIFFERENT copy in $f:"; cat "$f" 2>/dev/null; fi
+    done
     if [ -n "$log" ]; then
       echo; echo "== last 200 lines of $log"
       tail -n 200 "$log" 2>/dev/null || echo "(unreadable)"
@@ -347,6 +387,11 @@ p.parent.mkdir(parents=True, exist_ok=True)
 p.write_text("\n".join(lines) + "\n")
 print("frame generation", "resumed" if paused else "paused", f"({p})")
 PY
+  # Games in a Flatpak launcher read their own copy of the settings.
+  local f
+  for f in $(flatpak_dirs config); do
+    mkdir -p "$(dirname "$f")" && cp "$cfg" "$f"
+  done
 }
 
 check() {
