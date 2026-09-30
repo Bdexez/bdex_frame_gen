@@ -51,7 +51,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force logs | Out-Null
           cmake -S . -B build -G "Visual Studio 17 2022" -A ${{ matrix.arch }} `
-            -DBDEX_BUILD_DEMO=OFF -DBDEX_BUILD_TESTS=ON 2>&1 | Tee-Object -FilePath logs/configure.log
+            -DBDEX_BUILD_DEMO=OFF -DBDEX_BUILD_TESTS=ON -DBDEX_WERROR=ON 2>&1 | Tee-Object -FilePath logs/configure.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build

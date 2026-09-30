@@ -6,11 +6,14 @@
 #include <cstdlib>
 
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN  // (bdex_capture defines it for the whole target)
 #define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 #include <shellapi.h>
 #include <tlhelp32.h>
-extern char** _environ;  // MSVCRT/MinGW (also in <stdlib.h>); must stay at global scope
+// _environ comes from <stdlib.h> (the UCRT makes it a macro over
+// __p__environ(): redeclaring it here was an inconsistent-linkage warning).
 #else
 #include <dirent.h>
 #include <dlfcn.h>

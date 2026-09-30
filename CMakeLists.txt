@@ -10,12 +10,25 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 find_package(Vulkan REQUIRED)
+
+if(MSVC)
+  # getenv / fopen / strerror: the portable standard calls, used safely here;
+  # MSVC's "unsafe" deprecation (C4996) would otherwise be the bulk of the log.
+  add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+endif()
+# Warnings as errors for a target (BDEX_WERROR): /WX or -Werror.
+function(bdex_strict target)
+  if(BDEX_WERROR)
+    target_compile_options(${target} PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/WX,-Werror>)
+  endif()
+endfunction()
 find_program(GLSLC glslc REQUIRED)
 
 option(BDEX_BUILD_DEMO  "Build the GLFW demo application" ON)
 option(BDEX_BUILD_TESTS "Build unit tests" ON)
 option(BDEX_BUILD_OFFLINE "Build bdex_offline (headless engine on PPM sequences, for quality evaluation)" ON)
 option(BDEX_BUILD_CAPTURE "Build the Windows capture PoC (bdex_capture.exe, MSVC only)" ON)
+option(BDEX_WERROR      "Treat compiler warnings as errors in the layer, tests and capture app (the CI turns it on)" OFF)
 option(BDEX_32BIT       "Build the 32-bit layer (for 32-bit games); needs a multilib toolchain (ignored on Windows, where the arch comes from the generator platform)" OFF)
 
 # The 32-bit build gets its own library dir / manifest suffix. On Linux it is

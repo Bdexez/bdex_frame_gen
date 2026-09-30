@@ -6,6 +6,7 @@ if(MSVC)
 else()
   target_compile_options(bdex_tests PRIVATE -Wall -Wextra)
 endif()
+bdex_strict(bdex_tests)
 add_test(NAME unit COMMAND bdex_tests)
 
 # The real block_match shader against a C++ model of its winner selection

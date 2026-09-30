@@ -293,6 +293,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed (2026-09-25)
 
+- MSVC warnings cleared (all from the CI logs): `_CRT_SECURE_NO_WARNINGS`
+  for the standard `getenv`/`fopen` calls, explicit narrowing in the PPM
+  dump, `_environ` no longer redeclared (inconsistent linkage),
+  `WIN32_LEAN_AND_MEAN` guarded, a shadowed lock renamed. New option
+  `BDEX_WERROR` (`/WX`, `-Werror`) on the layer, the unit tests and the
+  capture app; both CI workflows turn it on.
 - Windows capture build: the engine files in `layer/src/passes/` got the
   capture app's `log.h` (no `BDEX_INFO`) because `capture/src` came first
   among `bdex_capture`'s include directories; `layer/src` now comes first.
