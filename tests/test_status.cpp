@@ -36,3 +36,36 @@ TEST(status_key_accepts_pointers_and_integers) {
     CHECK(statusKey(&x) != 0);
     CHECK(statusKey(uint64_t(7)) == 7);
 }
+
+TEST(status_parse_and_describe) {
+    std::map<uint64_t, StatusEntry> m;
+    StatusEntry c;
+    c.kind = "capture";
+    c.state = "generating";
+    c.target = "skyrimse";
+    c.mode = "extrapolate";
+    c.multiplier = 2;
+    c.gameFps = 60;
+    c.outFps = 120;
+    c.latencyMs = 21;
+    c.passes = "online_tune,hud_mask";
+    c.tune = "trying pixel_vectors=1 (2 of 5 decided)";
+    StatusEntry p;
+    p.kind = "swapchain";
+    p.state = "pass-through";
+    p.reason = "swapchain format 64 not supported";
+    m[1] = c;
+    m[2] = p;
+    const StatusFile f = statusParse(statusFormat("bdex_capture", 7, 99, m));
+    CHECK(f.process == "bdex_capture" && f.pid == 7 && f.time == 99 && f.sections.size() == 2);
+    CHECK(f.sections[0].kind == "capture" && f.sections[0].values.at("target") == "skyrimse");
+    const auto lines = statusDescribe(f);
+    CHECK(lines.size() == 4);
+    CHECK(lines[0] == "skyrimse : 60 → 120 i/s (×2, extrapolation) · latence 21 ms");
+    CHECK(lines[1] == "   passes : online_tune, hud_mask");
+    CHECK(lines[2] == "   réglage auto : trying pixel_vectors=1 (2 of 5 decided)");
+    CHECK(lines[3] == "transparente — swapchain format 64 not supported");
+    // Windows line ends, stray lines.
+    const StatusFile g = statusParse("process=x\r\npid=3\r\nnoise\r\n\r\n[device 1]\r\nstate=inactive\r\nreason=disabled\r\n");
+    CHECK(g.pid == 3 && statusDescribe(g).size() == 1 && statusDescribe(g)[0] == "Couche inactive : disabled");
+}

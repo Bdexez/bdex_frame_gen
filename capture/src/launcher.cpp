@@ -7,12 +7,17 @@
 
 #include "log.h"
 #include "platform.h"
+#include "status.h"
 
 #include <windows.h>
 #include <dwmapi.h>
 
 #include <algorithm>
 #include <cctype>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <cstdio>
 #include <cstdlib>
 #include <cwchar>
@@ -438,6 +443,8 @@ enum {
     ID_ZBIAS,
     ID_SFINE,
     ID_FITER,
+    ID_RUNNING,
+    ID_TIMER_RUNNING = 1,
 };
 
 const wchar_t* const kPresets[] = {L"Auto", L"Qualité", L"Équilibré", L"Performance"};
@@ -457,7 +464,55 @@ struct Ui {
     HWND grad = nullptr, scLow = nullptr, scHigh = nullptr, smooth = nullptr;
     HWND zbias = nullptr, sfine = nullptr, fiter = nullptr;
     std::vector<HWND> extra;  // one control per kExtra entry (nullptr for headers)
+    HWND running = nullptr;   // "En cours": the live status files
+    std::wstring runningText;
 };
+
+static std::wstring wideFromUtf8(const std::string& s) {
+    int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+    std::wstring w(static_cast<size_t>(std::max(n - 1, 0)), L'\0');
+    if (n > 1) MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, w.data(), n);
+    return w;
+}
+
+// A process that still runs (a status file outlives a crashed game).
+static bool processAlive(long pid) {
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+    if (!h) return false;
+    DWORD code = 0;
+    const bool alive = GetExitCodeProcess(h, &code) && code == STILL_ACTIVE;
+    CloseHandle(h);
+    return alive;
+}
+
+// "En cours": what the layer (Vulkan games) and other bdex_capture instances
+// publish (layer/src/status.h), refreshed every second while the launcher is
+// open — the same files as the GTK panel's view on Linux.
+void refreshRunning(Ui& ui) {
+    std::string text;
+    std::error_code ec;
+    const std::string dir = platformStatusDir();
+    const long long now = static_cast<long long>(std::time(nullptr));
+    if (!dir.empty())
+        for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+            if (entry.path().extension() != ".status") continue;
+            std::ifstream in(entry.path());
+            std::stringstream buf;
+            buf << in.rdbuf();
+            const StatusFile f = statusParse(buf.str());
+            if (f.pid <= 0 || !processAlive(f.pid) || now - f.time > 30) continue;
+            text += f.process + " (" + std::to_string(f.pid) + ")\r\n";
+            const auto lines = statusDescribe(f);
+            if (lines.empty()) text += "   couche chargée\r\n";
+            for (const auto& l : lines) text += "   " + l + "\r\n";
+        }
+    if (text.empty()) text = "Aucun jeu en cours avec bdex-framegen (couche Vulkan ou capture).";
+    const std::wstring w = wideFromUtf8(text);
+    if (w != ui.runningText) {  // no flicker nor lost scroll position when nothing changed
+        ui.runningText = w;
+        SetWindowTextW(ui.running, w.c_str());
+    }
+}
 
 int sel(HWND combo) {
     const int i = static_cast<int>(SendMessageW(combo, CB_GETCURSEL, 0, 0));
@@ -825,8 +880,13 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             y += 25;
         }
 
-        add(L"BUTTON", L"Démarrer", BS_DEFPUSHBUTTON | WS_TABSTOP, 770, 790, 96, 26, IDOK);
-        add(L"BUTTON", L"Quitter", BS_PUSHBUTTON | WS_TABSTOP, 874, 790, 94, 26, IDCANCEL);
+        group(L"En cours", 12, 786, 956, 124);
+        ui->running = add(L"EDIT", nullptr, ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL | WS_BORDER,
+                          24, 804, 932, 98, ID_RUNNING);
+        SetTimer(hwnd, ID_TIMER_RUNNING, 1000, nullptr);
+
+        add(L"BUTTON", L"Démarrer", BS_DEFPUSHBUTTON | WS_TABSTOP, 770, 920, 96, 26, IDOK);
+        add(L"BUTTON", L"Quitter", BS_PUSHBUTTON | WS_TABSTOP, 874, 920, 94, 26, IDCANCEL);
 
         for (const wchar_t* s : kPresets)
             SendMessageW(ui->preset, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
@@ -843,8 +903,12 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
         fillFromChoice(*ui);
         refreshList(*ui);
+        refreshRunning(*ui);
         return 0;
     }
+    case WM_TIMER:
+        if (wp == ID_TIMER_RUNNING && ui) refreshRunning(*ui);
+        return 0;
     case WM_COMMAND:
         switch (LOWORD(wp)) {
         case ID_REFRESH:
@@ -879,6 +943,7 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         DestroyWindow(hwnd);
         return 0;
     case WM_DESTROY:
+        KillTimer(hwnd, ID_TIMER_RUNNING);
         PostQuitMessage(0);
         return 0;
     default:
@@ -907,7 +972,7 @@ bool runLauncher(LaunchChoice& choice) {
             const std::string v = globalConfigValue(o.key);
             if (!v.empty()) choice.extra[o.key] = normalizeExtra(o, v);
         }
-    RECT client{0, 0, 980, 830};
+    RECT client{0, 0, 980, 958};
     AdjustWindowRect(&client, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, FALSE);
     RECT wa{};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);

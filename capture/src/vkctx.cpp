@@ -2,6 +2,8 @@
 #include "log.h"
 
 #include "framegen.h"
+#include "online_tune.h"
+#include "status.h"
 #include "vk_util.h"
 
 #include <algorithm>
@@ -733,7 +735,29 @@ int VkCtx::present(int index) {
 
 // ------------------------------------------------------------- shutdown ---
 
+void VkCtx::publishStatus(const std::string& target, double captureFps, double outFps, double latencyMs) {
+    StatusEntry e;
+    e.kind = "capture";
+    e.target = target;
+    e.state = genEnabled_ ? "generating" : "paused";
+    e.mode = layerDev_.config.extrapolate ? "extrapolate" : "interpolate";
+    e.multiplier = genEnabled_ ? std::max(1, layerDev_.config.multiplier) : 1;
+    e.gameFps = captureFps;
+    e.outFps = outFps;
+    e.latencyMs = latencyMs;
+    e.width = width_;
+    e.height = height_;
+    e.device = layerDev_.props.deviceName;
+    if (fg_) e.passes = fg_->passNames();
+    {
+        std::lock_guard<std::mutex> lock(layerDev_.onlineTuneMutex);
+        if (layerDev_.onlineTune) e.tune = layerDev_.onlineTune->status();
+    }
+    statusSet(statusKey(this), e);
+}
+
 void VkCtx::shutdown() {
+    statusRemove(statusKey(this));
     if (!dev_) {
         if (surface_) vkDestroySurfaceKHR(inst_, surface_, nullptr);
         if (inst_) vkDestroyInstance(inst_, nullptr);

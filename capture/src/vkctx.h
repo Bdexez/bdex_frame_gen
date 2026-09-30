@@ -89,6 +89,9 @@ public:
 
     // HUD figures (captured fps, output fps).
     void setHud(int gameFps, int outFps);
+    // Live status for the launcher's "En cours" view and bdex-framegen
+    // tools (layer/src/status.h): `target` is the captured game.
+    void publishStatus(const std::string& target, double captureFps, double outFps, double latencyMs);
 
     void setCapture(Capture* c) { cap_ = c; }
 

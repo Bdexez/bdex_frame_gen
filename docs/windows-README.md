@@ -27,7 +27,12 @@ checklist in `windows-port.md` §3. Please report what happens.
    ones, the flow structure and the debug view) and press **Démarrer**. The choices are saved to
    `%APPDATA%\bdex-framegen\bdex-framegen.conf` (the same keys as the Linux
    control panel); when the capture stops (Ctrl+Alt+Q, game closed) the
-   launcher reopens.
+   launcher reopens. Its **En cours** frame lists, refreshed every second,
+   what is running with bdex-framegen: Vulkan games through the layer
+   (mode 1) and captures — fps, mode, latency, the optional passes at work
+   and `online_tune`'s decisions or current trial. To watch a capture while
+   it runs, open a second `bdex_capture.exe` (its launcher shows the first
+   one); the files are `%TEMP%\bdex-framegen\<pid>.status`.
 3. An always-on-top overlay appears over (or, with "Ajustée à l'écran",
    centred on the monitor of) the game window, showing the game with
    generated frames in between: x2 by default, **extrapolation** by default

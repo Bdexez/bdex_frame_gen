@@ -576,6 +576,8 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
                  cap.captureFps(), realFps, outFps, synthLatency.first, synthLatency.second,
                  presentLatency.first, presentLatency.second);
             vk.setHud(static_cast<int>(cap.captureFps() + 0.5f), static_cast<int>(outFps + 0.5f));
+            // Latency shown: WGC frame -> present call (the part this app controls).
+            vk.publishStatus(gameProc, cap.captureFps(), outFps, presentLatency.first);
             presented = presentedReal = 0;
             statsT0 = now;
         }

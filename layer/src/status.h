@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace bdex {
 
@@ -12,7 +13,7 @@ namespace bdex {
 // doing in a running game — and, above all, why it passes frames through
 // when it does, which otherwise takes a log file to find out.
 struct StatusEntry {
-    std::string kind;        // "device" or "swapchain"
+    std::string kind;        // "device", "swapchain" (the layer) or "capture" (bdex_capture)
     std::string state;       // generating | paused | pass-through | active | anti-cheat | inactive
     std::string reason;      // why pass-through / inactive (empty otherwise)
     std::string mode;        // interpolate | extrapolate
@@ -25,6 +26,7 @@ struct StatusEntry {
     std::string device;      // GPU name
     std::string passes;      // optional passes running (fg_pass.h), comma-separated
     std::string tune;        // online_tune: its decisions, or the option on trial
+    std::string target;      // capture: the captured game's executable
 };
 
 // Keys: any Vulkan handle or pointer, on 64- and 32-bit builds alike (a
@@ -37,5 +39,21 @@ void statusRemove(uint64_t key);
 // The file's text (unit-tested).
 std::string statusFormat(const std::string& process, long pid, long long unixTime,
                          const std::map<uint64_t, StatusEntry>& entries);
+
+// Reading the files back (the Windows launcher's "En cours" view; the GTK
+// panel has its own Python reader).
+struct StatusFile {
+    std::string process;
+    long pid = 0;
+    long long time = 0;
+    struct Section {
+        std::string kind;  // from "[kind n]"
+        std::map<std::string, std::string> values;
+    };
+    std::vector<Section> sections;
+};
+StatusFile statusParse(const std::string& text);
+// What a status file says, in French, a line per point worth showing.
+std::vector<std::string> statusDescribe(const StatusFile& file);
 
 } // namespace bdex
