@@ -26,6 +26,9 @@ if echo 'int main(){return 0;}' | g++ -m32 -x c++ - -o /dev/null 2>/dev/null && 
 else
   echo "  (no 32-bit toolchain: 32-bit games will run without the layer)"
 fi
+# Steam, Heroic, Lutris or Bottles installed as a Flatpak: a copy in their
+# sandbox.
+bash "$ROOT/packaging/linux/flatpak.sh" "$PREFIX"
 echo
 echo "The layer now loads into every Vulkan game automatically, inert until you"
 echo "turn it on. Open the control panel to enable it (globally or per game):"

@@ -9,3 +9,8 @@ rm -fv "$PREFIX/lib/libVkLayer_bdex_framegen.so" \
        "$PREFIX/bin/bdex-framegen" "$PREFIX/bin/bdex-framegen-gui" "$PREFIX/bin/bdex_demo" \
        "$PREFIX/share/applications/bdex-framegen.desktop"
 rm -rfv "$PREFIX/share/bdex-framegen"
+# The copies made for Flatpak launchers (packaging/linux/flatpak.sh).
+here="$(cd "$(dirname "$0")" && pwd)"
+for f in "$here/flatpak.sh" "$here/../packaging/linux/flatpak.sh"; do
+  if [ -f "$f" ]; then bash "$f" --remove; break; fi
+done
