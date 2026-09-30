@@ -33,7 +33,14 @@ if ! grep -q "generation on" "$LOG"; then
   cat "$LOG"
   exit 1
 fi
-ratio="$(grep -o '(x[0-9.]*)' "$LOG" | tail -1 | tr -d '(x)')"
+# Mean over the statistics lines, the first (start-up) left out: a line
+# covers 2 s, which on a slow runner (a sanitizer build on software Vulkan:
+# ~3 game fps) is ~6 frames, so one frame more or less in a window reads
+# x1.86 or x2.17 while generation is steady at x2.
+ratio="$(grep -o '(x[0-9.]*)' "$LOG" | tr -d '(x)' |
+         awk '{ v[NR] = $1 } END { if (NR == 0) exit; s = 0; n = 0
+               for (i = (NR > 1 ? 2 : 1); i <= NR; ++i) { s += v[i]; ++n }
+               printf "%.2f", s / n }')"
 if [ -z "$ratio" ]; then
   echo "no statistics line found"
   cat "$LOG"
