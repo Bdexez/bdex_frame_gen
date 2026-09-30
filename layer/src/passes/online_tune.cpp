@@ -51,8 +51,11 @@ static std::shared_ptr<OnlineTune> createOnlineTune(const Config& cfg) {
     const std::string mine = cfg.describe();
     for (const auto& tc : cfg.tuneCandidates()) {
         const OnlineTune::Candidate c{tc.key, tc.value, tc.synthesis};
+        // Not a candidate if the user set any of its options.
+        std::vector<std::pair<std::string, std::string>> parts;
+        OnlineTune::expand(c.key, c.value, parts);
         Config off = cfg;
-        off.apply(c.key, "0");
+        for (const auto& kv : parts) off.apply(kv.first, "0");
         if (off.describe() == mine) candidates.push_back(c);
     }
     auto tune = std::make_shared<OnlineTune>(candidates);

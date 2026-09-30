@@ -23,10 +23,22 @@ OnlineTune::OnlineTune(std::vector<Candidate> candidates)
     while (current_ < candidates_.size() && decided_[current_]) ++current_;
 }
 
+void OnlineTune::expand(const std::string& key, const std::string& value,
+                        std::vector<std::pair<std::string, std::string>>& out) {
+    size_t k0 = 0, v0 = 0;
+    while (true) {
+        const size_t k1 = key.find('+', k0), v1 = value.find('+', v0);
+        out.emplace_back(key.substr(k0, k1 - k0), value.substr(v0, v1 == std::string::npos ? v1 : v1 - v0));
+        if (k1 == std::string::npos || v1 == std::string::npos) break;
+        k0 = k1 + 1;
+        v0 = v1 + 1;
+    }
+}
+
 std::vector<std::pair<std::string, std::string>> OnlineTune::keptLocked() const {
     std::vector<std::pair<std::string, std::string>> out;
     for (size_t i = 0; i < decisions_.size(); ++i)
-        if (decided_[i] && decisions_[i].kept) out.emplace_back(decisions_[i].key, decisions_[i].value);
+        if (decided_[i] && decisions_[i].kept) expand(decisions_[i].key, decisions_[i].value, out);
     return out;
 }
 
@@ -57,7 +69,7 @@ uint32_t OnlineTune::nextFlow(std::vector<std::pair<std::string, std::string>>& 
     std::lock_guard<std::mutex> lock(mutex_);
     overrides = keptLocked();
     if (current_ >= candidates_.size()) return kSkip;
-    if (on(block_)) overrides.emplace_back(candidates_[current_].key, candidates_[current_].value);
+    if (on(block_)) expand(candidates_[current_].key, candidates_[current_].value, overrides);
     uint32_t tag = makeTag(current_, round_, block_);
     if (frame_ == 0) tag |= kSkip;
     if (++frame_ >= kBlockFrames) {

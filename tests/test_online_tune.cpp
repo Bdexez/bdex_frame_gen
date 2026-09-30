@@ -174,3 +174,17 @@ TEST(online_tune_status) {
     t.deserialize("a 1 kept 0.05 0\nb 2 dropped -0.01 0\n");
     CHECK(t.status() == "a=1 kept (-5.0 %), b=2 dropped (+1.0 %)");
 }
+
+TEST(online_tune_pairs_are_tried_together) {
+    std::vector<std::pair<std::string, std::string>> parts;
+    OnlineTune::expand("subpixel_lk+synth_bicubic", "2+1", parts);
+    CHECK(parts.size() == 2 && parts[0].first == "subpixel_lk" && parts[0].second == "2" &&
+          parts[1].first == "synth_bicubic" && parts[1].second == "1");
+    parts.clear();
+    OnlineTune::expand("a", "0.1", parts);
+    CHECK(parts.size() == 1 && parts[0].second == "0.1");
+    OnlineTune t({{"a+b", "1+2"}});
+    CHECK(t.deserialize("a+b 1+2 kept 0.05 0\n"));
+    const auto k = t.kept();
+    CHECK(k.size() == 2 && k[0].first == "a" && k[1].first == "b" && k[1].second == "2");
+}
