@@ -180,8 +180,40 @@ les images répétées (`dedup`) et commande des passes en dispatch indirect,
   - `bin/bdex-framegen` (lanceur, diagnostic) et `bin/bdex-framegen-gui`
     (panneau) ;
   - profils, description des options, raccourci d'application.
-- Depuis les sources : `tools/install.sh`. Arch : `packaging/arch/PKGBUILD`
-  (`bdex-framegen-git`).
+- Depuis les sources : `tools/install.sh`.
+- **Paquets de distribution** (depuis le 30/09, `tools/package-native.sh`,
+  refaits à partir des archives, publiés avec chaque release) :
+  - `.deb` amd64/arm64 : couche dans `/usr/lib/x86_64-linux-gnu` (32 bits :
+    `/usr/lib/i386-linux-gnu`) ; dépend de `libc6 (>= 2.29)`, `libvulkan1` ;
+    recommande `python3-gi`, `gir1.2-gtk-4.0` ;
+  - `.rpm` x86_64/aarch64 : `/usr/lib64` (32 bits : `/usr/lib`), `AutoReqProv:
+    no` (sinon la couche 32 bits tirerait une glibc 32 bits), dépendances
+    riches `(vulkan-loader or libvulkan1)` pour Fedora et openSUSE ;
+    `rpm-ostree install` sur Bazzite / Silverblue ;
+  - Arch : `packaging/arch/bdex-framegen-bin` (l'archive) et `-git`
+    (sources, couche 32 bits, runtime C++ statique), avec `.SRCINFO` —
+    **prêts pour l'AUR, non publiés** (dépôt privé : l'URL des sources
+    renvoie 404) ;
+  - NixOS : `flake.nix` (paquet, `layer32`, module
+    `programs.bdex-framegen.enable` qui lie `share/vulkan` dans le profil
+    système). Nix sur une autre distribution : non recommandé (couche liée à
+    la glibc du store, chargée dans des jeux à glibc plus ancienne).
+  - La couche trouve ses profils à `../share` **ou `../../share`** de son
+    dossier (`platformBundledProfilesPath`) ; `BDEX_INSTALL_LIBDIR` règle le
+    dossier au build.
+  - Un paquet n'écrit pas dans le home : `bdex-framegen --sandboxes` copie
+    la couche dans les lanceurs Flatpak/Snap (le postinst le rappelle).
+- **Panneau sans GTK 4** (Ubuntu 20.04, Debian 11) : mode texte dans un
+  terminal (`text_main`), même session/battement, mêmes options ; lancé
+  depuis le menu, il ouvre un terminal (`x-terminal-emulator`…) ; `--text`
+  le force. Sans GTK, des classes factices (`_Stub`) remplacent les modules
+  GTK pour que les classes de fenêtre restent définies (et
+  `tests/panel_logic.py` tourne sans GTK).
+- **MangoHud** : chargé seul, il se place *au-dessus* de la couche (côté
+  jeu) — mesuré : 330 i/s comptées pour 660 affichées, dessin sur les
+  réelles seulement. `bdex-framegen --mangohud` (= `VK_INSTANCE_LAYERS=
+  VK_LAYER_BDEX_framegen:VK_LAYER_MANGOHUD_overlay_x86_64:…_x86`) le met
+  dessous. `VK_LOADER_LAYERS_ENABLE` ne change pas l'ordre.
 
 **Principe** : la couche est **implicite**. Elle se charge dans chaque
 programme Vulkan et reste **transparente** tant qu'elle n'est pas activée
@@ -258,8 +290,15 @@ section `[exe]` dans la configuration.
 - **Le panneau** recopie la configuration à chaque enregistrement. Il trouve
   les jeux (PID interne `NSpid`, fichiers vus par `/proc/<pid>/root`) et leur
   écrit la session. `--report` et `--toggle` suivent.
-- **Installer les lanceurs d'abord**, ou relancer `install.sh` après.
-- **Snap** : non pris en charge.
+- **Installer les lanceurs d'abord**, ou relancer `install.sh` après (ou
+  `bdex-framegen --sandboxes`).
+- **Snap** (Steam d'Ubuntu, depuis le 30/09) : bibliothèque dans
+  `~/snap/steam/common/bdex-framegen` (gardée d'une révision à l'autre),
+  manifeste, configuration et session dans le HOME du snap
+  (`~/snap/steam/current/.local/share`, `.config`, `.cache`). Pas d'espace
+  de PID propre aux snaps. Écrit d'après l'organisation de snapd et simulé
+  dans un faux home ; **jamais essayé sur un vrai snap** (AppArmor pourrait
+  refuser le chargement).
 
 ### 4.4 SteamOS, Steam Deck et sessions gamescope
 
@@ -338,7 +377,15 @@ headless de la même génération.
   - installation, chargement (`vulkaninfo`) et **génération ×2 avec vkcube**
     sur Ubuntu 20.04, 22.04 et 24.04, Debian 11 et 12, Fedora ;
   - l'arm64 dans un Debian arm64 émulé (qemu-user) ;
-  - Debian 11 : chargement seulement, son Mesa ne sait pas présenter sur Xvfb.
+  - Debian 11 : chargement seulement, son Mesa ne sait pas présenter sur Xvfb ;
+  - les `.deb` (apt) sur Ubuntu 20.04 à 24.04 et Debian 12, les `.rpm` (dnf,
+    zypper) sur Fedora et openSUSE Tumbleweed : chargement, **profils lus**
+    (un profil `[vulkaninfo]` ajouté doit apparaître), ×2.
+- **Panneau** (job CI `panel`, `tools/ci/panel-check.sh`) : Ubuntu 20.04
+  (mode texte), Debian 12 et Arch (GTK 4 avec et sans libadwaita, texte).
+- **Nix** (job CI `nix`) : paquets 64 et 32 bits construits, couche chargée
+  par le loader du store. Module NixOS évalué en conteneur : les deux
+  manifestes dans `system.path`, sans collision.
 
 **Depuis les sources**
 - Prérequis : GCC ≥ 10 ou Clang, en-têtes Vulkan ≥ 1.3.204, glslc ou
@@ -421,7 +468,7 @@ seulement, pas le plein écran exclusif (comme Lossless Scaling).
 
 ### 4.8 Ce qui n'est pas pris en charge
 
-- **Systèmes et paquets** : macOS ; paquets Snap.
+- **Systèmes et paquets** : macOS. (Snap : Steam seulement, non vérifié.)
 - **Plein écran exclusif** sous Windows : ni en mode 1 (non transmis) ni en
   mode 2 (surcouche impossible).
 - **Jeux protégés** par un anti-triche ou compétitifs : la couche s'y retire.
@@ -568,6 +615,11 @@ d'affichage tournent dans `gamescope --backend headless` ou dans Docker
   - rattrapage de la présentation ;
   - appels relayés à la swapchain courante (HDR…) ;
   - panneau vérifié sur les versions de SteamOS.
+- **Distributions** (30/09, suite) :
+  - paquets `.deb` / `.rpm` dans les releases, PKGBUILD AUR `-bin` / `-git`,
+    flake NixOS ;
+  - panneau en mode texte sans GTK 4 ;
+  - Steam en Snap ; `--sandboxes` ; `--mangohud`.
 
 ---
 
@@ -608,7 +660,9 @@ Le détail de toutes les mesures est dans AGENTS.md §10 et le CHANGELOG.
 - Un Steam Deck (performance sur RDNA2 8 CU, HDR OLED, 90 Hz).
 - ARM64.
 - Un petit GPU (V3D).
-- Steam en Flatpak.
+- Steam en Flatpak ; Steam en Snap.
+- Les paquets `.deb` / `.rpm` / AUR / Nix sur une vraie machine (vérifiés en
+  conteneur, lavapipe).
 
 **Cas ouvert : KDE + NVIDIA (bureau de l'ami)**
 - Pas de retour d'affichage.
@@ -631,8 +685,17 @@ Le détail de toutes les mesures est dans AGENTS.md §10 et le CHANGELOG.
 multiplicateur, pause en jeu). Le mode Jeu n'a aujourd'hui que « sans le
 panneau » et les options de lancement.
 
-**CI GitHub invisible** (dépôt privé) : les jobs `distros`, `package` et
-`archive-check` n'ont jamais été vus tourner là-bas.
+**CI GitHub invisible** (dépôt privé) : les jobs `distros`, `package`,
+`archive-check`, `panel` et `nix` n'ont jamais été vus tourner là-bas.
+
+**Paquets, suite** : publier `bdex-framegen-bin` / `-git` sur l'AUR (dépôt
+public requis, compte AUR) ; COPR (Fedora) et OBS (openSUSE) pour des mises
+à jour automatiques (comptes, spec source) ; Flatpak du panneau **impossible
+en l'état** : le bac à sable a son propre espace de PID et ne voit pas les
+jeux de l'hôte (`/proc/<pid>/maps`), le mode texte couvre les distributions
+sans GTK 4. Choix automatique du GPU sur portable hybride : non fait (le
+jeu sur le GPU dédié avec l'écran sur l'intégré est le cas normal ; le
+rapport signale la copie PRIME).
 
 **Banc gamescope headless** : sans `CAP_SYS_NICE`, il compose mal quand le
 jeu est limité par son propre rendu. Le cadencement côté écran se valide sur

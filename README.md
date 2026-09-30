@@ -103,10 +103,54 @@ covers more than native Vulkan games:
 The layer never sees game logic or input: it only interpolates what reaches
 the display, so gameplay, anti-cheat interaction and mods are unaffected.
 Steam's overlay and MangoHud sit in the same layer chain and keep working.
+MangoHud usually loads *above* the layer (on the game's side): it counts and
+draws on the game's frames only, its text then carried into the generated
+ones. `bdex-framegen --mangohud -- <game>` (or, in Steam's launch options,
+`MANGOHUD=1 VK_INSTANCE_LAYERS=VK_LAYER_BDEX_framegen:VK_LAYER_MANGOHUD_overlay_x86_64:VK_LAYER_MANGOHUD_overlay_x86 %command%`)
+puts it under: it shows the frame rate on screen and draws on every frame.
+Launchers installed natively (Lutris, Heroic, Bottles, itch…) need nothing:
+the layer loads into their games as into Steam's.
 
 ---
 
 ## Installation
+
+### Distribution packages
+
+Each release also ships the prebuilt layer as packages of the distribution —
+installed to `/usr`, updated and removed by its package manager:
+
+| Distribution | Package | Install |
+|---|---|---|
+| Debian, Ubuntu, Mint, Pop!_OS, Zorin… | `bdex-framegen_<version>_amd64.deb` (`arm64`) | `sudo apt install ./bdex-framegen_*.deb` |
+| Fedora, Nobara, openSUSE, RHEL 9… | `bdex-framegen-<version>-1.x86_64.rpm` (`aarch64`) | `sudo dnf install ./bdex-framegen-*.rpm` / `sudo zypper in ./bdex-framegen-*.rpm` |
+| Bazzite, Silverblue, Kinoite (immutable) | the `.rpm` | `rpm-ostree install ./bdex-framegen-*.rpm`, reboot — or the archive below, in `~/.local` |
+| Arch, Manjaro, EndeavourOS, CachyOS | `packaging/arch/bdex-framegen-bin` (prebuilt) or `-git` (from source, 32-bit layer included) | `makepkg -si` in that directory |
+| NixOS | the flake (`flake.nix`) | below |
+
+The same files as the archives (64-bit layer, 32-bit one for 32-bit games,
+CLI, panel), in the distribution's library directories
+(`/usr/lib/x86_64-linux-gnu`, `/usr/lib64`…). Every CI run installs the
+`.deb` on Ubuntu 20.04 to 24.04 and Debian 12, the `.rpm` on Fedora and
+openSUSE Tumbleweed, and generates x2 there (`tools/ci/archive-check.sh`);
+`tools/package-native.sh <archive>` builds them. A package cannot write into
+your home: for **Steam, Heroic, Lutris or Bottles installed as a Flatpak**
+(or Steam as a Snap), run `bdex-framegen --sandboxes` once, as your user.
+
+**NixOS** — in the system's flake:
+
+```nix
+inputs.bdex-framegen.url = "github:Bdexez/bdex_frame_gen";
+# ...
+modules = [ bdex-framegen.nixosModules.default { programs.bdex-framegen.enable = true; } ];
+```
+
+The module installs the layer and the 32-bit one (`enable32Bit`, on by
+default on x86_64) with `share/vulkan` linked into the system profile, where
+the Vulkan loader finds implicit layers. (Nix on another distribution: use
+that distribution's package or the archive instead — a layer linked against
+the store's glibc loads into the host's games, whose glibc may be older.)
+Built, and loaded by the store's Vulkan loader, in CI (job `nix`).
 
 ### Prebuilt (nothing to compile)
 
@@ -141,11 +185,17 @@ sees neither `~/.local` nor `~/.config`. `install.sh` also installs the layer
 inside each one found (`~/.var/app/<app>/data`, where its Vulkan loader
 looks), and the control panel keeps their copy of the settings up to date and
 finds their games (each sandbox has its own process numbers). Install the
-Flatpak launcher first (and run it once), or run `install.sh` again after.
-Snap packages are not supported.
+Flatpak launcher first (and run it once), or run `install.sh` again after
+(or `bdex-framegen --sandboxes`). **Steam as a Snap** (Ubuntu's Software
+centre) likewise: the layer goes into `~/snap/steam` (`common` for the
+library, the manifest and settings in the snap's own home) — written from the
+snap's documented layout, not yet tried on a real snap.
 
 The control panel needs `python3-gobject` and GTK 4 (libadwaita is used when
-present). `./uninstall.sh` removes everything, Flatpak copies included.
+present). Without GTK 4 (Ubuntu 20.04, Debian 11) it runs in text mode, in a
+terminal — the same session, options and Steam string (`bdex-framegen-gui
+--text` forces it). `./uninstall.sh` removes everything, Flatpak copies
+included.
 `tools/ci/package-release.sh` builds the same archives (Docker).
 
 ### Requirements (building from source)
@@ -193,8 +243,10 @@ The installation drops:
 
 Uninstall: `tools/uninstall.sh`.
 
-> **Arch Linux**: `packaging/arch/PKGBUILD` builds a `bdex-framegen-git`
-> package (`makepkg -si` in that directory) installing to `/usr`.
+> **Arch Linux**: `packaging/arch/bdex-framegen-git/PKGBUILD` builds a
+> `bdex-framegen-git` package (`makepkg -si` in that directory) installing to
+> `/usr`, the 32-bit layer included (multilib); `bdex-framegen-bin` packages
+> the release archive.
 
 ### Windows
 
