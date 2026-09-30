@@ -154,7 +154,7 @@ private:
     void recordCas(VkCommandBuffer cmd, VkDescriptorSet set);
     void recordSynthesis(VkCommandBuffer cmd, VkDescriptorSet set, float t, int32_t timing, bool gated);
     void recordSynthesisImpl(VkCommandBuffer cmd, const FgPipeline& pipe, VkDescriptorSet set, float t, int32_t timing,
-                             bool gated, const Config& cfg, bool hud);
+                             bool gated, const Config& cfg);
     void createPipelines();
     void createResources();
     void createDescriptors();
@@ -216,7 +216,7 @@ private:
     std::vector<VkDescriptorPool> pools_;  // opened as allocSet needs them (see DescriptorPlanner)
     DescriptorPlanner planner_;
 
-    Pass downsample_, blockMatch_, smooth_, refine_, reduce_, interp_, upscale_, cas_, splat_, frameState_, downChroma_;
+    Pass downsample_, blockMatch_, smooth_, refine_, reduce_, interp_, upscale_, cas_, frameState_, downChroma_;
 
     // Optional passes (fg_pass.h, passes/), in hook order, and what they see
     // of the engine (FgContext).
@@ -245,6 +245,11 @@ private:
     VkDescriptorSet synthesisSet(VkImageView prev, VkImageView cur, uint32_t output) override;
     VkDescriptorSet realOutputSet(VkImageView src) override;
     void setStaticMask(VkImageView view) override;
+    void setSplatMap(VkImageView view) override;
+    void dispatchSynthesisSize(VkCommandBuffer cmd, bool gated) override;
+    VkImageView outputView(int output) const override { return output < 0 ? outReal_.view : out_[output].view; }
+    OutputEncoding outputEncoding() const override { return enc_; }
+    FgHud hud() const override { return {hudMode_, hudGame_, hudOut_, hudLow1_, hudLow01_, hudLatency_}; }
     FgPipeline makeLinearSynthesisPipeline() override;
     VkDescriptorSet synthesisSetFor(VkDescriptorSetLayout layout, VkImageView prev, VkImageView cur, VkImageView fwd,
                                     VkImageView bwd, VkImageView out) override;
@@ -282,11 +287,9 @@ private:
     std::vector<VkDescriptorSet> dsSmooth_[2];        // [dir] per level
     std::vector<VkDescriptorSet> dsRefine_[2][2];     // [parity][dir] per level
     VkDescriptorSet dsReduce_ = VK_NULL_HANDLE;
-    VkDescriptorSet dsSplat_ = VK_NULL_HANDLE;
-    AllocatedImage splatMap_;  // forward-splat targets (display size), or 1x1 when splatting is off
+    AllocatedImage splatDummy_;              // 1x1: the synthesis's splat map without extrapolate_splat
+    VkImageView splatMap_ = VK_NULL_HANDLE;  // bound at binding 6 of every synthesis set
     AllocatedImage prevBwd_;   // extrapolate_accel: the previous pair's finest backward flow
-    float accelThisFrame_ = 0.f; // extrapolate_accel weight for this frame's syntheses (0 = off)
-    bool splatting_ = false;   // extrapolate_splat in effect
     std::vector<VkDescriptorSet> dsInterp_;           // [(prev * N + cur) * outputs + output]
     std::vector<VkDescriptorSet> dsUpscale_;          // [source]; only when upscaling_
     std::vector<VkDescriptorSet> dsCas_;              // [output] generated frames; only when sharpen_

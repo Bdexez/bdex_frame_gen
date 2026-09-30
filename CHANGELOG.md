@@ -200,6 +200,16 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed (2026-09-25)
 
+- **The last optional features moved into passes**: `extrapolate_accel`,
+  `extrapolate_splat` (a `beforeSynthesis` hook fills `SynthesisInputs`; the
+  splat map is bound through `FgContext::setSplatMap`) and the fps HUD (now
+  `hud_overlay.comp`, drawn over the finished output through an
+  `afterOutput` hook; the synthesis and upscale shaders lost their HUD
+  code and push constants). Byte-identical, the HUD included — except that
+  with CAS sharpening the HUD is no longer sharpened. `dedup` stays in
+  `FrameGen`: it is the pipeline's control flow (flow dispatches cancelled
+  indirectly, the state buffer shared with `frame_timing`), not an added
+  pass.
 - **Optional passes behind one interface** (`fg_pass.h`): an opt-in GPU
   feature is an `FgPass` in `layer/src/passes/` with `create`/`destroy` and
   named pipeline hooks, seeing the engine only through `FgContext`;

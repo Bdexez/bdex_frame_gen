@@ -29,7 +29,7 @@ FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, Vk
     // when the HUD must be drawn on it, or when a repeated frame may have to
     // be replaced by an extrapolated one (otherwise it is copied straight).
     packReal_ = upscaling_ || hudMode_ > 0 || dupReal_;
-    passes_ = createOptionalPasses(*cfgp_, dev, outputs_, upscaling_);
+    passes_ = createOptionalPasses(*cfgp_, dev, outputs_, upscaling_, displayExtent_);
     // The CAS pass needs a linear rgba16f intermediate it can both write and
     // sample with filtering; skip sharpening if the driver cannot provide it.
     sharpen_ = upscaling_ && (*cfgp_).sharpness > 0.f &&
@@ -137,7 +137,6 @@ void FrameGen::createPipelines() {
         if (sharpen_)       interp_ = makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS});
         else if (enc_.is64) interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS});
         else                interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS});
-        splat_ = makePass(splat_comp, splat_comp_size, {CIS, CIS, SI, SB, CIS});
         frameState_ = makePass(frame_state_comp, frame_state_comp_size, {CIS, CIS, SB});
         if (chroma_) downChroma_ = makePass(downsample_chroma_comp, downsample_chroma_comp_size, {CIS, SI});
     }
@@ -226,12 +225,9 @@ void FrameGen::createResources() {
         gateReduce_ = gate(1 + kCutTiles * kCutTiles, 1, false);  // global + local tiles (idle when off)
         gateDupReal_ = gate(divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), true);
         if (gateFull_.size() / 4 > kGateEntries) throw VkError(VK_ERROR_INITIALIZATION_FAILED, "too many gated dispatches");
-        // The splat key packs the source index in 23 bits (4K fits). Sized
-        // too when online_tune may try extrapolate_splat.
-        splatting_ = cfg.extrapolate && (cfg.extrapolateSplat || cfg.onlineTune) &&
-                     uint64_t(displayExtent_.width) * displayExtent_.height <= (1ull << 23);
-        splatMap_ = dev_.createImage(VK_FORMAT_R32_UINT, splatting_ ? displayExtent_ : VkExtent2D{1, 1},
-                                     VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, true);
+        // Bound as the synthesis's splat map until extrapolate_splat provides one.
+        splatDummy_ = dev_.createImage(VK_FORMAT_R32_UINT, {1, 1}, VK_IMAGE_USAGE_STORAGE_BIT, true);
+        splatMap_ = splatDummy_.view;
         // Small (finest flow resolution); created in either mode so that
         // extrapolate_accel can be toggled live.
         prevBwd_ = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, levels_v_[0].fine,
@@ -274,7 +270,7 @@ void FrameGen::createResources() {
             for (auto& i : lv.cost) add(i);
         }
         for (auto& o : out_) add(o);
-        if (splatMap_.image) add(splatMap_);
+        if (splatDummy_.image) add(splatDummy_);
         if (prevBwd_.image) add(prevBwd_);
         if (chromaDummy_.image) add(chromaDummy_);
         if (maskDummy_.image) add(maskDummy_);
@@ -440,12 +436,6 @@ void FrameGen::createDescriptors() {
     dsReduce_ = allocSet(reduce_.setLayout);
     writeImage(dsReduce_, 0, SI, levels_v_[0].cost[0].view);
     writeBuffer(dsReduce_, 1, stateBuf_.buffer);
-    dsSplat_ = allocSet(splat_.setLayout);
-    writeImage(dsSplat_, 0, CIS, levels_v_[0].flowFine[0].view);
-    writeImage(dsSplat_, 1, CIS, levels_v_[0].flowFine[1].view);
-    writeImage(dsSplat_, 2, SI, splatMap_.view);
-    writeBuffer(dsSplat_, 3, stateBuf_.buffer);
-    writeImage(dsSplat_, 4, CIS, prevBwd_.view);
     dsState_ = allocSet(frameState_.setLayout);
     writeImage(dsState_, 0, CIS, levels_v_[0].pyr[0].view);
     writeImage(dsState_, 1, CIS, levels_v_[0].pyr[1].view);
@@ -461,7 +451,7 @@ void FrameGen::createDescriptors() {
                 writeImage(s, 3, CIS, levels_v_[0].flowFine[1].view);
                 writeImage(s, 4, SI, (sharpen_ ? sharp_[o] : out_[o]).view);
                 writeBuffer(s, 5, stateBuf_.buffer);
-                writeImage(s, 6, SI, splatMap_.view);
+                writeImage(s, 6, SI, splatMap_);
                 writeImage(s, 7, CIS, prevBwd_.view);
                 writeImage(s, 8, CIS, staticMask_);
                 synthSets_.push_back(s);
@@ -475,7 +465,7 @@ void FrameGen::createDescriptors() {
                 writeImage(s, 3, CIS, levels_v_[0].flowFine[1].view);
                 writeImage(s, 4, SI, (sharpen_ ? sharpReal_ : outReal_).view);
                 writeBuffer(s, 5, stateBuf_.buffer);
-                writeImage(s, 6, SI, splatMap_.view);
+                writeImage(s, 6, SI, splatMap_);
                 writeImage(s, 7, CIS, prevBwd_.view);
                 writeImage(s, 8, CIS, staticMask_);
                 synthSets_.push_back(s);
@@ -542,11 +532,21 @@ VkDescriptorSet FrameGen::synthesisSetFor(VkDescriptorSetLayout layout, VkImageV
     writeImage(s, 3, CIS, bwd);
     writeImage(s, 4, SI, out);
     writeBuffer(s, 5, stateBuf_.buffer);
-    writeImage(s, 6, SI, splatMap_.view);
+    writeImage(s, 6, SI, splatMap_);
     writeImage(s, 7, CIS, prevBwd_.view);
     writeImage(s, 8, CIS, staticMask_);
     synthSets_.push_back(s);
     return s;
+}
+
+void FrameGen::setSplatMap(VkImageView view) {
+    splatMap_ = view;
+    for (VkDescriptorSet s : synthSets_) writeImage(s, 6, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, view);
+}
+
+void FrameGen::dispatchSynthesisSize(VkCommandBuffer cmd, bool gated) {
+    if (gated) dev_.vt.CmdDispatchIndirect(cmd, stateBuf_.buffer, kStateGateActive + 12 * VkDeviceSize(gateDupReal_));
+    else dev_.vt.CmdDispatch(cmd, divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), 1);
 }
 
 void FrameGen::setStaticMask(VkImageView view) {
@@ -569,7 +569,7 @@ void FrameGen::destroyAll() {
     for (VkDescriptorPool pool : pools_) vt.DestroyDescriptorPool(d, pool, nullptr);
     pools_.clear();
     planner_.reset();
-    for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_, &splat_, &frameState_, &downChroma_}) {
+    for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_, &frameState_, &downChroma_}) {
         if (p->pipeline) vt.DestroyPipeline(d, p->pipeline, nullptr);
         if (p->layout) vt.DestroyPipelineLayout(d, p->layout, nullptr);
         if (p->setLayout) vt.DestroyDescriptorSetLayout(d, p->setLayout, nullptr);
@@ -592,7 +592,8 @@ void FrameGen::destroyAll() {
     levels_v_.clear();
     for (auto& o : out_) dev_.destroyImage(o);
     out_.clear();
-    if (splatMap_.image) dev_.destroyImage(splatMap_);
+    if (splatDummy_.image) dev_.destroyImage(splatDummy_);
+    splatMap_ = VK_NULL_HANDLE;
     if (prevBwd_.image) dev_.destroyImage(prevBwd_);
     if (chromaDummy_.image) dev_.destroyImage(chromaDummy_);
     if (maskDummy_.image) dev_.destroyImage(maskDummy_);
@@ -873,11 +874,11 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
     for (auto& p : passes_) p->flowBegin(*this, cmd, parity);
     const Config cfg = effectiveConfig();
     flowThisFrame_ = true;
-    // extrapolate_accel: keep the previous pair's finest backward flow before
-    // this frame overwrites it (on a repeat, dedup keeps the flow, so the
-    // copy equals it and the acceleration is zero).
-    accelThisFrame_ = 0.f;
-    bool keepPrevious = cfg.extrapolate && cfg.extrapolateAccel > 0.f;
+    // Keep the previous pair's finest backward flow before this frame
+    // overwrites it, for the passes that use it (extrapolate_accel,
+    // flow_temporal, online_tune; on a repeat, dedup keeps the flow, so the
+    // copy equals it).
+    bool keepPrevious = false;
     for (auto& p : passes_) keepPrevious = keepPrevious || p->needsPreviousFlow(cfg);
     if (keepPrevious && flowLastFrame_) {
         VkImageCopy region{};
@@ -887,7 +888,6 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
         vt.CmdCopyImage(cmd, levels_v_[0].flowFine[1].image, VK_IMAGE_LAYOUT_GENERAL, prevBwd_.image,
                         VK_IMAGE_LAYOUT_GENERAL, 1, &region);
         memoryBarrier(cmd);
-        if (cfg.extrapolate) accelThisFrame_ = cfg.extrapolateAccel;
     }
     for (int l = levels_ - 1; l >= 0; --l) {
         const Level& lv = levels_v_[l];
@@ -971,6 +971,7 @@ void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cu
         if (VkDescriptorSet alt = p->synthesisInputs(*this, cmd, prev, cur, output)) set = alt;
     recordSynthesis(cmd, set, t, timingActive_ ? int32_t(output) + 1 : 0, false);
     if (sharpen_) recordCas(cmd, dsCas_[output]);  // sharp_[output] -> out_[output]
+    for (auto& p : passes_) p->afterOutput(*this, cmd, int32_t(output));  // (the fps HUD)
 }
 
 // One synthesis pass (plus the forward splat it may need) into the output
@@ -978,44 +979,27 @@ void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cu
 // buffer instead of `t` (which still tells extrapolation from interpolation).
 // `gated`: dispatched through the state pass's "only on duplicates" entry.
 void FrameGen::recordSynthesis(VkCommandBuffer cmd, VkDescriptorSet set, float t, int32_t timing, bool gated) {
-    recordSynthesisImpl(cmd, interp_, set, t, timing, gated, effectiveConfig(), true);
+    recordSynthesisImpl(cmd, interp_, set, t, timing, gated, effectiveConfig());
 }
 
 void FrameGen::recordSynthesisWith(VkCommandBuffer cmd, const FgPipeline& pipe, VkDescriptorSet set, float t,
                                    const Config& cfg) {
-    recordSynthesisImpl(cmd, pipe, set, t, 0, false, cfg, false);
+    recordSynthesisImpl(cmd, pipe, set, t, 0, false, cfg);
 }
 
-// `hud`: draw the fps HUD (the frames shown; not a pass's own syntheses).
 void FrameGen::recordSynthesisImpl(VkCommandBuffer cmd, const Pass& pipe, VkDescriptorSet set, float t, int32_t timing,
-                                   bool gated, const Config& cfg, bool hud) {
+                                   bool gated, const Config& cfg) {
     auto& vt = dev_.vt;
     const Level& fine = levels_v_[0];
-    const bool splat = splatting_ && cfg.extrapolateSplat && t > 1.f;
     const uint32_t gx = divUp(displayExtent_.width, 16), gy = divUp(displayExtent_.height, 16);
     auto dispatch = [&] {
         if (gated) vt.CmdDispatchIndirect(cmd, stateBuf_.buffer, kStateGateActive + 12 * VkDeviceSize(gateDupReal_));
         else vt.CmdDispatch(cmd, gx, gy, 1);
     };
-    if (splat) {
-        // Forward-splat the current frame to time t (see splat.comp).
-        const uint32_t blkS = fine.refined ? kFineBlock : kBlockSize;
-        const float sxS = float(displayExtent_.width) / extent_.width;
-        const float syS = float(displayExtent_.height) / extent_.height;
-        VkClearColorValue none{};
-        none.uint32[0] = 0xFFFFFFFFu;
-        VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        vt.CmdClearColorImage(cmd, splatMap_.image, VK_IMAGE_LAYOUT_GENERAL, &none, 1, &range);
-        memoryBarrier(cmd);
-        vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, splat_.pipeline);
-        SplatPC spc{{(int32_t)displayExtent_.width, (int32_t)displayExtent_.height}, t - 1.f, flowScale_ * sxS,
-                    {1.f / (fine.fine.width * blkS * flowScale_ * sxS), 1.f / (fine.fine.height * blkS * flowScale_ * syS)},
-                    timing, accelThisFrame_};
-        vt.CmdPushConstants(cmd, splat_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(spc), &spc);
-        vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, splat_.layout, 0, 1, &dsSplat_, 0, nullptr);
-        dispatch();
-        memoryBarrier(cmd);
-    }
+    // Passes working ahead of the synthesis (extrapolate_splat) and its
+    // inputs from them (the splat map, the acceleration weight).
+    SynthesisInputs in;
+    for (auto& p : passes_) p->beforeSynthesis(*this, cmd, t, timing, gated, cfg, in);
     vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe.pipeline);
     // Interpolation output is at display resolution; the flow (in render pixels)
     // and its coverage are scaled to display space, so the same shader also
@@ -1028,8 +1012,8 @@ void FrameGen::recordSynthesisImpl(VkCommandBuffer cmd, const Pass& pipe, VkDesc
                 cfg.sceneCutLow, cfg.sceneCutHigh,
                 {1.f / (fine.fine.width * blk * flowScale_ * sx),
                  1.f / (fine.fine.height * blk * flowScale_ * sy)},
-                cfg.flowIterations, hud ? hudMode_ : 0, hudGame_, hudOut_, hudLow1_, hudLow01_, cfg.occlusionStrength, cfg.staticGuard, cfg.extrapolateHold, splat ? 1 : 0, cfg.pixelVectors ? 1 : 0, enc_.transfer,
-                timing, cfg.sceneCutLocal ? (int32_t)kCutTiles : 0, t > 1.f ? accelThisFrame_ : 0.f, hudLatency_,
+                cfg.flowIterations, cfg.occlusionStrength, cfg.staticGuard, cfg.extrapolateHold, in.splat ? 1 : 0, cfg.pixelVectors ? 1 : 0, enc_.transfer,
+                timing, cfg.sceneCutLocal ? (int32_t)kCutTiles : 0, t > 1.f ? in.accel : 0.f,
                 cfg.synthBicubic ? 1 : 0, hasStaticMask_ ? float(cfg.hudMask) : 0.f};
     vt.CmdPushConstants(cmd, pipe.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe.layout, 0, 1, &set, 0, nullptr);
