@@ -4,6 +4,7 @@
 // upscale / interpolation passes produced, sharpens each pixel by an amount
 // that adapts to local contrast (so flat and already-sharp regions are left
 // alone, avoiding overshoot), then encodes and packs into the swapchain format.
+#extension GL_GOOGLE_include_directive : require  // #include with glslangValidator too
 #include "common.glsl"
 
 layout(local_size_x = 16, local_size_y = 16) in;

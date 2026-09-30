@@ -1,9 +1,10 @@
 {
-  "file_format_version": "1.2.0",
+  "file_format_version": "1.1.2",
   "layer": {
     "name": "@BDEX_LAYER_NAME@",
     "type": "GLOBAL",
     "library_path": "@BDEX_LAYER_LIBRARY_PATH@",
+    "library_arch": "@BDEX_LIBRARY_ARCH@",
     "api_version": "1.4.0",
     "implementation_version": "1",
     "description": "BDEX frame generation: interpolates extra frames between the game's frames",

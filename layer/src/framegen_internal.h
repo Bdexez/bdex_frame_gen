@@ -4,7 +4,7 @@
 // helpers. Not part of the engine's interface (framegen.h).
 #include "config.h"
 
-#include <vulkan/vulkan.h>
+#include "vk_compat.h"
 
 #include <cstdint>
 #include <memory>

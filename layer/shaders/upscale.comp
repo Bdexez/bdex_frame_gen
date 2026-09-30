@@ -5,6 +5,7 @@
 // the interpolation shader, so any mandatory storage format works). Used for
 // the real frame; generated frames are synthesised directly at display size.
 // (The fps HUD is drawn afterwards, by passes/fps_hud.cpp.)
+#extension GL_GOOGLE_include_directive : require  // #include with glslangValidator too
 #include "common.glsl"
 
 layout(local_size_x = 16, local_size_y = 16) in;

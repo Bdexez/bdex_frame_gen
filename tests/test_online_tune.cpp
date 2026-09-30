@@ -8,6 +8,10 @@ using namespace bdex;
 
 namespace {
 
+// The candidate list spelled out: a one-element braced list is ambiguous with
+// the (deleted) move constructor for GCC 11.
+using Cands = std::vector<OnlineTune::Candidate>;
+
 bool has(const std::vector<std::pair<std::string, std::string>>& o, const std::string& key) {
     for (const auto& kv : o)
         if (kv.first == key) return true;
@@ -44,7 +48,7 @@ void play(OnlineTune& t, int frames, double factorA, double factorB, bool motion
 } // namespace
 
 TEST(online_tune_keeps_a_helpful_option_and_drops_a_neutral_one) {
-    OnlineTune t({{"a", "1"}, {"b", "1"}});
+    OnlineTune t(Cands{{"a", "1"}, {"b", "1"}});
     play(t, 2000, 0.9, 1.0);
     CHECK(t.done());
     const auto d = t.decisions();
@@ -56,7 +60,7 @@ TEST(online_tune_keeps_a_helpful_option_and_drops_a_neutral_one) {
 }
 
 TEST(online_tune_drops_a_harmful_option) {
-    OnlineTune t({{"a", "1"}});
+    OnlineTune t(Cands{{"a", "1"}});
     play(t, 2000, 1.1, 1.0);
     CHECK(t.done());
     CHECK(!t.decisions()[0].kept);
@@ -64,7 +68,7 @@ TEST(online_tune_drops_a_harmful_option) {
 }
 
 TEST(online_tune_waits_for_motion) {
-    OnlineTune t({{"a", "1"}});
+    OnlineTune t(Cands{{"a", "1"}});
     play(t, 3000, 0.8, 1.0, false);
     CHECK(!t.done());
     CHECK(t.decisions().empty());
@@ -72,23 +76,23 @@ TEST(online_tune_waits_for_motion) {
 
 TEST(online_tune_decides_within_a_few_seconds) {
     // 8 pairs of 8-flow blocks: 128 flows, about 2 s at 60 fps.
-    OnlineTune t({{"a", "1"}});
+    OnlineTune t(Cands{{"a", "1"}});
     play(t, 160, 0.9, 1.0);
     CHECK(t.done());
 }
 
 TEST(online_tune_trials_on_top_of_kept_options) {
     // "b" only helps together with "a": tried after "a" was kept, it is too.
-    OnlineTune t({{"a", "1"}, {"b", "1"}});
+    OnlineTune t(Cands{{"a", "1"}, {"b", "1"}});
     play(t, 2000, 0.9, 0.9);
     CHECK(t.kept().size() == 2);
 }
 
 TEST(online_tune_cache_round_trip) {
-    OnlineTune t({{"a", "1"}, {"b", "1"}});
+    OnlineTune t(Cands{{"a", "1"}, {"b", "1"}});
     play(t, 2000, 0.9, 1.0);
     const std::string text = t.serialize();
-    OnlineTune u({{"a", "1"}, {"b", "1"}, {"c", "2"}});
+    OnlineTune u(Cands{{"a", "1"}, {"b", "1"}, {"c", "2"}});
     CHECK(u.deserialize(text));
     CHECK(!u.done());  // "c" is new: still tried
     CHECK(u.kept().size() == 1 && u.kept()[0].first == "a");
@@ -96,52 +100,52 @@ TEST(online_tune_cache_round_trip) {
     u.nextFlow(o);
     CHECK(has(o, "a"));
     // A different trial value is a different candidate.
-    OnlineTune v({{"a", "2"}});
+    OnlineTune v(Cands{{"a", "2"}});
     CHECK(!v.deserialize(text));
     CHECK(!v.done());
-    CHECK(!OnlineTune({{"a", "1"}}).deserialize("garbage\n"));
+    CHECK(!OnlineTune(Cands{{"a", "1"}}).deserialize("garbage\n"));
 }
 
 TEST(online_tune_summary) {
-    OnlineTune t({{"a", "1"}});
+    OnlineTune t(Cands{{"a", "1"}});
     CHECK(t.summary().empty());
     t.deserialize("a 1 kept 0.042\n");
     CHECK(t.summary() == "a=1 kept (-4.2 %)");
-    OnlineTune u({{"a", "1"}});
+    OnlineTune u(Cands{{"a", "1"}});
     u.deserialize("a 1 kept 0 0.25\n");
     CHECK(u.summary() == "a=1 kept (-0.0 %, flow change -25 %)");
 }
 
 TEST(online_tune_keeps_a_steadier_flow_at_equal_prediction) {
     // flow_temporal's case: same prediction error, a third less flow change.
-    OnlineTune t({{"a", "1"}});
+    OnlineTune t(Cands{{"a", "1"}});
     play(t, 2000, 1.0, 1.0, true, 0.67);
     CHECK(t.done());
     CHECK(t.decisions()[0].kept && t.decisions()[0].stability > 0.2);
 }
 
 TEST(online_tune_drops_a_small_prediction_win_that_destabilises) {
-    OnlineTune t({{"a", "1"}});
+    OnlineTune t(Cands{{"a", "1"}});
     play(t, 2000, 0.96, 1.0, true, 1.5);  // 2 % better, 50 % less stable
     CHECK(t.done());
     CHECK(!t.decisions()[0].kept);
 }
 
 TEST(online_tune_keeps_a_strong_prediction_win_whatever_the_stability) {
-    OnlineTune t({{"a", "1"}});
+    OnlineTune t(Cands{{"a", "1"}});
     play(t, 2000, 0.8, 1.0, true, 3.0);  // 10 % better (of the no-motion error)
     CHECK(t.done());
     CHECK(t.decisions()[0].kept);
 }
 
 TEST(online_tune_reads_caches_without_stability) {
-    OnlineTune t({{"a", "1"}});
+    OnlineTune t(Cands{{"a", "1"}});
     CHECK(t.deserialize("a 1 kept 0.05\n"));
     CHECK(t.kept().size() == 1 && t.decisions()[0].stability == 0.0);
 }
 
 TEST(online_tune_restarts_when_the_content_changes) {
-    OnlineTune t({{"a", "1"}});
+    OnlineTune t(Cands{{"a", "1"}});
     play(t, 2000, 0.9, 1.0);
     CHECK(t.done());
     // Same kind of content: no restart, whatever the time.
@@ -160,7 +164,7 @@ TEST(online_tune_restarts_when_the_content_changes) {
 }
 
 TEST(online_tune_restarts_at_most_once_per_cooldown) {
-    OnlineTune t({{"a", "1"}});
+    OnlineTune t(Cands{{"a", "1"}});
     play(t, 2000, 0.9, 1.0);
     for (int i = 0; i < 1000; ++i) t.observe(0.02, 0.4);
     int n = 0;
@@ -169,7 +173,7 @@ TEST(online_tune_restarts_at_most_once_per_cooldown) {
 }
 
 TEST(online_tune_status) {
-    OnlineTune t({{"a", "1"}, {"b", "2"}});
+    OnlineTune t(Cands{{"a", "1"}, {"b", "2"}});
     CHECK(t.status() == "trying a=1 (0 of 2 decided)");
     t.deserialize("a 1 kept 0.05 0\nb 2 dropped -0.01 0\n");
     CHECK(t.status() == "a=1 kept (-5.0 %), b=2 dropped (+1.0 %)");
@@ -183,7 +187,7 @@ TEST(online_tune_pairs_are_tried_together) {
     parts.clear();
     OnlineTune::expand("a", "0.1", parts);
     CHECK(parts.size() == 1 && parts[0].second == "0.1");
-    OnlineTune t({{"a+b", "1+2"}});
+    OnlineTune t(Cands{{"a+b", "1+2"}});
     CHECK(t.deserialize("a+b 1+2 kept 0.05 0\n"));
     const auto k = t.kept();
     CHECK(k.size() == 2 && k[0].first == "a" && k[1].first == "b" && k[1].second == "2");

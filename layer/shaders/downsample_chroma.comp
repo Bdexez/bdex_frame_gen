@@ -4,6 +4,7 @@
 // colour-difference channels (Cb, Cr, BT.601 scale) of the perceptually
 // encoded colour. Level 0 reads the colour history image (fromColor=1);
 // deeper levels box-filter the previous chroma level.
+#extension GL_GOOGLE_include_directive : require  // #include with glslangValidator too
 #include "common.glsl"
 
 layout(local_size_x = 16, local_size_y = 16) in;

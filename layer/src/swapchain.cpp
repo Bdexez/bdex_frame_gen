@@ -1887,26 +1887,26 @@ VkResult VirtualSwapchain::presentCopied(const Job& job, const Copied& c) {
     pi.swapchainCount = 1;
     pi.pSwapchains = &real_;
     pi.pImageIndices = &ri;
-    const void** tail = &pi.pNext;
+    const void** tail = bdexNext(pi);
     uint64_t feedbackId = 0;
     if (c.real && job.presentId) {
         presentId.swapchainCount = 1;
         presentId.pPresentIds = &job.presentId;
         *tail = &presentId;
-        tail = &presentId.pNext;
+        tail = bdexNext(presentId);
     } else if (feedback_ && !job.presentId) {
         // Our own ids (the game cannot use present ids: they are hidden).
         feedbackId = ++presentCounter_;
         presentId.swapchainCount = 1;
         presentId.pPresentIds = &feedbackId;
         *tail = &presentId;
-        tail = &presentId.pNext;
+        tail = bdexNext(presentId);
     }
     if (job.presentMode >= 0) {
         presentMode.swapchainCount = 1;
         presentMode.pPresentModes = &presentModeValue;
         *tail = &presentMode;
-        tail = &presentMode.pNext;
+        tail = bdexNext(presentMode);
     }
     const auto now = clock::now();
     if (c.real)

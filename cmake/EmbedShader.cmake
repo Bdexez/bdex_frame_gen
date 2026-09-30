@@ -33,12 +33,25 @@ function(bdex_add_shaders target)
     foreach(d IN LISTS defines)
       list(APPEND defflags "-D${d}")
     endforeach()
+    # glslc, else glslangValidator, else a precompiled file (see the top-level
+    # CMakeLists.txt). Both compilers target SPIR-V 1.0 / Vulkan 1.0.
+    if(BDEX_SPIRV_DIR)
+      set(compile ${CMAKE_COMMAND} -E copy "${BDEX_SPIRV_DIR}/${sym}.spv" "${spv}")
+      set(tool "precompiled")
+    elseif(GLSLC)
+      set(compile ${GLSLC} --target-env=vulkan1.0 -O ${defflags} -o "${spv}" "${CMAKE_CURRENT_SOURCE_DIR}/${src}")
+      set(tool "glslc")
+    else()
+      set(compile ${GLSLANG_VALIDATOR} -V --target-env vulkan1.0 ${defflags} -o "${spv}"
+                  "${CMAKE_CURRENT_SOURCE_DIR}/${src}")
+      set(tool "glslangValidator")
+    endif()
     add_custom_command(
       OUTPUT "${spv}"
       COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/spv"
-      COMMAND ${GLSLC} --target-env=vulkan1.0 -O ${defflags} -o "${spv}" "${CMAKE_CURRENT_SOURCE_DIR}/${src}"
+      COMMAND ${compile}
       DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${src}" ${ARG_DEPENDS}
-      COMMENT "glslc ${src} ${defflags}"
+      COMMENT "${tool} ${src} ${defflags}"
       VERBATIM)
     list(APPEND spv_files "${spv}")
     list(APPEND symbols "${sym}")

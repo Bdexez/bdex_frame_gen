@@ -9,7 +9,45 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-find_package(Vulkan REQUIRED)
+# The layer needs only the Vulkan headers (the loader calls into it); the
+# demo, bdex_offline, the capture app and some tests also link the loader.
+# Headers older than 1.3.237 are completed by layer/src/vk_compat.h.
+find_package(Vulkan)
+if(NOT BDEX_VULKAN_INCLUDE_DIR AND NOT TARGET Vulkan::Headers)
+  find_path(BDEX_VULKAN_INCLUDE_DIR vulkan/vulkan.h HINTS "${Vulkan_INCLUDE_DIR}")
+  if(NOT BDEX_VULKAN_INCLUDE_DIR)
+    message(FATAL_ERROR "Vulkan headers not found: install them (libvulkan-dev, vulkan-headers, vulkan-devel, "
+                        "vulkan-loader-devel...) or pass -DBDEX_VULKAN_INCLUDE_DIR=<dir containing vulkan/vulkan.h>")
+  endif()
+endif()
+if(BDEX_VULKAN_INCLUDE_DIR)  # found above, or given: newer headers than the system's
+  if(NOT TARGET Vulkan::Headers)
+    add_library(Vulkan::Headers INTERFACE IMPORTED)
+  endif()
+  set_target_properties(Vulkan::Headers PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${BDEX_VULKAN_INCLUDE_DIR}")
+  if(TARGET Vulkan::Vulkan)
+    set_target_properties(Vulkan::Vulkan PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${BDEX_VULKAN_INCLUDE_DIR}")
+  endif()
+endif()
+get_target_property(BDEX_VULKAN_INCLUDES Vulkan::Headers INTERFACE_INCLUDE_DIRECTORIES)
+foreach(dir IN LISTS BDEX_VULKAN_INCLUDES)
+  if(EXISTS "${dir}/vulkan/vulkan_core.h")
+    file(STRINGS "${dir}/vulkan/vulkan_core.h" BDEX_VK_HEADER_LINE REGEX "^#define VK_HEADER_VERSION [0-9]+")
+    string(REGEX REPLACE "^#define VK_HEADER_VERSION ([0-9]+).*" "\\1" BDEX_VK_HEADER_VERSION "${BDEX_VK_HEADER_LINE}")
+    break()
+  endif()
+endforeach()
+if(BDEX_VK_HEADER_VERSION AND BDEX_VK_HEADER_VERSION LESS 204)
+  message(FATAL_ERROR "Vulkan headers 1.x.${BDEX_VK_HEADER_VERSION} are too old (1.3.204 or newer needed): "
+                      "git clone --depth 1 --branch v1.3.275 https://github.com/KhronosGroup/Vulkan-Headers "
+                      "and pass -DBDEX_VULKAN_INCLUDE_DIR=<clone>/include (or use the prebuilt archive)")
+endif()
+if(NOT TARGET Vulkan::Vulkan)
+  message(STATUS "Vulkan loader library not found: building the layer only (no demo, bdex_offline or GPU tests)")
+  set(BDEX_BUILD_DEMO OFF CACHE BOOL "" FORCE)
+  set(BDEX_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(BDEX_BUILD_OFFLINE OFF CACHE BOOL "" FORCE)
+endif()
 
 if(MSVC)
   # getenv / fopen / strerror: the portable standard calls, used safely here;
@@ -20,9 +58,30 @@ endif()
 function(bdex_strict target)
   if(BDEX_WERROR)
     target_compile_options(${target} PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/WX,-Werror>)
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 12
+       AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 13)
+      # GCC 12's own std::string code trips its -Wrestrict (GCC bug 105651):
+      # a false positive on Debian 12, left a warning.
+      target_compile_options(${target} PRIVATE -Wno-error=restrict)
+    endif()
   endif()
 endfunction()
-find_program(GLSLC glslc REQUIRED)
+# GLSL to SPIR-V: glslc (shaderc) when there is one — the tested output —,
+# else glslangValidator (glslang), which more distributions package; or
+# SPIR-V compiled elsewhere (BDEX_SPIRV_DIR: a build's <build>/layer/spv), for
+# a release built on an old distribution with neither.
+set(BDEX_SPIRV_DIR "" CACHE PATH "Directory of precompiled SPIR-V (<symbol>.spv, as in <build>/layer/spv): no GLSL compiler needed")
+if(NOT BDEX_SPIRV_DIR)
+  find_program(GLSLC glslc)
+  if(NOT GLSLC)
+    find_program(GLSLANG_VALIDATOR NAMES glslangValidator glslang)
+    if(NOT GLSLANG_VALIDATOR)
+      message(FATAL_ERROR "No GLSL compiler: install glslc (packages glslc / shaderc) or glslangValidator "
+                          "(glslang / glslang-tools), or pass -DBDEX_SPIRV_DIR=<precompiled SPIR-V>")
+    endif()
+    message(STATUS "Shaders: glslangValidator (${GLSLANG_VALIDATOR}); glslc was not found")
+  endif()
+endif()
 
 option(BDEX_BUILD_DEMO  "Build the GLFW demo application" ON)
 option(BDEX_BUILD_TESTS "Build unit tests" ON)
@@ -38,10 +97,17 @@ option(BDEX_32BIT       "Build the 32-bit layer (for 32-bit games); needs a mult
 if(BDEX_32BIT OR CMAKE_SIZEOF_VOID_P EQUAL 4)
   set(BDEX_LIBDIR lib32)
   set(BDEX_MANIFEST_SUFFIX "_32")
+  set(BDEX_LIBRARY_ARCH 32)
 else()
   set(BDEX_LIBDIR lib)
   set(BDEX_MANIFEST_SUFFIX "")
+  set(BDEX_LIBRARY_ARCH 64)
 endif()
+# (library_arch in the manifest: a loader of the other width skips the
+# library instead of failing to load it with an error — loaders 1.3.239 and
+# newer, whatever the manifest's format version; older ones ignore the field.
+# The format stays 1.1.2: loaders before 1.3 warn "invalid layer manifest file
+# version" for 1.2.x.)
 if(BDEX_32BIT)
   set(BDEX_BUILD_DEMO OFF CACHE BOOL "" FORCE)
   set(BDEX_BUILD_TESTS OFF CACHE BOOL "" FORCE)

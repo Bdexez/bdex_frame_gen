@@ -1,5 +1,5 @@
 #pragma once
-#include <vulkan/vulkan.h>
+#include "vk_compat.h"
 
 #include <cstdint>
 
