@@ -76,8 +76,15 @@ fi
 if [ -x /tmp/b/demo/bdex_demo ] && [ -n "$icd" ] && command -v Xvfb >/dev/null; then
   Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 &
   sleep 2
-  DISPLAY=:99 VK_ICD_FILENAMES="$icd" BDEX_REQUIRE_DISPLAY=1 LD_PRELOAD="$preload" \
-    bash /tmp/src/tests/integration.sh /tmp/b/demo/bdex_demo /tmp/b/layer | tail -3
+  # The whole log on a failure (the verdict, the layer's statistics), its
+  # end otherwise.
+  if DISPLAY=:99 VK_ICD_FILENAMES="$icd" BDEX_REQUIRE_DISPLAY=1 LD_PRELOAD="$preload" \
+       bash /tmp/src/tests/integration.sh /tmp/b/demo/bdex_demo /tmp/b/layer >/tmp/integration.log 2>&1; then
+    tail -3 /tmp/integration.log
+  else
+    grep -vE '^bdex demo - ' /tmp/integration.log | tail -40
+    exit 1
+  fi
 else
   echo "runtime check skipped (no GLFW, Xvfb or lavapipe package here)"
 fi
@@ -86,7 +93,7 @@ JOB
 status=0
 for img in "${images[@]}"; do
   # (Alpine has no bash until it is installed.)
-  if docker run --rm -v "$work:/work:ro" "$img" sh -c \
+  if docker run --rm ${BDEX_DOCKER_ARGS:-} -v "$work:/work:ro" "$img" sh -c \
        'command -v bash >/dev/null || apk add -q bash >/dev/null; exec bash /work/job.sh "$1"' sh "$cc" 2>&1 |
      sed "s|^|[$img] |"; then
     echo "[$img] OK"
