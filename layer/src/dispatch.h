@@ -42,6 +42,11 @@ namespace bdex {
     X(WaitForPresentKHR)              \
     X(GetSwapchainStatusKHR)          \
     X(ReleaseSwapchainImagesEXT)      \
+    X(SetHdrMetadataEXT)              \
+    X(GetRefreshCycleDurationGOOGLE)  \
+    X(GetPastPresentationTimingGOOGLE) \
+    X(GetSwapchainCounterEXT)         \
+    X(SetLocalDimmingAMD)             \
     X(CreateImage)                    \
     X(DestroyImage)                   \
     X(CreateImageView)                \
@@ -101,6 +106,21 @@ namespace bdex {
     X(CmdResetQueryPool)              \
     X(CmdWriteTimestamp)              \
     X(GetQueryPoolResults)
+// Newer than the oldest Vulkan headers the layer builds with (1.3.204).
+#ifdef VK_NV_low_latency2
+#define BDEX_DEVICE_FUNCS_LOW_LATENCY2(X) \
+    X(SetLatencySleepModeNV)             \
+    X(LatencySleepNV)                    \
+    X(SetLatencyMarkerNV)                \
+    X(GetLatencyTimingsNV)
+#else
+#define BDEX_DEVICE_FUNCS_LOW_LATENCY2(X)
+#endif
+#ifdef VK_KHR_present_wait2
+#define BDEX_DEVICE_FUNCS_PRESENT_WAIT2(X) X(WaitForPresent2KHR)
+#else
+#define BDEX_DEVICE_FUNCS_PRESENT_WAIT2(X)
+#endif
 
 struct InstanceDispatch {
 #define X(name) PFN_vk##name name = nullptr;
@@ -117,11 +137,15 @@ struct InstanceDispatch {
 struct DeviceDispatch {
 #define X(name) PFN_vk##name name = nullptr;
     BDEX_DEVICE_FUNCS(X)
+    BDEX_DEVICE_FUNCS_LOW_LATENCY2(X)
+    BDEX_DEVICE_FUNCS_PRESENT_WAIT2(X)
 #undef X
     void load(VkDevice device, PFN_vkGetDeviceProcAddr gdpa) {
         GetDeviceProcAddr = gdpa;
 #define X(name) name = reinterpret_cast<PFN_vk##name>(gdpa(device, "vk" #name));
         BDEX_DEVICE_FUNCS(X)
+        BDEX_DEVICE_FUNCS_LOW_LATENCY2(X)
+        BDEX_DEVICE_FUNCS_PRESENT_WAIT2(X)
 #undef X
     }
 };

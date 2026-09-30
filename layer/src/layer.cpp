@@ -4,6 +4,7 @@
 #include "status.h"
 #include "device.h"
 #include "dispatch.h"
+#include "gamescope.h"
 #include "log.h"
 #include "present_slice.h"
 #include "swapchain.h"
@@ -439,6 +440,13 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
 
     data->device = *pDevice;
     data->vt.load(*pDevice, gdpa);
+    // gamescope's WSI layer answers vkGetRefreshCycleDurationGOOGLE for its
+    // swapchains whether or not the extension is enabled (it never reaches
+    // the driver, which may not have it: NVIDIA's has not).
+    data->gamescope = gamescopeWsi() && data->vt.GetRefreshCycleDurationGOOGLE != nullptr;
+    if (gamescopeWsi())
+        BDEX_INFO("presenting through gamescope's WSI layer: %s", data->gamescope ? "refresh rate and frame limit from gamescope"
+                                                                                  : "its refresh cycle is not available");
     inst->vt.GetPhysicalDeviceProperties(physDev, &data->props);
     inst->vt.GetPhysicalDeviceMemoryProperties(physDev, &data->memProps);
     data->config.autoConfigure(data->props, data->memProps);
@@ -705,6 +713,81 @@ VKAPI_ATTR VkResult VKAPI_CALL GetSwapchainStatusKHR(VkDevice device, VkSwapchai
     return dev->vt.GetSwapchainStatusKHR(device, swapchain);
 }
 
+#ifdef VK_KHR_present_wait2
+VKAPI_ATTR VkResult VKAPI_CALL WaitForPresent2KHR(VkDevice device, VkSwapchainKHR swapchain,
+                                                  const VkPresentWait2InfoKHR* pInfo) {
+    DeviceData* dev = getDevice(dispatchKey(device));
+    if (dev->findSwapchain(swapchain)) return VK_SUCCESS;  // as WaitForPresentKHR
+    return dev->vt.WaitForPresent2KHR(device, swapchain, pInfo);
+}
+#endif
+
+// The other calls on a swapchain we virtualise go to the real swapchain —
+// the handle the application holds, unless the surface changed size since:
+// followSurface re-created it underneath, and the application's handle is
+// then a destroyed swapchain (HDR games call vkSetHdrMetadataEXT again after
+// a mode change).
+VkSwapchainKHR currentReal(DeviceData* dev, VkSwapchainKHR swapchain) {
+    if (VirtualSwapchain* vs = dev->findSwapchain(swapchain)) return vs->currentReal();
+    return swapchain;
+}
+
+VKAPI_ATTR void VKAPI_CALL SetHdrMetadataEXT(VkDevice device, uint32_t swapchainCount, const VkSwapchainKHR* pSwapchains,
+                                             const VkHdrMetadataEXT* pMetadata) {
+    DeviceData* dev = getDevice(dispatchKey(device));
+    std::vector<VkSwapchainKHR> real(pSwapchains, pSwapchains + swapchainCount);
+    for (VkSwapchainKHR& s : real) s = currentReal(dev, s);
+    dev->vt.SetHdrMetadataEXT(device, swapchainCount, real.data(), pMetadata);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL GetRefreshCycleDurationGOOGLE(VkDevice device, VkSwapchainKHR swapchain,
+                                                             VkRefreshCycleDurationGOOGLE* pProperties) {
+    DeviceData* dev = getDevice(dispatchKey(device));
+    return dev->vt.GetRefreshCycleDurationGOOGLE(device, currentReal(dev, swapchain), pProperties);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL GetPastPresentationTimingGOOGLE(VkDevice device, VkSwapchainKHR swapchain, uint32_t* pCount,
+                                                               VkPastPresentationTimingGOOGLE* pTimings) {
+    DeviceData* dev = getDevice(dispatchKey(device));
+    return dev->vt.GetPastPresentationTimingGOOGLE(device, currentReal(dev, swapchain), pCount, pTimings);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL GetSwapchainCounterEXT(VkDevice device, VkSwapchainKHR swapchain,
+                                                      VkSurfaceCounterFlagBitsEXT counter, uint64_t* pValue) {
+    DeviceData* dev = getDevice(dispatchKey(device));
+    return dev->vt.GetSwapchainCounterEXT(device, currentReal(dev, swapchain), counter, pValue);
+}
+
+VKAPI_ATTR void VKAPI_CALL SetLocalDimmingAMD(VkDevice device, VkSwapchainKHR swapchain, VkBool32 enable) {
+    DeviceData* dev = getDevice(dispatchKey(device));
+    dev->vt.SetLocalDimmingAMD(device, currentReal(dev, swapchain), enable);
+}
+
+#ifdef VK_NV_low_latency2
+VKAPI_ATTR VkResult VKAPI_CALL SetLatencySleepModeNV(VkDevice device, VkSwapchainKHR swapchain,
+                                                     const VkLatencySleepModeInfoNV* pInfo) {
+    DeviceData* dev = getDevice(dispatchKey(device));
+    return dev->vt.SetLatencySleepModeNV(device, currentReal(dev, swapchain), pInfo);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL LatencySleepNV(VkDevice device, VkSwapchainKHR swapchain, const VkLatencySleepInfoNV* pInfo) {
+    DeviceData* dev = getDevice(dispatchKey(device));
+    return dev->vt.LatencySleepNV(device, currentReal(dev, swapchain), pInfo);
+}
+
+VKAPI_ATTR void VKAPI_CALL SetLatencyMarkerNV(VkDevice device, VkSwapchainKHR swapchain,
+                                              const VkSetLatencyMarkerInfoNV* pInfo) {
+    DeviceData* dev = getDevice(dispatchKey(device));
+    dev->vt.SetLatencyMarkerNV(device, currentReal(dev, swapchain), pInfo);
+}
+
+VKAPI_ATTR void VKAPI_CALL GetLatencyTimingsNV(VkDevice device, VkSwapchainKHR swapchain,
+                                               VkGetLatencyMarkerInfoNV* pInfo) {
+    DeviceData* dev = getDevice(dispatchKey(device));
+    dev->vt.GetLatencyTimingsNV(device, currentReal(dev, swapchain), pInfo);
+}
+#endif
+
 VkResult worstResult(VkResult a, VkResult b) {
     if (a < 0) return a;
     if (b < 0) return b;
@@ -830,6 +913,20 @@ const Hook g_deviceHooks[] = {
     HOOK(GetSwapchainStatusKHR),
     HOOK(ReleaseSwapchainImagesEXT),
     {"vkReleaseSwapchainImagesKHR", reinterpret_cast<PFN_vkVoidFunction>(ReleaseSwapchainImagesEXT)},
+    HOOK(SetHdrMetadataEXT),
+    HOOK(GetRefreshCycleDurationGOOGLE),
+    HOOK(GetPastPresentationTimingGOOGLE),
+    HOOK(GetSwapchainCounterEXT),
+    HOOK(SetLocalDimmingAMD),
+#ifdef VK_NV_low_latency2
+    HOOK(SetLatencySleepModeNV),
+    HOOK(LatencySleepNV),
+    HOOK(SetLatencyMarkerNV),
+    HOOK(GetLatencyTimingsNV),
+#endif
+#ifdef VK_KHR_present_wait2
+    HOOK(WaitForPresent2KHR),
+#endif
 };
 
 template <size_t N>

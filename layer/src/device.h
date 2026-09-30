@@ -98,6 +98,16 @@ struct DeviceData {
     VkCommandPool cmdPool = VK_NULL_HANDLE;
     bool hasSwapchainMaintenance1 = false;
     bool presentFeedback = false;  // VK_KHR_present_id/present_wait enabled for the layer's own swapchains (hidden from the game)
+    // Presenting through gamescope's WSI layer, which answers
+    // vkGetRefreshCycleDurationGOOGLE for our swapchains (gamescope.h).
+    bool gamescope = false;
+    // The last refresh cycle (ns) gamescope reported for each surface
+    // (statusKey): it sends a surface's cycle only when it changes, so a
+    // swapchain re-created on the surface — its WSI layer forces that when
+    // Steam's framerate limit is switched on or off — reports the layer's
+    // default (60 Hz) until the next change; the surface's last one stands.
+    std::mutex gamescopeMutex;
+    std::unordered_map<uint64_t, uint64_t> gamescopeCycles;
 
     std::mutex queueMapMutex;
     std::unordered_map<VkQueue, std::unique_ptr<std::mutex>> queueMutexes;

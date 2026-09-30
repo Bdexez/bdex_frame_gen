@@ -19,7 +19,8 @@ struct StatusEntry {
     std::string mode;        // interpolate | extrapolate
     int multiplier = 0;
     double gameFps = 0.0, outFps = 0.0;
-    double refreshHz = 0.0;  // measured (present feedback), 0 unknown
+    double refreshHz = 0.0;  // measured (present feedback) or gamescope's, 0 unknown
+    double limitHz = 0.0;    // Steam's framerate limit in gamescope (the screen shows no more), 0 none
     double latencyMs = -1.0; // present-to-screen, -1 unknown
     int budgetLevel = 0;     // gpu_budget quality level
     uint32_t width = 0, height = 0;

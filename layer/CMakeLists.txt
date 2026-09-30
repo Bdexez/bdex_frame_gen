@@ -68,6 +68,7 @@ add_library(bdex_core STATIC
   src/descriptor_planner.cpp
   src/options_ui.cpp
   src/display_clock.cpp
+  src/gamescope.cpp
   src/status.cpp
 )
 target_include_directories(bdex_core PUBLIC src)

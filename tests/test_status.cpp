@@ -65,6 +65,24 @@ TEST(status_parse_and_describe) {
     CHECK(lines[1] == "   passes : online_tune, hud_mask");
     CHECK(lines[2] == "   réglage auto : trying pixel_vectors=1 (2 of 5 decided)");
     CHECK(lines[3] == "transparente — swapchain format 64 not supported");
+    // Steam's framerate limit in gamescope is shown instead of the refresh rate.
+    std::map<uint64_t, StatusEntry> lim;
+    StatusEntry l;
+    l.kind = "swapchain";
+    l.state = "generating";
+    l.mode = "interpolate";
+    l.multiplier = 1;
+    l.gameFps = l.outFps = 30;
+    l.refreshHz = 30;
+    l.limitHz = 30;
+    lim[1] = l;
+    const std::string limText = statusFormat("game", 1, 1, lim);
+    CHECK(limText.find("limit_hz=30.0\n") != std::string::npos);
+    CHECK(statusDescribe(statusParse(limText))[0] ==
+          "30 → 30 i/s (×1, interpolation) · limite Steam 30 i/s (rien au-delà ne s'affiche)");
+    l.limitHz = 0;
+    lim[1] = l;
+    CHECK(statusFormat("game", 1, 1, lim).find("limit_hz") == std::string::npos);
     // Windows line ends, stray lines.
     const StatusFile g = statusParse("process=x\r\npid=3\r\nnoise\r\n\r\n[device 1]\r\nstate=inactive\r\nreason=disabled\r\n");
     CHECK(g.pid == 3 && statusDescribe(g).size() == 1 && statusDescribe(g)[0] == "Couche inactive : disabled");

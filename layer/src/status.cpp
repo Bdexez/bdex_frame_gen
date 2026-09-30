@@ -91,6 +91,10 @@ std::string statusFormat(const std::string& process, long pid, long long unixTim
         o << "output_fps=" << buf << "\n";
         fixed1(buf, sizeof buf, e.refreshHz);
         o << "refresh_hz=" << buf << "\n";
+        if (e.limitHz > 0.0) {
+            fixed1(buf, sizeof buf, e.limitHz);
+            o << "limit_hz=" << buf << "\n";
+        }
         fixed1(buf, sizeof buf, e.latencyMs);
         o << "latency_ms=" << buf << "\n";
         o << "gpu_budget_level=" << e.budgetLevel << "\n";
@@ -160,7 +164,10 @@ std::vector<std::string> statusDescribe(const StatusFile& file) {
         snprintf(buf, sizeof buf, "%.0f → %.0f i/s (×%s, %s)", num(v, "game_fps", 0), num(v, "output_fps", 0),
                  get(v, "multiplier").c_str(), get(v, "mode") == "extrapolate" ? "extrapolation" : "interpolation");
         std::string line = (state == "paused" ? "En pause — " : "") + who + buf;
-        if (num(v, "refresh_hz", 0) > 0) {
+        if (num(v, "limit_hz", 0) > 0) {
+            snprintf(buf, sizeof buf, " · limite Steam %.0f i/s (rien au-delà ne s'affiche)", num(v, "limit_hz", 0));
+            line += buf;
+        } else if (num(v, "refresh_hz", 0) > 0) {
             snprintf(buf, sizeof buf, " · écran %.0f Hz", num(v, "refresh_hz", 0));
             line += buf;
         }
