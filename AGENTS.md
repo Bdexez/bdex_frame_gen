@@ -128,7 +128,12 @@ hook `afterOutput`, dessiné sur l'image finale — donc plus accentué par
 CAS). `dedup` reste dans `FrameGen` : c'est le contrôle du pipeline (passes
 de flux annulées en dispatch indirect, tampon d'état partagé avec
 `frame_timing`), pas une passe ajoutée. Nouvelle :
-`subpixel_lk` (Lucas-Kanade), `hud_mask` (masque appris : n'apprend que
+`subpixel_lk` (Lucas-Kanade), `reveal_fill` (extrapolation : source la plus
+lente quand le point fixe oscille ET que la trajectoire est incohérente —
+sans ce second test, la rotation de la démo perdait 0,4 dB ; en
+interpolation, un test de visibilité par trajectoire a perdu 1 dB dans les
+zones d'occultation, `pixel_vectors` y gagne +1,3 : ne pas y revenir),
+`hud_mask` (masque appris : n'apprend que
 sous mouvement de caméra — 25 % des pixels changés ; à 1 %, la démo à
 caméra fixe perdait 0,3 dB en extrapolation). La synthèse a un binding 8
 « masque statique » générique (`FgContext::setStaticMask`, 1×1 à zéro

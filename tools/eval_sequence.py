@@ -20,6 +20,8 @@ Reported per variant (mean over the generated frames, dB):
            sees without frame generation) — the gain over it is `psnr - dup`
   blend    whole-frame PSNR of a plain cross-fade of the two inputs
   ssim     luma SSIM (8x8 box windows) of the generated frames, 1 = identical
+  occl     occlusion areas — only for sequences shipping masks in
+           <frames>/occlusion/<frame>.png (make_corpus.py's occlude)
   flicker  mean |e_k - e_(k-1)| of the luma error between successive
            generated frames (0..255, lower is better): a stable error such
            as a slight blur does not flicker, an error that jumps from frame
@@ -135,7 +137,17 @@ def score(out_dir, exclude):
                psnr(dup, gt, valid), psnr(blend, gt, valid) if blend is not None else None]
         if cap is not None:
             row = [None if v is None else min(v, cap) for v in row]
-        rows.append((*row, ssim(gen, gt, valid), flicker))
+        # Occlusion areas, when the sequence ships their masks
+        # (<frames>/occlusion/<frame>.png: make_corpus.py's occlude).
+        occl = None
+        mask_path = Path(gt_path).parent / "occlusion" / (Path(gt_path).stem + ".png")
+        if mask_path.exists():
+            occl_mask = (np.asarray(Image.open(mask_path).convert("L")) > 127) & valid
+            if occl_mask.any():
+                occl = psnr(gen, gt, occl_mask)
+                if cap is not None:
+                    occl = min(occl, cap)
+        rows.append((*row, ssim(gen, gt, valid), flicker, occl))
     return rows
 
 
@@ -195,18 +207,23 @@ def main():
         rows = score(out, exclude)
         results.append((name, rows))
 
-    print(f"{'variant':<32} {'psnr':>7} {'motion':>7} {'edges':>7} {'dup':>7} {'blend':>7} {'ssim':>7} {'flicker':>7}  frames")
+    # The occlusion column only for sequences that ship occlusion masks.
+    with_occl = any(r[7] is not None for _, rows in results for r in rows)
+    print(f"{'variant':<32} {'psnr':>7} {'motion':>7} {'edges':>7} {'dup':>7} {'blend':>7} {'ssim':>7} {'flicker':>7}"
+          + (f" {'occl':>7}" if with_occl else "") + "  frames")
     ref = None
     report = []
     for name, rows in results:
         m = [mean(c) for c in zip(*rows)]
         delta = "" if ref is None else ("  Δ " + " ".join(f"{a - b:+.2f}" for a, b in zip(m[:3], ref[:3]))
-                                        + f" ssim {m[5] - ref[5]:+.4f} flicker {m[6] - ref[6]:+.2f}")
+                                        + f" ssim {m[5] - ref[5]:+.4f} flicker {m[6] - ref[6]:+.2f}"
+                                        + (f" occl {m[7] - ref[7]:+.2f}" if with_occl else ""))
         ref = ref or m
-        print(f"{name:<32} {m[0]:7.2f} {m[1]:7.2f} {m[2]:7.2f} {m[3]:7.2f} {m[4]:7.2f} {m[5]:7.4f} {m[6]:7.2f}  {len(rows)}{delta}")
+        print(f"{name:<32} {m[0]:7.2f} {m[1]:7.2f} {m[2]:7.2f} {m[3]:7.2f} {m[4]:7.2f} {m[5]:7.4f} {m[6]:7.2f}"
+              + (f" {m[7]:7.2f}" if with_occl else "") + f"  {len(rows)}{delta}")
         if args.json:
-            report.append({"variant": name, "frames": len(rows),
-                           **dict(zip(("psnr", "motion", "edges", "dup", "blend", "ssim", "flicker"), m))})
+            keys = ("psnr", "motion", "edges", "dup", "blend", "ssim", "flicker") + (("occl",) if with_occl else ())
+            report.append({"variant": name, "frames": len(rows), **dict(zip(keys, m))})
     if args.json:
         import json
         Path(args.json).write_text(json.dumps(report, indent=1))

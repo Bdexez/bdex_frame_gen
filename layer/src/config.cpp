@@ -181,6 +181,7 @@ const std::vector<OptionDef>& registry() {
     I("subpixel_lk", nullptr, &Config::subpixelLk, 0, 4, kLive, Tune::Extrapolation, "2", 5),
     B("synth_bicubic", nullptr, &Config::synthBicubic, kLive, Tune::SynthAlways, "1", 13),
     I("hud_mask", nullptr, &Config::hudMask, 0, 1000, kLive),
+    B("reveal_fill", nullptr, &Config::revealFill, kLive, Tune::SynthExtrapolation, "1", 12),
     B("online_tune", nullptr, &Config::onlineTune),
     F("upscale_temporal", nullptr, &Config::upscaleTemporal, 0.f, 0.95f),
     B("frame_timing", nullptr, &Config::frameTiming, kLive),
@@ -520,6 +521,7 @@ std::string Config::describe() const {
     if (subpixelLk > 0) o << " subpixel_lk=" << subpixelLk;
     if (synthBicubic) o << " synth_bicubic=1";
     if (hudMask > 0) o << " hud_mask=" << hudMask;
+    if (revealFill) o << " reveal_fill=1";
     if (onlineTune) o << " online_tune=1";
     if (upscaleTemporal > 0.f) o << " upscale_temporal=" << upscaleTemporal;
     if (targetFps != 0.f) o << " target_fps=" << (targetFps < 0.f ? std::string("auto") : std::to_string(targetFps));

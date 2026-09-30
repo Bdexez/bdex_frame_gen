@@ -74,6 +74,7 @@ layout(push_constant) uniform PC {
     float accel;             // extrapolation: weight of the second-order (acceleration) term, 0 = constant velocity
     int bicubic;             // synth_bicubic: Catmull-Rom sampling along the trajectories (0 = bilinear, historical)
     float staticFrames;      // hud_mask: pixels unchanged for at least this many frames stay as in cur (0 = off)
+    int revealFill;          // extrapolation: a revealed pixel takes the slower-moving (background) of the last two sources
 } pc;
 
 // Catmull-Rom sampling in 9 bilinear taps (the separable weights of the
@@ -266,7 +267,23 @@ void main() {
             for (int i = 0; i < pc.iterations; ++i) { B = bwdAt(pb); pb = q - extrapDisp(pb, s, B); }
         } else {
             pb = q + s * B;
-            for (int i = 0; i < pc.iterations; ++i) { B = bwdAt(pb); pb = q + s * B; }
+            vec2 pbPrev = q, Bprev = B;
+            for (int i = 0; i < pc.iterations; ++i) { pbPrev = pb; Bprev = B; B = bwdAt(pb); pb = q + s * B; }
+            // reveal_fill: area the moving object uncovers after cur. The
+            // fixed point does not exist there (the source alternates between
+            // the object and the background it leaves); of the last two
+            // sources take the one whose content moves less — the background
+            // (the splat's model: the faster pixel is in front) — instead of
+            // whichever the iteration count lands on.
+            // Only there: a rotation also keeps the iteration from settling,
+            // but its trajectory stays consistent (the forward flow at the
+            // source leads back) — the demo's spinning square lost 0.4 dB
+            // without this test.
+            if (pc.revealFill != 0 && pc.iterations > 0 && distance(pb, pbPrev) > 1.0 &&
+                length(B + fwdAt(pb + B)) > 2.0) {
+                vec2 Bpb = bwdAt(pb), BpbPrev = bwdAt(pbPrev);
+                if (length(BpbPrev) < length(Bpb)) { pb = pbPrev; B = Bprev; }
+            }
         }
         if (pc.splat != 0) {
             uint key = imageLoad(splatMap, p).r;
