@@ -38,6 +38,9 @@
 //   --steady-content  with --jitter: a fixed-timestep game instead, image k
 //                   shows time k*S and is presented within +-J*S/2 of it
 //                   (only the present times jitter, the content does not)
+//   --limit-shared KB, --limit-storage-images N   a smaller GPU's limits
+//                   (Vulkan guarantees 16 KB and 4): the engine's fallbacks
+//                   — a lean matcher only, or no generation — on any GPU
 //   With --jitter, --dup or --spacing, the ground truth of every displayed
 //   frame, real ones included, is the input frame at the time the player
 //   should see then, following the layer's pacing (see the loop below), and
@@ -229,6 +232,9 @@ int main(int argc, char** argv) {
     double refreshHz = 0.0;
     std::string fmtName = "rgba8", csName = "srgb";
     float renderScale = 1.f;
+    // A smaller GPU's limits, as the engine sees them (its fallbacks are
+    // tested on any GPU): KB of compute shared memory, storage images per stage.
+    uint32_t limitShared = 0, limitStorage = 0;
     for (int i = 3; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--multiplier" && i + 1 < argc) mult = atoi(argv[++i]);
@@ -249,6 +255,8 @@ int main(int argc, char** argv) {
         else if (a == "--hud-counter") hudCounter = true;
         else if (a == "--refresh" && i + 1 < argc) refreshHz = atof(argv[++i]);
         else if (a == "--refresh-known") refreshKnown = true;
+        else if (a == "--limit-shared" && i + 1 < argc) limitShared = uint32_t(atoi(argv[++i])) * 1024u;
+        else if (a == "--limit-storage-images" && i + 1 < argc) limitStorage = uint32_t(atoi(argv[++i]));
         else { fprintf(stderr, "unknown argument %s\n", a.c_str()); return 2; }
     }
     if (mult < 2 || mult > 8) die("--multiplier must be 2 to 8");
@@ -367,6 +375,8 @@ int main(int argc, char** argv) {
     dev.config = cfg;
     vkGetPhysicalDeviceProperties(pd, &dev.props);
     vkGetPhysicalDeviceMemoryProperties(pd, &dev.memProps);
+    if (limitShared) dev.props.limits.maxComputeSharedMemorySize = limitShared;
+    if (limitStorage) dev.props.limits.maxPerStageDescriptorStorageImages = limitStorage;
     vkGetDeviceQueue(device, qf, 0, &dev.queue);
     dev.queueFamily = qf;
     dev.layerUsable = true;

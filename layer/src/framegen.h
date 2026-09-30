@@ -182,7 +182,9 @@ private:
     void createResources();
     void createDescriptors();
     void destroyAll();
-    Pass makePass(const uint32_t* spv, size_t spvSize, const std::vector<VkDescriptorType>& bindings, bool lean = false);
+    Pass makePass(const uint32_t* spv, size_t spvSize, const std::vector<VkDescriptorType>& bindings, bool lean = false,
+                  bool leanOnly = false);
+    bool matcherFull_ = true;  // the GPU has the shared memory for the full block matcher (createPipelines)
     VkDescriptorSet allocSet(VkDescriptorSetLayout layout) override;
     void writeImage(VkDescriptorSet set, uint32_t binding, VkDescriptorType type, VkImageView view) override;
     void writeBuffer(VkDescriptorSet set, uint32_t binding, VkBuffer buffer) override;

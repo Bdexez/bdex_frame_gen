@@ -40,6 +40,10 @@ if(Python3_Interpreter_FOUND)
       # Every output encoding (8/10-bit, sRGB, FP16) and the upscaling path.
       add_test(NAME formats COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_formats.py" "${CMAKE_BINARY_DIR}")
       set_tests_properties(formats PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+      # Within the limits every Vulkan GPU guarantees (4 storage images, 16 KB
+      # of shared memory): small GPUs like the Raspberry Pi's.
+      add_test(NAME min_limits COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_min_limits.py" "${CMAKE_BINARY_DIR}")
+      set_tests_properties(min_limits PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
       # Every option gives the same frames twice (races, out-of-bounds reads).
       add_test(NAME determinism COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_determinism.py" "${CMAKE_BINARY_DIR}")
       set_tests_properties(determinism PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)

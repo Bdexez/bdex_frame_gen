@@ -76,10 +76,55 @@ FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, Vk
 
 FrameGen::~FrameGen() { destroyAll(); }
 
+// What a pass asks of the GPU, against what the GPU allows. Some passes go
+// past the Vulkan minimums (flow_refine binds 5 storage images, 4 are
+// guaranteed; most use 256 invocations a workgroup, 128 are): a GPU at those
+// minimums (Raspberry Pi's V3D, some mobile GPUs) must fall back to passing
+// the frames through, with the reason, rather than fail a pipeline — or not
+// fail it and run out of bounds. (Unknown limits, all zero: not checked.)
+static void checkPassLimits(const VkPhysicalDeviceLimits& lim, const uint32_t* spv, size_t spvSize,
+                            const std::vector<VkDescriptorType>& bindings) {
+    if (lim.maxComputeWorkGroupInvocations == 0) return;
+    uint32_t storage = 0, sampled = 0, buffers = 0;
+    for (VkDescriptorType t : bindings) {
+        if (t == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) ++storage;
+        else if (t == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) ++sampled;
+        else if (t == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) ++buffers;
+    }
+    char msg[200] = "";
+    if (storage > lim.maxPerStageDescriptorStorageImages)
+        snprintf(msg, sizeof msg, "the GPU allows %u storage images per shader, the frame generation needs %u",
+                 lim.maxPerStageDescriptorStorageImages, storage);
+    else if (sampled > std::min(lim.maxPerStageDescriptorSampledImages, lim.maxPerStageDescriptorSamplers))
+        snprintf(msg, sizeof msg, "the GPU allows %u sampled images per shader, the frame generation needs %u",
+                 std::min(lim.maxPerStageDescriptorSampledImages, lim.maxPerStageDescriptorSamplers), sampled);
+    else if (buffers > lim.maxPerStageDescriptorStorageBuffers || storage + sampled + buffers > lim.maxPerStageResources)
+        snprintf(msg, sizeof msg, "the GPU allows too few resources per shader for the frame generation");
+    // The workgroup size: OpExecutionMode %main LocalSize x y z.
+    for (size_t i = 5, words = spvSize / 4; !msg[0] && i < words;) {
+        const uint32_t op = spv[i] & 0xFFFFu, len = spv[i] >> 16;
+        if (len == 0) break;
+        if (op == 16 && len >= 6 && i + 5 < words && spv[i + 2] == 17) {
+            const uint32_t x = spv[i + 3], y = spv[i + 4], z = spv[i + 5];
+            if (x > lim.maxComputeWorkGroupSize[0] || y > lim.maxComputeWorkGroupSize[1] ||
+                z > lim.maxComputeWorkGroupSize[2] || x * y * z > lim.maxComputeWorkGroupInvocations)
+                snprintf(msg, sizeof msg, "the GPU allows %u threads per workgroup (%ux%u), the frame generation needs %ux%u",
+                         lim.maxComputeWorkGroupInvocations, lim.maxComputeWorkGroupSize[0],
+                         lim.maxComputeWorkGroupSize[1], x, y);
+            break;
+        }
+        i += len;
+    }
+    if (msg[0]) throw VkError(VK_ERROR_FEATURE_NOT_PRESENT, msg);
+}
+
 // lean: also build Pass::lean, the same shader with its specialization
 // constant 0 (a bool) set to false — a variant with the opt-in terms compiled
-// out (block_match.comp: kOptIns).
-FrameGen::Pass FrameGen::makePass(const uint32_t* spv, size_t spvSize, const std::vector<VkDescriptorType>& bindings, bool lean) {
+// out (block_match.comp: kOptIns). leanOnly: only that variant, as
+// Pass::pipeline (a GPU with too little shared memory for the full one).
+FrameGen::Pass FrameGen::makePass(const uint32_t* spv, size_t spvSize, const std::vector<VkDescriptorType>& bindings,
+                                  bool lean, bool leanOnly) {
+    checkPassLimits(dev_.props.limits, spv, spvSize, bindings);
     Pass p;
     std::vector<VkDescriptorSetLayoutBinding> b(bindings.size());
     for (uint32_t i = 0; i < bindings.size(); ++i) {
@@ -108,11 +153,12 @@ FrameGen::Pass FrameGen::makePass(const uint32_t* spv, size_t spvSize, const std
     VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
     ci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, mod, "main", nullptr};
     ci.layout = p.layout;
+    const VkBool32 off = VK_FALSE;
+    const VkSpecializationMapEntry entry{0, 0, sizeof(off)};
+    const VkSpecializationInfo spec{1, &entry, sizeof(off), &off};
+    if (leanOnly) ci.stage.pSpecializationInfo = &spec;
     VkResult r = dev_.vt.CreateComputePipelines(dev_.device, VK_NULL_HANDLE, 1, &ci, nullptr, &p.pipeline);
-    if (r >= 0 && lean) {
-        const VkBool32 off = VK_FALSE;
-        const VkSpecializationMapEntry entry{0, 0, sizeof(off)};
-        const VkSpecializationInfo spec{1, &entry, sizeof(off), &off};
+    if (r >= 0 && lean && !leanOnly) {
         ci.stage.pSpecializationInfo = &spec;
         r = dev_.vt.CreateComputePipelines(dev_.device, VK_NULL_HANDLE, 1, &ci, nullptr, &p.lean);
     }
@@ -131,15 +177,24 @@ void FrameGen::createPipelines() {
     const VkFormatFeatureFlags lumaFeatures = VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
                                               VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
     lumaFormat_ = dev_.formatSupports(VK_FORMAT_R16_SFLOAT, lumaFeatures) ? VK_FORMAT_R16_SFLOAT : VK_FORMAT_R32_SFLOAT;
+    // The full matcher (its opt-in terms: grad, census, rotation, chroma)
+    // stages ~21 KB of shared memory, the lean one ~4 KB; Vulkan guarantees
+    // 16 KB. Under 32 KB (Raspberry Pi's V3D: 16 KB) only the lean one is
+    // built, and those terms stay off (effectiveConfig).
+    matcherFull_ = dev_.props.limits.maxComputeSharedMemorySize == 0 || dev_.props.limits.maxComputeSharedMemorySize >= 32768;
+    if (!matcherFull_)
+        BDEX_INFO("%u KB of shared memory: the block matcher's optional terms are off", dev_.props.limits.maxComputeSharedMemorySize / 1024);
     if (outputs_ > 0) {
         if (lumaFormat_ == VK_FORMAT_R16_SFLOAT) {
             downsample_ = makePass(downsample_comp_f16, downsample_comp_f16_size, {CIS, SI});
-            blockMatch_ = makePass(block_match_comp_f16, block_match_comp_f16_size, {SI, SI, CIS, SI, SI, CIS, CIS, CIS}, true);
-            refine_ = makePass(flow_refine_comp_f16, flow_refine_comp_f16_size, {SI, SI, SI, SI, SI});
+            blockMatch_ = makePass(block_match_comp_f16, block_match_comp_f16_size, {SI, SI, CIS, SI, SI, CIS, CIS, CIS}, true,
+                                   !matcherFull_);
+            refine_ = makePass(flow_refine_comp_f16, flow_refine_comp_f16_size, {CIS, CIS, SI, SI, SI});
         } else {
             downsample_ = makePass(downsample_comp_f32, downsample_comp_f32_size, {CIS, SI});
-            blockMatch_ = makePass(block_match_comp_f32, block_match_comp_f32_size, {SI, SI, CIS, SI, SI, CIS, CIS, CIS}, true);
-            refine_ = makePass(flow_refine_comp_f32, flow_refine_comp_f32_size, {SI, SI, SI, SI, SI});
+            blockMatch_ = makePass(block_match_comp_f32, block_match_comp_f32_size, {SI, SI, CIS, SI, SI, CIS, CIS, CIS}, true,
+                                   !matcherFull_);
+            refine_ = makePass(flow_refine_comp_f32, flow_refine_comp_f32_size, {CIS, CIS, SI, SI, SI});
         }
         smooth_ = makePass(flow_smooth_comp, flow_smooth_comp_size, {SI, SI});
         reduce_ = makePass(reduce_cost_comp, reduce_cost_comp_size, {SI, SB});
@@ -432,8 +487,8 @@ void FrameGen::createDescriptors() {
                 dsMatch_[parity][dir].push_back(s);
 
                 VkDescriptorSet rs = allocSet(refine_.setLayout);
-                writeImage(rs, 0, SI, lv.pyr[dir == 0 ? prev : cur].view);
-                writeImage(rs, 1, SI, lv.pyr[dir == 0 ? cur : prev].view);
+                writeImage(rs, 0, CIS, lv.pyr[dir == 0 ? prev : cur].view);
+                writeImage(rs, 1, CIS, lv.pyr[dir == 0 ? cur : prev].view);
                 writeImage(rs, 2, SI, lv.flowRaw[dir].view);
                 writeImage(rs, 3, SI, lv.flow[dir].view);
                 writeImage(rs, 4, SI, lv.flowFine[dir].view);
@@ -1268,6 +1323,8 @@ Config FrameGen::effectiveConfig() const {
         if (c.sceneCutLocalAuto) c.sceneCutLocal = false;
     }
     for (const auto& p : passes_) p->overrideConfig(c);
+    // Only the lean matcher on this GPU (createPipelines): its opt-in terms off.
+    if (!matcherFull_) c.gradWeight = c.censusWeight = c.rotWeight = c.chromaWeight = 0.f;
     if (qualityLevel_ >= 1) {
         c.pixelVectors = false;
         c.subpixel = false;
