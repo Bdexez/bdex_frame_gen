@@ -186,13 +186,18 @@ std::string platformBundledProfilesPath() {
     return slash == std::string::npos ? "" : path.substr(0, slash + 1) + "profiles.conf";
 #else
     // Installed layout: <prefix>/lib[32]/libVkLayer_bdex_framegen.so and
-    // <prefix>/share/bdex-framegen/profiles.conf.
+    // <prefix>/share/bdex-framegen/profiles.conf — or one level deeper for a
+    // distribution's library dir (Debian: lib/x86_64-linux-gnu).
     Dl_info info{};
     if (!dladdr(reinterpret_cast<void*>(&platformBundledProfilesPath), &info) || !info.dli_fname) return "";
     std::string lib = info.dli_fname;
     size_t slash = lib.rfind('/');
     if (slash == std::string::npos) return "";
-    return lib.substr(0, slash) + "/../share/bdex-framegen/profiles.conf";
+    const std::string dir = lib.substr(0, slash);
+    const std::string near = dir + "/../share/bdex-framegen/profiles.conf";
+    const std::string deep = dir + "/../../share/bdex-framegen/profiles.conf";
+    if (access(near.c_str(), R_OK) != 0 && access(deep.c_str(), R_OK) == 0) return deep;
+    return near;
 #endif
 }
 

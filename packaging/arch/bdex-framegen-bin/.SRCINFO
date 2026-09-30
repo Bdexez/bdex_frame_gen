@@ -1,0 +1,26 @@
+pkgbase = bdex-framegen-bin
+	pkgdesc = Frame generation for Vulkan games (optical flow, x2 to x8) as a Vulkan layer, with a GTK control panel (prebuilt)
+	pkgver = 0.5.6
+	pkgrel = 1
+	url = https://github.com/Bdexez/bdex_frame_gen
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	depends = glibc
+	depends = vulkan-icd-loader
+	optdepends = python-gobject: control panel (bdex-framegen-gui)
+	optdepends = gtk4: control panel (bdex-framegen-gui)
+	optdepends = libadwaita: control panel with Adwaita widgets (plain GTK 4 without it)
+	optdepends = lib32-vulkan-icd-loader: 32-bit games
+	optdepends = vulkan-tools: bdex-framegen --check and --report
+	provides = bdex-framegen
+	conflicts = bdex-framegen
+	conflicts = bdex-framegen-git
+	options = !strip
+	options = !debug
+	source_x86_64 = https://github.com/Bdexez/bdex_frame_gen/releases/download/v0.5.6/bdex-framegen-linux-x86_64-0.5.6.tar.gz
+	sha256sums_x86_64 = SKIP
+	source_aarch64 = https://github.com/Bdexez/bdex_frame_gen/releases/download/v0.5.6/bdex-framegen-linux-aarch64-0.5.6.tar.gz
+	sha256sums_aarch64 = SKIP
+
+pkgname = bdex-framegen-bin

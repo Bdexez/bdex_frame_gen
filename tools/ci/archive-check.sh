@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Installs a prebuilt archive in other distributions, as a user would
-# (./install.sh), and checks it there on Mesa's software driver, with their
+# (./install.sh) — or a distribution package (tools/package-native.sh: .deb
+# with apt, .rpm with dnf or zypper) —, and checks it there on Mesa's software driver, with their
 # glibc, Vulkan loader and Mesa — no GPU, no window on the host:
 #   - the layer loads and turns active (vulkaninfo creates a device);
 #   - it generates frames: vkcube through it on a virtual display (Xvfb), x2
 #     (skipped where Mesa cannot present to Xvfb: Mesa 20, Debian 11).
 #   tools/ci/archive-check.sh <x86_64 archive> [image...]    (default: ubuntu:20.04 debian:11 ubuntu:24.04)
 #   tools/ci/archive-check.sh <aarch64 archive> [suite...]   (Debian suites, default: bullseye bookworm)
+#   tools/ci/archive-check.sh <.deb | .rpm> [image...]       (default: ubuntu:22.04 debian:12 | fedora:latest opensuse/tumbleweed)
 # An aarch64 archive is checked in a Debian arm64 tree run by qemu-user inside
 # an x86_64 container: no binfmt registration on the host, Docker is all it
 # needs.
@@ -15,6 +17,8 @@ archive="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 shift
 targets=("$@")
 case "$archive" in
+  *.deb) arm64=0; [ ${#targets[@]} -gt 0 ] || targets=(ubuntu:22.04 debian:12) ;;
+  *.rpm) arm64=0; [ ${#targets[@]} -gt 0 ] || targets=(fedora:latest opensuse/tumbleweed) ;;
   *aarch64*) arm64=1; [ ${#targets[@]} -gt 0 ] || targets=(bullseye bookworm) ;;
   *) arm64=0; [ ${#targets[@]} -gt 0 ] || targets=(ubuntu:20.04 debian:11 ubuntu:24.04) ;;
 esac
@@ -59,6 +63,9 @@ else
   elif command -v dnf >/dev/null; then
     dnf install -y -q mesa-vulkan-drivers vulkan-tools xorg-x11-server-Xvfb >/tmp/dnf.log 2>&1 ||
       { tail -5 /tmp/dnf.log; exit 1; }
+  elif command -v zypper >/dev/null; then
+    zypper -q -n install libvulkan_lvp vulkan-tools xorg-x11-server-Xvfb gawk >/tmp/zypper.log 2>&1 ||
+      { tail -5 /tmp/zypper.log; exit 1; }
   fi
   . /etc/os-release
   echo "== $PRETTY_NAME ($(uname -m)), $(ldd --version | head -1)"
@@ -68,9 +75,18 @@ else
   secs=12 stats=2
   install_path=$PATH
 fi
-mkdir -p /tmp/a && tar -xzf /work/archive.tar.gz -C /tmp/a
-HOME=/tmp/home PATH=$install_path bash /tmp/a/*/install.sh >/dev/null
 export HOME=/tmp/home XDG_DATA_HOME=/tmp/home/.local/share
+mkdir -p "$HOME"
+case "$(ls /work/pkg.*)" in
+  *.deb) apt-get install -y -qq --no-install-recommends /work/pkg.deb >/tmp/pkg.log 2>&1 || { tail -5 /tmp/pkg.log; exit 1; }
+         echo "installed $(dpkg-query -W bdex-framegen), $(dpkg -L bdex-framegen | grep '\.so$' | tr '\n' ' ')" ;;
+  *.rpm) if command -v dnf >/dev/null; then dnf install -y -q /work/pkg.rpm >/tmp/pkg.log 2>&1
+         else zypper -q -n --no-gpg-checks install --allow-unsigned-rpm /work/pkg.rpm >/tmp/pkg.log 2>&1; fi ||
+           { tail -5 /tmp/pkg.log; exit 1; }
+         echo "installed $(rpm -q bdex-framegen), $(rpm -ql bdex-framegen | grep '\.so$' | tr '\n' ' ')" ;;
+  *) mkdir -p /tmp/a && tar -xzf /work/pkg.tar.gz -C /tmp/a
+     PATH=$install_path bash /tmp/a/*/install.sh >/dev/null ;;
+esac
 export BDEX_FG=1 BDEX_FG_LOG=2 VK_ICD_FILENAMES="$icd"
 run() { ${emu[@]+"${emu[@]}"} "$bin/$1" "${@:2}"; }
 out="$(VK_LOADER_DEBUG=warn run vulkaninfo --summary 2>&1 || true)"
@@ -78,6 +94,18 @@ if grep -qE '^USAGE: .*vulkaninfo' <<<"$out"; then  # (no --summary before 1.2.1
   out="$(VK_LOADER_DEBUG=warn run vulkaninfo 2>&1 || true)"
 fi
 grep -E 'bdex-fg.*(loaded|layer (in)?active|error|failed)' <<<"$out" | cut -c1-140 | head -4
+# The shipped profiles are found from the library's own directory, however
+# deep the distribution puts it (lib/x86_64-linux-gnu): a profile for
+# vulkaninfo shows in its startup line.
+profiles="$(ls /usr/share/bdex-framegen/profiles.conf "$HOME"/.local/share/bdex-framegen/profiles.conf 2>/dev/null | head -1 || true)"
+if [ -n "$profiles" ] && [ -z "${emu[*]:-}" ]; then
+  cp "$profiles" /tmp/profiles.orig
+  printf '\n[vulkaninfo]\nmultiplier = 3\n' >> "$profiles"
+  grep -q 'loaded (enabled=1 multiplier=3' <<<"$(run vulkaninfo --summary 2>&1; run vulkaninfo 2>&1 | head -40)" ||
+    { echo "the shipped profiles ($profiles) are not read"; exit 1; }
+  cp /tmp/profiles.orig "$profiles"
+  echo "profiles found: $profiles"
+fi
 # Every loader accepts the manifest's format (1.2.x: loaders before 1.3 warn
 # that it is invalid).
 if grep -E 'VK_LAYER_BDEX_framegen[_0-9]*\.json.*invalid' <<<"$out" | cut -c1-160 | head -2 | grep .; then
@@ -107,7 +135,9 @@ for target in "${targets[@]}"; do
   else
     cmd=("$target" bash /work/job.sh)
   fi
-  if docker run --rm -v "$archive:/work/archive.tar.gz:ro" -v "$job:/work/job.sh:ro" "${cmd[@]}" 2>&1 |
+  ext=tar.gz
+  case "$archive" in *.deb) ext=deb ;; *.rpm) ext=rpm ;; esac
+  if docker run --rm -v "$archive:/work/pkg.$ext:ro" -v "$job:/work/job.sh:ro" "${cmd[@]}" 2>&1 |
      sed "s|^|[$target] |"; then
     echo "[$target] OK"
   else
