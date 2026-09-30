@@ -221,6 +221,38 @@ jobs:
       - name: Build and test (${{ matrix.image }})
         run: tools/ci/distro-check.sh "${{ matrix.image }}"
 
+  # The control panel in containers, on a virtual display: GTK 4 with and
+  # without libadwaita, and its text mode where GTK 4 is missing (Ubuntu
+  # 20.04).
+  panel:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Options description (options_ui.json)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends cmake g++ glslc libvulkan-dev
+          cmake -S . -B build -DBDEX_BUILD_TESTS=OFF -DBDEX_BUILD_DEMO=OFF -DBDEX_BUILD_OFFLINE=OFF
+          cmake --build build --target bdex_options_ui -j"$(nproc)"
+      - name: Panel (Ubuntu 20.04, Debian 12, Arch)
+        run: tools/ci/panel-check.sh build/options_ui.json ubuntu:20.04 debian:12 archlinux:latest
+
+  # NixOS: the flake's packages (64-bit, and the 32-bit layer) build and the
+  # layer loads with the store's Vulkan loader.
+  nix:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - name: Build
+        run: |
+          nix build .#default .#layer32 -L
+          mesa="$(nix build --no-link --print-out-paths nixpkgs#mesa | head -1)"
+          out="$(XDG_DATA_DIRS="$PWD/result/share" BDEX_FG=1 BDEX_FG_LOG=2 \
+            VK_ICD_FILENAMES="$(ls "$mesa"/share/vulkan/icd.d/lvp_icd*.json | head -1)" \
+            nix shell nixpkgs#vulkan-tools -c vulkaninfo --summary 2>&1 || true)"
+          grep -E 'bdex-fg.*loaded' <<<"$out"
+
   # The prebuilt archives: the SPIR-V compiled by glslc (as tested above),
   # the layers linked on Ubuntu 20.04 (glibc 2.31, GCC 10, static C++
   # runtime) for x86_64 (64 and 32-bit) and arm64 — they load on every
@@ -241,10 +273,15 @@ jobs:
           version=""
           if [ "$GITHUB_REF_TYPE" = tag ]; then version="${GITHUB_REF_NAME#v}"; fi
           tools/ci/package-release.sh dist "$version"
+          # The same files as .deb and .rpm (x86_64 and aarch64).
+          for a in dist/bdex-framegen-linux-*.tar.gz; do tools/package-native.sh "$a" dist "$version"; done
       - uses: actions/upload-artifact@v4
         with:
           name: bdex-framegen-linux
-          path: dist/*.tar.gz
+          path: |
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.rpm
           if-no-files-found: error
       # Mesa's software Vulkan and Xvfb in each container (arm64: Debian arm64
       # under qemu-user): the layer loads with that glibc and loader, and
@@ -255,10 +292,15 @@ jobs:
           tools/ci/archive-check.sh dist/bdex-framegen-linux-x86_64*.tar.gz \
             ubuntu:20.04 debian:11 ubuntu:22.04 debian:12 ubuntu:24.04 fedora:latest
           tools/ci/archive-check.sh dist/bdex-framegen-linux-aarch64*.tar.gz bullseye bookworm
+          tools/ci/archive-check.sh dist/bdex-framegen_*_amd64.deb ubuntu:20.04 ubuntu:22.04 debian:12 ubuntu:24.04
+          tools/ci/archive-check.sh dist/bdex-framegen-*.x86_64.rpm fedora:latest opensuse/tumbleweed
       - name: Attach to the release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.tar.gz
+          files: |
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.rpm
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
