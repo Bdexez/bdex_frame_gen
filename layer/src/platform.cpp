@@ -315,7 +315,8 @@ bool platformIsDesktopApp() {
 bool platformIsNonGame(const std::string& name) {
     // Keep in sync with NOT_GAMES in tools/bdex-framegen-gui.
     static const char* const kNonGames[] = {
-        "steam", "steamwebhelper", "gamescope", "gamescopereaper", "chrome", "chromium",
+        "steam", "steamwebhelper", "gamescope", "gamescopereaper", "gamescope-wl", "mangoapp",
+        "steam-runtime-check-requirements", "chrome", "chromium",
         "firefox", "librewolf", "brave", "zen", "electron", "discord", "vesktop", "code",
         "obs", "vulkaninfo", "vkcube", "bdex-framegen-gui",
     };

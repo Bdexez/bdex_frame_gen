@@ -23,6 +23,11 @@
 #       --check            report whether the layer is found by the Vulkan loader
 #       --toggle           pause / resume frame generation in running games (live,
 #                          through the config file; bind it to a desktop shortcut)
+#       --always-on [GAME] generate without the control panel, from the game's
+#                          start: in GAME (its executable name), or in every game
+#                          — for Steam's Game Mode (Steam Deck), where the panel
+#                          cannot stay open beside a game
+#       --always-off [GAME] undo it (the panel's « Démarrer » decides again)
 #       --report [FILE]    write a diagnostic report for bug reports (default:
 #                          ./bdex-framegen-report.txt)
 #       --record DIR [N]   record the game's real frames into DIR (N, default
@@ -36,7 +41,7 @@
 #   -h, --help
 set -euo pipefail
 
-usage() { sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # The screens as the desktop sees them: "<output> <current mode>" per enabled
 # output (KDE's kscreen-doctor, else xrandr), for the report and the quick read.
@@ -128,14 +133,19 @@ quick_read() {
       [ -f "$fdir/app.session" ] && { read -r _ panel_target _ < "$fdir/app.session" || true; }
       echo "(jeu dans un Flatpak : $fdir)"
     fi
-    # One line per swapchain: state device multiplier game_fps output_fps refresh_hz
+    # One line per swapchain: state device multiplier game_fps output_fps refresh_hz limit_hz
     awk -F= '
-      /^\[/ { if (sc) print st "\t" dv "\t" m "\t" g "\t" o "\t" r; sc = ($0 ~ /^\[swapchain/); st = dv = m = g = o = r = "" }
+      /^\[/ { if (sc) print st "\t" dv "\t" m "\t" g "\t" o "\t" r "\t" l; sc = ($0 ~ /^\[swapchain/); st = dv = m = g = o = r = l = "" }
       $1 == "state" { st = $2 } $1 == "device" { dv = $2 } $1 == "multiplier" { m = $2 }
-      $1 == "game_fps" { g = $2 } $1 == "output_fps" { o = $2 } $1 == "refresh_hz" { r = $2 }
-      END { if (sc) print st "\t" dv "\t" m "\t" g "\t" o "\t" r }' "$f" |
-    while IFS=$'\t' read -r state dev mult gfps ofps rhz; do
+      $1 == "game_fps" { g = $2 } $1 == "output_fps" { o = $2 } $1 == "refresh_hz" { r = $2 } $1 == "limit_hz" { l = $2 }
+      END { if (sc) print st "\t" dv "\t" m "\t" g "\t" o "\t" r "\t" l }' "$f" |
+    while IFS=$'\t' read -r state dev mult gfps ofps rhz lhz; do
       echo "jeu $(sed -n 's/^process=//p' "$f" | head -1) (pid $pid) : $state, ×$mult, $gfps → $ofps fps, écran selon la couche ${rhz} Hz, GPU $dev"
+      if [ -n "$lhz" ]; then
+        echo "  → limite d'images/s de Steam (menu rapide, mode Jeu) : ${lhz} i/s. gamescope n'affiche rien au-delà :"
+        echo "    la génération ne fait que compléter jusqu'à ${lhz}. Pour générer au-delà : limite « Désactivée »"
+        echo "    (ou la fréquence de l'écran), et plafonner le jeu lui-même avec fps_limit (ex. 30 pour 60 à ×2)"
+      fi
       case "$state" in
         ready)  if [ "${panel_target:-0}" != "$pid" ]; then echo "  → armé mais pas ciblé : le panneau vise le pid ${panel_target:-0}, pas $pid"
                 else echo "  → armé, en attente de « Démarrer »"; fi ;;
@@ -394,6 +404,87 @@ PY
   done
 }
 
+# --always-on / --always-off [GAME]: require_app = 0 in [GAME], or in [*] for
+# every game (the panel's « Mode Jeu — sans le panneau »).
+always() {
+  local on="$1" game="${2:-}"
+  cfg="${BDEX_FG_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/bdex-framegen.conf}"
+  python3 - "$cfg" "$on" "$game" <<'PY'
+import re, sys
+from pathlib import Path
+p, on, game = Path(sys.argv[1]), sys.argv[2] == "1", sys.argv[3].strip()
+if game.lower().endswith(".exe"):
+    game = game[:-4]
+lines = p.read_text().splitlines() if p.exists() else []
+
+def section(name):
+    """(header index, end index) of [name], or None."""
+    start = None
+    for i, line in enumerate(lines):
+        m = re.match(r"\s*\[(.*)\]\s*$", line)
+        if m:
+            if start is not None:
+                return start, i
+            if m.group(1).strip().lower() == name.lower():
+                start = i
+    return (start, len(lines)) if start is not None else None
+
+def get(name, key):
+    sec = section(name)
+    for i in range(sec[0] + 1, sec[1]) if sec else ():
+        m = re.match(rf"\s*{key}\s*=(.*)$", lines[i])
+        if m:
+            return m.group(1).strip()
+    return None
+
+def put(name, key, value):
+    """Sets (value None: removes) key in [name]; [*] goes first: a later [*]
+    would override the games' own lines."""
+    sec = section(name)
+    if sec is None:
+        if value is None:
+            return
+        block = [f"[{name}]", f"{key} = {value}"]
+        if name == "*":
+            lines[0:0] = block + ([""] if lines else [])
+        else:
+            lines.extend(([""] if lines else []) + block)
+        return
+    for i in range(sec[0] + 1, sec[1]):
+        if re.match(rf"\s*{key}\s*=", lines[i]):
+            if value is None:
+                del lines[i]
+            else:
+                lines[i] = f"{key} = {value}"
+            return
+    if value is not None:
+        lines.insert(sec[0] + 1, f"{key} = {value}")
+
+put("*", "enabled", "1")
+if game:
+    if get("*", "require_app") is None:
+        put("*", "require_app", "1")   # the other games keep needing the panel
+    put(game, "require_app", "0" if on else None)
+    where = game
+else:
+    put("*", "require_app", "0" if on else "1")
+    where = "every game"
+p.parent.mkdir(parents=True, exist_ok=True)
+p.write_text("\n".join(lines) + "\n")
+if on:
+    what = "frame generation from the start, without the control panel"
+elif game and get("*", "require_app") == "0":
+    what = "no setting of its own: every game generates without the panel (--always-off alone undoes that)"
+else:
+    what = "frame generation only once the control panel's « Démarrer » targets it"
+print(f"{where}: {what} ({p})")
+PY
+  local f
+  for f in $(flatpak_dirs config); do
+    mkdir -p "$(dirname "$f")" && cp "$cfg" "$f"
+  done
+}
+
 check() {
   if ! command -v vulkaninfo >/dev/null; then
     echo "vulkaninfo not found (install vulkan-tools)"; exit 1
@@ -426,6 +517,8 @@ env_vars=(BDEX_FG=1)
 while [ $# -gt 0 ]; do
   case "$1" in
     --toggle)          toggle; exit 0 ;;
+    --always-on)       always 1 "${2:-}"; exit 0 ;;
+    --always-off)      always 0 "${2:-}"; exit 0 ;;
     --report)          report "${2:-}"; exit 0 ;;
     --tuned-profile)   shift; tuned_profile "$@"; exit $? ;;
     --record)          rec="$2"; mkdir -p "$rec"; rec="$(realpath "$rec")"

@@ -25,6 +25,8 @@ struct Config {
                                   // swapchain, frames passed through) and generates only once « Démarrer » targets it
                                   // (platformAppSession); set by the panel. BDEX_FG=1 bypasses it.
     bool  appTargeted   = false;  // require_app, runtime: the panel's session targets this process
+    bool  processNamed  = false;  // runtime: this process's own [section] or BDEX_FG=1 turned the layer on or
+                                  // set require_app — never taken for a desktop program (platformIsNonGame)
     double panelDisplayHz = 0.0;  // require_app, runtime: the monitor's refresh rate as the panel reads it (0 unknown)
     uint64_t rebuildGen = 0;      // require_app, runtime: bumped when the panel changes settings that size the
                                   // output stage; the swapchains rebuild it (like a resize)

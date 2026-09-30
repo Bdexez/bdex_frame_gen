@@ -53,6 +53,11 @@ if(Python3_Interpreter_FOUND)
     # The GUI, the launcher and the README name only options the engine
     # knows, and the README documents all of them (no GPU, no numpy).
     add_test(NAME option_keys COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_option_keys.py" "${CMAKE_BINARY_DIR}")
+    # The control panel's config model (Game Mode settings), without a window;
+    # skipped where PyGObject with GTK 4 is missing.
+    add_test(NAME panel_logic COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/panel_logic.py"
+             "${CMAKE_SOURCE_DIR}/tools/bdex-framegen-gui")
+    set_tests_properties(panel_logic PROPERTIES SKIP_RETURN_CODE 77)
   endif()
 endif()
 
