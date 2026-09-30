@@ -4,9 +4,10 @@
 # x86, syntax only. The 32-bit pass catches what only MSVC Win32
 # used to report after a push: non-dispatchable Vulkan handles are uint64_t
 # there, not pointers (no reinterpret_cast to or from them), and pointer-
-# sized integers are 32 bits. Run through tools/ci/run.sh mingw.
+# sized integers are 32 bits. Run through tools/ci/run.sh mingw (Docker), or
+# directly where both MinGW toolchains are installed (the CI's windows-syntax job).
 set -uo pipefail
-cd /work/src
+cd "$(dirname "$0")/../../.."
 # shaders.h (generated) is included by the engine files.
 cmake -S . -B build-gen -DCMAKE_BUILD_TYPE=Release >/dev/null && cmake --build build-gen --target bdex_layer_shaders >/dev/null || exit 1
 # Only the Vulkan headers of the system (the rest would be glibc's).

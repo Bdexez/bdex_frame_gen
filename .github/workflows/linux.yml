@@ -172,3 +172,21 @@ jobs:
           env ${{ matrix.env }} VK_ICD_FILENAMES="$icd" BDEX_REQUIRE_DISPLAY=1 \
             xvfb-run -a -s '-screen 0 1280x800x24' \
             ctest --test-dir build -R "unit|offline|integration|acquire" --output-on-failure
+
+  # The Windows C++ (layer, unit tests, capture app except its C++/WinRT
+  # file) compiled with MinGW for x64 and 32-bit x86, syntax only: reports
+  # in a minute what the MSVC jobs (windows.yml) would fail on — the Win32
+  # handle casts, the capture target's include order — so both kinds of
+  # breakage surface on every push, next to the Linux results.
+  windows-syntax:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake g++ pkg-config glslc libvulkan-dev \
+            g++-mingw-w64-x86-64-posix g++-mingw-w64-i686-posix
+      - name: MinGW syntax check (x64, x86)
+        run: tools/ci/mingw/check.sh
