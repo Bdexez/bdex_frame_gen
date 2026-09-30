@@ -13,6 +13,7 @@ struct TemporalPC { int32_t size[2]; int32_t luma[2]; int32_t block; float stren
 class FlowTemporalPass : public FgPass {
 public:
     const char* name() const override { return "flow_temporal"; }
+    bool active(const Config& cfg) const override { return cfg.flowTemporal > 0.f; }
 
     void create(FgContext& ctx) override {
         const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;

@@ -80,6 +80,8 @@ std::string statusFormat(const std::string& process, long pid, long long unixTim
         snprintf(buf, sizeof buf, "%.1f", e.latencyMs);
         o << "latency_ms=" << buf << "\n";
         o << "gpu_budget_level=" << e.budgetLevel << "\n";
+        if (!e.passes.empty()) o << "passes=" << e.passes << "\n";
+        if (!e.tune.empty()) o << "online_tune=" << e.tune << "\n";
     }
     return o.str();
 }

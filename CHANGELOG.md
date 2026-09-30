@@ -8,6 +8,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-25)
 
+- **Richer diagnostics.** The live status of a swapchain now lists the
+  optional passes at work (`passes=`, `FgPass::active`) and `online_tune`'s
+  state (`online_tune=`: its decisions, or the option on trial and how many
+  are decided); the GTK panel's "En cours" view shows both, in French.
+  `bdex-framegen --report` adds the live status of the running games and
+  the cached `online_tune` decisions, so a bug report carries what used to
+  take a log file (the pass-through reason and `gpu_budget` level were
+  already in the status).
 - **`online_tune` tries the synthesis options, and again when the content
   changes.** A synthesis probe (`passes/synthesis_probe.{h,cpp}`,
   `flow_compose.comp`, `probe_compare.comp`) runs the engine's own

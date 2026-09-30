@@ -54,6 +54,23 @@ report() {
     done
     echo; echo "== environment"
     env | grep -E '^(BDEX_FG|VK_|PROTON_|DXVK_|VKD3D_|MESA_|RADV_|__GL)' | sort || true
+    echo; echo "== running games (live status)"
+    sdir="${BDEX_FG_STATUS_DIR:-${XDG_RUNTIME_DIR:+$XDG_RUNTIME_DIR/bdex-framegen}}"
+    sdir="${sdir:-/tmp/bdex-framegen-$(id -u)}"
+    found=0
+    for f in "$sdir"/*.status; do
+      [ -f "$f" ] || continue
+      found=1; echo "-- $f"; cat "$f"
+    done
+    [ "$found" = 1 ] || echo "(none: start the game, then run --report while it runs)"
+    echo; echo "== online_tune decisions (per game and mode)"
+    cdir="${BDEX_FG_CACHE_DIR-${XDG_CACHE_HOME:-$HOME/.cache}/bdex-framegen}"
+    found=0
+    for f in "$cdir"/online-tune-*.txt; do
+      [ -f "$f" ] || continue
+      found=1; echo "-- $(basename "$f")"; cat "$f"
+    done
+    [ "$found" = 1 ] || echo "(none)"
     echo; echo "== config file ($cfg)"
     if [ -f "$cfg" ]; then cat "$cfg"; else echo "(none)"; fi
     log="$(grep -hE '^\s*log_file\s*=' "$cfg" 2>/dev/null | tail -1 | cut -d= -f2- | xargs || true)"

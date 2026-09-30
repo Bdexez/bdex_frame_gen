@@ -126,6 +126,15 @@ public:
     // rebuild with a larger flowScaleFactor.
     void setQualityLevel(int level) { qualityLevel_ = level; }
     int flowScale() const { return int(flowScale_); }
+    // The optional passes at work with the current settings, comma-separated
+    // (status, diagnostics).
+    std::string passNames() const {
+        const Config cfg = effectiveConfig();
+        std::string s;
+        for (const auto& p : passes_)
+            if (p->active(cfg)) s += (s.empty() ? "" : ",") + std::string(p->name());
+        return s;
+    }
 
 private:
     struct Level {

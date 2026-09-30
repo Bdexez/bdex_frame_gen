@@ -12,6 +12,7 @@ struct LkPC { int32_t size[2]; int32_t luma[2]; int32_t block; int32_t iteration
 class SubpixelLkPass : public FgPass {
 public:
     const char* name() const override { return "subpixel_lk"; }
+    bool active(const Config& cfg) const override { return cfg.subpixelLk > 0; }
 
     void create(FgContext& ctx) override {
         const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;

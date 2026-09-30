@@ -23,6 +23,8 @@ struct StatusEntry {
     int budgetLevel = 0;     // gpu_budget quality level
     uint32_t width = 0, height = 0;
     std::string device;      // GPU name
+    std::string passes;      // optional passes running (fg_pass.h), comma-separated
+    std::string tune;        // online_tune: its decisions, or the option on trial
 };
 
 // Keys: any Vulkan handle or pointer, on 64- and 32-bit builds alike (a
