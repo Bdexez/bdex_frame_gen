@@ -94,6 +94,24 @@ VK_IMPLICIT_LAYER_PATH=$PWD/build/layer BDEX_FG=1 ./build/demo/bdex_demo --fps 3
   body explaining *why* when it is not obvious.
 - Add an entry to `CHANGELOG.md` (*Unreleased* section).
 
+### Adding a game to the evaluation corpus
+
+Measurements on real games beat the synthetic scenes. To add one:
+
+1. Record its real frames (generation off):
+   `bdex-framegen --record ~/rec/mygame 240 -- %command%` (Steam launch
+   options) or with any command. Play a few seconds of representative
+   motion — camera pans, characters, the HUD.
+2. Pack a window of it, downscaled for the CI's software Vulkan:
+   `tools/corpus_pack.py ~/rec/mygame mygame-town.tar.gz --name mygame-town --start 60 --count 121 --note "…"`
+3. Check it locally: `tools/corpus_fetch.py /tmp/real mygame-town.tar.gz`,
+   then `BDEX_CORPUS_DIR=/tmp/real tests/test_corpus.py build --update`
+   writes its references into `tests/corpus_reference.json`.
+4. Attach the archive to the repository's GitHub release named `corpus`
+   (`gh release upload corpus mygame-town.tar.gz`) and commit the
+   references: the Linux CI scores every archive of that release on each
+   push. Mind the game's rights before publishing frames of it.
+
 ### Style
 
 - C++20, `-Wall -Wextra` with no warnings. No external dependency beyond the

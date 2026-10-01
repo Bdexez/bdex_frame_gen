@@ -85,6 +85,8 @@ tools/make_corpus.py DIR                                # corpus synthétique (H
 tools/tune.py SEQ...                                    # réglage automatique (descente par coordonnées)
 bdex-framegen --toggle | --report                       # pause à chaud (raccourci) | rapport de diagnostic
 bdex-framegen --tuned-profile [JEU] [--apply]           # décisions d'online_tune -> section [JEU] de config
+bdex-framegen --record DIR [N] -- <jeu>                 # enregistre N images réelles (corpus)
+tools/corpus_pack.py DIR out.tar.gz --name X            # séquence -> archive (release GitHub "corpus", notée en CI)
 tools/eval_sequence.py <dir_ppm> --variant KEY=VAL     # éval hors ligne (bdex_offline, sans fenêtre) sur séquence enregistrée
 ```
 
