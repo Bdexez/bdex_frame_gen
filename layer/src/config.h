@@ -139,6 +139,18 @@ struct Config {
     // Every key Config::apply understands (with their aliases if `aliases`),
     // from the option registry in config.cpp.
     static std::vector<std::string> optionKeys(bool aliases = true);
+    // What the registry knows of each plain option (the UIs build their
+    // controls from it, with the texts of layer/options_ui.conf).
+    struct OptionInfo {
+        std::string key;
+        std::string kind;      // "bool", "int", "float"
+        double lo = 0.0, hi = 0.0;
+        std::string def;       // the default, as a config value
+        bool live = false;     // applied by a live config reload
+    };
+    static std::vector<OptionInfo> optionInfo();
+    // The canonical key of a key or alias ("" if unknown).
+    static std::string canonicalKey(const std::string& key);
     // online_tune candidates for this mode, in trial order.
     struct TuneCandidate {
         std::string key, value;
