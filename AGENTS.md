@@ -84,6 +84,7 @@ tools/run_eval.sh                                       # éval qualité (PSNR)
 tools/make_corpus.py DIR                                # corpus synthétique (HUD, panoramique doux, sous-pixel, fondu)
 tools/tune.py SEQ...                                    # réglage automatique (descente par coordonnées)
 bdex-framegen --toggle | --report                       # pause à chaud (raccourci) | rapport de diagnostic
+bdex-framegen --tuned-profile [JEU] [--apply]           # décisions d'online_tune -> section [JEU] de config
 tools/eval_sequence.py <dir_ppm> --variant KEY=VAL     # éval hors ligne (bdex_offline, sans fenêtre) sur séquence enregistrée
 ```
 

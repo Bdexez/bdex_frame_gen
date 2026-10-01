@@ -8,6 +8,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-25)
 
+- `bdex-framegen --tuned-profile [GAME] [--mode M] [--apply]`: the options
+  `online_tune` kept for a game (pairs expanded) as a `[GAME]` config
+  section — printed (ready to share or to add to `layer/profiles.conf`), or
+  merged into the config file, which pins them (the tuner leaves options
+  set explicitly alone). Without GAME, lists the tuned games and modes.
 - **`reveal_fill` (opt-in, extrapolation)**: in areas a moving object
   uncovers, the source search alternates between the object and the
   background; the pixel now takes the source whose content moves less (the
