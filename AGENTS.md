@@ -198,9 +198,14 @@ complète (multiplier 1-4, render_scale, upscale_filter, sharpness, scene cut
 puis **une ligne** dans le registre `registry()` de `config.cpp` (`B`/`I`/`F` :
 clé, alias, bornes, `kLive` si relue à chaque image sans dimensionner de
 ressource, colonne `Tune` si `online_tune` peut l'essayer). Une syntaxe
-spéciale va dans `Config::apply` + `kCustomKeys`. Le test `option_keys`
-exige ensuite la clé dans le tableau du README et refuse toute clé inconnue
-dans la GUI / le launcher.
+spéciale va dans `Config::apply` + `kCustomKeys`. Pour qu'elle apparaisse
+dans la GUI GTK **et** le launcher Windows : une ligne dans
+`layer/options_ui.conf` (libellé, aide, surfaces ; type, bornes et défaut
+viennent du registre). La GUI lit `options_ui.json` (généré par
+`tools/options/bdex_options` au build, installé dans share/bdex-framegen) ;
+le launcher embarque le `.conf` (`options_ui_conf.h`, octets). Le build
+échoue sur une clé inconnue du `.conf` ; le test `option_keys` exige la clé
+dans le tableau du README.
 
 ## 8. Produit Windows capture — architecture et pièges hardware
 
