@@ -20,6 +20,7 @@
 #include "config.h"
 #include "launcher.h"
 #include "log.h"
+#include "tray.h"
 #include "vkctx.h"
 
 #include <windows.h>
@@ -443,6 +444,17 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
                    static_cast<uint32_t>(ov.bottom - ov.top));
     };
 
+    // Notification-area icon: the live status and a menu (toggle, quit).
+    bdex::Tray tray;
+    if (!tray.create()) LOGW("notification-area icon unavailable");
+    tray.setGeneration(vk.generation());
+    auto wide = [](const std::string& s) {
+        int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+        std::wstring w(static_cast<size_t>(std::max(n - 1, 0)), L'\0');
+        if (n > 1) MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, w.data(), n);
+        return w;
+    };
+
     ULONGLONG lastRectCheck = 0, statsT0 = GetTickCount64();
     uint32_t presented = 0, presentedReal = 0;
     std::vector<double> arrivalToSubmitMs, arrivalToPresentMs;
@@ -450,10 +462,12 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
     while (g_running) {
         MSG msg;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-            if (msg.message == WM_QUIT || (msg.message == WM_HOTKEY && msg.wParam == HK_QUIT)) {
+            if (msg.message == WM_QUIT || (msg.message == WM_HOTKEY && msg.wParam == HK_QUIT) ||
+                msg.message == bdex::Tray::kMsgQuit) {
                 g_running = false;
-            } else if (msg.message == WM_HOTKEY && msg.wParam == HK_TOGGLE) {
+            } else if ((msg.message == WM_HOTKEY && msg.wParam == HK_TOGGLE) || msg.message == bdex::Tray::kMsgToggle) {
                 const bool on = vk.toggleGeneration();
+                tray.setGeneration(on);
                 LOGI("frame generation %s", on ? "on" : "off");
             }
             TranslateMessage(&msg);
@@ -578,11 +592,20 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
             vk.setHud(static_cast<int>(cap.captureFps() + 0.5f), static_cast<int>(outFps + 0.5f));
             // Latency shown: WGC frame -> present call (the part this app controls).
             vk.publishStatus(gameProc, cap.captureFps(), outFps, presentLatency.first);
+            {
+                // Tooltip: the first line (Windows keeps 127 characters);
+                // "Statut détaillé…": all of them.
+                const auto lines = vk.statusLines();
+                std::wstring details;
+                for (const auto& l : lines) details += wide(l) + L"\n";
+                tray.setStatus(L"bdex framegen\n" + (lines.empty() ? std::wstring() : wide(lines[0])), details);
+            }
             presented = presentedReal = 0;
             statsT0 = now;
         }
     }
 
+    tray.destroy();
     UnregisterHotKey(nullptr, HK_QUIT);
     if (toggleOk) UnregisterHotKey(nullptr, HK_TOGGLE);
     // Order matters: Vulkan drops its references to the shared textures

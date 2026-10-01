@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
+#include <map>
 #include <vector>
 
 namespace bdex {
@@ -754,6 +755,13 @@ void VkCtx::publishStatus(const std::string& target, double captureFps, double o
         if (layerDev_.onlineTune) e.tune = layerDev_.onlineTune->status();
     }
     statusSet(statusKey(this), e);
+    std::map<uint64_t, StatusEntry> one;
+    one[0] = e;
+    lastStatus_ = statusFormat(target, 0, 0, one);
+}
+
+std::vector<std::string> VkCtx::statusLines() const {
+    return statusDescribe(statusParse(lastStatus_));
 }
 
 void VkCtx::shutdown() {
