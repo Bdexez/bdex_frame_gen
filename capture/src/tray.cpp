@@ -39,7 +39,7 @@ void Tray::add() {
     nid.uID = kIconId;
     nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
     nid.uCallbackMessage = kCallback;
-    nid.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    nid.hIcon = LoadIconW(nullptr, MAKEINTRESOURCEW(32512));  // IDI_APPLICATION, as a wide resource id (no UNICODE here)
     wcsncpy_s(nid.szTip, tip_.c_str(), _TRUNCATE);
     Shell_NotifyIconW(NIM_ADD, &nid);
 }

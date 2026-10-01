@@ -22,7 +22,7 @@ for cxx in x86_64-w64-mingw32-g++-posix i686-w64-mingw32-g++-posix; do
   [[ $cxx == x86_64* ]] && files="$files capture/src/vkctx.cpp capture/src/launcher.cpp capture/src/main.cpp capture/src/tray.cpp"
   n=0
   for f in $files; do
-    out=$($cxx -std=c++20 -fsyntax-only -DUNICODE -D_UNICODE -DWIN32_LEAN_AND_MEAN -DNOMINMAX \
+    out=$($cxx -std=c++20 -fsyntax-only -DWIN32_LEAN_AND_MEAN -DNOMINMAX \
           -DVK_USE_PLATFORM_WIN32_KHR -DBDEX_LAYER_NAME='"VK_LAYER_BDEX_framegen"' -DBDEX_LAYER_VERSION_STR='"0"' \
           -Ilayer/src -Icapture/src -Itests -Ibuild-gen/layer/generated -isystem /tmp/vkinc "$f" 2>&1)
     if [ $? -ne 0 ]; then
@@ -37,7 +37,7 @@ done
 # define (log.h) must still resolve to the layer's in the engine's files.
 n=0
 for f in layer/src/*.cpp layer/src/passes/*.cpp; do
-  out=$(x86_64-w64-mingw32-g++-posix -std=c++20 -fsyntax-only -DUNICODE -D_UNICODE -DWIN32_LEAN_AND_MEAN -DNOMINMAX \
+  out=$(x86_64-w64-mingw32-g++-posix -std=c++20 -fsyntax-only -DWIN32_LEAN_AND_MEAN -DNOMINMAX \
         -DVK_USE_PLATFORM_WIN32_KHR -DBDEX_LAYER_NAME='"VK_LAYER_BDEX_framegen"' -DBDEX_LAYER_VERSION_STR='"0"' \
         -Ilayer/src -Ibuild-gen/layer/generated -Icapture/src -isystem /tmp/vkinc "$f" 2>&1)
   if [ $? -ne 0 ]; then echo "FAIL [capture include order] $f"; grep -E "error" <<<"$out" | head -5; status=1; fi
