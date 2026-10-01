@@ -133,7 +133,12 @@ lente quand le point fixe oscille ET que la trajectoire est incohérente —
 sans ce second test, la rotation de la démo perdait 0,4 dB ; en
 interpolation, un test de visibilité par trajectoire a perdu 1 dB dans les
 zones d'occultation, `pixel_vectors` y gagne +1,3 : ne pas y revenir),
-`hud_mask` (masque appris : n'apprend que
+`hud_mask` (mesuré 2026-09-25 : le masque dans l'accumulation
+d'`upscale_temporal` — historique sans mouvement sur le HUD — ne change
+rien, HUD opaque ou transparent : le test aller-retour du flux rejette déjà
+ces pixels, et l'upscale ne peut pas rendre le HUD plus net que sa
+résolution de rendu ; seul le masque dans la synthèse compte : +0,20 dB
+sur la scène HUD à l'échelle 0,75, masque appris : n'apprend que
 sous mouvement de caméra — 25 % des pixels changés ; à 1 %, la démo à
 caméra fixe perdait 0,3 dB en extrapolation). La synthèse a un binding 8
 « masque statique » générique (`FgContext::setStaticMask`, 1×1 à zéro
