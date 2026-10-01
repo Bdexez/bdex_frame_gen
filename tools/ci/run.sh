@@ -45,7 +45,7 @@ else
     export ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
   else
     flags="-fsanitize=thread -fno-omit-frame-pointer"
-    export TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1
+    export TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1:suppressions=$PWD/tests/tsan.supp
   fi
   cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS="$flags" \
     -DCMAKE_SHARED_LINKER_FLAGS="$flags" -DCMAKE_EXE_LINKER_FLAGS="$flags" >/dev/null
