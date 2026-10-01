@@ -200,6 +200,7 @@ const std::vector<OptionDef>& registry() {
     B("latency_limiter", nullptr, &Config::latencyLimiter, kLive),
     B("sync_present", "sync", &Config::syncPresent),
     B("hide_present_ext", nullptr, &Config::hidePresentExt),
+    B("ignore_anticheat", nullptr, &Config::ignoreAntiCheat),
     I("search", "search_radius", &Config::searchRadius, 1, 4),
     I("search_fine", nullptr, &Config::searchFine, 1, 4),
     F("render_scale", nullptr, &Config::renderScale, 0.5f, 1.0f),
@@ -579,6 +580,7 @@ void Config::applyLive(const Config& n) {
 Config Config::keepingCreationSettings(Config n) const {
     n.enabled = enabled;
     n.antiCheatDisabled = antiCheatDisabled;
+    n.ignoreAntiCheat = ignoreAntiCheat;
     n.requireApp = requireApp;
     n.renderScale = renderScale;
     n.presentMode = presentMode;
@@ -617,8 +619,12 @@ Config Config::loadWithDefaults(Config c, const std::string& extraProcess) {
     // Multiplayer anti-cheat present: stay a pass-through for this process,
     // whatever the config/env says. Injection into a protected process is
     // what anti-cheats flag, so the safe side wins (see platform.cpp).
+    // ignore_anticheat=1 (opt-in, the player's own risk) keeps the layer on.
     std::string antiCheat;
-    if (platformAntiCheatPresent(&antiCheat)) {
+    if (c.ignoreAntiCheat) {
+        if (platformAntiCheatPresent(&antiCheat))
+            BDEX_WARN("anti-cheat '%s' detected but ignore_anticheat=1: layer stays on (ban risk)", antiCheat.c_str());
+    } else if (platformAntiCheatPresent(&antiCheat)) {
         c.enabled = false;
         c.antiCheatDisabled = true;
         BDEX_WARN("anti-cheat '%s' detected: layer disabled for this process", antiCheat.c_str());

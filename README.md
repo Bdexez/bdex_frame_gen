@@ -484,6 +484,7 @@ them).
 | `DUMP` / `DUMP_FRAMES` | – / `24` | write the presented frames (PPM) into a directory |
 | `SHARED_QUEUE` | `0` | force sharing the game's queue (testing) |
 | `SYNC_PRESENT` | `0` | block the game's present call until the worker presented the frame (compatibility test) |
+| `IGNORE_ANTICHEAT` | `0` | `1` keeps the layer on when a multiplayer anti-cheat (EAC, BattlEye…) or a listed competitive game is detected. **At your own risk**: the layer sits inside the game process, where the anti-cheat can see it — account bans are possible. For anti-cheat games on Windows, the capture app (`bdex_capture.exe`) is the safe route |
 | `HIDE_PRESENT_EXT` | `1` | hide the present-timing extensions (`swapchain_maintenance1`, `present_id`/`present_wait`) from the game: they would target the real swapchain, and VKD3D-Proton hangs otherwise |
 | `CAPTURE_HDR` | `auto` | Windows capture app: `auto` captures in scRGB HDR when the game's display is in HDR mode, `0` always SDR, `1` HDR if possible |
 

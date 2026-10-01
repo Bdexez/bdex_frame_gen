@@ -30,6 +30,8 @@ struct Config {
     double panelDisplayHz = 0.0;  // require_app, runtime: the monitor's refresh rate as the panel reads it (0 unknown)
     uint64_t rebuildGen = 0;      // require_app, runtime: bumped when the panel changes settings that size the
                                   // output stage; the swapchains rebuild it (like a resize)
+    bool  ignoreAntiCheat = false;  // opt-in, at the player's own risk: do not retract when an anti-cheat or a
+                                    // competitive game is detected (the layer is visible to the anti-cheat; bans possible)
     bool  antiCheatDisabled = false;  // forced off by platformAntiCheatPresent() (multiplayer
                                       // anti-cheat running); wins over enabled, file and env.
     bool  autoTune      = true;   // pick the quality preset from the detected GPU (until the user sets a preset or a flow option)
