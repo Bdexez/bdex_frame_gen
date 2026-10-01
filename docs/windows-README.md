@@ -30,9 +30,10 @@ checklist in `windows-port.md` §3. Please report what happens.
    launcher reopens. Its **En cours** frame lists, refreshed every second,
    what is running with bdex-framegen: Vulkan games through the layer
    (mode 1) and captures — fps, mode, latency, the optional passes at work
-   and `online_tune`'s decisions or current trial. To watch a capture while
-   it runs, open a second `bdex_capture.exe` (its launcher shows the first
-   one); the files are `%TEMP%\bdex-framegen\<pid>.status`.
+   and `online_tune`'s decisions or current trial. While a capture runs,
+   its **notification-area icon** shows the same status in its tooltip; its
+   menu toggles generation, opens the detailed status and quits (as
+   Ctrl+Alt+G / Ctrl+Alt+Q). The files are `%TEMP%\bdex-framegen\<pid>.status`.
 3. An always-on-top overlay appears over (or, with "Ajustée à l'écran",
    centred on the monitor of) the game window, showing the game with
    generated frames in between: x2 by default, **extrapolation** by default

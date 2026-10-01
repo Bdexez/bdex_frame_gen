@@ -8,6 +8,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-25)
 
+- **Windows: a notification-area icon while capturing.** Its tooltip shows
+  the live status (captured game, fps, latency — the same French summary as
+  the launcher and the GTK panel), its menu toggles frame generation, shows
+  the detailed status (passes, `online_tune`) and quits — the hotkeys'
+  actions, for players who do not remember them. The icon comes back when
+  Explorer restarts.
 - **Recorded game sequences in the CI.** `bdex-framegen --record DIR [N]`
   records a game's real frames; `tools/corpus_pack.py` packs a downscaled
   window of them (PNG + meta.json), `tools/corpus_fetch.py` unpacks
