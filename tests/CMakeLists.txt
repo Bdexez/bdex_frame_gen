@@ -1,5 +1,5 @@
 find_package(Threads REQUIRED)
-add_executable(bdex_tests test_main.cpp test_config.cpp test_format.cpp test_present_slice.cpp test_budget.cpp test_display_clock.cpp test_status.cpp test_online_tune.cpp test_descriptor_planner.cpp)
+add_executable(bdex_tests test_main.cpp test_config.cpp test_format.cpp test_present_slice.cpp test_budget.cpp test_display_clock.cpp test_status.cpp test_online_tune.cpp test_descriptor_planner.cpp test_options_ui.cpp)
 target_link_libraries(bdex_tests PRIVATE bdex_core)
 if(MSVC)
   target_compile_options(bdex_tests PRIVATE /W4)
@@ -7,6 +7,7 @@ else()
   target_compile_options(bdex_tests PRIVATE -Wall -Wextra)
 endif()
 bdex_strict(bdex_tests)
+target_compile_definitions(bdex_tests PRIVATE BDEX_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME unit COMMAND bdex_tests)
 
 # The real block_match shader against a C++ model of its winner selection
