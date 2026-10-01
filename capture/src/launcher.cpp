@@ -7,6 +7,8 @@
 
 #include "log.h"
 #include "platform.h"
+#include "options_ui.h"
+#include "options_ui_conf.h"
 #include "status.h"
 
 #include <windows.h>
@@ -247,58 +249,97 @@ static std::vector<std::pair<std::string, std::string>> readScope(const std::str
 // file, so the engine reads them exactly as on Linux.
 enum ExtraKind { kCheck, kNumber, kChoice };
 struct ExtraOpt {
-    const char* key;
-    const wchar_t* label;
-    ExtraKind kind;
-    const char* def;                  // config-string default (Config's)
-    const wchar_t* const* choiceLabels = nullptr;
-    const char* const* choiceValues = nullptr;
+    std::string key;            // empty: a section header
+    std::wstring label;
+    ExtraKind kind = kCheck;
+    std::string def;            // config-string default (Config's, or options_ui.conf's)
+    std::vector<std::wstring> choiceLabels;
+    std::vector<std::string> choiceValues;
     int choices = 0;
 };
-const wchar_t* const kFlowScaleLabels[] = {L"Auto", L"Pleine (1)", L"Moitié (2)", L"Quart (4)"};
-const char* const kFlowScaleValues[] = {"auto", "1", "2", "4"};
-const wchar_t* const kDebugLabels[] = {L"Aucun", L"Flux (mouvement coloré)", L"Écran partagé"};
-const wchar_t* const kHdrLabels[] = {L"Auto (selon l'écran)", L"Toujours SDR", L"HDR si possible"};
-const char* const kHdrValues[] = {"auto", "0", "1"};
-const char* const kDebugValues[] = {"none", "flow", "split"};
-// Section headers are entries with a null key.
-const ExtraOpt kExtra[] = {
-    {nullptr, L"Qualité du mouvement", kCheck, ""},
-    {"online_tune", L"Réglage automatique par jeu (essaie les options ci-dessous)", kCheck, "0"},
-    {"zero_bias_contrast", L"Stabilité adaptée au contraste (0,1 recommandé)", kNumber, "0"},
-    {"pixel_vectors", L"Contours d'objets (synthèse ~2× plus coûteuse)", kCheck, "0"},
-    {"subpixel", L"Mouvement sous-pixel", kCheck, "0"},
-    {"hud_mask", L"Masque de HUD appris (images stables, 24 conseillé)", kNumber, "0"},
-    {"reveal_fill", L"Extrapolation : fond dans les zones révélées", kCheck, "0"},
-    {"subpixel_lk", L"Sous-pixel précis Lucas-Kanade (0–4, 2 conseillé)", kNumber, "0"},
-    {"synth_bicubic", L"Échantillonnage bicubique (avec le sous-pixel)", kCheck, "0"},
-    {"extrapolate_splat", L"Extrapolation par projection (moins d'images doubles)", kCheck, "0"},
-    {"chroma_weight", L"Couleur dans la recherche du mouvement (0–8, 1 conseillé)", kNumber, "0"},
-    {"scene_cut_local", L"Coupure de scène par zone (menus, incrustations)", kCheck, "0"},
-    {nullptr, L"Expérimental", kCheck, ""},
-    {"upscale_temporal", L"Upscaling temporel (0–0,95, 0,05 conseillé)", kNumber, "0"},
-    {"frame_timing", L"Suivre le temps réel des images du jeu (saccades)", kCheck, "0"},
-    {"dedup", L"Détecter les images répétées (cinématiques 30 i/s)", kCheck, "0"},
-    {"extrapolate_accel", L"Extrapolation : accélération (0–1)", kNumber, "0"},
-    {"flow_temporal", L"Stabilisation temporelle du mouvement (0–1)", kNumber, "0"},
-    {"static_guard", L"Protection du HUD statique (0–1)", kNumber, "0"},
-    {"temporal_prediction", L"Prédiction temporelle (panoramiques rapides)", kCheck, "0"},
-    {"occlusion_strength", L"Gestion des occlusions (0–1)", kNumber, "0"},
-    {"rot_weight", L"Rotation / zoom (0 ou 1)", kNumber, "0"},
-    {"census_weight", L"Recherche par structure — poids (0–8)", kNumber, "0"},
-    {"census_margin", L"Recherche par structure — seuil (0–1)", kNumber, "0.05"},
-    {"extrapolate_hold", L"Extrapolation : figer les pixels incertains (0–1)", kNumber, "0"},
-    {"capture_hdr", L"Couleur HDR (écrans HDR)", kChoice, "auto", kHdrLabels, kHdrValues, 3},
-    {nullptr, L"Structure du flux (désactive l'auto-réglage)", kCheck, ""},
-    {"flow_scale", L"Résolution du flux", kChoice, "auto", kFlowScaleLabels, kFlowScaleValues, 4},
-    {"levels", L"Niveaux de pyramide (1–6)", kNumber, "4"},
-    {"search_radius", L"Rayon de recherche grossier (1–4)", kNumber, "4"},
-    {"refine", L"Raffinement 4×4", kCheck, "1"},
-    {"refine_all", L"Raffiner tous les niveaux", kCheck, "1"},
-    {"refine_bias", L"Préférence pour le mouvement du bloc (0–5)", kNumber, "0.5"},
-    {nullptr, L"Diagnostic", kCheck, ""},
-    {"debug", L"Mode de débogage", kChoice, "none", kDebugLabels, kDebugValues, 3},
+
+// Options with a control of their own in the left column.
+const char* const kLeftColumn[] = {"grad_weight", "scene_cut_low", "scene_cut_high", "smoothness",
+                                   "zero_bias",   "search_fine",   "flow_iterations"};
+
+static std::wstring wideUtf8(const std::string& s) {
+    int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+    std::wstring w(static_cast<size_t>(std::max(n - 1, 0)), L'\0');
+    if (n > 1) MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, w.data(), n);
+    return w;
+}
+
+// The column, built once from layer/options_ui.conf (embedded at build time,
+// the same file the GTK panel is built from) and the engine's option
+// registry: the "launcher" sections and options, in order.
+const std::vector<ExtraOpt>& extraOptions();
+
+// Window layout, from the column's content (rows of 22 px, headers 20 px).
+struct Layout {
+    int columnGroupH;   // the "Options avancées" group
+    int buttonsY;
+    int clientH;
 };
+Layout launcherLayout() {
+    int h = 48;
+    for (const ExtraOpt& o : extraOptions()) h += o.key.empty() ? 20 : 22;
+    Layout l;
+    l.columnGroupH = std::max(770, h + 4);
+    // The left column (and "En cours" under it) ends at 910.
+    l.buttonsY = std::max(8 + l.columnGroupH, 910) + 10;
+    l.clientH = l.buttonsY + 26 + 12;
+    return l;
+}
+
+const std::vector<ExtraOpt>& extraOptions() {
+    static const std::vector<ExtraOpt> opts = [] {
+        std::vector<ExtraOpt> out;
+        std::vector<std::string> errors;
+        const auto sections = parseOptionsUi(reinterpret_cast<const char*>(kOptionsUiConf), errors);
+        for (const auto& e : errors) LOGW("%s", e.c_str());
+        for (const auto& sec : sections) {
+            if (!sec.launcher) continue;
+            bool header = false;
+            for (const auto& o : sec.options) {
+                if (!o.launcher || o.kind == "text") continue;
+                if (std::find_if(std::begin(kLeftColumn), std::end(kLeftColumn),
+                                 [&](const char* k) { return o.key == k; }) != std::end(kLeftColumn))
+                    continue;
+                if (!header) {
+                    ExtraOpt h;
+                    h.label = wideUtf8(sec.title);
+                    out.push_back(h);
+                    header = true;
+                }
+                ExtraOpt e;
+                e.key = o.key;
+                e.def = o.def;
+                e.label = wideUtf8(o.label);
+                if (o.kind == "switch") {
+                    e.kind = kCheck;
+                } else if (o.kind == "choice") {
+                    e.kind = kChoice;
+                    for (const auto& [value, label] : o.choices) {
+                        e.choiceValues.push_back(value);
+                        e.choiceLabels.push_back(wideUtf8(label));
+                    }
+                    e.choices = static_cast<int>(e.choiceValues.size());
+                } else {
+                    e.kind = kNumber;
+                    char range[64];  // the accepted range, French decimal comma
+                    std::snprintf(range, sizeof range, " (%g–%g)", o.lo, o.hi);
+                    std::string r = range;
+                    for (auto& ch : r)
+                        if (ch == '.') ch = ',';
+                    e.label += wideUtf8(r);
+                }
+                out.push_back(e);
+            }
+        }
+        return out;
+    }();
+    return opts;
+}
 
 // Canonical config string of an extra option (numbers without trailing zeros,
 // booleans as 0/1, choices lower-case); the default when unparsable.
@@ -308,7 +349,7 @@ static std::string normalizeExtra(const ExtraOpt& o, std::string v) {
     if (o.kind == kCheck) return (v == "1" || v == "true" || v == "on" || v == "yes") ? "1" : "0";
     if (o.kind == kChoice) {
         for (int i = 0; i < o.choices; ++i)
-            if (v == o.choiceValues[i]) return v;
+            if (v == o.choiceValues[size_t(i)]) return v;
         return o.def;
     }
     char* end = nullptr;
@@ -320,8 +361,8 @@ static std::string normalizeExtra(const ExtraOpt& o, std::string v) {
 }
 
 static bool managedKey(const std::string& key) {
-    for (const ExtraOpt& o : kExtra)
-        if (o.key && key == o.key) return true;
+    for (const ExtraOpt& o : extraOptions())
+        if (!o.key.empty() && key == o.key) return true;
     static const char* kManaged[] = {"preset",        "multiplier",  "mode",      "present_mode",
                                      "upscale_filter", "sharpness",  "overlay",   "hud",
                                      "grad_weight",   "smoothness",  "zero_bias", "search_fine",
@@ -464,7 +505,7 @@ struct Ui {
     HWND fifo = nullptr, hud = nullptr;
     HWND grad = nullptr, scLow = nullptr, scHigh = nullptr, smooth = nullptr;
     HWND zbias = nullptr, sfine = nullptr, fiter = nullptr;
-    std::vector<HWND> extra;  // one control per kExtra entry (nullptr for headers)
+    std::vector<HWND> extra;  // one control per extraOptions() entry (nullptr for headers)
     HWND running = nullptr;   // "En cours": the live status files
     std::wstring runningText;
 };
@@ -608,8 +649,8 @@ void applyScopeToChoice(const std::vector<std::pair<std::string, std::string>>& 
         else if (k == "scene_cut_low") c.sceneCutLow = std::clamp(toF(v, c.sceneCutLow), 0.f, 1.f);
         else if (k == "scene_cut_high") c.sceneCutHigh = std::clamp(toF(v, c.sceneCutHigh), 0.f, 1.f);
         else
-            for (const ExtraOpt& o : kExtra)
-                if (o.key && k == o.key) c.extra[k] = normalizeExtra(o, v);
+            for (const ExtraOpt& o : extraOptions())
+                if (!o.key.empty() && k == o.key) c.extra[k] = normalizeExtra(o, v);
     }
 }
 
@@ -655,9 +696,10 @@ void fillFromChoice(Ui& ui) {
     setNum(ui.zbias, c.zeroBias);
     setNum(ui.sfine, c.searchFine);
     setNum(ui.fiter, c.flowIterations);
-    for (size_t i = 0; i < std::size(kExtra); ++i) {
-        const ExtraOpt& o = kExtra[i];
-        if (!o.key || !ui.extra[i]) continue;
+    const auto& extra = extraOptions();
+    for (size_t i = 0; i < extra.size(); ++i) {
+        const ExtraOpt& o = extra[i];
+        if (o.key.empty() || !ui.extra[i]) continue;
         const auto it = c.extra.find(o.key);
         const std::string v = it != c.extra.end() ? it->second : o.def;
         if (o.kind == kCheck) {
@@ -665,7 +707,7 @@ void fillFromChoice(Ui& ui) {
         } else if (o.kind == kChoice) {
             int s = 0;
             for (int k = 0; k < o.choices; ++k)
-                if (v == o.choiceValues[k]) s = k;
+                if (v == o.choiceValues[size_t(k)]) s = k;
             SendMessageW(ui.extra[i], CB_SETCURSEL, s, 0);
         } else {
             SetWindowTextW(ui.extra[i], wideFromAcp(v.c_str()).c_str());
@@ -702,8 +744,8 @@ void persist(const LaunchChoice& c) {
     addNum("flow_iterations", c.flowIterations, 1);
     addNum("scene_cut_low", c.sceneCutLow, 0.05);
     addNum("scene_cut_high", c.sceneCutHigh, 0.09);
-    for (const ExtraOpt& o : kExtra) {
-        if (!o.key) continue;
+    for (const ExtraOpt& o : extraOptions()) {
+        if (o.key.empty()) continue;
         const auto it = c.extra.find(o.key);
         if (it != c.extra.end() && it->second != normalizeExtra(o, o.def)) kv.emplace_back(o.key, it->second);
     }
@@ -750,9 +792,10 @@ void gather(Ui& ui) {
     c.zeroBias = std::clamp(readFloat(ui.zbias, 0.002f), 0.f, 1.f);
     c.searchFine = std::clamp(readInt(ui.sfine, 2), 1, 4);
     c.flowIterations = std::clamp(readInt(ui.fiter, 1), 0, 3);
-    for (size_t i = 0; i < std::size(kExtra); ++i) {
-        const ExtraOpt& o = kExtra[i];
-        if (!o.key || !ui.extra[i]) continue;
+    const auto& extra = extraOptions();
+    for (size_t i = 0; i < extra.size(); ++i) {
+        const ExtraOpt& o = extra[i];
+        if (o.key.empty() || !ui.extra[i]) continue;
         std::string v;
         if (o.kind == kCheck) {
             v = SendMessageW(ui.extra[i], BM_GETCHECK, 0, 0) == BST_CHECKED ? "1" : "0";
@@ -851,43 +894,47 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         ui->sfine  = advEdit(L"Précision de recherche (1–4)", 722, ID_SFINE, true);
         ui->fiter  = advEdit(L"Itérations de synthèse (0–3)", 748, ID_FITER, true);
 
-        // Second column: every other engine option (kExtra), section by section.
-        group(L"Options avancées", 496, 8, 472, 770);
+        // Second column: the engine options of layer/options_ui.conf's
+        // launcher sections (extraOptions), section by section.
+        const Layout layout = launcherLayout();
+        const auto& extra = extraOptions();
+        group(L"Options avancées", 496, 8, 472, layout.columnGroupH);
         add(L"STATIC", L"Seules les valeurs modifiées sont enregistrées ; par défaut convient à la plupart des jeux.",
             SS_LEFT, 508, 26, 452, 16, 0);
-        ui->extra.assign(std::size(kExtra), nullptr);
-        // 25 px per row: the whole column fits the 770 px group.
+        ui->extra.assign(extra.size(), nullptr);
         int y = 48;
-        for (size_t i = 0; i < std::size(kExtra); ++i) {
-            const ExtraOpt& o = kExtra[i];
+        for (size_t i = 0; i < extra.size(); ++i) {
+            const ExtraOpt& o = extra[i];
             const int id = 300 + static_cast<int>(i);
-            if (!o.key) {  // section header
-                y += 5;
-                add(L"STATIC", o.label, SS_LEFT, 508, y, 452, 16, 0);
-                y += 21;
+            if (o.key.empty()) {  // section header
+                y += 3;
+                add(L"STATIC", o.label.c_str(), SS_LEFT, 508, y, 452, 16, 0);
+                y += 17;
                 continue;
             }
             if (o.kind == kCheck) {
-                ui->extra[i] = add(L"BUTTON", o.label, BS_AUTOCHECKBOX | WS_TABSTOP, 520, y, 440, 20, id);
+                ui->extra[i] = add(L"BUTTON", o.label.c_str(), BS_AUTOCHECKBOX | WS_TABSTOP, 520, y, 440, 20, id);
             } else if (o.kind == kChoice) {
-                add(L"STATIC", o.label, SS_LEFT, 520, y + 3, 250, 16, 0);
+                add(L"STATIC", o.label.c_str(), SS_LEFT, 520, y + 3, 250, 16, 0);
                 ui->extra[i] = combo(776, y, 184, id);
                 for (int k = 0; k < o.choices; ++k)
-                    SendMessageW(ui->extra[i], CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(o.choiceLabels[k]));
+                    SendMessageW(ui->extra[i], CB_ADDSTRING, 0,
+                                 reinterpret_cast<LPARAM>(o.choiceLabels[size_t(k)].c_str()));
             } else {
-                add(L"STATIC", o.label, SS_LEFT, 520, y + 3, 330, 16, 0);
-                ui->extra[i] = add(L"EDIT", nullptr, WS_TABSTOP | WS_BORDER, 870, y, 90, 23, id);
+                add(L"STATIC", o.label.c_str(), SS_LEFT, 520, y + 3, 330, 16, 0);
+                ui->extra[i] = add(L"EDIT", nullptr, WS_TABSTOP | WS_BORDER, 870, y, 90, 21, id);
             }
-            y += 25;
+            y += 22;
         }
 
-        group(L"En cours", 12, 786, 956, 124);
+        // Under the left column.
+        group(L"En cours", 12, 786, 472, 124);
         ui->running = add(L"EDIT", nullptr, ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL | WS_BORDER,
-                          24, 804, 932, 98, ID_RUNNING);
+                          24, 804, 448, 98, ID_RUNNING);
         SetTimer(hwnd, ID_TIMER_RUNNING, 1000, nullptr);
 
-        add(L"BUTTON", L"Démarrer", BS_DEFPUSHBUTTON | WS_TABSTOP, 770, 920, 96, 26, IDOK);
-        add(L"BUTTON", L"Quitter", BS_PUSHBUTTON | WS_TABSTOP, 874, 920, 94, 26, IDCANCEL);
+        add(L"BUTTON", L"Démarrer", BS_DEFPUSHBUTTON | WS_TABSTOP, 770, layout.buttonsY, 96, 26, IDOK);
+        add(L"BUTTON", L"Quitter", BS_PUSHBUTTON | WS_TABSTOP, 874, layout.buttonsY, 94, 26, IDCANCEL);
 
         for (const wchar_t* s : kPresets)
             SendMessageW(ui->preset, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
@@ -968,12 +1015,12 @@ bool runLauncher(LaunchChoice& choice) {
     }
     // Prefill the advanced column from the global config scope (what the
     // capture would load), unless the caller already did.
-    for (const ExtraOpt& o : kExtra)
-        if (o.key && !choice.extra.count(o.key)) {
+    for (const ExtraOpt& o : extraOptions())
+        if (!o.key.empty() && !choice.extra.count(o.key)) {
             const std::string v = globalConfigValue(o.key);
             if (!v.empty()) choice.extra[o.key] = normalizeExtra(o, v);
         }
-    RECT client{0, 0, 980, 958};
+    RECT client{0, 0, 980, launcherLayout().clientH};
     AdjustWindowRect(&client, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, FALSE);
     RECT wa{};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
