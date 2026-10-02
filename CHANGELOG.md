@@ -213,6 +213,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Linux distributions
 
+- **The 32-bit layer at run time** (`tools/ci/lib32-check.sh`, CI job
+  `source-packages`): built with -m32 in Debian 12 with the i386
+  architecture, a 32-bit vkcube runs through it on Xvfb with the 32-bit
+  lavapipe — loaded, generating, x2.00. (It had only ever been compiled.)
 - **Flatpak Vulkan layer extension**
   (`packaging/flatpak/org.freedesktop.Platform.VulkanLayer.BdexFramegen.yml`,
   Freedesktop runtime 25.08, 64 and 32-bit, Flathub-ready): every Flatpak
