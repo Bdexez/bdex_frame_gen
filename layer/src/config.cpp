@@ -198,7 +198,7 @@ const std::vector<OptionDef>& registry() {
     B("low_latency", "lowlatency", &Config::lowLatency),
     I("max_frame_latency", "frame_latency", &Config::maxFrameLatency, 0, 3, kLive),
     B("latency_limiter", nullptr, &Config::latencyLimiter, kLive),
-    F("interp_hold", nullptr, &Config::interpHold, 0.1f, 1.f, kLive),
+    F("interp_hold", nullptr, &Config::interpHold, -1.f, 1.f, kLive),
     B("sync_present", "sync", &Config::syncPresent),
     B("hide_present_ext", nullptr, &Config::hidePresentExt),
     B("ignore_anticheat", nullptr, &Config::ignoreAntiCheat),
@@ -367,6 +367,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
                           "refine", "refine_all", "flow_iterations"})
         if (key == k) { autoTune = false; break; }
     if (key == "preset")                      return applyPreset(value);
+    if (key == "interp_hold" && lower(value) == "auto") { interpHold = -1.f; return true; }  // (registry: -1)
     if (key == "pixel_vectors") autoOptionsSet |= kAutoPixelVectors;
     if (key == "extrapolate_splat") autoOptionsSet |= kAutoSplat;
     if (key == "reveal_fill") autoOptionsSet |= kAutoRevealFill;
