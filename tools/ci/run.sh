@@ -16,8 +16,10 @@ if [ "$job" = mingw ]; then
   docker build -q -t bdex-ci-mingw:24.04 "$ROOT/tools/ci/mingw" >/dev/null
   mkdir -p "$work/src"
   (cd "$ROOT" && git ls-files -co --exclude-standard | grep -v '^build' | tar -cf - -T - | tar -xf - -C "$work/src")
-  exec docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$work:/work" bdex-ci-mingw:24.04 \
+  # (No exec: the EXIT trap must still remove the copy of the sources.)
+  docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$work:/work" bdex-ci-mingw:24.04 \
     bash /work/src/tools/ci/mingw/check.sh
+  exit $?
 fi
 docker build -q -t bdex-ci:24.04 "$ROOT/tools/ci" >/dev/null
 mkdir -p "$work/src" "$work/baseline"
