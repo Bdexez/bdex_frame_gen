@@ -8,6 +8,32 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Linux distributions
 
+- **Outdated sandbox copies**: after an update of the layer (package,
+  archive, AUR...), the copies in the Flatpak / Snap launchers kept the old
+  one. `flatpak.sh --check <prefix>` lists them; the control panel re-copies
+  them when it opens (toast « Couche mise à jour dans… »), `bdex-framegen
+  --check` exits 2 and `--report` flags them.
+- **No copy over a running game's library**: `install.sh` (archive and
+  source) and `flatpak.sh` replaced the installed `.so` in place, truncating
+  the file a running game had mapped (SIGBUS). They now write a new file.
+- **32-bit layer from source on Debian, Ubuntu, Fedora**: `tools/install.sh`
+  looked for `/usr/lib32/libvulkan.so.1` (Arch's path only) and skipped the
+  32-bit layer elsewhere. It now checks that a 32-bit C++ shared library
+  links (verified in Ubuntu 24.04 and Fedora containers) and names the
+  packages to install; `BDEX_NO_32BIT=1` skips it.
+- **Refresh rate under Wayland (text-mode panel)**: read from `hyprctl`,
+  `kscreen-doctor` (Plasma only), `wlr-randr` or GNOME's DisplayConfig before
+  xrandr, which only sees Xwayland (143.78 Hz read for a 143.91 Hz screen
+  under Hyprland). `bdex-framegen --report` reads hyprctl / wlr-randr too,
+  and no longer hangs outside Plasma (`kscreen-doctor` waits forever
+  without KScreen: now only in a Plasma session, under a timeout).
+- **Terminal for the text-mode panel**: `$TERMINAL`, `xdg-terminal-exec`,
+  Ptyxis, GNOME Console, foot, kitty, alacritty, wezterm... (Fedora 41+ and
+  GNOME 47+ ship none of the old list).
+- `--report` names the security modules (SELinux, AppArmor).
+- Test `linux_scripts` (ctest, also in the `distros` job): sandbox copies,
+  stale detection, re-copy while the library is open, removal, install.sh.
+
 - **Distribution packages**: every release also ships `.deb` (amd64, arm64)
   and `.rpm` (x86_64, aarch64) packages of the prebuilt layer
   (`tools/package-native.sh`, from the release archives): installed to

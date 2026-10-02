@@ -56,7 +56,7 @@ cmake -S /tmp/src -B /tmp/b -DCMAKE_BUILD_TYPE=Release -DBDEX_WERROR=ON >/tmp/co
 grep -E 'Vulkan|Shaders' /tmp/configure.log || true
 cmake --build /tmp/b -j"$(nproc)" >/tmp/build.log 2>&1 || { grep -E -B2 -A6 'error' /tmp/build.log | head -60; exit 1; }
 # The tests that need no GPU (the others skip themselves or are not built).
-(cd /tmp/b && ctest -R 'unit|option_keys' --output-on-failure) | tail -3
+(cd /tmp/b && ctest -R 'unit|option_keys|linux_scripts' --output-on-failure) | tail -3
 # The layer at work with this distribution's Vulkan loader and Mesa: the demo
 # through it on Xvfb, rendered by lavapipe (tests/integration.sh: x2, and
 # "generation on"). All inside the container.

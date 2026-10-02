@@ -23,7 +23,9 @@ GTK 4 (_Compat).
 """
 import json
 import os
+import re
 import shlex
+import shutil
 import subprocess
 import sys
 import threading
@@ -752,6 +754,30 @@ def sandbox_dirs():
     return out
 
 
+def refresh_sandboxes():
+    """Re-copies the layer into the Flatpak / Snap launchers whose copy an
+    update left behind (a distribution package cannot write in the home):
+    [names refreshed]. The copy goes through a new file, so running games keep
+    the library they mapped."""
+    here = os.path.dirname(os.path.realpath(__file__))
+    prefix = os.path.normpath(os.path.join(here, ".."))
+    for script in (os.path.join(prefix, "share", "bdex-framegen", "flatpak.sh"),
+                   os.path.join(prefix, "packaging", "linux", "flatpak.sh")):
+        if os.path.isfile(script):
+            break
+    else:
+        return []
+    try:
+        out = subprocess.run(["bash", script, "--check", prefix], capture_output=True, text=True,
+                             timeout=20).stdout
+        stale = sorted({line.split(" ", 1)[0] for line in out.splitlines() if line.strip()})
+        if stale:
+            subprocess.run(["bash", script, prefix], capture_output=True, timeout=60, check=True)
+        return stale
+    except (OSError, subprocess.SubprocessError):
+        return []
+
+
 def proc_env(pid):
     """A process's environment (as it started)."""
     try:
@@ -814,11 +840,64 @@ def display_hz():
             return max(rates) / 1000.0 if rates else 0.0
         except Exception:  # no display, old GDK
             return 0.0
-    # Text mode: the current mode of each output, as xrandr reports it.
+    # Text mode: the compositor's own tool first — under Wayland xrandr only
+    # sees Xwayland's outputs (a made-up mode, or nothing) — then xrandr.
+    return max(text_mode_rates(), default=0.0)
+
+
+def _run(cmd):
     try:
-        out = subprocess.run(["xrandr", "--current"], capture_output=True, text=True, timeout=4).stdout
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=4).stdout
     except (OSError, subprocess.SubprocessError):
-        return 0.0
+        return ""
+
+
+def rates_hyprctl(out):
+    """`hyprctl monitors -j`: the current refresh rate of each monitor."""
+    try:
+        return [float(m["refreshRate"]) for m in json.loads(out) if not m.get("disabled")]
+    except (ValueError, TypeError, KeyError):
+        return []
+
+
+def rates_kscreen(out):
+    """`kscreen-doctor -j` (KDE): each enabled output's current mode."""
+    try:
+        rates = []
+        for o in json.loads(out).get("outputs", []):
+            if not o.get("enabled", True):
+                continue
+            for m in o.get("modes", []):
+                if str(m.get("id")) == str(o.get("currentModeId")):
+                    rates.append(float(m["refreshRate"]))
+        return rates
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return []
+
+
+def rates_wlr(out):
+    """`wlr-randr --json` (sway, river, Wayfire, labwc...): Hz of the current modes."""
+    try:
+        return [float(m["refresh"]) for o in json.loads(out) if o.get("enabled", True)
+                for m in o.get("modes", []) if m.get("current")]
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return []
+
+
+def rates_mutter(out):
+    """GNOME's DisplayConfig.GetCurrentState (as gdbus prints it): modes are
+    ('1920x1080@143.998', 1920, 1080, 143.998..., ...{'is-current': <true>...})."""
+    rates = []
+    marks = [m for m in re.finditer(r"\('\d+x\d+@[\d.]+', \d+, \d+, ([\d.]+)", out)]
+    for i, m in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(out)
+        if "'is-current': <true>" in out[m.end():end]:
+            rates.append(float(m.group(1)))
+    return rates
+
+
+def rates_xrandr(out):
+    """`xrandr --current`: the starred (current) mode of each output."""
     rates = []
     for line in out.splitlines():
         for tok in line.split()[1:]:
@@ -827,7 +906,28 @@ def display_hz():
                     rates.append(float(tok.replace("*", "").replace("+", "")))
                 except ValueError:
                     pass
-    return max(rates) if rates else 0.0
+    return rates
+
+
+def text_mode_rates():
+    if os.environ.get("WAYLAND_DISPLAY"):
+        probes = []
+        if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+            probes.append((["hyprctl", "monitors", "-j"], rates_hyprctl))
+        # (kscreen-doctor only answers in a Plasma session: elsewhere it waits.)
+        if "KDE" in os.environ.get("XDG_CURRENT_DESKTOP", "") or os.environ.get("KDE_FULL_SESSION"):
+            probes.append((["kscreen-doctor", "-j"], rates_kscreen))
+        probes += [
+                   (["wlr-randr", "--json"], rates_wlr),
+                   (["gdbus", "call", "--session", "--dest", "org.gnome.Mutter.DisplayConfig",
+                     "--object-path", "/org/gnome/Mutter/DisplayConfig",
+                     "--method", "org.gnome.Mutter.DisplayConfig.GetCurrentState"], rates_mutter)]
+        for cmd, parse in probes:
+            if shutil.which(cmd[0]):
+                rates = parse(_run(cmd))
+                if rates:
+                    return rates
+    return rates_xrandr(_run(["xrandr", "--current"]))
 
 
 def auto_ceiling():
@@ -1112,7 +1212,14 @@ class Window(Adw.ApplicationWindow):
             self.toast(f"Session impossible : {e}")
         self._refresh_running()
         GLib.timeout_add_seconds(1, self._beat)
+        GLib.idle_add(self._refresh_sandboxes)
         self.connect("close-request", self._on_close)
+
+    def _refresh_sandboxes(self):
+        apps = refresh_sandboxes()
+        if apps:
+            self.toast("Couche mise à jour dans : " + ", ".join(a.replace("snap:", "Snap ") for a in apps))
+        return False
 
     def _beat(self):
         try:
@@ -1602,13 +1709,35 @@ def _text_pick(title, table, current):
     return current
 
 
+# Terminal emulators and how each takes a command (argv after the prefix):
+# xdg-terminal-exec (the freedesktop default terminal, Fedora / GNOME 47+),
+# Debian's alternative, then the desktops' own, then the standalone ones.
+TERMINALS = (["xdg-terminal-exec"], ["x-terminal-emulator", "-e"], ["ptyxis", "--"], ["kgx", "--"],
+             ["gnome-terminal", "--"], ["konsole", "-e"], ["xfce4-terminal", "-x"], ["mate-terminal", "-x"],
+             ["lxterminal", "-e"], ["qterminal", "-e"], ["terminator", "-x"], ["foot"], ["kitty"],
+             ["alacritty", "-e"], ["wezterm", "start", "--"], ["xterm", "-e"])
+
+
+def terminal_commands(env=None):
+    """The terminals to try, in order: $TERMINAL (the user's choice, with
+    -e as most take it) first."""
+    env = os.environ if env is None else env
+    out = []
+    user = env.get("TERMINAL", "").strip()
+    if user:
+        known = next((t for t in TERMINALS if t[0] == os.path.basename(user)), None)
+        out.append([user] + (known[1:] if known else ["-e"]))
+    return out + [list(t) for t in TERMINALS]
+
+
 def text_main():
     if not sys.stdin.isatty() and "--in-terminal" not in sys.argv[1:] and \
             (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
         # Started from the application menu: the text mode in a terminal.
         me = os.path.realpath(__file__)
-        for term in (["x-terminal-emulator", "-e"], ["gnome-terminal", "--"], ["konsole", "-e"],
-                     ["xfce4-terminal", "-x"], ["mate-terminal", "-x"], ["xterm", "-e"]):
+        for term in terminal_commands():
+            if not shutil.which(term[0]):
+                continue
             try:
                 os.execvp(term[0], term + [sys.executable, me, "--text", "--in-terminal"])
             except OSError:
@@ -1637,6 +1766,8 @@ def text_main():
 
     if cfg.glob.get("require_app") != "1" or cfg.glob.get("enabled") != "1":
         save()
+    for app in refresh_sandboxes():
+        print(f"Couche mise à jour dans {app.replace('snap:', 'Snap ')} (copie d'une version précédente)")
     try:
         write_session(0)
     except OSError as e:

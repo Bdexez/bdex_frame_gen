@@ -243,6 +243,12 @@ The installation drops:
 
 Uninstall: `tools/uninstall.sh`.
 
+The 32-bit layer is built when a 32-bit C++ toolchain is installed:
+`gcc-multilib g++-multilib` (Debian, Ubuntu), `glibc-devel.i686
+libstdc++-devel.i686 libatomic.i686` (Fedora), `lib32-gcc-libs` (Arch).
+The 32-bit Vulkan loader is not needed to build it. `BDEX_NO_32BIT=1`
+skips it.
+
 > **Arch Linux**: `packaging/arch/bdex-framegen-git/PKGBUILD` builds a
 > `bdex-framegen-git` package (`makepkg -si` in that directory) installing to
 > `/usr`, the 32-bit layer included (multilib); `bdex-framegen-bin` packages
