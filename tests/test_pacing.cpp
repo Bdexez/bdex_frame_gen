@@ -248,3 +248,56 @@ TEST(pacing_jittered_game_properties) {
         CHECK(s.replaced * 50 < int(s.frames.size()));
     }
 }
+
+// vrr_hold: on a variable-refresh screen a frame shows when it is presented
+// (no sooner than the top rate after the one before; a frame still waiting
+// is replaced by a newer one). Auto hold there at 40 fps x2, 144 Hz top:
+// every frame shown, the real frame ~3.8 ms sooner than evenly spaced (the
+// bound: 1.25 refresh between the two frames, a hold of 0.69).
+TEST(pacing_vrr_auto_hold) {
+    struct Vrr {
+        explicit Vrr(double m) : minMs(m) {}
+        double minMs;
+        std::vector<double> shown;  // display times (-1 replaced)
+        std::vector<bool> real;
+        double lastPresentMs = 0.0;
+        int replaced = 0;
+        void present(double t, bool isReal) {
+            t = std::max(t, lastPresentMs + 0.01);
+            double show = shown.empty() ? t : std::max(t, lastShown() + minMs);
+            if (!shown.empty() && shown.back() > t) {  // the previous one still waiting
+                shown.back() = -1.0;
+                ++replaced;
+                show = std::max(t, lastShown() + minMs);
+            }
+            shown.push_back(show);
+            real.push_back(isReal);
+            lastPresentMs = t;
+        }
+        double lastShown() const {
+            for (auto it = shown.rbegin(); it != shown.rend(); ++it)
+                if (*it >= 0.0) return *it;
+            return -1e9;
+        }
+    };
+    const double hz = 144, I = 1000.0 / 40;
+    const FrameOrder even = orderFor(2, 1.f, 1.f, hz, I);
+    const FrameOrder held = orderFor(2, 1.f, -1.f, hz, I);  // what vrr_hold asks for
+    CHECK(held.hold < 1.f);
+    Vrr a(1000.0 / hz), b(1000.0 / hz);
+    const pacing::Grid none{};  // no grid on a VRR screen
+    double realA = 0, realB = 0;
+    int n = 0;
+    for (int f = 1; f <= 80; ++f) {
+        const double present = f * I, origin = present + 2.0;
+        for (int k = 0; k < 2; ++k) {
+            a.present(pacing::presentTargetMs(origin, I, 2, even, k, a.lastPresentMs, 0.0, none), k == 1);
+            b.present(pacing::presentTargetMs(origin, I, 2, held, k, b.lastPresentMs, 0.0, none), k == 1);
+        }
+        realA += a.shown.back() - present;
+        realB += b.shown.back() - present;
+        ++n;
+    }
+    CHECK(a.replaced == 0 && b.replaced == 0);
+    CHECK(realA / n - realB / n >= 3.0);
+}

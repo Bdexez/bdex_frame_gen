@@ -60,6 +60,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Input latency
 
+- **`vrr_hold`** (default on): on a variable-refresh screen — the present
+  feedback works but finds no fixed refresh grid (FreeSync / G-Sync, VRR
+  compositors) — `interp_hold = 1` counts as auto: each frame shows when it
+  is presented, so the real frame goes out as soon as the top rate allows
+  (simulated, 40 fps x2 with a 144 Hz top: the real frame 3.8 ms sooner,
+  every frame shown). Fixed-refresh screens unchanged.
 - **Pacing simulator**: the pacing's decisions — present targets, the
   interp_hold bound, late jobs, the latency limiter, the adaptive multiplier,
   skip_fast's gate — moved, unchanged, into `layer/src/pacing.h` (no Vulkan),

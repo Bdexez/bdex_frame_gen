@@ -192,6 +192,7 @@ private:
     void resumeFeedback();
     bool fastGame(double hz);           // skip_fast: the game already at (nearly) the refresh rate
     double fastGameHz();                // the refresh rate skip_fast uses
+    bool variableRefresh();             // vrr_hold: displayed when presented (no refresh grid)
     double displayHz();                 // measured refresh rate, 0 if unknown (VRR, no feedback)
     bool displayGrid(double& lastMs, double& periodMs);  // the refresh grid, if known
     static double msOf(clock::time_point t) {

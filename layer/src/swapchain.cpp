@@ -718,6 +718,14 @@ int VirtualSwapchain::chooseMultiplier() {
 // its generated frames for good — tests/gamescope_limit.sh); elsewhere the
 // larger of the measured and the panel's rates — too low a rate idles
 // generation wrongly, too high one only keeps it.
+// A screen that shows frames when they are presented: the present feedback
+// has seen enough frames displayed, and no fixed refresh grid in them.
+bool VirtualSwapchain::variableRefresh() {
+    if (!feedback_) return false;
+    std::lock_guard<std::mutex> lock(fbMutex_);
+    return fbDisplayed_ >= 120 && !displayClock_.valid();
+}
+
 double VirtualSwapchain::fastGameHz() {
     if (dev_.gamescope) return dev_.gamescopeLimitSeen.load(std::memory_order_relaxed) || gsLimited_.load() ? 0.0 : gsHz_.load();
     std::lock_guard<std::mutex> lock(fbMutex_);
@@ -934,8 +942,16 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     // shows): two frames inside one refresh would replace each other. At
     // 60 fps x2 on 144 Hz that is a hold of 0.83 at least; the measured
     // 0.5 showed 116 of the 120 frames, 0.25 only 95.
+    // vrr_hold: a screen that shows each frame when it is presented (VRR:
+    // the present feedback works but finds no refresh grid) gains nothing
+    // from even spacing, and interp_hold 1 is taken as auto there.
+    float askHold = cfg_.interpHold;
+    if (askHold >= 1.f && cfg_.vrrHold && order.real > 0 && !(adaptivePeriodMs_ > 0.0) && variableRefresh()) {
+        askHold = -1.f;
+        order.hold = 0.1f;  // (FrameOrder::of's auto: raised to the bound below)
+    }
     if (order.hold < 1.f && frameIntervalMs_ > 0.0)
-        order.hold = pacing::effectiveHold(order.hold, cfg_.interpHold, displayHz(), mult, frameIntervalMs_, order.real);
+        order.hold = pacing::effectiveHold(order.hold, askHold, displayHz(), mult, frameIntervalMs_, order.real);
     // A rebuilt output stage has no analysis of the previous frame yet.
     const bool haveHistory = prevIndex_ >= 0 && !historyLost_;
     const bool interpolate = generating_ && haveHistory && mult > 1;
