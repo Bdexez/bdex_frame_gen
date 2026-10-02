@@ -152,7 +152,28 @@ les images répétées (`dedup`) et commande des passes en dispatch indirect,
     l'extrapolation, d'environ 0,1 ms ;
   - `max_frame_latency = 1` : le jeu ne prend pas d'avance sur le GPU ;
   - `latency_limiter` : retient le début de l'image suivante, à la façon de
-    Reflex ;
+    Reflex ; **il s'efface** (02/10) quand le jeu a son propre Reflex
+    (`VK_NV_low_latency2` en mode basse latence, `vkLatencySleepNV` dans la
+    dernière seconde) ou Anti-Lag (`vkAntiLagUpdateAMD` actif) : deux
+    retenues empilées se gênent, celle du pilote est mieux informée (non
+    essayé sur un jeu Reflex) ;
+  - **`interp_hold`** (02/10, défaut 1 = identique au bit près) : fraction de
+    la retenue habituelle de l'image réelle en interpolation. En dessous de
+    1, les positions jusqu'à la réelle sont espacées de h/m d'intervalle
+    (`FrameOrder::offset`, `paceTarget`) et chaque image montre le contenu
+    de son instant d'affichage (`t` = 1 − (real − p)·h/m) : mouvement juste,
+    cadence irrégulière. Bornée à un rafraîchissement d'écart (`displayHz`) :
+    sans borne, 0,5 n'affichait que 116 images sur 120 et 0,25, 95 (deux
+    images dans le même rafraîchissement). Seulement dans la couche
+    (`FrameOrder::of(…, withHold)`) : la capture et `bdex_offline` restent à
+    l'espacement régulier ; hors adaptatif. Les temps d'affichage passent au
+    tampon d'état pour que `frame_timing` suive ;
+  - `synth_priority` (02/10, avec `async_compute`) : priorité globale haute
+    pour la file de synthèse (sa famille a son propre `VkDeviceQueueCreateInfo`
+    ; une famille partagée avec le jeu n'a qu'une priorité). Refusée sans
+    privilèges (NVIDIA, amdgpu sans CAP_SYS_NICE : `VK_ERROR_NOT_PERMITTED`,
+    mesuré par une sonde : MEDIUM accepté, HIGH/REALTIME refusés) → device
+    recréé sans ;
   - `low_latency` et `fps_limit` complètent.
 - **Rattrapage** (30/09) : quand la présentation prend du retard, une image
   est montrée sans générée. Sinon une file qui s'est formée ne se vide jamais
@@ -685,6 +706,7 @@ d'affichage tournent dans `gamescope --backend headless` ou dans Docker
 | Qualité, CI (lavapipe) | 29,50 / 23,65 dB (seuils 28,0 / 23,0), à ~0,04 dB du GPU |
 | Latence, interpolation ×2 à 60 i/s | image réelle retenue ~8,4 ms (~16,7 ms à 30 i/s) |
 | Latence, extrapolation ×2 | ~0,1 ms |
+| `interp_hold = 0,5`, gamescope 144 Hz (02/10) | 40 i/s ×2 : image→écran 43,4 → 37,6 ms (79,3/80 affichées) ; 40 i/s ×3 : 47,7 → 45,0 ; 60 i/s ×2 : 30,3 → 29,8 |
 | Coût GPU, variantes allégées (1440p, quality) | 2,7 → 1,35 ms |
 | Jeu limité par le GPU, 4K lourd, avant/après le cadencement GPU | 66 → 132 images affichées/s |
 | `latency_limiter`, 4K lourd | image → écran 26,8 → 18,3 ms, 97 → 101 i/s |
@@ -708,6 +730,13 @@ Le détail de toutes les mesures est dans AGENTS.md §10 et le CHANGELOG.
 ---
 
 ## 9. Problèmes connus et pistes
+
+**Création du device, nouvel essai** (corrigé le 02/10) : chaque couche
+du dessous avance la même chaîne de liens en appelant plus bas ; un second
+`vkCreateDevice` (repli sans retour d'affichage, sans priorité) repartait
+de là où le premier l'avait laissée, sautait la couche WSI de gamescope et
+faisait planter le jeu. Chaque essai repart du lien qui suit la couche
+(`createDevice` dans `layer.cpp`).
 
 **Jamais validé sur du vrai matériel**
 - La couche Windows (mode 1).

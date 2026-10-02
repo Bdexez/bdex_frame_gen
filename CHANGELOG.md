@@ -6,6 +6,37 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Input latency
+
+- **`interp_hold`** (interpolation, default 1 = unchanged bit for bit): the
+  real frame's hold as a fraction of the usual one. Below 1 the generated
+  frames go out closer together before the real one (`FrameOrder::offset`,
+  the worker's `paceTarget`), each showing the content of its own display
+  time (`t` = 1 − (real − p)·h/m), so motion stays right and only the
+  spacing becomes uneven. Never closer than one refresh (`displayHz`: two
+  frames in one refresh would replace each other — unclamped, 0.5 showed
+  116 of 120 frames, 0.25 only 95). Measured in headless gamescope at
+  144 Hz: 40 fps x2, frame-to-screen 43.4 → 37.6 ms, 79.3 of 80 frames
+  displayed; 40 fps x3, 47.7 → 45.0 ms; 60 fps x2, 30.3 → 29.8 ms (the
+  screen leaves little room). Panel: « Retenue de l'image réelle ».
+- **The game's own Reflex / Anti-Lag**: when a game turns on
+  `VK_NV_low_latency2`'s low-latency mode (and sleeps through it each frame)
+  or `vkAntiLagUpdateAMD`, the layer's `latency_limiter` steps aside instead
+  of stacking a second hold on the driver's; the statistics line says so.
+  (Not tried with a Reflex game yet.)
+- **`synth_priority`** (with `async_compute`): the synthesis queue at a high
+  global priority (`VK_EXT/KHR_global_priority`), so a GPU-bound game's
+  next frame does not delay the generated and real frames. Drivers grant it
+  to privileged processes only: NVIDIA (and amdgpu without CAP_SYS_NICE)
+  answer `VK_ERROR_NOT_PERMITTED`, and the device is created at normal
+  priority (logged at INFO).
+- **Fixed: device creation retries crashed under another layer.** The
+  fallback attempts (without present feedback; now without the priority)
+  called down with the layer link chain where the previous attempt had left
+  it — a layer below (gamescope's WSI layer) had already advanced it, so the
+  retry skipped it and the game crashed. Each attempt now starts again from
+  the link after the layer's.
+
 ### Linux distributions
 
 - **Flatpak Vulkan layer extension**

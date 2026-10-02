@@ -2,6 +2,7 @@
 #include "device.h"
 #include "budget.h"
 #include "display_clock.h"
+#include "frame_order.h"
 #include "framegen.h"
 
 #include <atomic>
@@ -95,6 +96,7 @@ private:
         int frames = 1;              // presents to perform (multiplier, or 1)
         bool generated = false;      // frames-1 generated images in out_[]
         int realIndex = 0;           // display position of the real frame (frame_order.h): 0 extrapolation, frames-1 interpolation
+        FrameOrder order;            // the present's frame order, for interp_hold's spacing (hold 1: even)
         bool fifo = false;           // the real swapchain presents in FIFO: the display paces
         int slot = -1;               // the synthesis slot (slots_) of this present
         clock::time_point start{};   // when the application presented

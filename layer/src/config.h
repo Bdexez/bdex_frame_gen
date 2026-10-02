@@ -41,6 +41,7 @@ struct Config {
     bool  lowLatency    = false;  // block the game until the previous frames are handed to the display
     int   maxFrameLatency = 1;    // while generating: frames the GPU may still be working on when the game begins its next one (0 = no limit); a GPU-bound game otherwise runs ahead by up to a few frames of input lag
     bool  latencyLimiter = true;  // with maxFrameLatency: a GPU-bound game's present returns just in time for its next frame to reach the GPU as it frees up (fresher input, same frame rate)
+    float interpHold    = 1.0f;   // interpolation: the real frame's hold as a fraction of the usual one ((m-1)/m of an interval at xm): the generated frames go out closer together before it, showing the content of their own display time (motion stays right, spacing uneven); 1 = evenly spaced, 0.5 = half the added latency
     bool  syncPresent   = false;  // block the game's present call until the worker has presented this frame (D3D12/VKD3D compat test)
     bool  hidePresentExt = true;  // hide present-timing extensions (swapchain_maintenance1, present_id/wait) from the game; their semantics target the real swapchain we virtualise, and VKD3D-Proton hangs otherwise
     bool  extrapolate   = false;  // predict the frame after the last one instead of interpolating (no added latency)
@@ -59,6 +60,7 @@ struct Config {
     int   captureHdr    = -1;     // capture app: -1 auto (HDR when the game's display is in HDR mode), 0 SDR, 1 HDR if possible
     bool  asyncCompute  = false;  // run the synthesis on a compute-only queue family alongside the game's graphics (where the GPU has one)
     bool  presentQueue  = true;   // copies and presents on a queue of their own (same family as the synthesis), so a present's GPU work never waits behind the next synthesis
+    bool  synthPriority = true;   // with async_compute: the synthesis queue at a high global priority (VK_KHR/EXT_global_priority), so a GPU-bound game's next frame does not delay the generated and real frames; drivers grant it to privileged processes only (NVIDIA, amdgpu without CAP_SYS_NICE: refused, normal priority)
     bool  presentFeedback = true; // measure when frames are really displayed (VK_KHR_present_wait, where supported): refresh rate, drops, vblank-aligned pacing
     bool  pacing        = true;   // sleep-based pacing when the present mode is not FIFO
     Debug debug         = Debug::None;

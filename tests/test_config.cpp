@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <clocale>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -433,4 +434,41 @@ TEST(frame_order_positions_and_times) {
     const FrameOrder h3 = FrameOrder::of(c, 3);
     CHECK(h3.t(0) == 2.f / 3.f && h3.t(1) == 1.f + 1.f / 3.f);
     CHECK(FrameOrder::of(c, 1).real == 0);  // a lone real frame
+}
+
+// interp_hold: only where the caller allows it (the layer's present path),
+// 1 = the historical order bit for bit; below 1 the positions up to the real
+// frame come closer together, and every frame's content time stays a
+// constant distance behind its display time (no wrong motion).
+TEST(frame_order_interp_hold) {
+    using bdex::FrameOrder;
+    bdex::Config c;
+    c.interpHold = 0.5f;
+    CHECK(FrameOrder::of(c, 2).hold == 1.f);         // not asked for: capture app, bdex_offline
+    for (int m = 2; m <= 4; ++m) {
+        c.interpHold = 1.f;
+        const FrameOrder even = FrameOrder::of(c, m, true);
+        CHECK(even.hold == 1.f);
+        for (int p = 0; p < m; ++p) CHECK(even.offset(p) == double(p) / double(m));
+        for (int i = 1; i < m; ++i) CHECK(even.t(i - 1) == float(i) / float(m));
+        for (float h : {0.25f, 0.5f, 0.75f}) {
+            c.interpHold = h;
+            const FrameOrder o = FrameOrder::of(c, m, true);
+            CHECK(o.hold == h);
+            // The real frame shows h*(m-1)/m of an interval after the first one.
+            CHECK(std::abs(o.offset(o.real) - double(h) * (m - 1) / m) < 1e-9);
+            const double lag = 1.0 - o.offset(o.real);  // content time - display time, in intervals
+            for (int out = 0; out + 1 < m; ++out)
+                CHECK(std::abs(double(o.t(out)) - (o.offset(o.position(out)) + lag)) < 1e-6);
+        }
+    }
+    c.interpHold = 0.5f;
+    c.hybrid = true;  // x4 hybrid: 1 interpolated, the real one, 2 predicted 1/4 apart as before
+    const FrameOrder h4 = FrameOrder::of(c, 4, true);
+    CHECK(std::abs(h4.offset(1) - 0.125) < 1e-9 && std::abs(h4.offset(2) - 0.375) < 1e-9);
+    CHECK(h4.t(0) == 0.875f && h4.t(1) == 1.25f && h4.t(2) == 1.5f);
+    c.hybrid = false;
+    c.extrapolate = true;  // nothing before the real frame: no hold to shorten
+    CHECK(FrameOrder::of(c, 3, true).hold == 1.f);
+    CHECK(c.apply("interp_hold", "0.5") && c.interpHold == 0.5f);
 }

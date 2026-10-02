@@ -121,6 +121,11 @@ namespace bdex {
 #else
 #define BDEX_DEVICE_FUNCS_PRESENT_WAIT2(X)
 #endif
+#ifdef VK_AMD_anti_lag
+#define BDEX_DEVICE_FUNCS_ANTI_LAG(X) X(AntiLagUpdateAMD)
+#else
+#define BDEX_DEVICE_FUNCS_ANTI_LAG(X)
+#endif
 
 struct InstanceDispatch {
 #define X(name) PFN_vk##name name = nullptr;
@@ -139,6 +144,7 @@ struct DeviceDispatch {
     BDEX_DEVICE_FUNCS(X)
     BDEX_DEVICE_FUNCS_LOW_LATENCY2(X)
     BDEX_DEVICE_FUNCS_PRESENT_WAIT2(X)
+    BDEX_DEVICE_FUNCS_ANTI_LAG(X)
 #undef X
     void load(VkDevice device, PFN_vkGetDeviceProcAddr gdpa) {
         GetDeviceProcAddr = gdpa;
@@ -146,6 +152,7 @@ struct DeviceDispatch {
         BDEX_DEVICE_FUNCS(X)
         BDEX_DEVICE_FUNCS_LOW_LATENCY2(X)
         BDEX_DEVICE_FUNCS_PRESENT_WAIT2(X)
+        BDEX_DEVICE_FUNCS_ANTI_LAG(X)
 #undef X
     }
 };

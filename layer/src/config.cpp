@@ -198,6 +198,7 @@ const std::vector<OptionDef>& registry() {
     B("low_latency", "lowlatency", &Config::lowLatency),
     I("max_frame_latency", "frame_latency", &Config::maxFrameLatency, 0, 3, kLive),
     B("latency_limiter", nullptr, &Config::latencyLimiter, kLive),
+    F("interp_hold", nullptr, &Config::interpHold, 0.1f, 1.f, kLive),
     B("sync_present", "sync", &Config::syncPresent),
     B("hide_present_ext", nullptr, &Config::hidePresentExt),
     B("ignore_anticheat", nullptr, &Config::ignoreAntiCheat),
@@ -210,6 +211,7 @@ const std::vector<OptionDef>& registry() {
     B("present_feedback", nullptr, &Config::presentFeedback),
     B("async_compute", nullptr, &Config::asyncCompute),
     B("present_queue", nullptr, &Config::presentQueue),
+    B("synth_priority", nullptr, &Config::synthPriority),
     I("log", "log_level", &Config::logLevel, 0, 3),
     F("scene_cut_low", nullptr, &Config::sceneCutLow, 0.f, 1.f, kLive),
     F("scene_cut_high", nullptr, &Config::sceneCutHigh, 0.f, 1.f, kLive),
@@ -586,6 +588,7 @@ Config Config::keepingCreationSettings(Config n) const {
     n.presentMode = presentMode;
     n.hidePresentExt = hidePresentExt;
     n.asyncCompute = asyncCompute;
+    n.synthPriority = synthPriority;
     n.presentFeedback = presentFeedback;
     n.syncPresent = syncPresent;
     n.onlineTune = onlineTune;  // DeviceData's OnlineTune, created with the device
