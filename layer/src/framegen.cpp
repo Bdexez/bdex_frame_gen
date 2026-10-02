@@ -1113,6 +1113,8 @@ Config FrameGen::effectiveConfig() const {
     if (qualityLevel_ >= 1) {
         c.pixelVectors = false;
         c.subpixel = false;
+        c.subpixelLk = 0;
+        c.synthBicubic = false;  // up to 13 fetches a sample (~0.6 ms at 1.7 Mpx)
         c.rotWeight = c.censusWeight = c.gradWeight = c.chromaWeight = 0.f;
         c.extrapolateAccel = 0.f;
         c.occlusionStrength = 0.f;

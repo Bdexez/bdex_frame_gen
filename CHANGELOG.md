@@ -255,6 +255,9 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed (2026-09-25)
 
+- `gpu_budget`'s first level also turns off `synth_bicubic` and
+  `subpixel_lk` (the costly opt-ins added since). The README's
+  `ZERO_BIAS_CONTRAST` row notes the offline demo replay's loss at 0.1.
 - `pixel_vectors` with `synth_bicubic`: a candidate vector equal to the
   current one or to one already tried is skipped (same error, rejected by
   the strict comparison) — away from motion boundaries one evaluation
