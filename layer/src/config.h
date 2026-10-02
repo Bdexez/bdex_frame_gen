@@ -70,6 +70,7 @@ struct Config {
     Debug debug         = Debug::None;
     int   logLevel      = 1;
     std::string logFile;
+    std::string latencyLog;      // latency_log: every displayed frame as "<game's present ms> <display ms> <real 0/1>" (steady clock, present feedback), for tools/latency_report.py
     float sceneCutLow   = 0.05f;  // mean matching cost above which we start fading to the real frame
     float sceneCutHigh  = 0.09f;  // ... and above which the generated frame is a plain duplicate
     bool  sceneCutLocal = false;  // scene-cut test per region (8x8 grid) instead of on the frame mean (opt-in)
