@@ -4,6 +4,8 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <iterator>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN  // (bdex_capture defines it for the whole target)
@@ -243,6 +245,30 @@ std::string platformStatusDir() {
 #else
     if (const char* x = std::getenv("XDG_RUNTIME_DIR"); x && *x) return std::string(x) + "/bdex-framegen";
     return "/tmp/bdex-framegen-" + std::to_string(static_cast<long>(getuid()));
+#endif
+}
+
+bool platformAppSessionActive() {
+    const std::string dir = platformStatusDir();
+    if (dir.empty()) return false;
+#ifdef _WIN32
+    std::ifstream in(dir + "\\app.session");
+#else
+    std::ifstream in(dir + "/app.session");
+#endif
+    long pid = 0;
+    if (!(in >> pid) || pid <= 0) return false;
+#ifdef _WIN32
+    HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(pid));
+    if (!h) return false;
+    const bool alive = WaitForSingleObject(h, 0) == WAIT_TIMEOUT;
+    CloseHandle(h);
+    return alive;
+#else
+    // Alive and still the control panel (not a recycled process id).
+    std::ifstream cmd("/proc/" + std::to_string(pid) + "/cmdline", std::ios::binary);
+    const std::string line((std::istreambuf_iterator<char>(cmd)), std::istreambuf_iterator<char>());
+    return line.find("bdex-framegen") != std::string::npos;
 #endif
 }
 

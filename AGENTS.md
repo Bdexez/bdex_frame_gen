@@ -195,7 +195,13 @@ Priorité : défauts < `~/.config/bdex-framegen.conf` (Windows :
  `%APPDATA%\bdex-framegen\bdex-framegen.conf`) < env `BDEX_FG_<KEY>`.
 Sections `[nom]` par process (le nom du jeu, sans `.exe`), `[*]` global.
 La couche est toujours chargée et reste pass-through tant que `enabled=0`
-(ou section absente) ; `BDEX_FG=1` l'active. Presets : `enhanced` (balanced + opt-ins mesurés positifs ensemble, dont
+(ou section absente) ; `BDEX_FG=1` l'active. **`require_app=1`** (toujours
+écrit par la GUI, 2026-09-26, demande utilisateur : rien ne doit tourner
+sans l'app) : il faut en plus la session de la GUI (bouton « Lancer »,
+fichier `app.session` = pid dans `platformStatusDir()`, vérifié via
+`/proc/<pid>/cmdline` contenant `bdex-framegen`) — sinon inactif au
+chargement ; en jeu, `pollConfig` met en pause/reprend quand la session
+change. `BDEX_FG=1` dans l'env contourne. Presets : `enhanced` (balanced + opt-ins mesurés positifs ensemble, dont
 `zero_bias_contrast=0.02` — à 0,1 il perd 1,2 dB sur le replay de la démo
 avec `pixel_vectors`), `balanced` (défaut),
 `quality` (flow_scale 1, levels 5, iterations 2), `performance` (flow_scale 4,

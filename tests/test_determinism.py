@@ -43,7 +43,7 @@ SETTINGS = [
 # Options that do not change the generated frames of an offline run: output
 # path / presentation / logging / platform settings, or covered through
 # another key above ("fullres" is flow_scale=1; "upscale" is render_scale).
-NOT_FRAMES = {"enabled", "multiplier", "low_latency", "sync_present", "hide_present_ext", "pacing",
+NOT_FRAMES = {"enabled", "multiplier", "low_latency", "sync_present", "hide_present_ext", "pacing", "require_app",
               "present_feedback", "async_compute", "log", "paused", "gpu_budget", "stats", "profile",
               "shared_queue", "stats_interval", "dump_frames", "preset", "fullres", "flow_scale", "mode",
               "upscale", "overlay", "capture_hdr", "log_file", "target_fps", "fps_limit", "dump",

@@ -3,9 +3,12 @@
 
 The layer is an *implicit* Vulkan layer: once installed it loads into every
 Vulkan game automatically and stays a pure pass-through until it is turned on.
-This window is where you turn it on — like Lossless Scaling, you open it once,
-flip frame generation on (globally or for a chosen list of games), set the
-quality options, and then launch your games normally through Steam. No Steam
+This window is where you turn it on — like Lossless Scaling: open it, choose
+the games (all Vulkan games or a list) and the quality options, press
+"Lancer", then launch your games normally through Steam. Frame generation
+only runs while this window is open and started (`require_app`, which the
+panel always writes): nothing happens at boot or with the panel closed, and
+closing it (or "Arrêter") pauses the generation in running games. No Steam
 launch options to edit.
 
 Everything here is stored in the layer's config file
@@ -187,7 +190,7 @@ def game_name(text):
 # ---------------------------------------------------------------------------
 
 # Keys the UI owns in the global section; anything else found there is kept.
-GLOBAL_KEYS = ("enabled", "preset", "multiplier", "mode", "present_mode",
+GLOBAL_KEYS = ("enabled", "require_app", "preset", "multiplier", "mode", "present_mode",
                "low_latency", "render_scale", "upscale_filter", "sharpness",
                "overlay", "hud", "paused") + tuple(o["key"] for o in OPTIONS)
 
@@ -333,6 +336,7 @@ class Options:
         for k in GLOBAL_KEYS:
             glob.pop(k, None)
         glob["enabled"] = "1" if self.master else "0"
+        glob["require_app"] = "1"   # generation only while this panel is started
         glob["preset"] = self.preset
         glob["multiplier"] = str(self.multiplier if self.generate else 1)
         if self.generate:
@@ -419,6 +423,39 @@ def status_dir():
         return os.environ["BDEX_FG_STATUS_DIR"]
     runtime = os.environ.get("XDG_RUNTIME_DIR")
     return os.path.join(runtime, "bdex-framegen") if runtime else f"/tmp/bdex-framegen-{os.getuid()}"
+
+
+def session_path():
+    """The session file the layer checks for require_app (platformAppSessionActive)."""
+    return os.path.join(status_dir(), "app.session")
+
+
+def session_pid():
+    """Process id of the panel whose session is running, or None."""
+    try:
+        with open(session_path()) as f:
+            pid = int(f.read().split()[0])
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            return pid if b"bdex-framegen" in f.read() else None
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def start_session():
+    os.makedirs(status_dir(), mode=0o700, exist_ok=True)
+    tmp = session_path() + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(f"{os.getpid()}\n")
+    os.replace(tmp, session_path())
+
+
+def stop_session(only_ours=True):
+    if only_ours and session_pid() not in (None, os.getpid()):
+        return  # another panel window started it
+    try:
+        os.remove(session_path())
+    except OSError:
+        pass
 
 
 def read_running():
@@ -525,6 +562,7 @@ class Window(Adw.ApplicationWindow):
         page = Adw.PreferencesPage()
         scroller.set_child(page)
 
+        self._build_session(page)
         self._build_status(page)
         self._build_running(page)
         self._build_activation(page)
@@ -537,8 +575,54 @@ class Window(Adw.ApplicationWindow):
 
         self._loading = False
         self.refresh_sensitivity()
+        # The layer only honours the session once require_app is in the file.
+        if self.cfg.glob.get("require_app") != "1":
+            self.save()
+        self.connect("close-request", self._on_close)
+
+    def _on_close(self, *_):
+        stop_session()
+        return False
 
     # -- sections ----------------------------------------------------------
+
+    def _build_session(self, page):
+        g = Adw.PreferencesGroup()
+        page.add(g)
+        self.session_row = Adw.ActionRow()
+        self.session_icon = Gtk.Image(valign=Gtk.Align.CENTER)
+        self.session_row.add_prefix(self.session_icon)
+        self.session_btn = Gtk.Button(valign=Gtk.Align.CENTER)
+        self.session_btn.connect("clicked", self.on_session)
+        self.session_row.add_suffix(self.session_btn)
+        g.add(self.session_row)
+        self._refresh_session()
+
+    def _refresh_session(self):
+        on = session_pid() is not None
+        self.session_row.set_title("Framegen lancé" if on else "Framegen arrêté")
+        self.session_row.set_subtitle(
+            "Actif dans les jeux démarrés maintenant. Fermer cette fenêtre ou « Arrêter » "
+            "met la génération en pause dans les jeux en cours." if on else
+            "Choisis tes réglages puis clique « Lancer », avant de démarrer le jeu. "
+            "Rien ne tourne tant que le framegen n'est pas lancé.")
+        self.session_icon.set_from_icon_name("media-playback-start-symbolic" if on
+                                             else "media-playback-stop-symbolic")
+        self.session_btn.set_label("Arrêter" if on else "Lancer")
+        for c in ("suggested-action", "destructive-action"):
+            self.session_btn.remove_css_class(c)
+        self.session_btn.add_css_class("destructive-action" if on else "suggested-action")
+
+    def on_session(self, _btn):
+        try:
+            if session_pid() is not None:
+                stop_session(only_ours=False)
+            else:
+                self.save()   # the layer reads the settings shown here
+                start_session()
+        except OSError as e:
+            self.toast(f"Échec : {e}")
+        self._refresh_session()
 
     def _build_status(self, page):
         g = Adw.PreferencesGroup(title="État")
@@ -579,6 +663,7 @@ class Window(Adw.ApplicationWindow):
         GLib.timeout_add_seconds(1, self._refresh_running)
 
     def _refresh_running(self):
+        self._refresh_session()   # another panel window may have started/stopped it
         for row in self.running_rows:
             self.running_group.remove(row)
         self.running_rows = []
@@ -598,7 +683,8 @@ class Window(Adw.ApplicationWindow):
     def _build_activation(self, page):
         g = Adw.PreferencesGroup(
             title="Activation",
-            description="Aucune option de lancement Steam nécessaire : lance tes jeux normalement.")
+            description="Aucune option de lancement Steam nécessaire : clique « Lancer » en haut, "
+                        "puis lance tes jeux normalement.")
         page.add(g)
         self.master_row = Adw.SwitchRow(
             title="Activer pour tous les jeux Vulkan",

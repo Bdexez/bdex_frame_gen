@@ -1,4 +1,5 @@
 #include "device.h"
+#include "platform.h"
 #include "log.h"
 #include "vk_util.h"
 
@@ -180,15 +181,25 @@ void DeviceData::pollConfig() {
         const auto t = std::filesystem::last_write_time(path, ec);
         if (!ec) stamp = static_cast<int64_t>(t.time_since_epoch().count());
     }
-    if (configStamp == -1 || stamp == configStamp) { configStamp = stamp; return; }
+    // require_app: closing the control panel (or "Arrêter") pauses the
+    // generation in running games, starting it again resumes it.
+    const bool session = !config.requireApp || platformAppSessionActive();
+    if (configStamp == -1) filePaused = config.paused;  // first poll: the config loaded at creation
+    const bool fileChanged = configStamp != -1 && stamp != configStamp;
     configStamp = stamp;
-    Config fresh = Config::load();
-    fresh.autoConfigure(props, memProps);
+    if (!fileChanged && session == appSession) return;
     const bool wasPaused = config.paused;
-    config.applyLive(fresh);
+    if (fileChanged) {
+        Config fresh = Config::load();
+        fresh.autoConfigure(props, memProps);
+        config.applyLive(fresh);
+        filePaused = config.paused;
+    }
+    appSession = session;
+    config.paused = filePaused || !session;
     ++configVersion;
-    BDEX_INFO("config file changed: live settings reloaded%s", config.paused != wasPaused
-                  ? (config.paused ? " (frame generation paused)" : " (frame generation resumed)") : "");
+    BDEX_INFO("%s%s", fileChanged ? "config file changed: live settings reloaded" : "control panel session changed",
+              config.paused != wasPaused ? (config.paused ? " (frame generation paused)" : " (frame generation resumed)") : "");
 }
 
 void DeviceData::snapshotConfig(Config& out, uint64_t& version) {

@@ -8,6 +8,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Frame generation only while the control panel runs** (`require_app`,
+  Linux): the panel has a « Lancer / Arrêter » button and always writes
+  `require_app = 1`. Stopped (or closed), games start without the layer —
+  nothing runs at boot; closing it or « Arrêter » pauses the generation in
+  running games within ~0.5 s, « Lancer » resumes it. The session is a file
+  `app.session` (the panel's pid) in the status directory; a dead or
+  recycled pid counts as stopped. `BDEX_FG=1` (Steam option, CLI) bypasses
+  it.
+
 - **The layer stays off in competitive multiplayer games**, matched by
   executable name, where the anti-cheat has no process to detect: VAC
   (CS2, CS:GO, Dota 2, Deadlock, TF2), Vanguard (Valorant, League of

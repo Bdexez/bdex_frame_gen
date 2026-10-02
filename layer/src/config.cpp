@@ -170,6 +170,7 @@ const std::vector<OptionDef>& registry() {
     F("render_scale", nullptr, &Config::renderScale, 0.5f, 1.0f),
     F("sharpness", "sharpen", &Config::sharpness, 0.f, 1.f),
     B("pacing", nullptr, &Config::pacing),
+    B("require_app", nullptr, &Config::requireApp),
     B("present_feedback", nullptr, &Config::presentFeedback),
     B("async_compute", nullptr, &Config::asyncCompute),
     I("log", "log_level", &Config::logLevel, 0, 3),
@@ -483,6 +484,7 @@ void Config::loadEnv() {
     if (const char* v = getenv("BDEX_FG")) {
         bool b;
         if (parseBool(v, b)) enabled = b;
+        if (enabled) requireApp = false;  // explicit per-game launch (Steam option, CLI)
     }
 }
 
@@ -528,6 +530,11 @@ Config Config::loadWithDefaults(Config c, const std::string& extraProcess) {
         c.enabled = false;
         c.antiCheatDisabled = true;
         BDEX_WARN("anti-cheat '%s' detected: layer disabled for this process", antiCheat.c_str());
+    }
+    // require_app: the control panel must be open with generation started.
+    if (c.enabled && c.requireApp && !platformAppSessionActive()) {
+        c.enabled = false;
+        BDEX_INFO("control panel not started (require_app): layer inactive for this process");
     }
     if (c.sceneCutHigh < c.sceneCutLow) c.sceneCutHigh = c.sceneCutLow;
     if (!extraProcess.empty()) c.tuneName = baseName(extraProcess);
