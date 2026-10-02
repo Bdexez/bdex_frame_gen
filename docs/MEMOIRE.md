@@ -202,11 +202,41 @@ les images répétées (`dedup`) et commande des passes en dispatch indirect,
     dossier (`platformBundledProfilesPath`) ; `BDEX_INSTALL_LIBDIR` règle le
     dossier au build.
   - Un paquet n'écrit pas dans le home : `bdex-framegen --sandboxes` copie
-    la couche dans les lanceurs Flatpak/Snap (le postinst le rappelle).
+    la couche dans les lanceurs Flatpak/Snap (le postinst le rappelle). Après
+    une mise à jour, le panneau recopie à son ouverture les copies périmées
+    (`flatpak.sh --check`), `--check` sort en 2 et `--report` les signale.
+  - **Toute copie d'une `.so` installée passe par un nouveau fichier**
+    (`flatpak.sh` : copie puis renommage ; `install.sh` : suppression puis
+    copie) : copier par-dessus tronque la bibliothèque qu'un jeu en cours a
+    mappée (SIGBUS). Testé par `tests/linux_scripts.sh` (inode qui change,
+    fichier ouvert intact).
+  - **Paquets source** (02/10, job CI `source-packages`, chacun construit
+    depuis le checkout dans le conteneur de la distribution puis installé) :
+    `packaging/rpm/bdex-framegen.spec` (COPR, OBS ; Fedora 44, Tumbleweed),
+    `packaging/debian/` (PPA, OBS ; Ubuntu 24.04/22.04, Debian 12), overlay
+    Gentoo `packaging/gentoo` (`ABI_X86="64 32"`), template Void (glibc,
+    musl). Pièges : dnf satisfait `libstdc++-devel` de gcc-c++ par le seul
+    paquet i686 (pas de `c++config.h` 64 bits) → `libstdc++-devel%{?_isa}`
+    exigé, et `libatomic` 64 + 32 ; les macros `%cmake` de Fedora et
+    d'openSUSE diffèrent (dossier, répertoire courant) → `cmake` simple ;
+    Void : xbps-src en conteneur = utilisateur du groupe `xbuilder`, uchroot,
+    `--privileged` (le mode ethereal ne bootstrappe pas) ; Gentoo : seules les
+    phases de l'ebuild (`ebuild … install`), vulkan-loader[abi_x86_32] non
+    fusionné (pile X/Wayland 32 bits à compiler).
+  - **Couche 32 bits depuis les sources** : `tools/install.sh` testait
+    `/usr/lib32/libvulkan.so.1` (chemin d'Arch seulement) et sautait la
+    couche 32 bits sous Debian/Ubuntu/Fedora ; il teste maintenant la
+    liaison d'une bibliothèque C++ 32 bits. Fedora : `glibc-devel.i686
+    libstdc++-devel.i686 libatomic.i686`.
 - **Panneau sans GTK 4** (Ubuntu 20.04, Debian 11) : mode texte dans un
   terminal (`text_main`), même session/battement, mêmes options ; lancé
-  depuis le menu, il ouvre un terminal (`x-terminal-emulator`…) ; `--text`
-  le force. Sans GTK, des classes factices (`_Stub`) remplacent les modules
+  depuis le menu, il ouvre un terminal (`$TERMINAL`, `xdg-terminal-exec`,
+  Ptyxis, kgx, foot, kitty… : Fedora 41+ et GNOME 47+ n'ont aucun des
+  anciens) ; `--text` le force. Fréquence de l'écran : `hyprctl`,
+  `kscreen-doctor` (Plasma seulement : ailleurs il attend indéfiniment, vu
+  sous Hyprland, d'où aussi un `--report` bloqué jusqu'au 02/10),
+  `wlr-randr`, DisplayConfig de GNOME, puis xrandr (qui ne voit que
+  Xwayland : 143,78 Hz lus pour 143,91). Sans GTK, des classes factices (`_Stub`) remplacent les modules
   GTK pour que les classes de fenêtre restent définies (et
   `tests/panel_logic.py` tourne sans GTK).
 - **MangoHud** : chargé seul, il se place *au-dessus* de la couche (côté
@@ -235,7 +265,12 @@ programme Vulkan et reste **transparente** tant qu'elle n'est pas activée
 - AMD et Intel sous Mesa (RADV, ANV) ; Radeon Vega 8 testée pour la qualité.
 - NVK ; lavapipe (logiciel, pour les tests).
 - Portables hybrides : le jeu doit tourner sur le GPU relié à l'écran (le
-  rapport le signale).
+  rapport le signale). `bdex-framegen --gpu screen|discrete|integrated|
+  nvidia|amd|intel|list -- jeu` (02/10) : `MESA_VK_DEVICE_SELECT` (+
+  `_FORCE_DEFAULT_DEVICE`), `DRI_PRIME`, PRIME offload NVIDIA
+  (`__NV_PRIME_RENDER_OFFLOAD`, `__VK_LAYER_NV_optimus`), et
+  `DXVK_FILTER_DEVICE_NAME` / `VKD3D_FILTER_DEVICE_NAME` (Proton choisit son
+  GPU lui-même). Liste par vulkaninfo, écrans par `/sys/class/drm`.
 
 **OpenGL** : `bdex-framegen --gl -- jeu` fait passer le jeu par Zink
 (OpenGL sur Vulkan, en forçant le GL de Mesa).
@@ -292,6 +327,21 @@ section `[exe]` dans la configuration.
   écrit la session. `--report` et `--toggle` suivent.
 - **Installer les lanceurs d'abord**, ou relancer `install.sh` après (ou
   `bdex-framegen --sandboxes`).
+- **Extension Flatpak** (02/10, `packaging/flatpak`,
+  `org.freedesktop.Platform.VulkanLayer.BdexFramegen`, runtime 25.08, prête
+  pour Flathub, comme MangoHud/vkBasalt) : toute appli Flatpak sur ce
+  runtime charge la couche (64 et 32 bits, `/usr/lib/extensions/vulkan/
+  BdexFramegen/lib/<triplet>`), `flatpak update` la met à jour.
+  `flatpak.sh` ne copie alors plus la couche dans l'appli (copies retirées :
+  une copie périmée serait chargée d'abord), seulement la config, plus une
+  marque `data/bdex-framegen/extension` lue par le CLI ; le panneau détecte
+  lui-même la branche du runtime de l'appli (`metadata`). Vérifiée par
+  `tools/ci/flatpak-check.sh` (conteneur, SDK en volume Docker) : chargée
+  par le loader 64 bits du runtime, listée (`VK_LAYER_BDEX_framegen_32`) par
+  le loader i386. Pièges : pas de `vulkaninfo` dans le SDK (sonde C
+  `tools/ci/vk_layer_probe.c`) ; sans `--allow=multiarch`, seccomp tue un
+  programme 32 bits (SIGSYS, code 159) ; aucun pilote 32 bits monté dans le
+  SDK (GL32 est pour les applis qui le déclarent, comme Steam).
 - **Snap** (Steam d'Ubuntu, depuis le 30/09) : bibliothèque dans
   `~/snap/steam/common/bdex-framegen` (gardée d'une révision à l'autre),
   manifeste, configuration et session dans le HOME du snap
@@ -406,6 +456,10 @@ headless de la même génération.
   Raspberry Pi 5 (V3D : 4 images de stockage, d'où le respect des limites
   garanties).
 - Jamais essayée sur du vrai matériel ARM.
+- **Asahi** : Steam y lance les jeux x86 dans une machine virtuelle muvm +
+  FEX, dont le loader Vulkan x86_64 ne peut pas charger une couche ARM64 ;
+  installer l'archive x86_64 à côté ne marche pas non plus (même nom de
+  manifeste, `library_arch` ne distingue que 32/64). Non couvert.
 
 ### 4.6 Windows, mode 1 — la couche Vulkan
 
@@ -692,14 +746,16 @@ sont lents, lavapipe y dispute le CPU au jeu et le rattrapage retire des
 images générées (×1,7) — les tests comptent donc sortie = 2 × jeu −
 rattrapages.
 
-**Paquets, suite** : publier `bdex-framegen-bin` / `-git` sur l'AUR (dépôt
-public requis, compte AUR) ; COPR (Fedora) et OBS (openSUSE) pour des mises
-à jour automatiques (comptes, spec source) ; Flatpak du panneau **impossible
+**Paquets, suite** : publier `bdex-framegen-bin` / `-git` sur l'AUR, le
+`.spec` sur COPR / OBS, `packaging/debian` sur un PPA, l'extension sur
+Flathub (tous prêts et vérifiés en conteneur ; dépôt public et comptes
+requis) ; Flatpak du panneau **impossible
 en l'état** : le bac à sable a son propre espace de PID et ne voit pas les
 jeux de l'hôte (`/proc/<pid>/maps`), le mode texte couvre les distributions
-sans GTK 4. Choix automatique du GPU sur portable hybride : non fait (le
-jeu sur le GPU dédié avec l'écran sur l'intégré est le cas normal ; le
-rapport signale la copie PRIME).
+sans GTK 4. GPU sur portable hybride : `--gpu` (choix manuel ; pas
+d'automatisme, le jeu sur le GPU dédié avec l'écran sur l'intégré reste le
+cas normal). Validation sur vrai matériel : `docs/linux-validation.md`
+(liste à confier à des testeurs).
 
 **Banc gamescope headless** : sans `CAP_SYS_NICE`, il compose mal quand le
 jeu est limité par son propre rendu. Le cadencement côté écran se valide sur

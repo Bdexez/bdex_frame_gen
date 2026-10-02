@@ -65,3 +65,18 @@ assert t[0] == ["/usr/bin/foot"] and ["xdg-terminal-exec"] in t, t[:3]
 assert panel.terminal_commands({"TERMINAL": "myterm"})[0] == ["myterm", "-e"]
 assert panel.terminal_commands({})[0] == ["xdg-terminal-exec"]
 print("panel display / terminal probes OK")
+
+# The Flatpak extension, for the app's Freedesktop runtime branch only.
+root = os.path.join(home, "flatpak")
+arch = os.uname().machine
+for app, rt in (("a.Steam", "org.freedesktop.Platform/x86_64/25.08"), ("a.Old", "org.freedesktop.Platform/x86_64/24.08"),
+                ("a.Gnome", "org.gnome.Platform/x86_64/49")):
+    os.makedirs(os.path.join(root, "app", app, "current", "active"))
+    with open(os.path.join(root, "app", app, "current", "active", "metadata"), "w") as f:
+        f.write(f"[Application]\nname={app}\nruntime={rt}\n")
+os.makedirs(os.path.join(root, "runtime", panel.FLATPAK_EXTENSION, arch, "25.08"))
+assert panel.flatpak_extension_branch("a.Steam", (root,)) == "25.08"
+assert panel.flatpak_extension_branch("a.Old", (root,)) is None
+assert panel.flatpak_extension_branch("a.Gnome", (root,)) is None
+assert panel.flatpak_extension_branch("a.Missing", (root,)) is None
+print("panel Flatpak extension detection OK")

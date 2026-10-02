@@ -21,6 +21,10 @@
 #       --mangohud         MangoHud under the layer: it counts and draws on every
 #                          frame shown (generated ones included); on its own it
 #                          usually loads above and sees the game's frames only
+#       --gpu WHICH        run the game on one GPU of a hybrid laptop: screen (the
+#                          one the screens are plugged into: no PRIME copy of every
+#                          frame, generated ones included), discrete, integrated,
+#                          or a vendor (nvidia | amd | intel); --gpu list shows them
 #       --off              run the program with the layer disabled
 #       --gui              open the graphical launcher instead
 #       --check            report whether the layer is found by the Vulkan loader
@@ -49,7 +53,7 @@
 #   -h, --help
 set -euo pipefail
 
-usage() { sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,/^#   -h, --help/p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # The screens as the desktop sees them: "<output> <current mode>" per enabled
 # output (KDE's kscreen-doctor, else xrandr), for the report and the quick read.
@@ -115,7 +119,9 @@ flatpak_dirs() {
   local app d
   for app in com.valvesoftware.Steam com.heroicgameslauncher.hgl net.lutris.Lutris com.usebottles.bottles; do
     d="$HOME/.var/app/$app"
-    [ -f "$d/data/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen.json" ] || continue
+    # (a copy of the layer, or flatpak.sh's mark: the Flatpak extension loads it)
+    [ -f "$d/data/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen.json" ] ||
+      [ -f "$d/data/bdex-framegen/extension" ] || continue
     case "${1:-}" in
       run) echo "$d/.cache/bdex-framegen/run" ;;
       config) echo "$d/config/bdex-framegen.conf" ;;
@@ -201,7 +207,7 @@ quick_read() {
       if [ -n "$outputs" ] && [ "$gv" != "?" ] &&
          ! echo "$outputs" | while read -r _ _ drv; do [ "$(gpu_vendor "$drv")" = "$gv" ] && echo y; done | grep -q y; then
         echo "  → le jeu tourne sur $dev mais aucun écran n'est branché sur ce GPU : les images passent par l'autre GPU"
-        echo "    (copie PRIME ; brancher l'écran sur la carte graphique du jeu, ou lancer le jeu sur le GPU de l'écran)"
+        echo "    (copie PRIME ; brancher l'écran sur la carte graphique du jeu, ou lancer le jeu sur le GPU de l'écran : bdex-framegen --gpu screen -- jeu)"
       fi
     done
   done
@@ -278,7 +284,9 @@ report() {
       echo "Flatpak $(basename "$d"):"; ls -l "$d"/data/vulkan/implicit_layer.d/*BDEX* 2>/dev/null || true
     done
     for app in com.valvesoftware.Steam com.heroicgameslauncher.hgl net.lutris.Lutris com.usebottles.bottles; do
-      if [ -d "$HOME/.var/app/$app" ] && [ ! -f "$HOME/.var/app/$app/data/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen.json" ]; then
+      if [ -f "$HOME/.var/app/$app/data/bdex-framegen/extension" ]; then
+        echo "Flatpak $app: layer from the Flatpak extension (runtime $(cat "$HOME/.var/app/$app/data/bdex-framegen/extension"))"
+      elif [ -d "$HOME/.var/app/$app" ] && [ ! -f "$HOME/.var/app/$app/data/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen.json" ]; then
         echo "Flatpak $app: layer NOT installed there (bdex-framegen --sandboxes)"
       fi
     done
@@ -288,6 +296,10 @@ report() {
     fi
     stale="$(stale_sandboxes)"
     [ -z "$stale" ] || echo "$stale" | sed 's/^/OUTDATED copy (layer updated since; bdex-framegen --sandboxes): /'
+    if command -v flatpak >/dev/null; then
+      echo "Flatpak extension: $(flatpak list --runtime --columns=application,branch 2>/dev/null |
+        awk '$1 == "org.freedesktop.Platform.VulkanLayer.BdexFramegen" { printf "%s ", $2 }')"
+    fi
     echo; echo "== security modules"
     if command -v getenforce >/dev/null; then echo "SELinux: $(getenforce 2>/dev/null)"; fi
     if [ -r /sys/module/apparmor/parameters/enabled ]; then
@@ -577,6 +589,73 @@ check() {
   exit 1
 }
 
+# The Vulkan GPUs: "<vendorID> <deviceID> <type> <name>" per line (vulkaninfo,
+# without our layer), the CPU ones left out; BDEX_GPU_LIST stands in for it
+# (tests).
+gpu_list() {
+  if [ -n "${BDEX_GPU_LIST:-}" ]; then printf '%s\n' "$BDEX_GPU_LIST"; return; fi
+  command -v vulkaninfo >/dev/null || return 0
+  BDEX_FG_DISABLE=1 vulkaninfo --summary 2>/dev/null | awk -F' = ' '
+    /^GPU[0-9]+:/ { if (v != "") print v, d, t, n; v = d = t = n = "" }
+    /vendorID/ { v = $2 } /deviceID/ { d = $2 }
+    /deviceType/ { t = $2; sub(/PHYSICAL_DEVICE_TYPE_/, "", t); sub(/_GPU/, "", t) }
+    /deviceName/ { n = $2 }
+    END { if (v != "") print v, d, t, n }' | awk '$3 != "CPU"' | awk '!seen[$1 $2]++'
+}
+
+# The PCI ids (vendor device, 0x...) of the GPUs driving a connected screen;
+# BDEX_DRM_DIR stands in for /sys/class/drm (tests).
+screen_gpus() {
+  local c card dev
+  for c in "${BDEX_DRM_DIR:-/sys/class/drm}"/card*-*; do
+    [ "$(cat "$c/status" 2>/dev/null)" = connected ] || continue
+    card="${c##*/}"; card="${card%%-*}"
+    dev="${BDEX_DRM_DIR:-/sys/class/drm}/$card/device"
+    echo "$(cat "$dev/vendor" 2>/dev/null) $(cat "$dev/device" 2>/dev/null)"
+  done | awk 'NF == 2' | sort -u
+}
+
+# --gpu WHICH: the environment that puts the game on that GPU — Mesa's device
+# selection (every Vulkan driver it orders, DRI_PRIME for OpenGL), NVIDIA's
+# PRIME render offload, and DXVK / VKD3D-Proton's own filter (Proton games
+# pick a GPU themselves).
+gpu_env() {
+  local which="$1" line pick="" v d t n
+  local gpus; gpus="$(gpu_list)"
+  if [ -z "$gpus" ]; then echo "bdex-framegen: no GPU listed (vulkaninfo missing?)" >&2; return 1; fi
+  if [ "$which" = list ]; then
+    local screens; screens="$(screen_gpus)"
+    while read -r v d t n; do
+      local mark=""; grep -qix "$v $d" <<<"$screens" && mark="  ← screen"
+      echo "$v:$d  $(echo "$t" | tr 'A-Z' 'a-z')  $n$mark"
+    done <<<"$gpus"
+    exit 0
+  fi
+  while read -r v d t n; do
+    case "$which" in
+      screen) grep -qix "$v $d" <<<"$(screen_gpus)" && pick="$v $d $t $n" ;;
+      discrete|dgpu) [ "$t" = DISCRETE ] && pick="$v $d $t $n" ;;
+      integrated|igpu) [ "$t" = INTEGRATED ] && pick="$v $d $t $n" ;;
+      nvidia) [ "$v" = 0x10de ] && pick="$v $d $t $n" ;;
+      amd) [ "$v" = 0x1002 ] && pick="$v $d $t $n" ;;
+      intel) [ "$v" = 0x8086 ] && pick="$v $d $t $n" ;;
+      *) echo "bdex-framegen: --gpu screen | discrete | integrated | nvidia | amd | intel | list" >&2; return 2 ;;
+    esac
+    [ -n "$pick" ] && break
+  done <<<"$gpus"
+  if [ -z "$pick" ]; then echo "bdex-framegen: no $which GPU (bdex-framegen --gpu list)" >&2; return 1; fi
+  read -r v d t n <<<"$pick"
+  env_vars+=("MESA_VK_DEVICE_SELECT=${v#0x}:${d#0x}" "MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE=1"
+             "DXVK_FILTER_DEVICE_NAME=$n" "VKD3D_FILTER_DEVICE_NAME=$n")
+  if [ "$v" = 0x10de ]; then
+    env_vars+=("__NV_PRIME_RENDER_OFFLOAD=1" "__VK_LAYER_NV_optimus=NVIDIA_only" "__GLX_VENDOR_LIBRARY_NAME=nvidia")
+  else
+    # (NVIDIA's own layer otherwise lists its GPU first)
+    env_vars+=("__VK_LAYER_NV_optimus=non_NVIDIA_only" "DRI_PRIME=${v#0x}:${d#0x}")
+  fi
+  echo "bdex-framegen: game on $n" >&2
+}
+
 # OpenGL through Zink. MESA_LOADER_DRIVER_OVERRIDE alone only reaches Mesa's
 # own GL: with a vendor driver installed (NVIDIA's), libglvnd dispatches GLX
 # and EGL to it and Zink is never loaded — the game then runs on native GL,
@@ -621,6 +700,7 @@ while [ $# -gt 0 ]; do
                        # skips the one of the other width).
                        env_vars+=("MANGOHUD=1" "VK_INSTANCE_LAYERS=VK_LAYER_BDEX_framegen:VK_LAYER_MANGOHUD_overlay_x86_64:VK_LAYER_MANGOHUD_overlay_x86${VK_INSTANCE_LAYERS:+:$VK_INSTANCE_LAYERS}")
                        shift ;;
+    --gpu)             gpu_env "${2:?--gpu needs screen, discrete, integrated, a vendor or list}" || exit $?; shift 2 ;;
     --off)             env_vars+=("BDEX_FG=0"); shift ;;
     --gui)             exec "$(dirname "$0")/bdex-framegen-gui" ;;
     --check)           check ;;

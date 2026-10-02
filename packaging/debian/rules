@@ -1,0 +1,39 @@
+#!/usr/bin/make -f
+# Source package for a Launchpad PPA or the openSUSE Build Service (copy this
+# directory to debian/ at the top of the tree: tools/ci/debsrc-check.sh).
+# The prebuilt .deb of the releases is tools/package-native.sh.
+include /usr/share/dpkg/architecture.mk
+
+COMMON := -DBDEX_BUILD_DEMO=OFF -DBDEX_BUILD_TESTS=OFF -DBDEX_BUILD_OFFLINE=OFF \
+          -DBDEX_STATIC_RUNTIME=ON
+
+%:
+	dh $@ --buildsystem=cmake --builddirectory=build64
+
+override_dh_auto_configure:
+	dh_auto_configure -- $(COMMON) -DBDEX_INSTALL_LIBDIR=lib/$(DEB_HOST_MULTIARCH)
+ifeq ($(DEB_HOST_ARCH),amd64)
+	# The 32-bit layer (32-bit games), with -m32 (g++-multilib).
+	cmake -S . -B build32 -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+	      -DBDEX_32BIT=ON -DBDEX_STATIC_RUNTIME=ON -DBDEX_INSTALL_LIBDIR=lib/i386-linux-gnu
+endif
+
+override_dh_auto_build:
+	dh_auto_build
+ifeq ($(DEB_HOST_ARCH),amd64)
+	cmake --build build32 --parallel
+endif
+
+override_dh_auto_install:
+	dh_auto_install
+ifeq ($(DEB_HOST_ARCH),amd64)
+	DESTDIR=$(CURDIR)/debian/bdex-framegen cmake --install build32
+endif
+
+# No GPU in a build root.
+override_dh_auto_test:
+
+# The 32-bit layer loads into 32-bit games, which bring their own 32-bit
+# libc: no dependency on libc6:i386.
+override_dh_shlibdeps:
+	dh_shlibdeps -Xi386-linux-gnu

@@ -13,7 +13,11 @@ T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-export HOME="$T/home" XDG_CONFIG_HOME="$T/home/.config"
+# Every per-user location in the scratch home: the scripts follow the XDG
+# variables (uninstall.sh --purge deletes their bdex-framegen files).
+export HOME="$T/home" XDG_CONFIG_HOME="$T/home/.config" XDG_CACHE_HOME="$T/home/.cache" \
+  XDG_DATA_HOME="$T/home/.local/share" XDG_STATE_HOME="$T/home/.local/state"
+unset XDG_RUNTIME_DIR BDEX_FG_CONFIG BDEX_FG_STATUS_DIR BDEX_FG_CACHE_DIR
 mkdir -p "$HOME/.var/app/com.valvesoftware.Steam" "$HOME/.var/app/net.lutris.Lutris" "$HOME/snap/steam/current"
 pre="$T/prefix"
 mkdir -p "$pre/lib" "$pre/lib32" "$pre/share/vulkan/implicit_layer.d" "$pre/share/bdex-framegen"
@@ -65,6 +69,29 @@ bash "$FP" --remove > /dev/null
   fail "--remove left the Flatpak copy"
 [ ! -e "$snapcopy" ] || fail "--remove left the Snap copy"
 
+# The Flatpak extension installed for Steam's runtime branch: no copy there
+# (old ones removed), the settings and a mark for the panel; Lutris, on a
+# branch the extension is not installed for, keeps its copy.
+fl="$HOME/.local/share/flatpak"
+mkdir -p "$fl/app/com.valvesoftware.Steam/current/active" "$fl/app/net.lutris.Lutris/current/active" \
+  "$fl/runtime/org.freedesktop.Platform.VulkanLayer.BdexFramegen/$(uname -m)/25.08"
+printf '[Application]\nname=com.valvesoftware.Steam\nruntime=org.freedesktop.Platform/x86_64/25.08\n' \
+  > "$fl/app/com.valvesoftware.Steam/current/active/metadata"
+printf '[Application]\nruntime=org.freedesktop.Platform/x86_64/24.08\n' > "$fl/app/net.lutris.Lutris/current/active/metadata"
+bash "$FP" "$pre" > /dev/null
+bash "$FP" "$pre" > "$T/out"   # twice: the second run finds the first one's state
+grep -q "com.valvesoftware.Steam (Flatpak): layer provided by the .* extension (25.08)" "$T/out" || fail "extension not seen: $(cat "$T/out")"
+[ ! -e "$copy" ] && [ ! -e "$steam/data/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen.json" ] ||
+  fail "a copy left beside the extension"
+[ "$(cat "$steam/data/bdex-framegen/extension")" = 25.08 ] || fail "no extension mark"
+[ -f "$steam/config/bdex-framegen.conf" ] || fail "settings not copied for the extension"
+[ -f "$HOME/.var/app/net.lutris.Lutris/data/bdex-framegen/lib/libVkLayer_bdex_framegen.so" ] ||
+  fail "Lutris (other branch) lost its copy"
+bash "$FP" --check "$pre" > /dev/null || fail "--check on the extension's app"
+rm -rf "$fl"
+bash "$FP" "$pre" > /dev/null
+[ -f "$copy" ] && [ ! -e "$steam/data/bdex-framegen/extension" ] || fail "copy not back once the extension is gone"
+
 # The archive's install.sh: new inodes for the libraries it replaces.
 arc="$T/archive"
 mkdir -p "$arc/files/lib" "$arc/files/share/bdex-framegen" "$arc/files/share/vulkan/implicit_layer.d"
@@ -82,4 +109,34 @@ exec 9<&-
 [ "$(cat "$inst/lib/libVkLayer_bdex_framegen.so")" = new ] || fail "install.sh did not install"
 grep -q "\"library_path\": \"$inst/lib/libVkLayer_bdex_framegen.so\"" \
   "$inst/share/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen.json" || fail "install.sh manifest path"
+# uninstall.sh: the installation; --purge also the settings and caches.
+cp "$SRC/tools/uninstall.sh" "$arc/"
+mkdir -p "$HOME/.cache/bdex-framegen/run" "$steam/.cache/bdex-framegen/run"
+bash "$arc/uninstall.sh" "$inst" > /dev/null
+[ ! -e "$inst/lib/libVkLayer_bdex_framegen.so" ] || fail "uninstall.sh left the layer"
+[ -f "$XDG_CONFIG_HOME/bdex-framegen.conf" ] || fail "uninstall.sh without --purge removed the settings"
+bash "$arc/uninstall.sh" --purge "$inst" > /dev/null
+[ ! -e "$XDG_CONFIG_HOME/bdex-framegen.conf" ] && [ ! -e "$HOME/.cache/bdex-framegen" ] &&
+  [ ! -e "$steam/config/bdex-framegen.conf" ] && [ ! -e "$steam/.cache/bdex-framegen" ] ||
+  fail "--purge left settings: $(ls -d "$XDG_CONFIG_HOME/bdex-framegen.conf" "$HOME/.cache/bdex-framegen" "$steam/config/bdex-framegen.conf" "$steam/.cache/bdex-framegen" 2>/dev/null)"
+
+# bdex-framegen --gpu: the GPU the screen is plugged into, by type, by vendor.
+CLI="$SRC/tools/bdex-framegen"
+drm="$T/drm"; mkdir -p "$drm/card0/device" "$drm/card1/device" "$drm/card0-eDP-1" "$drm/card1-HDMI-A-1"
+echo 0x8086 > "$drm/card0/device/vendor"; echo 0x46a6 > "$drm/card0/device/device"
+echo 0x10de > "$drm/card1/device/vendor"; echo 0x25a2 > "$drm/card1/device/device"
+echo connected > "$drm/card0-eDP-1/status"; echo disconnected > "$drm/card1-HDMI-A-1/status"
+export BDEX_DRM_DIR="$drm" BDEX_GPU_LIST=$'0x8086 0x46a6 INTEGRATED Intel(R) Iris(R) Xe Graphics\n0x10de 0x25a2 DISCRETE NVIDIA GeForce RTX 3050 Laptop GPU'
+env_of() { bash "$CLI" --gpu "$1" -- env 2>/dev/null; }
+out="$(env_of screen)"
+grep -qx "MESA_VK_DEVICE_SELECT=8086:46a6" <<<"$out" && grep -qx "__VK_LAYER_NV_optimus=non_NVIDIA_only" <<<"$out" ||
+  fail "--gpu screen: $out"
+grep -qx "DXVK_FILTER_DEVICE_NAME=Intel(R) Iris(R) Xe Graphics" <<<"$out" || fail "--gpu screen: no DXVK filter"
+out="$(env_of discrete)"
+grep -qx "MESA_VK_DEVICE_SELECT=10de:25a2" <<<"$out" && grep -qx "__NV_PRIME_RENDER_OFFLOAD=1" <<<"$out" ||
+  fail "--gpu discrete: $out"
+[ "$(env_of nvidia | grep MESA_VK_DEVICE_SELECT=)" = "MESA_VK_DEVICE_SELECT=10de:25a2" ] || fail "--gpu nvidia"
+grep -q "0x8086:0x46a6  integrated  Intel(R) Iris(R) Xe Graphics  ← screen" <<<"$(bash "$CLI" --gpu list)" || fail "--gpu list"
+if bash "$CLI" --gpu amd -- true 2>/dev/null; then fail "--gpu amd without an AMD GPU"; fi
+bash "$CLI" --help | tail -1 | grep -q -- "-h, --help" || fail "--help cut short"
 echo "linux scripts OK"

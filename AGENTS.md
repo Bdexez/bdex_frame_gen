@@ -103,6 +103,9 @@ tools/ci/archive-check.sh ARCHIVE [image|suite...]     # installe une archive ai
 tools/ci/distro-check.sh [image...]                    # build + tests + démo dans d'autres distributions (job CI `distros`)
 tools/ci/panel-check.sh build/options_ui.json [image]  # panneau sur écran virtuel en conteneur (versions SteamOS : Arch)
 bdex-framegen --always-on [JEU] | --always-off [JEU]   # générer sans le panneau (mode Jeu SteamOS)
+bdex-framegen --gpu screen|discrete|integrated|list -- <jeu>  # portable hybride (pas de copie PRIME)
+tools/ci/flatpak-check.sh                              # extension Flatpak (packaging/flatpak) : build + loader du runtime
+tools/ci/srpm-check.sh | debsrc-check.sh | gentoo-check.sh | void-check.sh  # paquets source (job `source-packages`)
 ```
 
 Windows : **pas de machine Windows dans l'environnement** — le build MSVC, les
@@ -397,6 +400,11 @@ réintroduire) :
 - `hide_present_ext=1` (défaut) : cacher `swapchain_maintenance1` / present_id
   au jeu, sinon VKD3D-Proton se bloque (la sémantique vise la vraie swapchain
   qu'on virtualise).
+- **Un test de script qui isole `HOME` doit aussi isoler `XDG_CONFIG_HOME`,
+  `XDG_CACHE_HOME`, `XDG_DATA_HOME`** : le poste de dev les définit, et les
+  scripts les suivent. Vécu le 2026-10-02 : `uninstall.sh --purge` testé
+  avec `HOME` seul a supprimé le vrai `~/.cache/bdex-framegen`
+  (`tests/linux_scripts.sh` les isole tous désormais).
 - Les tests d'intégration nécessitent un display (skip propre sinon) ; le test
   e2e exerce la génération sur GPU — le faire tourner après toute modif de
   shader.

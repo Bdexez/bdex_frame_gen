@@ -29,6 +29,25 @@ host_so() { sed -n 's/.*"library_path": *"\([^"]*\)".*/\1/p' "$arg/share/vulkan/
 same() {
   if command -v cmp >/dev/null; then cmp -s "$1" "$2"; else [ "$(cksum < "$1")" = "$(cksum < "$2")" ]; fi
 }
+# The layer's Flatpak extension (packaging/flatpak, Flathub), for the
+# Freedesktop runtime branch an app runs on: then the app needs no copy, the
+# extension loads (and `flatpak update` updates) the layer. Prints the branch.
+EXT=org.freedesktop.Platform.VulkanLayer.BdexFramegen
+covered_by_extension() {
+  local app="$1" meta rt branch root
+  for root in "$HOME/.local/share/flatpak" /var/lib/flatpak; do
+    meta="$root/app/$app/current/active/metadata"
+    [ -f "$meta" ] || continue
+    rt="$(sed -n 's/^runtime=//p' "$meta" | head -1)"
+    case "$rt" in org.freedesktop.Platform/*) ;; *) return 1 ;; esac
+    branch="${rt##*/}"
+    for root in "$HOME/.local/share/flatpak" /var/lib/flatpak; do
+      if [ -d "$root/runtime/$EXT/$(uname -m)/$branch" ]; then echo "$branch"; return 0; fi
+    done
+    return 1
+  done
+  return 1
+}
 # --check: one sandbox (name, its lib dir root), compared with the prefix.
 check_one() {
   local name="$1" dest="$2" suffix json so lib
@@ -61,6 +80,17 @@ for app in "${APPS[@]}"; do
     echo "  removed from $app (Flatpak)"
     continue
   fi
+  if branch="$(covered_by_extension "$app")"; then
+    # No copy beside the extension (a stale one would load first): only the
+    # settings, and a mark for the panel (sessions, settings mirror).
+    rm -rf "$dest/lib" "$dest/lib32"
+    rm -f "$manifests"/VK_LAYER_BDEX_framegen.json "$manifests"/VK_LAYER_BDEX_framegen_32.json
+    mkdir -p "$dest"; echo "$branch" > "$dest/extension"
+    if [ -f "$cfg" ]; then mkdir -p "$d/config"; put "$cfg" "$d/config/bdex-framegen.conf"; fi
+    echo "  $app (Flatpak): layer provided by the $EXT extension ($branch)"
+    continue
+  fi
+  rm -f "$dest/extension"
   mkdir -p "$dest/share/bdex-framegen" "$manifests"
   for suffix in "" _32; do
     json="VK_LAYER_BDEX_framegen$suffix.json"
