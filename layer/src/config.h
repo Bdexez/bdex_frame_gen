@@ -11,7 +11,7 @@ namespace bdex {
 // priority): built-in defaults, ~/.config/bdex-framegen.conf, environment
 // variables named BDEX_FG_<KEY>.
 struct Config {
-    enum class Debug { None, Flow, Split, Passthrough };
+    enum class Debug { None, Flow, Split, Passthrough, Confidence };
 
     // Resolution divisor of the finest flow level for a given swapchain
     // size: keeps that level around 0.5 Mpixel (half resolution at 1080p,
@@ -41,6 +41,8 @@ struct Config {
     bool  lowLatency    = false;  // block the game until the previous frames are handed to the display
     int   maxFrameLatency = 1;    // while generating: frames the GPU may still be working on when the game begins its next one (0 = no limit); a GPU-bound game otherwise runs ahead by up to a few frames of input lag
     bool  latencyLimiter = true;  // with maxFrameLatency: a GPU-bound game's present returns just in time for its next frame to reach the GPU as it frees up (fresher input, same frame rate)
+    bool  flowConfidence = false; // per flow texel confidence (round trip of the vectors, luma match): the share of uncertain pixels in the statistics, the panel and --report; on with debug=confidence or confidence_fallback
+    float confidenceFallback = 0.0f; // interpolation: fade toward the plain cross-fade where the flow is not trusted (flow_confidence's map), 0 = off (historical), 1 = fully
     bool  crashLog      = true;   // Linux: a crash in the layer writes ~/.cache/bdex-framegen/crash-<game>-<pid>.txt (signal, offsets in the layer, settings); other faults go untouched to the game's handlers
     bool  skipFast      = true;   // fixed multiplier: no generation while the game already runs at 85 % of the screen's refresh rate or more (back under 75 %): it would add almost no frame to the screen, only GPU work and the interpolation's hold (refresh rate known only)
     float interpHold    = 1.0f;   // interpolation: the real frame's hold as a fraction of the usual one ((m-1)/m of an interval at xm): the generated frames go out closer together before it, showing the content of their own display time (motion stays right, spacing uneven); 1 = evenly spaced, 0.5 = half the added latency; -1 (any negative) = auto: as close as the screen allows (one refresh apart), only where it saves at least 2 ms

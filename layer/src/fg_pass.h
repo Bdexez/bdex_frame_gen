@@ -111,6 +111,11 @@ public:
     // The forward-splat map (r32ui, display size) every synthesis reads when
     // SynthesisInputs::splat is set (a 1x1 image until a pass provides one).
     virtual void setSplatMap(VkImageView view) = 0;
+    // flow_confidence's map (r32f, finest flow size, 0..1) every synthesis
+    // reads for confidence_fallback and debug=confidence (a 1x1 one until a
+    // pass provides it), and its counts: uncertain / all flow texels of a frame.
+    virtual void setConfidenceMap(VkImageView view) = 0;
+    virtual void reportConfidence(uint32_t uncertain, uint32_t total) = 0;
     // A dispatch over the display in 16x16 groups — or, `gated`, through the
     // frame state's "only on repeated frames" entry (dedup's replacement).
     virtual void dispatchSynthesisSize(VkCommandBuffer cmd, bool gated) = 0;

@@ -201,6 +201,8 @@ const std::vector<OptionDef>& registry() {
     F("interp_hold", nullptr, &Config::interpHold, -1.f, 1.f, kLive),
     B("skip_fast", nullptr, &Config::skipFast, kLive),
     B("crash_log", nullptr, &Config::crashLog),
+    B("flow_confidence", nullptr, &Config::flowConfidence),
+    F("confidence_fallback", nullptr, &Config::confidenceFallback, 0.f, 1.f, kLive),
     B("sync_present", "sync", &Config::syncPresent),
     B("hide_present_ext", nullptr, &Config::hidePresentExt),
     B("ignore_anticheat", nullptr, &Config::ignoreAntiCheat),
@@ -465,6 +467,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
         else if (v == "flow")                     debug = Debug::Flow;
         else if (v == "split")                    debug = Debug::Split;
         else if (v == "passthrough" || v == "off") debug = Debug::Passthrough;
+        else if (v == "confidence" || v == "conf") debug = Debug::Confidence;
         else return false;
         return true;
     }

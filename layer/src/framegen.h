@@ -5,6 +5,7 @@
 #include "format.h"
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -118,6 +119,13 @@ public:
     // `latencyMs`: measured present-to-screen latency (HUD level 5), -1 unknown.
     void setHud(int gameFps, int outFps, int low1, int low01, int latencyMs = -1) {
         hudGame_ = gameFps; hudOut_ = outFps; hudLow1_ = low1; hudLow01_ = low01; hudLatency_ = latencyMs;
+    }
+    // flow_confidence: share of uncertain flow texels since the last call (-1: not measured).
+    double takeUncertainShare() {
+        std::lock_guard<std::mutex> lock(confMutex_);
+        const double r = confTotal_ ? double(confUncertain_) / double(confTotal_) : -1.0;
+        confUncertain_ = confTotal_ = 0;
+        return r;
     }
     // HUD level 6: the pacing graph (FgHud::graph), oldest sample first.
     void setHudGraph(const uint8_t* samples, int count, int refHalfMs) {
@@ -285,6 +293,12 @@ private:
     VkDescriptorSet synthesisSet(VkImageView prev, VkImageView cur, uint32_t output) override;
     VkDescriptorSet realOutputSet(VkImageView src) override;
     void setStaticMask(VkImageView view) override;
+    void setConfidenceMap(VkImageView view) override;
+    void reportConfidence(uint32_t uncertain, uint32_t total) override {
+        std::lock_guard<std::mutex> lock(confMutex_);
+        confUncertain_ += uncertain;
+        confTotal_ += total;
+    }
     void setSplatMap(VkImageView view) override;
     void dispatchSynthesisSize(VkCommandBuffer cmd, bool gated) override;
     VkImageView outputView(int output) const override { return output < 0 ? outReal_.view : out_[output].view; }
@@ -301,6 +315,11 @@ private:
                              const Config& cfg) override;
     AllocatedImage maskDummy_;               // 1x1 zero: the static mask without hud_mask
     VkImageView staticMask_ = VK_NULL_HANDLE;
+    AllocatedImage confDummy_;               // 1x1 one: the confidence map without flow_confidence
+    VkImageView confMap_ = VK_NULL_HANDLE;
+    bool hasConfMap_ = false;
+    std::mutex confMutex_;
+    uint64_t confUncertain_ = 0, confTotal_ = 0;
     bool hasStaticMask_ = false;
     std::vector<VkDescriptorSet> synthSets_;  // every synthesis set (binding 8 follows setStaticMask)
     bool chroma_ = false;                         // chroma pyramid built (chroma_weight > 0 at creation)

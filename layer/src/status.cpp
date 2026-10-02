@@ -98,6 +98,10 @@ std::string statusFormat(const std::string& process, long pid, long long unixTim
         fixed1(buf, sizeof buf, e.latencyMs);
         o << "latency_ms=" << buf << "\n";
         o << "gpu_budget_level=" << e.budgetLevel << "\n";
+        if (e.uncertainPct >= 0.0) {
+            fixed1(buf, sizeof buf, e.uncertainPct);
+            o << "flow_uncertain_pct=" << buf << "\n";
+        }
         if (!e.passes.empty()) o << "passes=" << e.passes << "\n";
         if (!e.tune.empty()) o << "online_tune=" << e.tune << "\n";
     }
@@ -180,6 +184,10 @@ std::vector<std::string> statusDescribe(const StatusFile& file) {
             line += buf;
         }
         if (get(v, "reason") == "fast") line += " · génération inutile : le jeu tient déjà la fréquence de l'écran";
+        if (num(v, "flow_uncertain_pct", -1) >= 0) {
+            snprintf(buf, sizeof buf, " · flux incertain sur %.0f %% de l'image", num(v, "flow_uncertain_pct", -1));
+            line += buf;
+        }
         out.push_back(line);
         if (!get(v, "passes").empty()) {
             std::string p = get(v, "passes");
