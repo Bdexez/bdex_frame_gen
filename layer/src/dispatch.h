@@ -72,6 +72,9 @@ namespace bdex {
     X(CreatePipelineLayout)           \
     X(DestroyPipelineLayout)          \
     X(CreateComputePipelines)         \
+    X(CreatePipelineCache)            \
+    X(DestroyPipelineCache)           \
+    X(GetPipelineCacheData)           \
     X(DestroyPipeline)                \
     X(CreateDescriptorPool)           \
     X(DestroyDescriptorPool)          \

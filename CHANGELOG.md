@@ -60,6 +60,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Input latency
 
+- **`pipeline_cache`** (default on): the passes' pipelines through a
+  `VkPipelineCache` loaded from and written back to
+  `~/.cache/bdex-framegen/pipelines-<vendor>-<device>-<UUID>.bin` (checked
+  against the driver's cache UUID, written atomically). NVIDIA without its
+  own shader cache: frame generation ready in 0.15 s instead of 0.88.
 - **`thread_priority`** (default on): the presentation thread gets the
   real-time round-robin class where permitted, else nice −10 from rtkit
   (D-Bus `MakeThreadHighPriority`, libdbus loaded at run time: no new

@@ -56,6 +56,7 @@ FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, Vk
         createResources();
         createDescriptors();
         for (auto& p : passes_) p->create(*this);
+        dev_.savePipelineCache();  // (what this build compiled, for the next start)
     } catch (...) {
         destroyAll();
         throw;
@@ -157,10 +158,11 @@ FrameGen::Pass FrameGen::makePass(const uint32_t* spv, size_t spvSize, const std
     const VkSpecializationMapEntry entry{0, 0, sizeof(off)};
     const VkSpecializationInfo spec{1, &entry, sizeof(off), &off};
     if (leanOnly) ci.stage.pSpecializationInfo = &spec;
-    VkResult r = dev_.vt.CreateComputePipelines(dev_.device, VK_NULL_HANDLE, 1, &ci, nullptr, &p.pipeline);
+    const VkPipelineCache cache = dev_.pipelineCache();  // pipeline_cache
+    VkResult r = dev_.vt.CreateComputePipelines(dev_.device, cache, 1, &ci, nullptr, &p.pipeline);
     if (r >= 0 && lean && !leanOnly) {
         ci.stage.pSpecializationInfo = &spec;
-        r = dev_.vt.CreateComputePipelines(dev_.device, VK_NULL_HANDLE, 1, &ci, nullptr, &p.lean);
+        r = dev_.vt.CreateComputePipelines(dev_.device, cache, 1, &ci, nullptr, &p.lean);
     }
     dev_.vt.DestroyShaderModule(dev_.device, mod, nullptr);
     if (r < 0) throw VkError(r, "vkCreateComputePipelines");

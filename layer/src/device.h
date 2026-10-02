@@ -143,6 +143,19 @@ struct DeviceData {
                                VkImageCreateFlags flags = 0, const void* pNext = nullptr,
                                const std::vector<uint32_t>* sharingFamilies = nullptr);
     void destroyImage(AllocatedImage& img);
+
+    // pipeline_cache: the compiled shaders of the layer's passes kept on disk
+    // (~/.cache/bdex-framegen/pipelines-<vendor>-<device>-<cache UUID>.bin:
+    // another driver or driver version gets a file of its own), loaded on
+    // first use, written back when it grew. VK_NULL_HANDLE if off or
+    // unavailable.
+    VkPipelineCache pipelineCache();
+    void savePipelineCache();
+    void destroyPipelineCache();
+    std::mutex pipelineCacheMutex;
+    VkPipelineCache pipelineCache_ = VK_NULL_HANDLE;
+    bool pipelineCacheTried_ = false;
+    size_t pipelineCacheSaved_ = 0;
     AllocatedBuffer createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible = false);
     void destroyBuffer(AllocatedBuffer& buf);
     bool formatSupports(VkFormat format, VkFormatFeatureFlags features) const;

@@ -171,6 +171,11 @@ les images répétées (`dedup`) et commande des passes en dispatch indirect,
     rafraîchissement d'écart (exactement un : 1,2 image/s perdue sur 80), et
     seulement si le gain dépasse 2 ms ; mesuré ×2 à 144 Hz : 30 i/s 56,7 →
     48,3 ms, 40 i/s 43,8 → 40,7, aucune image perdue, 60 i/s inchangé ;
+  - **`pipeline_cache`** (03/10, défaut 1) : `VkPipelineCache` de la couche sur
+    disque (`DeviceData::pipelineCache`, en-tête vérifié contre
+    `pipelineCacheUUID`, écrit après la construction de `FrameGen` et à la
+    destruction du device) ; démarrage 0,88 → 0,15 s sans le cache du pilote
+    NVIDIA ;
   - **`thread_priority`** (03/10, défaut 1, `thread_priority.cpp`) : SCHED_RR
     si permis, sinon rtkit `MakeThreadHighPriority` nice −10 (libdbus par
     `dlopen`, connexion privée fermée aussitôt), sinon rien. Vérifié : rtkit
