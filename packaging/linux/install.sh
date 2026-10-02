@@ -13,7 +13,12 @@ fi
 mkdir -p "$PREFIX"
 # New inodes (remove, then copy): a running game keeps the library it mapped
 # — copying over it in place would truncate that mapping (SIGBUS).
-(cd "$HERE/files" && find . -type f) | while IFS= read -r f; do rm -f "$PREFIX/$f"; done
+# (bash's globbing, not find: minimal systems may lack findutils)
+shopt -s globstar nullglob dotglob
+for f in "$HERE"/files/**; do
+  [ -f "$f" ] && rm -f "$PREFIX/${f#"$HERE"/files/}"
+done
+shopt -u globstar nullglob dotglob
 cp -rv "$HERE/files/." "$PREFIX/" | sed 's/^/  /'
 # The manifests point the Vulkan loader at the library: absolute paths into
 # this prefix.
