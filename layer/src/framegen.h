@@ -294,6 +294,10 @@ private:
     VkDescriptorSet realOutputSet(VkImageView src) override;
     void setStaticMask(VkImageView view) override;
     void setConfidenceMap(VkImageView view) override;
+    VkDescriptorSet synthesisSetWithFlow(VkImageView prev, VkImageView cur, VkImageView fwd, VkImageView bwd,
+                                         uint32_t output) override {
+        return synthesisSetFor(interp_.setLayout, prev, cur, fwd, bwd, (sharpen_ ? sharp_[output] : out_[output]).view);
+    }
     int pyramidLevels() const override { return levels_; }
     VkExtent2D pyramidExtent(int level) const override { return levels_v_[size_t(level)].size; }
     VkImageView pyramidView(int level, uint32_t parity) const override { return levels_v_[size_t(level)].pyr[parity & 1].view; }

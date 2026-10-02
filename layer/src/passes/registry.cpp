@@ -16,6 +16,7 @@ std::unique_ptr<FgPass> makeFpsHudPass();
 std::unique_ptr<FgPass> makeFlowConfidencePass();
 std::unique_ptr<FgPass> makeLearnedCorrectionPass();
 std::unique_ptr<FgPass> makeLumaMatchPass();
+std::unique_ptr<FgPass> makeFlowUpsamplePass();
 
 std::vector<std::unique_ptr<FgPass>> createOptionalPasses(const Config& cfg, DeviceData& dev, uint32_t outputs,
                                                           bool upscaling, VkExtent2D display) {
@@ -43,6 +44,9 @@ std::vector<std::unique_ptr<FgPass>> createOptionalPasses(const Config& cfg, Dev
         passes.push_back(makeExtrapolateSplatPass());
     // Before upscale_temporal: its synthesis sets are made with the mask bound.
     if (cfg.hudMask > 0) passes.push_back(makeHudMaskPass());
+    // Its synthesis sets replace the engine's (upscale_temporal's, made
+    // later, would replace them in turn: the two do not combine).
+    if (cfg.flowUpsample > 0.f) passes.push_back(makeFlowUpsamplePass());
     // Likewise with the confidence map (after the passes that rewrite the
     // finest flow: flow_temporal, subpixel_lk).
     if (cfg.flowConfidence || cfg.confidenceFallback > 0.f || cfg.debug == Config::Debug::Confidence)

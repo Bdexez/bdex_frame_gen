@@ -110,6 +110,10 @@ public:
     // output stage (packing, HUD) from `src`.
     virtual VkDescriptorSet synthesisSet(VkImageView prev, VkImageView cur, uint32_t output) = 0;
     virtual VkDescriptorSet realOutputSet(VkImageView src) = 0;
+    // ... the synthesis of output `output` with flows of a pass's own (same
+    // coverage as the engine's: any resolution).
+    virtual VkDescriptorSet synthesisSetWithFlow(VkImageView prev, VkImageView cur, VkImageView fwd, VkImageView bwd,
+                                                 uint32_t output) = 0;
     // A per-render-pixel count of frames a pixel stayed unchanged (r32f):
     // every synthesis keeps pixels at or above hud_mask's threshold as they
     // are (a 1x1 zero image until a pass provides one).
