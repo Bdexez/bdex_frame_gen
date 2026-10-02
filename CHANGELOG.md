@@ -8,6 +8,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-25)
 
+- `determinism` test: every option (and all of them together, per mode)
+  runs twice through bdex_offline on the `occlude` scene and must give
+  byte-identical frames — a shader reading what it did not write or a race
+  between invocations shows at once (as rot_weight's out-of-tile reads
+  did). The option list comes from the registry: a new option fails the
+  test until it is exercised or declared frame-neutral. 66 runs, ~30 s.
 - **Windows: a notification-area icon while capturing.** Its tooltip shows
   the live status (captured game, fps, latency — the same French summary as
   the launcher and the GTK panel), its menu toggles frame generation, shows
