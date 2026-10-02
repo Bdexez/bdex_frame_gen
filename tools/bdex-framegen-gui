@@ -320,10 +320,13 @@ HUD_MODES = [("Désactivé", 0),
              ("FPS", 1),
              ("FPS + génération", 2),
              ("+ 1% low", 3),
-             ("+ 1% et 0.1% low", 4)]
+             ("+ 1% et 0.1% low", 4),
+             ("+ latence", 5),
+             ("+ graphe de cadencement", 6)]
 HUD_NAMED = {"off": 0, "false": 0, "no": 0, "none": 0, "fps": 1,
              "framegen": 2, "fg": 2, "on": 2, "true": 2, "yes": 2,
-             "low": 3, "1low": 3, "lows": 3, "full": 4, "detailed": 4, "all": 4}
+             "low": 3, "1low": 3, "lows": 3, "full": 4, "detailed": 4, "all": 4,
+             "latency": 5, "ms": 5, "pacing": 6, "graph": 6, "frametime": 6}
 
 # Every other layer option, in collapsed sections under "Réglages avancés".
 # Each option maps a config key to a control:

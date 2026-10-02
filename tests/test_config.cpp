@@ -51,7 +51,8 @@ TEST(config_apply_values) {
     CHECK(c.apply("hud", "fps") && c.overlayMode == 1);
     CHECK(c.apply("hud", "full") && c.overlayMode == 4);
     CHECK(c.apply("hud", "on") && c.overlayMode == 2);
-    CHECK(c.apply("hud", "9") && c.overlayMode == 5);    // clamped to the top level
+    CHECK(c.apply("hud", "9") && c.overlayMode == 6);    // clamped to the top level
+    CHECK(c.apply("overlay", "pacing") && c.overlayMode == 6);
     CHECK(c.apply("hud", "latency") && c.overlayMode == 5);
     CHECK(!c.apply("hud", "loud"));                      // unknown word rejected
     CHECK(c.apply("census_weight", "0.5") && c.censusWeight == 0.5f);

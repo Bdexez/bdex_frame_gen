@@ -195,6 +195,9 @@ private:
     static double msOf(clock::time_point t) {
         return std::chrono::duration<double, std::milli>(t.time_since_epoch()).count();
     }
+    uint8_t hudGraphRing_[FgHud::kHudGraph] = {};  // HUD level 6 samples (FgHud::graph)
+    int hudGraphHead_ = 0;
+    uint64_t hudReplacedSeen_ = 0;
     bool fastSkip_ = false;             // skip_fast: generation idle, the game near the refresh rate
     double fastSinceMs_ = 0.0;          // when the game crossed the threshold the other way
     std::atomic<bool> feedback_{false};

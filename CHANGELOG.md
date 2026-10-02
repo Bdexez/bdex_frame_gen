@@ -8,6 +8,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Diagnostics
 
+- **Pacing graph** (`overlay = 6` / `pacing`, panel « + graphe de
+  cadencement »): under the fps text, one column per present for the last
+  64 — the game's frame time (green near the interval the pacing aims at,
+  amber past 1.25x, red past 2x), grey without generated frames (catch-up,
+  skip_fast, pause), a red mark when a frame was replaced before display.
+  Push constants only (104 of the 128 bytes guaranteed), drawn by
+  `hud_overlay.comp`; the panel also gained level 5 (latency).
 - **Bug reports ready to send**: `bdex-framegen --report` ends with the link
   to a GitHub issue form (`.github/ISSUE_TEMPLATE/bug_report.yml`) filled
   from the report — version, distribution, GPU and driver, session,

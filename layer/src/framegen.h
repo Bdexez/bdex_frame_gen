@@ -119,6 +119,13 @@ public:
     void setHud(int gameFps, int outFps, int low1, int low01, int latencyMs = -1) {
         hudGame_ = gameFps; hudOut_ = outFps; hudLow1_ = low1; hudLow01_ = low01; hudLatency_ = latencyMs;
     }
+    // HUD level 6: the pacing graph (FgHud::graph), oldest sample first.
+    void setHudGraph(const uint8_t* samples, int count, int refHalfMs) {
+        for (auto& w : hudGraph_) w = 0;
+        for (int i = 0; i < count && i < FgHud::kHudGraph; ++i)
+            hudGraph_[i / 4] |= uint32_t(samples[i]) << (8 * (i % 4));
+        hudGraphRef_ = refHalfMs;
+    }
 
     // Debug frame dumping: records a copy of the image that was just written
     // to `dst` (the generated output or the current history) into a staging
@@ -204,6 +211,8 @@ private:
     int  hudMode_ = 0;          // on-screen fps HUD detail level (0 = off)
     bool packReal_ = false;     // real frame goes through the internal packed image (upscaling or HUD)
     int hudGame_ = 0, hudOut_ = 0, hudLow1_ = 0, hudLow01_ = 0, hudLatency_ = -1;
+    uint32_t hudGraph_[FgHud::kHudGraph / 4] = {};
+    int hudGraphRef_ = 0;
     OutputEncoding enc_;
     int levels_ = 0;
     float flowScale_ = 1.f;
@@ -280,7 +289,11 @@ private:
     void dispatchSynthesisSize(VkCommandBuffer cmd, bool gated) override;
     VkImageView outputView(int output) const override { return output < 0 ? outReal_.view : out_[output].view; }
     OutputEncoding outputEncoding() const override { return enc_; }
-    FgHud hud() const override { return {hudMode_, hudGame_, hudOut_, hudLow1_, hudLow01_, hudLatency_}; }
+    FgHud hud() const override {
+        FgHud h{hudMode_, hudGame_, hudOut_, hudLow1_, hudLow01_, hudLatency_, {}, hudGraphRef_};
+        for (int i = 0; i < FgHud::kHudGraph / 4; ++i) h.graph[i] = hudGraph_[i];
+        return h;
+    }
     FgPipeline makeLinearSynthesisPipeline() override;
     VkDescriptorSet synthesisSetFor(VkDescriptorSetLayout layout, VkImageView prev, VkImageView cur, VkImageView fwd,
                                     VkImageView bwd, VkImageView out) override;
