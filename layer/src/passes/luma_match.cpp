@@ -54,6 +54,9 @@ public:
         vt.CmdDispatch(cmd, 1, 1, 1);
         ctx.barrier(cmd);
         for (int l = 0; l < levels_; ++l) {
+            // (every dispatch binds the coarsest level as read; the last one
+            // writes it: after the others' reads)
+            if (l == levels_ - 1 && l > 0) ctx.barrier(cmd);
             const VkExtent2D e = ctx.pyramidExtent(l);
             pc = {{(int32_t)e.width, (int32_t)e.height}, 1, cfg.lumaMatch};
             vt.CmdPushConstants(cmd, pipe_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
