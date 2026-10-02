@@ -8,6 +8,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (2026-09-25)
 
+- **`preset = enhanced`**: balanced flow plus the opt-ins measured positive
+  *together* — `zero_bias_contrast=0.02`, `pixel_vectors`, `flow_temporal`,
+  `hud_mask=24`, `scene_cut_local`, `dedup`, `extrapolate_splat`. Offline,
+  x2 vs the defaults: interpolation +0.08 to +10.8 dB (demo +0.71, fast
+  demo +0.28, occlusions +2.8, HUD +0.75), extrapolation −0.04 to +7.1 dB
+  (demo +2.0); about twice the synthesis time. The bundle measurement also
+  showed `zero_bias_contrast=0.1` losing 1.2 dB on the demo replay with
+  `pixel_vectors` (1.7 dB alone, where the online eval had measured +0.02),
+  hence 0.02. In the GTK panel and the Windows launcher preset lists.
 - `determinism` test: every option (and all of them together, per mode)
   runs twice through bdex_offline on the `occlude` scene and must give
   byte-identical frames — a shader reading what it did not write or a race

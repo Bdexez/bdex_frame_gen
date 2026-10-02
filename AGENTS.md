@@ -188,7 +188,9 @@ Priorité : défauts < `~/.config/bdex-framegen.conf` (Windows :
  `%APPDATA%\bdex-framegen\bdex-framegen.conf`) < env `BDEX_FG_<KEY>`.
 Sections `[nom]` par process (le nom du jeu, sans `.exe`), `[*]` global.
 La couche est toujours chargée et reste pass-through tant que `enabled=0`
-(ou section absente) ; `BDEX_FG=1` l'active. Presets : `balanced` (défaut),
+(ou section absente) ; `BDEX_FG=1` l'active. Presets : `enhanced` (balanced + opt-ins mesurés positifs ensemble, dont
+`zero_bias_contrast=0.02` — à 0,1 il perd 1,2 dB sur le replay de la démo
+avec `pixel_vectors`), `balanced` (défaut),
 `quality` (flow_scale 1, levels 5, iterations 2), `performance` (flow_scale 4,
 refine_all 0, iterations 0), `latency` (extrapolation + x2), `auto`
 (iGPU→performance, dGPU avec ≥2 Gio de VRAM→balanced). Les knobs flow
