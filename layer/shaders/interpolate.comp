@@ -49,6 +49,8 @@ layout(binding = 6, r32ui) uniform readonly uimage2D splatMap;  // forward-splat
 layout(binding = 7) uniform sampler2D prevBwdTex;  // previous pair's backward flow (extrapolate_accel)
 layout(binding = 8) uniform sampler2D staticMask;  // hud_mask: frames each render pixel stayed unchanged (1x1 zero when off)
 layout(binding = 9) uniform sampler2D confMap;     // flow_confidence: trust in the finest flow, 0..1 (1x1 one when off)
+layout(std430, binding = 10) readonly buffer AltFwd { vec2 v[]; } altFwd;  // alt_vectors: the matcher's second hypothesis per block, forward
+layout(std430, binding = 11) readonly buffer AltBwd { vec2 v[]; } altBwd;  // ... backward
 
 #define ENC_RGBA8      0u
 #define ENC_BGRA8      1u
@@ -86,6 +88,8 @@ layout(push_constant) uniform PC {
     float staticFrames;      // hud_mask: pixels unchanged for at least this many frames stay as in cur (0 = off)
     int revealFill;          // extrapolation: a revealed pixel takes the slower-moving (background) of the last two sources
     float confFallback;      // interpolation: fade to the plain cross-fade where confMap is low (0 = off, historical)
+    int altVectors;          // interpolation: also try the matcher's second hypotheses (altFwd / altBwd)
+    ivec2 altBlocks;         // their grid (the finest level's blocks)
 } pc;
 
 // flow_confidence's trust at display pixel p (the map covers the flow's area).
@@ -407,6 +411,29 @@ void main() {
     // per-candidate weight below discards that trajectory anyway. The blend
     // amount is gated by the trajectory's own consistency so an occluded sample
     // never contaminates the candidate it belongs to.
+    if (kOptIns && pc.altVectors != 0) {
+        // alt_vectors: the block's second hypothesis, a motion 2 px or more
+        // from the one the matcher kept — kept per pixel where its two
+        // endpoints agree better (fast motion over repeating or flat texture,
+        // where the lowest cost is not the true motion).
+        ivec2 ai = clamp(ivec2(pf * pc.flowInvSize * vec2(pc.altBlocks)), ivec2(0), pc.altBlocks - 1);
+        vec2 Fa = altFwd.v[ai.y * pc.altBlocks.x + ai.x] * pc.flowScale;
+        vec2 pa = q - t * Fa;
+        vec4 a = sampleC(prevTex, pa / fsize), b = sampleC(curTex, (pa + Fa) / fsize);
+        // (only where the trajectory kept is poor, and clearly better: where
+        // every trajectory nearly agrees — flat areas, smooth texture — the
+        // second hypothesis won on noise and tore thin text: scroll -3.0 dB
+        // without the margin, subpixel -2.7 without the poor-trajectory test)
+        float e = colourError(a, b);
+        if (ef > 0.04 && e < 0.75 * ef - 0.004) { ef = e; F = Fa; pf = pa; cf = a; cf2 = b; }
+        ivec2 bi = clamp(ivec2(pb * pc.flowInvSize * vec2(pc.altBlocks)), ivec2(0), pc.altBlocks - 1);
+        vec2 Ba = altBwd.v[bi.y * pc.altBlocks.x + bi.x] * pc.flowScale;
+        vec2 pba = q - (1.0 - t) * Ba;
+        a = sampleC(curTex, pba / fsize);
+        b = sampleC(prevTex, (pba + Ba) / fsize);
+        e = colourError(a, b);
+        if (eb > 0.04 && e < 0.75 * eb - 0.004) { eb = e; B = Ba; pb = pba; cb = a; cb2 = b; }
+    }
     float mf = (1.0 - smoothstep(0.04, 0.12, ef));
     float mb = (1.0 - smoothstep(0.04, 0.12, eb));
     vec4 cfc = mix(cf, cf2, t * mf);

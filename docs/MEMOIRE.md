@@ -815,6 +815,14 @@ fermée (retenir le jeu réduit son attente) ; les images écrasées d'un
 espacement trop serré n'arrivent que quand la couche ne connaît pas la
 grille (seulement la fréquence), la règle d'atterrissage les évite sinon.
 
+**`alt_vectors`** (03/10, opt-in, écarté) : second candidat du matcher (≥ 2 px
+du gagnant) essayé par pixel dans la synthèse. Sans marge : scroll −3,0,
+subpixel −2,7 (il gagne sur du bruit) ; avec marge (×0,75 − 0,004) et seulement
+si la trajectoire gardée est mauvaise (erreur > 0,04) : seul hud +0,57, pan
+−0,62, scroll −1,74 ; par-dessus pixel_vectors rien à gagner (pan −0,57).
+Tampons de stockage (pas d'image : 4 images de stockage garanties, test
+`min_limits`). pixel_vectors trouve déjà les mêmes cas.
+
 **`flow_upsample`** (03/10, opt-in, écarté des défauts) : sur-échantillonnage
 bilatéral joint du flux aux frontières de mouvement. Mesuré contradictoire :
 sans pixel_vectors rotate +0,51 / scroll −0,88 / démo −0,06, avec
