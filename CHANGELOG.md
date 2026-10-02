@@ -6,6 +6,17 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Diagnostics
+
+- **Crash journal** (`crash_log`, Linux, on where the layer works): a
+  SIGSEGV / SIGBUS / SIGILL / SIGFPE whose instruction (or one of its first
+  four callers) is in the layer writes `~/.cache/bdex-framegen/crash-<game>-
+  <pid>.txt` — signal, offsets in the layer for addr2line, version and
+  settings — with async-signal-safe calls only, then goes on to the handler
+  that was there (Wine's, Proton's) or the default action; every other
+  fault is untouched. `--report` shows the latest three. Unit tests: the
+  journal written then the default death, a previous handler still called.
+
 ### Input latency
 
 - **`skip_fast`** (default on, fixed multiplier): no generation while the

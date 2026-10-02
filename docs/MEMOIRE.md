@@ -338,7 +338,12 @@ programme Vulkan et reste **transparente** tant qu'elle n'est pas activée
 - Couche 32 bits pour les jeux 32 bits (DXVK 32 bits).
 - L'archive embarque son runtime C++ : celui de Steam peut être plus ancien.
 
-**Diagnostic** : `BDEX_FG_LOG_FILE` et `PROTON_LOG=1`. Les couches de
+**Diagnostic** : `BDEX_FG_LOG_FILE` et `PROTON_LOG=1`. **Journal de plantage** (02/10, `crash_log`, `crash.cpp`) : une faute
+dont l'instruction (ou l'un des 4 premiers appelants) est dans la couche
+écrit `~/.cache/bdex-framegen/crash-<jeu>-<pid>.txt` (décalages pour
+addr2line, réglages), puis chaîne vers le gestionnaire précédent : Wine se
+sert de SIGSEGV, on ne garde jamais une faute. Installé seulement si la
+couche est active et hors anti-triche ; `--report` les reprend. Les couches de
 validation ne se chargent pas dans pressure-vessel.
 
 **Réglage par jeu** : option de lancement Steam `BDEX_FG=1 %command%`, ou
