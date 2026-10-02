@@ -20,16 +20,16 @@
   "ssim": 0.8483
  },
  "fade/extrapolate/default": {
-  "psnr": 29.03,
-  "ssim": 0.808
+  "psnr": 29.2,
+  "ssim": 0.8165
  },
  "fade/interpolate/candidate": {
   "psnr": 34.19,
   "ssim": 0.8899
  },
  "fade/interpolate/default": {
-  "psnr": 33.26,
-  "ssim": 0.8576
+  "psnr": 33.42,
+  "ssim": 0.863
  },
  "hud/extrapolate/candidate": {
   "psnr": 23.04,
@@ -52,7 +52,7 @@
   "ssim": 0.9707
  },
  "occlude/extrapolate/default": {
-  "psnr": 29.27,
+  "psnr": 29.29,
   "ssim": 0.9644
  },
  "occlude/interpolate/candidate": {
@@ -60,24 +60,24 @@
   "ssim": 0.9917
  },
  "occlude/interpolate/default": {
-  "psnr": 35.52,
-  "ssim": 0.9853
+  "psnr": 35.68,
+  "ssim": 0.9856
  },
  "pan/extrapolate/candidate": {
   "psnr": 41.8,
   "ssim": 0.9913
  },
  "pan/extrapolate/default": {
-  "psnr": 29.61,
-  "ssim": 0.8463
+  "psnr": 35.99,
+  "ssim": 0.9655
  },
  "pan/interpolate/candidate": {
   "psnr": 46.41,
   "ssim": 0.9966
  },
  "pan/interpolate/default": {
-  "psnr": 33.77,
-  "ssim": 0.9098
+  "psnr": 43.38,
+  "ssim": 0.9906
  },
  "popup/extrapolate/candidate": {
   "psnr": 15.15,
@@ -85,46 +85,46 @@
  },
  "popup/extrapolate/default": {
   "psnr": 15.16,
-  "ssim": 0.7633
+  "ssim": 0.7658
  },
  "popup/interpolate/candidate": {
   "psnr": 22.82,
   "ssim": 0.8677
  },
  "popup/interpolate/default": {
-  "psnr": 22.74,
-  "ssim": 0.8648
+  "psnr": 22.75,
+  "ssim": 0.8669
  },
  "subpixel/extrapolate/candidate": {
   "psnr": 49.46,
   "ssim": 0.9966
  },
  "subpixel/extrapolate/default": {
-  "psnr": 45.93,
-  "ssim": 0.9925
+  "psnr": 46.34,
+  "ssim": 0.9932
  },
  "subpixel/interpolate/candidate": {
   "psnr": 50.66,
   "ssim": 0.9973
  },
  "subpixel/interpolate/default": {
-  "psnr": 51.86,
-  "ssim": 0.9981
+  "psnr": 52.05,
+  "ssim": 0.9983
  },
  "swing/extrapolate/candidate": {
   "psnr": 28.57,
   "ssim": 0.7517
  },
  "swing/extrapolate/default": {
-  "psnr": 26.99,
-  "ssim": 0.705
+  "psnr": 27.85,
+  "ssim": 0.7342
  },
  "swing/interpolate/candidate": {
   "psnr": 36.89,
   "ssim": 0.9485
  },
  "swing/interpolate/default": {
-  "psnr": 31.95,
-  "ssim": 0.8784
+  "psnr": 34.25,
+  "ssim": 0.9271
  }
 }

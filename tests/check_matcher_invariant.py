@@ -40,6 +40,8 @@ def render(build, dump):
         "BDEX_FG_PRESET": "balanced",
         "BDEX_FG_MULTIPLIER": "2",
         "BDEX_FG_GRAD_WEIGHT": "0",
+        # The default since 0.4, absent from the baseline: off for the historical path.
+        "BDEX_FG_ZERO_BIAS_CONTRAST": "0",
         "BDEX_FG_HUD": "0",
         "BDEX_FG_LOG": "0",
         "BDEX_FG_STATS": "0",

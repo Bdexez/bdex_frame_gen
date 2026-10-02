@@ -88,6 +88,7 @@ bdex-framegen --tuned-profile [JEU] [--apply]           # décisions d'online_tu
 bdex-framegen --record DIR [N] -- <jeu>                 # enregistre N images réelles (corpus)
 tools/corpus_pack.py DIR out.tar.gz --name X            # séquence -> archive (release GitHub "corpus", notée en CI)
 tools/eval_sequence.py <dir_ppm> --variant KEY=VAL     # éval hors ligne (bdex_offline, sans fenêtre) sur séquence enregistrée
+tools/package-linux.sh [outdir] [version]              # archive Linux précompilée (CI : job `package`, Debian 12)
 ```
 
 Windows : **pas de machine Windows dans l'environnement** — le build MSVC, les
@@ -169,6 +170,12 @@ la prédiction) et `zero_bias` (déplacement absolu). Un candidat « zéro motio
 supplémentaire garantit la stabilité des HUD statiques. Le coût exporté
 (`costOut`) est le SAD luma du gagnant — les seuils de cut de scène sont
 calibrés dessus, ne pas y exporter le coût gonflé par le gradient.
+
+**Depuis 0.4.0, `zero_bias_contrast=0.02` est le défaut** (A/B hors ligne :
+jamais < −0,01 dB, gratuit en GPU) ; le « chemin historique » de l'invariant
+est donc `zero_bias_contrast=0` (posé par `check_matcher_invariant.py`).
+`flow_temporal` a été écarté des défauts : +0,28 ms de flow en 1440p
+(`quality`) pour +0,1 dB.
 
 **Invariant n°1 — bit-for-bit à poids nuls.** `grad_weight = 0` et
 `census_weight = 0` (défauts) doivent reproduire **exactement** le

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(bdex_framegen VERSION 0.3.0 LANGUAGES C CXX)
+project(bdex_framegen VERSION 0.4.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -29,6 +29,7 @@ option(BDEX_BUILD_TESTS "Build unit tests" ON)
 option(BDEX_BUILD_OFFLINE "Build bdex_offline (headless engine on PPM sequences, for quality evaluation)" ON)
 option(BDEX_BUILD_CAPTURE "Build the Windows capture PoC (bdex_capture.exe, MSVC only)" ON)
 option(BDEX_WERROR      "Treat compiler warnings as errors in the layer, tests and capture app (the CI turns it on)" OFF)
+option(BDEX_STATIC_RUNTIME "Link libstdc++/libgcc statically into the Linux layer (release archives: games and the Steam runtime may bring an older libstdc++)" OFF)
 option(BDEX_32BIT       "Build the 32-bit layer (for 32-bit games); needs a multilib toolchain (ignored on Windows, where the arch comes from the generator platform)" OFF)
 
 # The 32-bit build gets its own library dir / manifest suffix. On Linux it is

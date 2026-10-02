@@ -206,3 +206,44 @@ jobs:
             g++-mingw-w64-x86-64-posix g++-mingw-w64-i686-posix
       - name: MinGW syntax check (x64, x86)
         run: tools/ci/mingw/check.sh
+
+  # The prebuilt Linux archive (tools/package-linux.sh: 64- and 32-bit layer
+  # with a static C++ runtime, CLI, control panel, install.sh), built on
+  # Debian 12 so it runs on glibc 2.36 and newer. Every push keeps it as an
+  # artifact; a v* tag attaches it to the GitHub release (windows.yml attaches
+  # the Windows zips to the same release).
+  package:
+    needs: build
+    runs-on: ubuntu-24.04
+    container: debian:bookworm
+    permissions:
+      contents: write
+    steps:
+      - name: Dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            cmake make g++ g++-multilib glslc libvulkan-dev python3 binutils git ca-certificates
+          # Debian 12's Vulkan headers (1.3.239) predate the const pNext of
+          # the present structs the layer chains: newer Khronos headers,
+          # found first in /usr/local.
+          git clone --depth 1 --branch v1.4.309 https://github.com/KhronosGroup/Vulkan-Headers /tmp/vh
+          cmake -S /tmp/vh -B /tmp/vh/b && cmake --install /tmp/vh/b
+      - uses: actions/checkout@v4
+      - name: Package
+        run: |
+          version=""
+          if [ "$GITHUB_REF_TYPE" = tag ]; then version="${GITHUB_REF_NAME#v}"; fi
+          tools/package-linux.sh dist "$version"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bdex-framegen-linux-x86_64
+          path: dist/*.tar.gz
+          if-no-files-found: error
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
