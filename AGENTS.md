@@ -223,7 +223,9 @@ Reflex/Anti-Lag actif (`DeviceData::appPacesLatency`, hooks
 `vkSetLatencySleepModeNV`/`vkLatencySleepNV`/`vkAntiLagUpdateAMD`).
 `synth_priority` : priorité globale haute de la file de synthèse quand sa
 famille est à elle (`async_compute`), repli sur `VK_ERROR_NOT_PERMITTED`.
-**`vkCreateDevice` réessayé : remettre `chain->u.pLayerInfo` au lien
+Les décisions du cadencement sont des fonctions pures de `pacing.h`
+(testées par `tests/test_pacing.cpp`, simulateur) : y mettre toute nouvelle
+règle de cadencement, avec son scénario. **`vkCreateDevice` réessayé : remettre `chain->u.pLayerInfo` au lien
 suivant avant chaque essai** (les couches du dessous l'avancent ; sinon
 plantage sous la couche WSI de gamescope).
 

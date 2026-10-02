@@ -125,6 +125,9 @@ struct DeviceData {
     // default (60 Hz) until the next change; the surface's last one stands.
     std::mutex gamescopeMutex;
     std::unordered_map<uint64_t, uint64_t> gamescopeCycles;
+    // Steam's frame limit was on at some point: gamescope's cycles may since
+    // be a lifted limit's (skip_fast stops trusting them).
+    std::atomic<bool> gamescopeLimitSeen{false};
 
     std::mutex queueMapMutex;
     std::unordered_map<VkQueue, std::unique_ptr<std::mutex>> queueMutexes;
