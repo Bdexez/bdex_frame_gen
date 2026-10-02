@@ -24,4 +24,8 @@ le panneau) affiche *généré* ≈ 2 × *jeu* en ×2, et le rapport dit
 | 10 | **Gentoo / Void** | overlay `packaging/gentoo`, template `packaging/void` | un jeu natif | dépendances manquantes à l'exécution |
 
 Renvoyer : le rapport, la distribution et sa version, le GPU, le compositeur,
-et pour les cas 1, 3, 4 la manière dont Steam est installé.
+et pour les cas 1, 3, 4 la manière dont Steam est installé. Le plus simple :
+`bdex-framegen --report` (ou « Rapport… » dans le panneau) se termine par un
+lien vers le formulaire d'issue déjà rempli avec le résumé ; il reste à
+décrire le problème et à joindre le fichier (le dépôt doit être public pour
+les testeurs extérieurs).

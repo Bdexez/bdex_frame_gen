@@ -42,6 +42,8 @@
 #                          installing a distribution package
 #       --report [FILE]    write a diagnostic report for bug reports (default:
 #                          ./bdex-framegen-report.txt)
+#       --issue-url [FILE] the link to a pre-filled bug report (GitHub issue form)
+#                          from a --report file (default ./bdex-framegen-report.txt)
 #       --record DIR [N]   record the game's real frames into DIR (N, default
 #                          240; generation off) for the evaluation corpus:
 #                          tools/corpus_pack.py, then eval_sequence.py
@@ -364,6 +366,46 @@ report() {
     fi
   } > "$out"
   echo "report written to $out — attach it to the issue (check it for anything private first)"
+  echo
+  echo "Signaler le problème (formulaire pré-rempli avec le résumé ; joindre le rapport) :"
+  echo "  $(issue_url "$out")"
+}
+
+# Percent-encoding for a URL query value (bytes: UTF-8 kept right).
+urlencode() {
+  if command -v python3 >/dev/null; then
+    python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"
+    return
+  fi
+  local LC_ALL=C s="$1" i c out=""
+  for ((i = 0; i < ${#s}; i++)); do
+    c="${s:i:1}"
+    case "$c" in [a-zA-Z0-9.~_-]) out+="$c" ;; *) out+="$(printf '%%%02X' "'$c")" ;; esac
+  done
+  echo "$out"
+}
+
+# The issue form (.github/ISSUE_TEMPLATE/bug_report.yml) filled from a
+# report: version, distribution, GPU, session, installation, the quick read —
+# never the settings or the log (they stay in the attached report, to read
+# first). Short enough for a URL (the quick read cut at 1500 characters).
+issue_url() {
+  local r="$1" version distro gpu session install quick title
+  local -; set +eo pipefail  # (a field missing from the report stays empty)
+  version="$(grep -o 'VK_LAYER_BDEX_framegen v[0-9][0-9.]*' "$r" | head -1 | sed 's/.* v//')"
+  distro="$(sed -n 's/^PRETTY_NAME="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$r" | head -1), $(sed -n '/^== system/{n;p;}' "$r" | head -1)"
+  gpu="$(grep -m1 'deviceName' "$r" | sed 's/.*= *//'), $(grep -m1 'driverInfo' "$r" | sed 's/.*= *//')"
+  session="$(grep -m1 '^session:' "$r" | sed 's/  WAYLAND_DISPLAY.*//')"
+  # (the manifests found, as paths; the Flatpak extension's branches if any)
+  install="$( { sed -n '/^== installed manifests/,/^== /p' "$r" | grep -E '\.json$' | awk '{ print $NF }'
+               grep -E '^Flatpak extension: [0-9]' "$r"; } | head -4 | tr '\n' ';' | sed 's/;$//')"
+  quick="$(sed -n '/^== lecture rapide/,/^== system/p' "$r" | sed '1d;$d' | head -c 1500)"
+  # (the home's path names the user: ~ in the link)
+  install="${install//$HOME/\~}"; quick="${quick//$HOME/\~}"
+  title="[$distro] "
+  printf 'https://github.com/Bdexez/bdex_frame_gen/issues/new?template=bug_report.yml&title=%s&version=%s&distro=%s&gpu=%s&session=%s&install=%s&quick=%s\n' \
+    "$(urlencode "$title")" "$(urlencode "$version")" "$(urlencode "$distro")" "$(urlencode "$gpu")" \
+    "$(urlencode "$session")" "$(urlencode "$install")" "$(urlencode "$quick")"
 }
 
 # online_tune's cached decisions for a game as a [game] config section.
@@ -685,6 +727,7 @@ while [ $# -gt 0 ]; do
     --always-off)      always 0 "${2:-}"; exit 0 ;;
     --sandboxes)       sandboxes "${2:-}"; exit $? ;;
     --report)          report "${2:-}"; exit 0 ;;
+    --issue-url)       issue_url "${2:-bdex-framegen-report.txt}"; exit 0 ;;
     --tuned-profile)   shift; tuned_profile "$@"; exit $? ;;
     --record)          rec="$2"; mkdir -p "$rec"; rec="$(realpath "$rec")"
                        n=240; case "${3:-}" in ''|*[!0-9]*) shift 2 ;; *) n="$3"; shift 3 ;; esac

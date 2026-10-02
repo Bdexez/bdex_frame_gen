@@ -139,4 +139,36 @@ grep -qx "MESA_VK_DEVICE_SELECT=10de:25a2" <<<"$out" && grep -qx "__NV_PRIME_REN
 grep -q "0x8086:0x46a6  integrated  Intel(R) Iris(R) Xe Graphics  ← screen" <<<"$(bash "$CLI" --gpu list)" || fail "--gpu list"
 if bash "$CLI" --gpu amd -- true 2>/dev/null; then fail "--gpu amd without an AMD GPU"; fi
 bash "$CLI" --help | tail -1 | grep -q -- "-h, --help" || fail "--help cut short"
+# --issue-url: the form's fields from a report, the home's path hidden.
+cat > "$T/report.txt" <<REPORT
+== bdex-framegen diagnostic report, 2026-10-02 12:00 UTC
+
+== lecture rapide (à faire pendant que le jeu tourne, après « Démarrer »)
+panneau : ouvert, cible pid 42 — écran 144 Hz
+
+== system
+Linux 6.18 x86_64
+PRETTY_NAME="Fedora Linux 44 (Workstation Edition)"
+session: wayland  desktop: GNOME  WAYLAND_DISPLAY=wayland-0  DISPLAY=:0
+
+== layer
+[bdex-fg     0.000 INFO] VK_LAYER_BDEX_framegen v0.6.0 loaded (enabled=1)
+	deviceName         = AMD Radeon RX 7800 XT (RADV NAVI32)
+	driverInfo         = Mesa 26.0.1
+
+== installed manifests
+-rw-r--r-- 1 u u 600 Oct  2 12:00 $HOME/.local/share/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen.json
+
+== environment
+REPORT
+url="$(bash "$CLI" --issue-url "$T/report.txt")"
+dec="$(python3 -c 'import sys, urllib.parse as u; q = u.parse_qs(u.urlparse(sys.argv[1]).query)
+for k in ("version", "distro", "gpu", "session", "install", "quick"): print(k + "=" + q.get(k, [""])[0].replace("\n", " "))' "$url")"
+grep -qx "version=0.6.0" <<<"$dec" || fail "issue url version: $dec"
+grep -qx "distro=Fedora Linux 44 (Workstation Edition), Linux 6.18 x86_64" <<<"$dec" || fail "issue url distro: $dec"
+grep -qx "gpu=AMD Radeon RX 7800 XT (RADV NAVI32), Mesa 26.0.1" <<<"$dec" || fail "issue url gpu: $dec"
+grep -qx "install=~/.local/share/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen.json" <<<"$dec" || fail "issue url install: $dec"
+grep -q "^quick=panneau : ouvert, cible pid 42" <<<"$dec" || fail "issue url quick: $dec"
+if grep -q "$HOME" <<<"$url$dec"; then fail "the home's path in the issue url"; fi
+[[ "$url" == https://github.com/Bdexez/bdex_frame_gen/issues/new\?template=bug_report.yml\&* ]] || fail "issue url: $url"
 echo "linux scripts OK"

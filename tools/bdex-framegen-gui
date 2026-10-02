@@ -779,6 +779,27 @@ def sandbox_dirs():
     return out
 
 
+def write_report():
+    """bdex-framegen --report into the cache directory: (report path, the
+    pre-filled issue form's URL), (None, None) without the CLI."""
+    here = os.path.dirname(os.path.realpath(__file__))
+    cli = os.path.join(here, "bdex-framegen")
+    if not os.path.isfile(cli):
+        cli = shutil.which("bdex-framegen")
+    if not cli:
+        return None, None
+    cache = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    path = os.path.join(cache, "bdex-framegen", "bdex-framegen-report.txt")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    try:
+        subprocess.run(["bash", cli, "--report", path], capture_output=True, timeout=120)
+        url = subprocess.run(["bash", cli, "--issue-url", path], capture_output=True, text=True,
+                             timeout=30).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None, None
+    return path, url if url.startswith("https://") else None
+
+
 def refresh_sandboxes():
     """Re-copies the layer into the Flatpak / Snap launchers whose copy an
     update left behind (a distribution package cannot write in the home):
@@ -1412,6 +1433,27 @@ class Window(Adw.ApplicationWindow):
         gpu_row.add_prefix(Gtk.Image(icon_name="video-display-symbolic", valign=Gtk.Align.CENTER))
         g.add(gpu_row)
 
+        report_row = Adw.ActionRow(title="Signaler un problème",
+                                   subtitle="Écrit le rapport de diagnostic et ouvre le formulaire pré-rempli "
+                                            "(à faire pendant que le jeu tourne)")
+        report_row.add_prefix(Gtk.Image(icon_name="dialog-question-symbolic", valign=Gtk.Align.CENTER))
+        btn = Gtk.Button(label="Rapport…", valign=Gtk.Align.CENTER)
+        btn.connect("clicked", self.on_report)
+        report_row.add_suffix(btn)
+        g.add(report_row)
+
+    def on_report(self, _btn):
+        path, url = write_report()
+        if not path:
+            self.toast("Rapport impossible : bdex-framegen introuvable")
+            return
+        self.toast(f"Rapport écrit dans {path} — à joindre au formulaire")
+        if url:
+            try:
+                Gio.AppInfo.launch_default_for_uri(url, None)
+            except GLib.Error:
+                self.toast("Ouvre le lien affiché par « bdex-framegen --issue-url »")
+
     def _build_running(self, page):
         """The games running now (Vulkan programs the layer is loaded into), like
         the Windows launcher's window list: pick one, then « Démarrer »."""
@@ -1823,7 +1865,7 @@ def text_main():
                         print(f"       {ln}")
             print("Options : " + _text_options(opt))
             print("[numéro] démarrer dans ce jeu · a arrêter · r actualiser · m multiplicateur · "
-                  "o mode · p préréglage · h compteur · j mode Jeu · s options Steam · q quitter")
+                  "o mode · p préréglage · h compteur · j mode Jeu · s options Steam · b signaler un problème · q quitter")
             try:
                 cmd = input("> ").strip().lower()
             except EOFError:
@@ -1867,6 +1909,13 @@ def text_main():
             elif cmd == "s":
                 print("Options de lancement Steam équivalentes (par jeu) :")
                 print("  " + opt.steam_string())
+            elif cmd == "b":
+                path, url = write_report()
+                if path:
+                    print(f"Rapport écrit dans {path} — à joindre au formulaire :")
+                    print("  " + (url or "(bdex-framegen --issue-url " + path + ")"))
+                else:
+                    print("bdex-framegen introuvable : pas de rapport.")
     except KeyboardInterrupt:
         print()
     finally:

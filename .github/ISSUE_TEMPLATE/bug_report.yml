@@ -1,0 +1,47 @@
+name: Problème / bug
+description: Quelque chose ne marche pas (pas d'images générées, saccades, plantage...). `bdex-framegen --report` pré-remplit ce formulaire.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Le plus utile : lancer le jeu, cliquer « Démarrer » dans le panneau, puis
+        `bdex-framegen --report` **pendant que le jeu tourne**. La commande écrit
+        `bdex-framegen-report.txt` et affiche un lien qui remplit les champs ci-dessous.
+  - type: textarea
+    id: what
+    attributes:
+      label: Ce qui se passe
+      description: Ce que tu vois, ce que tu attendais, le jeu concerné.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version de bdex-framegen
+  - type: input
+    id: distro
+    attributes:
+      label: Distribution
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU et pilote
+  - type: input
+    id: session
+    attributes:
+      label: Session (X11 / Wayland, bureau)
+  - type: input
+    id: install
+    attributes:
+      label: Installation (archive, paquet, Flatpak, Snap...)
+  - type: textarea
+    id: quick
+    attributes:
+      label: Lecture rapide du rapport
+      render: text
+  - type: textarea
+    id: report
+    attributes:
+      label: Rapport complet
+      description: Glisse ici `bdex-framegen-report.txt` (relis-le avant : il contient ta configuration et les dernières lignes du journal).

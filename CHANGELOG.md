@@ -8,6 +8,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Diagnostics
 
+- **Bug reports ready to send**: `bdex-framegen --report` ends with the link
+  to a GitHub issue form (`.github/ISSUE_TEMPLATE/bug_report.yml`) filled
+  from the report — version, distribution, GPU and driver, session,
+  installation, the quick read; never the settings or the log, which stay
+  in the attached report, and the home's path shown as `~`.
+  `--issue-url FILE` makes the link for an existing report; the panel's
+  « Rapport… » (and `b` in text mode) writes the report and opens the form.
+  (The repository is private: the form opens for its collaborators only.)
 - **Crash journal** (`crash_log`, Linux, on where the layer works): a
   SIGSEGV / SIGBUS / SIGILL / SIGFPE whose instruction (or one of its first
   four callers) is in the layer writes `~/.cache/bdex-framegen/crash-<game>-
