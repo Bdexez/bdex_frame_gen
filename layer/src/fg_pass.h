@@ -83,6 +83,12 @@ public:
 
     // The pipeline's images and buffers.
     virtual FgFineLevel fineLevel() const = 0;
+    // The luma pyramid: its levels (0 = finest), a level's size and view per
+    // parity ([parity] = current frame), and its format (r16f or r32f).
+    virtual int pyramidLevels() const = 0;
+    virtual VkExtent2D pyramidExtent(int level) const = 0;
+    virtual VkImageView pyramidView(int level, uint32_t parity) const = 0;
+    virtual VkFormat lumaFormat() const = 0;
     virtual VkImageView previousBackwardFlow() const = 0;  // the previous pair's finest backward flow (see needsPreviousFlow)
     virtual VkBuffer stateBuffer() const = 0;              // frame state (frame_state.comp layout)
     virtual uint32_t sourceCount() const = 0;

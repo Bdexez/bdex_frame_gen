@@ -815,6 +815,13 @@ fermée (retenir le jeu réduit son attente) ; les images écrasées d'un
 espacement trop serré n'arrivent que quand la couche ne connaît pas la
 grille (seulement la fréquence), la règle d'atterrissage les évite sinon.
 
+**`luma_match`** (03/10, **défaut 0,01**) : passe `luma_match.comp` après
+l'analyse — pyramide précédente ramenée à la moyenne / l'écart-type de la
+courante si toute l'image a changé de luminosité (≥ 13 tuiles 4×4 sur 16 dans
+le même sens, d'au moins la moitié du décalage). Sans ce test, popup −1,77 dB
+(un menu déplace la moyenne). pulse 27,0 → 35,2, fade +6,2 ; tout le reste
+identique. La synthèse n'est pas touchée (elle lit les images elles-mêmes).
+
 **Corpus difficile** (03/10) : `scroll`, `particles`, `smoke`, `rotate`,
 `flash`, `pulse` ajoutés à `make_corpus.py`. Scores de départ (PSNR / fondu) :
 scroll 32,1 / 22,7, particles 17,7 / 17,1, smoke 31,9 / 31,9, rotate 39,7 /
