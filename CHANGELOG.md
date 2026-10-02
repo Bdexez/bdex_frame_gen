@@ -60,6 +60,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Input latency
 
+- **`thread_priority`** (default on): the presentation thread gets the
+  real-time round-robin class where permitted, else nice −10 from rtkit
+  (D-Bus `MakeThreadHighPriority`, libdbus loaded at run time: no new
+  dependency), else stays as it is. Wake-up lateness with 12 busy processes
+  39 → 25 µs; frames shown unchanged on the headless bench (its compositor
+  starves too).
 - **`precise_wake`** (default on): the presentation thread drops the
   kernel's timer slack; wake-up lateness, now in the statistics line, 56 → 7
   µs idle, 130 → 38 µs with 12 busy processes (117.3 → 118.0 of 120 frames
