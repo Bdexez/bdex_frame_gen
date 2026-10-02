@@ -199,6 +199,7 @@ const std::vector<OptionDef>& registry() {
     I("max_frame_latency", "frame_latency", &Config::maxFrameLatency, 0, 3, kLive),
     B("latency_limiter", nullptr, &Config::latencyLimiter, kLive),
     F("interp_hold", nullptr, &Config::interpHold, -1.f, 1.f, kLive),
+    B("skip_fast", nullptr, &Config::skipFast, kLive),
     B("sync_present", "sync", &Config::syncPresent),
     B("hide_present_ext", nullptr, &Config::hidePresentExt),
     B("ignore_anticheat", nullptr, &Config::ignoreAntiCheat),
