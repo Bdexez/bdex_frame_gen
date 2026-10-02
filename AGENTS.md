@@ -442,6 +442,26 @@ x2/x3/x4), sauf le correctif HDR (les chemins SDR restent identiques).
   `bdex_offline` ne sont pas compilés en 32 bits / sous Windows, le job
   suit les mêmes règles que `CMakeLists.txt`).
 
+### Variantes allégées des shaders (2026-09-25)
+
+`block_match.comp` et `interpolate.comp` ont une constante de
+spécialisation `kOptIns` (défaut `true` = tout le code). `makePass(...,
+lean=true)` crée en plus `Pass::lean` (constante à `false`), liée quand les
+options concernées sont à 0 (matcher : grad/census/rot/chroma ; synthèse :
+décidé sur les push constants). Raison : les opt-ins déclarés
+inconditionnellement coûtaient ~21 Ko de shared au matcher (occupation ÷2)
+et des registres à la synthèse → flow + synthèse ×2 depuis le 14/09
+(2,7 → 1,35 ms en 1440p, preset quality), latence ressentie en
+interpolation. **Un nouvel opt-in de ces shaders doit être gardé par
+`kOptIns &&`, et ses tableaux partagés dimensionnés par une constante
+`kOptIns ? N : 1`** (glslang refuse un indice constant hors d'une taille
+spécialisée : `rsum` reste pleine taille). Sur NVIDIA, les branches mortes
+changent la génération de code (FMA) : `main` différait de `f2cec5f` de
+1 LSB en interpolation, la variante allégée lui est identique.
+Mesure GPU sans fenêtre : `gamescope --backend headless -W 2560 -H 1440 --
+env BDEX_FG_PROFILE=1 BDEX_FG_LOG=2 bdex_demo --size 2560x1440
+--ignore-resize` (lignes `gpu ms:`).
+
 ## 10. Décisions & mesures clés (retenir les chiffres)
 
 - Éval qualité historique (2026-09-15, affichage fixé) : baseline **31,0 dB normal /

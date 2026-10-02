@@ -159,7 +159,7 @@ private:
     void createResources();
     void createDescriptors();
     void destroyAll();
-    Pass makePass(const uint32_t* spv, size_t spvSize, const std::vector<VkDescriptorType>& bindings);
+    Pass makePass(const uint32_t* spv, size_t spvSize, const std::vector<VkDescriptorType>& bindings, bool lean = false);
     VkDescriptorSet allocSet(VkDescriptorSetLayout layout) override;
     void writeImage(VkDescriptorSet set, uint32_t binding, VkDescriptorType type, VkImageView view) override;
     void writeBuffer(VkDescriptorSet set, uint32_t binding, VkBuffer buffer) override;

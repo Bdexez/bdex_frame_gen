@@ -75,6 +75,13 @@
 // choice unless chroma separates near-equals. Applied after the census
 // re-ranking. chromaWeight = 0 leaves the pass bit-for-bit unchanged.
 //
+// Lean variant (specialization constant kOptIns = false, created by the
+// layer next to the full one and bound while grad, census, rotation and
+// chroma weights are all 0): those branches are compiled out and their shared
+// arrays shrink to one element. The full variant keeps ~21 KB of shared
+// memory per workgroup against ~5 KB here, which caps how many blocks an SM
+// runs at once: the lean variant is ~2x faster, with the same results.
+//
 // Output flow is the displacement (in pixels of this level) that maps a
 // position in the reference image to the matching position in the target.
 #include "common.glsl"
@@ -95,6 +102,17 @@ const float kRotAngle[ROT_A] = float[ROT_A](-30.0, -10.0, 0.0, 10.0, 30.0);
 #define MAXCAND ((2 * MAXR + 1) * (2 * MAXR + 1) + 1)  // + the zero-motion candidate
 
 layout(local_size_x = BS, local_size_y = BS) in;
+
+layout(constant_id = 0) const bool kOptIns = true;
+// Shared-array sizes of the opt-in terms: one element in the lean variant.
+const int kRegS  = kOptIns ? REG : BS + 2 * MAXR + 2;  // staged side, border 1
+const int kCenT  = kOptIns ? (REG - 2) * (REG - 2) : 1;
+const int kNtO   = kOptIns ? NT : 1;
+const int kRotO  = kOptIns ? NROT : 1;
+const int kRbO   = kOptIns ? RB * RB : 1;
+const int kRegO  = kOptIns ? REG * REG : 1;
+const int kCandO = kOptIns ? MAXCAND : 1;
+const int kCand1 = kOptIns ? MAXCAND + 1 : 1;
 
 layout(binding = 0, LUMA_FMT) uniform readonly image2D refImg;
 layout(binding = 1, LUMA_FMT) uniform readonly image2D tgtImg;
@@ -125,23 +143,23 @@ layout(push_constant) uniform PC {
 #define CHROMA_GATE 0.01   // luma SAD (mean per pixel) within which candidates are re-ranked on chroma
 
 shared float refBlk[RB * RB];
-shared float tgt[REG * REG];
+shared float tgt[kRegS * kRegS];
 shared float qsad[4][MAXCAND];
 shared float sCost[NT];                // per-thread minima for the tree reduction
 shared int   sIdx[NT];
-shared uint  refCen[NT];               // census of the 8x8 block interior
-shared uint  tgtCen[(REG - 2) * (REG - 2)];  // census of the staged target interior
+shared uint  refCen[kNtO];             // census of the 8x8 block interior
+shared uint  tgtCen[kCenT];            // census of the staged target interior
 shared float sCost2[MAXCAND + 1];      // full per-candidate cost
-shared float rpix[2][NROT][NT];        // per-pixel costs of the rotated re-evaluation
+shared float rpix[2][kRotO][kNtO];     // per-pixel costs of the rotated re-evaluation
 shared float rsum[2][NROT];            // block sums of rpix
 shared ivec2 sBase;
 shared int   sStatic;                  // static-block early-out (see main)
-shared float sGrad[NT];                // per-pixel gradient magnitude (contrast-relative zero bias)
-shared vec2  refC[RB * RB];            // chroma of the reference block (chroma re-ranking)
-shared vec2  tgtC[REG * REG];          // chroma of the staged target region
-shared float qcsad[4][MAXCAND];        // per-quadrant chroma SADs
-shared float sSad[MAXCAND + 1];        // luma SAD per candidate (no penalties)
-shared float sCsad[MAXCAND + 1];       // chroma SAD per candidate
+shared float sGrad[NT];                // per-pixel gradient magnitude (contrast-relative zero bias), then the winner's per-pixel SAD
+shared vec2  refC[kRbO];               // chroma of the reference block (chroma re-ranking)
+shared vec2  tgtC[kRegO];              // chroma of the staged target region
+shared float qcsad[4][kCandO];         // per-quadrant chroma SADs
+shared float sSad[kCand1];             // luma SAD per candidate (no penalties)
+shared float sCsad[kCand1];            // chroma SAD per candidate
 
 // Neighbour order for the 8-bit census (3x3 minus the centre).
 const ivec2 kCenOff[8] = ivec2[8](ivec2(-1, -1), ivec2(0, -1), ivec2(1, -1), ivec2(-1, 0),
@@ -169,11 +187,13 @@ void main() {
     ivec2 origin = blk * BS;
     int R = clamp(pc.radius, 1, MAXR);
     int W = 2 * R + 1;
-    bool rotOn = pc.rotWeight > 0.0;
+    bool rotOn = kOptIns && pc.rotWeight > 0.0;
+    bool censusOn = kOptIns && pc.censusWeight > 0.0;
+    bool chromaOn = kOptIns && pc.chromaWeight > 0.0;
     int anc = rotOn ? ROTANC : 1;   // staged-tile border: wider when the rotation re-ranking samples beyond the block
     int regG = BS + 2 * R + 2 * anc;      // dynamic staged region side (incl. borders)
     int ncand = W * W;
-    float gw = pc.gradWeight;
+    float gw = kOptIns ? pc.gradWeight : 0.0;
 
     if (tid == 0) {
         vec2 pred = vec2(0.0);
@@ -226,7 +246,7 @@ void main() {
     // and its noise then outweighs the smoothness penalty that picks the
     // right alias (measured: -2.3 dB on the demo's striped box without this).
     float chromaW = 0.0;
-    if (pc.chromaWeight > 0.0) {  // uniform branch (push constant)
+    if (chromaOn) {  // uniform branch (push constant)
         int px = tid & (BS - 1), py = tid / BS;
         int ri = (py + 1) * RB + (px + 1);
         sGrad[tid] = 0.5 * (abs(refBlk[ri + 1] - refBlk[ri - 1]) + abs(refBlk[ri + RB] - refBlk[ri - RB]));
@@ -253,7 +273,6 @@ void main() {
         ivec2 o = ivec2(i % regG, i / regG);
         tgt[i] = loadTgt(regOrigin + o);
     }
-    bool chromaOn = pc.chromaWeight > 0.0;
     if (chromaOn) {  // uniform branch (push constant)
         for (int i = tid; i < RB * RB; i += NT)
             refC[i] = texelFetch(refChroma, clamp(origin - 1 + ivec2(i % RB, i / RB), ivec2(0), pc.size - 1), 0).rg;
@@ -265,7 +284,7 @@ void main() {
     // Census (rank transform) of the staged tiles; the 1-pixel gradient border
     // doubles as the census border. Uniform branch: censusWeight is a push
     // constant. The barrier after the quadrant costs below also publishes this.
-    if (pc.censusWeight > 0.0) {
+    if (censusOn) {
         {
             int px = tid & (BS - 1), py = tid / BS;
             float c = refBlk[(py + 1) * RB + (px + 1)];
@@ -376,6 +395,7 @@ void main() {
     // (AGENTS.md §6), and at censusWeight > 0 the census rerank does.
     float best = 1e30, second = 1e30;
     int bestIdx = 0, secondIdx = -1;
+    if (censusOn || rotOn)  // their only readers
     for (int c = 0; c < total; ++c) {
         float v = sCost2[c];
         if (v < best) { second = best; secondIdx = bestIdx; best = v; bestIdx = c; }
@@ -391,7 +411,7 @@ void main() {
     // the plain luma-SAD pass from before the census term existed (the scan
     // above only supplies the runner-up, never the output). censusWeight > 0:
     // re-rank the ambiguous near-winners on census structure.
-    if (pc.censusWeight > 0.0) {
+    if (censusOn) {
         // Ambiguity re-ranking: a runner-up within the margin means luma SAD
         // does not discriminate; let the census (structure, not brightness)
         // decide among the near-winners. The extra zero-motion candidate is
@@ -537,14 +557,21 @@ void main() {
     }
 #undef DISPOF
 
+    // The cost output feeds scene-cut detection, whose thresholds are tuned
+    // against plain luma SAD; recompute the winner's luma-only SAD rather
+    // than exporting the (gradient-inflated) combined cost. Each thread loads
+    // its pixel, thread 0 sums them in raster order (the order of the former
+    // serial loop: same result, without 64 dependent image loads on one thread).
+    {
+        int px = tid & (BS - 1), py = tid / BS;
+        float v = abs(refBlk[(py + 1) * RB + (px + 1)] - loadTgt(origin + ivec2(px, py) + outDisp));
+        barrier();  // sGrad / the rotation's reads are done
+        sGrad[tid] = v;
+        barrier();
+    }
     if (tid == 0) {
-        // The cost output feeds scene-cut detection, whose thresholds are tuned
-        // against plain luma SAD; recompute the winner's luma-only SAD rather
-        // than exporting the (gradient-inflated) combined cost.
         float lumaSad = 0.0;
-        for (int y = 0; y < BS; ++y)
-            for (int x = 0; x < BS; ++x)
-                lumaSad += abs(refBlk[(y + 1) * RB + (x + 1)] - loadTgt(origin + ivec2(x, y) + outDisp));
+        for (int i = 0; i < NT; ++i) lumaSad += sGrad[i];
         imageStore(flowOut, blk, vec4(vec2(outDisp), 0.0, 0.0));
         imageStore(costOut, blk, vec4(lumaSad * (1.0 / float(NT)), 0.0, 0.0, 0.0));
     }

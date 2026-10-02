@@ -75,7 +75,10 @@ FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, Vk
 
 FrameGen::~FrameGen() { destroyAll(); }
 
-FrameGen::Pass FrameGen::makePass(const uint32_t* spv, size_t spvSize, const std::vector<VkDescriptorType>& bindings) {
+// lean: also build Pass::lean, the same shader with its specialization
+// constant 0 (a bool) set to false — a variant with the opt-in terms compiled
+// out (block_match.comp: kOptIns).
+FrameGen::Pass FrameGen::makePass(const uint32_t* spv, size_t spvSize, const std::vector<VkDescriptorType>& bindings, bool lean) {
     Pass p;
     std::vector<VkDescriptorSetLayoutBinding> b(bindings.size());
     for (uint32_t i = 0; i < bindings.size(); ++i) {
@@ -105,6 +108,13 @@ FrameGen::Pass FrameGen::makePass(const uint32_t* spv, size_t spvSize, const std
     ci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, mod, "main", nullptr};
     ci.layout = p.layout;
     VkResult r = dev_.vt.CreateComputePipelines(dev_.device, VK_NULL_HANDLE, 1, &ci, nullptr, &p.pipeline);
+    if (r >= 0 && lean) {
+        const VkBool32 off = VK_FALSE;
+        const VkSpecializationMapEntry entry{0, 0, sizeof(off)};
+        const VkSpecializationInfo spec{1, &entry, sizeof(off), &off};
+        ci.stage.pSpecializationInfo = &spec;
+        r = dev_.vt.CreateComputePipelines(dev_.device, VK_NULL_HANDLE, 1, &ci, nullptr, &p.lean);
+    }
     dev_.vt.DestroyShaderModule(dev_.device, mod, nullptr);
     if (r < 0) throw VkError(r, "vkCreateComputePipelines");
     return p;
@@ -123,20 +133,20 @@ void FrameGen::createPipelines() {
     if (outputs_ > 0) {
         if (lumaFormat_ == VK_FORMAT_R16_SFLOAT) {
             downsample_ = makePass(downsample_comp_f16, downsample_comp_f16_size, {CIS, SI});
-            blockMatch_ = makePass(block_match_comp_f16, block_match_comp_f16_size, {SI, SI, CIS, SI, SI, CIS, CIS, CIS});
+            blockMatch_ = makePass(block_match_comp_f16, block_match_comp_f16_size, {SI, SI, CIS, SI, SI, CIS, CIS, CIS}, true);
             refine_ = makePass(flow_refine_comp_f16, flow_refine_comp_f16_size, {SI, SI, SI, SI, SI});
         } else {
             downsample_ = makePass(downsample_comp_f32, downsample_comp_f32_size, {CIS, SI});
-            blockMatch_ = makePass(block_match_comp_f32, block_match_comp_f32_size, {SI, SI, CIS, SI, SI, CIS, CIS, CIS});
+            blockMatch_ = makePass(block_match_comp_f32, block_match_comp_f32_size, {SI, SI, CIS, SI, SI, CIS, CIS, CIS}, true);
             refine_ = makePass(flow_refine_comp_f32, flow_refine_comp_f32_size, {SI, SI, SI, SI, SI});
         }
         smooth_ = makePass(flow_smooth_comp, flow_smooth_comp_size, {SI, SI});
         reduce_ = makePass(reduce_cost_comp, reduce_cost_comp_size, {SI, SB});
         // With sharpening, the interpolation writes a linear rgba16f image that
         // the CAS pass then sharpens and packs; otherwise it packs directly.
-        if (sharpen_)       interp_ = makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS});
-        else if (enc_.is64) interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS});
-        else                interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS});
+        if (sharpen_)       interp_ = makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS}, true);
+        else if (enc_.is64) interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS}, true);
+        else                interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS}, true);
         frameState_ = makePass(frame_state_comp, frame_state_comp_size, {CIS, CIS, SB});
         if (chroma_) downChroma_ = makePass(downsample_chroma_comp, downsample_chroma_comp_size, {CIS, SI});
     }
@@ -480,6 +490,7 @@ void FrameGen::createDescriptors() {
 void FrameGen::destroyPipeline(FgPipeline& p) {
     auto& vt = dev_.vt;
     if (p.pipeline) vt.DestroyPipeline(dev_.device, p.pipeline, nullptr);
+    if (p.lean) vt.DestroyPipeline(dev_.device, p.lean, nullptr);
     if (p.layout) vt.DestroyPipelineLayout(dev_.device, p.layout, nullptr);
     if (p.setLayout) vt.DestroyDescriptorSetLayout(dev_.device, p.setLayout, nullptr);
     p = FgPipeline{};
@@ -571,6 +582,7 @@ void FrameGen::destroyAll() {
     planner_.reset();
     for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_, &frameState_, &downChroma_}) {
         if (p->pipeline) vt.DestroyPipeline(d, p->pipeline, nullptr);
+        if (p->lean) vt.DestroyPipeline(d, p->lean, nullptr);
         if (p->layout) vt.DestroyPipelineLayout(d, p->layout, nullptr);
         if (p->setLayout) vt.DestroyDescriptorSetLayout(d, p->setLayout, nullptr);
         *p = Pass{};
@@ -889,14 +901,20 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
                         VK_IMAGE_LAYOUT_GENERAL, 1, &region);
         memoryBarrier(cmd);
     }
+    // The lean matcher when none of its opt-in terms is on (same results).
+    const float chromaWeight = chroma_ ? cfg.chromaWeight : 0.f;
+    const VkPipeline matcher = cfg.gradWeight == 0.f && cfg.censusWeight == 0.f && cfg.rotWeight == 0.f &&
+                                       chromaWeight == 0.f && blockMatch_.lean
+                                   ? blockMatch_.lean
+                                   : blockMatch_.pipeline;
     for (int l = levels_ - 1; l >= 0; --l) {
         const Level& lv = levels_v_[l];
-        vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, blockMatch_.pipeline);
+        vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, matcher);
         MatchPC pc{{(int32_t)lv.size.width, (int32_t)lv.size.height},
                    {(int32_t)lv.blocks.width, (int32_t)lv.blocks.height},
                    l + 1 < levels_ ? cfg.searchFine : cfg.searchRadius, l + 1 < levels_ ? 1 : 0, cfg.smoothness, cfg.zeroBias,
                    cfg.gradWeight, cfg.censusWeight, cfg.censusMargin, cfg.rotWeight, 0, cfg.zeroBiasContrast,
-                   chroma_ ? cfg.chromaWeight : 0.f, 0};
+                   chromaWeight, 0};
         const bool temporal = cfg.temporalPrediction && flowValid_;
         for (uint32_t dir = 0; dir < 2; ++dir) {
             pc.temporal = temporal ? static_cast<int32_t>(dir + 1) : 0;
@@ -1000,7 +1018,6 @@ void FrameGen::recordSynthesisImpl(VkCommandBuffer cmd, const Pass& pipe, VkDesc
     // inputs from them (the splat map, the acceleration weight).
     SynthesisInputs in;
     for (auto& p : passes_) p->beforeSynthesis(*this, cmd, t, timing, gated, cfg, in);
-    vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe.pipeline);
     // Interpolation output is at display resolution; the flow (in render pixels)
     // and its coverage are scaled to display space, so the same shader also
     // upscales the generated frame when render != display.
@@ -1015,6 +1032,11 @@ void FrameGen::recordSynthesisImpl(VkCommandBuffer cmd, const Pass& pipe, VkDesc
                 cfg.flowIterations, cfg.occlusionStrength, cfg.staticGuard, cfg.extrapolateHold, in.splat ? 1 : 0, cfg.pixelVectors ? 1 : 0, enc_.transfer,
                 timing, cfg.sceneCutLocal ? (int32_t)kCutTiles : 0, t > 1.f ? in.accel : 0.f,
                 cfg.synthBicubic ? 1 : 0, hasStaticMask_ ? float(cfg.hudMask) : 0.f, cfg.revealFill ? 1 : 0};
+    // The lean shader variant when none of its opt-ins is on (same results).
+    const bool lean = pipe.lean && pc.occlusionStrength == 0.f && pc.staticGuard == 0.f && pc.splat == 0 &&
+                      pc.pixelVectors == 0 && pc.timing == 0 && pc.localCut == 0 && pc.accel == 0.f &&
+                      pc.bicubic == 0 && pc.staticFrames == 0.f && pc.revealFill == 0;
+    vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, lean ? pipe.lean : pipe.pipeline);
     vt.CmdPushConstants(cmd, pipe.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe.layout, 0, 1, &set, 0, nullptr);
     dispatch();

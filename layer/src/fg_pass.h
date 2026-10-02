@@ -41,6 +41,7 @@ struct FgPipeline {
     VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
     VkPipelineLayout layout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
+    VkPipeline lean = VK_NULL_HANDLE;  // specialization constant 0 = false, where the shader has one (see makePass)
 };
 
 // The finest flow level (level 0 of the pyramid).
