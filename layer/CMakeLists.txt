@@ -39,7 +39,7 @@ bdex_add_shaders(bdex_layer_shaders
     shaders/cas.comp:u64:OUT_64
     shaders/hud_overlay.comp:u32
     shaders/hud_overlay.comp:u64:OUT_64
-  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/common.glsl" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/learned_correction_weights.glsl"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/common.glsl" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/learned_correction_weights.glsl" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/learned_correction_extrap_weights.glsl"
 )
 
 if(MSVC)
