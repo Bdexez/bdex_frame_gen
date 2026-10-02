@@ -365,8 +365,11 @@ programme Vulkan et reste **transparente** tant qu'elle n'est pas activée
   présente jamais en FIFO.
 - **Vérifié en CI depuis le 03/10** (`tools/ci/proton-check.sh`, job
   `source-packages`) : un programme Direct3D 11 (`tests/proton/d3d11_probe.cpp`,
-  MinGW) sous Wine 9 + DXVK 2.5.3, lavapipe, Ubuntu 24.04 — la couche se
-  charge dans le processus Wine (winevulkan), génère, ×2,00. Piège : sous
+  MinGW) sous Wine 9 + DXVK 2.5.3, puis un programme Direct3D 12
+  (`d3d12_probe.cpp`) sous VKD3D-Proton 3.0.1 + le `dxgi` de DXVK (comme
+  Proton ; avec le `dxgi` de Wine, VKD3D-Proton plante), lavapipe, Ubuntu
+  24.04 — la couche se charge dans le processus Wine (winevulkan), génère,
+  ×2,00 dans les deux cas. Piège : sous
   Xvfb, Wine voit l'écran à 0 Hz et DXVK (2.5 à 2.7) divise par zéro au
   premier `Present` ; d'où Xorg + pilote `dummy` avec un mode à 60 Hz
   (`tests/proton/xorg-dummy.conf`). DXVK 3.x refuse le lavapipe de Mesa 25.2

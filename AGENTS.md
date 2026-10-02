@@ -101,7 +101,7 @@ nix build .#default .#layer32                          # paquets Nix (flake.nix,
 tools/ci/package-release.sh [outdir] [version]         # archives de release x86_64 + aarch64 (Docker, comme le job CI `package`)
 tools/ci/archive-check.sh ARCHIVE [image|suite...]     # installe une archive ailleurs : charge + génère x2 (vkcube, Xvfb)
 tools/ci/distro-check.sh [image...]                    # build + tests + démo dans d'autres distributions (job CI `distros`)
-tools/ci/proton-check.sh                               # D3D11 sous Wine + DXVK à travers la couche (lavapipe, Xorg dummy 60 Hz : Xvfb = 0 Hz, DXVK divise par 0)
+tools/ci/proton-check.sh                               # D3D11 (DXVK) et D3D12 (VKD3D-Proton) sous Wine à travers la couche (lavapipe, Xorg dummy 60 Hz : Xvfb = 0 Hz, DXVK divise par 0)
 tools/ci/lib32-check.sh                                # couche 32 bits exécutée (vkcube i386)
 tools/ci/panel-check.sh build/options_ui.json [image]  # panneau sur écran virtuel en conteneur (versions SteamOS : Arch)
 bdex-framegen --always-on [JEU] | --always-off [JEU]   # générer sans le panneau (mode Jeu SteamOS)
