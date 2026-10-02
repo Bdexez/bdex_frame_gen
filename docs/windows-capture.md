@@ -28,7 +28,9 @@ Linux strength:
 - So on Windows, capture buys **coverage of every D3D game** at the cost of
   **more latency than the Linux layer**, not less. Frame-gen mode still matters:
   interpolation adds another ½-frame hold; **extrapolation** keeps it to roughly
-  the capture cost. We should default to extrapolation here.
+  the capture cost. (Extrapolation was the default until 2026-09-26; user
+  feedback comparing it with the Linux layer — far more artefacts at low
+  frame rates — made interpolation the default, as in the layer.)
 
 Two ways exist to reduce that cost, each with a catch:
 

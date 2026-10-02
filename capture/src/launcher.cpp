@@ -940,7 +940,7 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SendMessageW(ui->preset, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
         for (const wchar_t* s : {L"x2", L"x3", L"x4"})
             SendMessageW(ui->mult, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
-        for (const wchar_t* s : {L"Extrapolation (latence minimale)", L"Interpolation (plus fluide)"})
+        for (const wchar_t* s : {L"Extrapolation (latence minimale)", L"Interpolation (défaut, moins d'artefacts)"})
             SendMessageW(ui->mode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
         for (const wchar_t* s : {L"Identique au jeu", L"Ajustée à l'écran", L"Échelle personnalisée"})
             SendMessageW(ui->size, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));

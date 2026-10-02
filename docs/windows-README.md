@@ -36,8 +36,9 @@ checklist in `windows-port.md` §3. Please report what happens.
    Ctrl+Alt+G / Ctrl+Alt+Q). The files are `%TEMP%\bdex-framegen\<pid>.status`.
 3. An always-on-top overlay appears over (or, with "Ajustée à l'écran",
    centred on the monitor of) the game window, showing the game with
-   generated frames in between: x2 by default, **extrapolation** by default
-   (interpolation is smoother but adds half a frame of latency). The fps HUD
+   generated frames in between: x2 by default, **interpolation** by default, as on Linux
+   (extrapolation saves half a frame of latency but shows far more
+   artefacts at low frame rates). The fps HUD
    prints `capture > output`; the console logs `capture → shown → output`
    every 2 s.
 
@@ -77,7 +78,7 @@ GPU or driver cannot carry FP16 from D3D11 to Vulkan, or the overlay has no
 scRGB format, it stays in SDR as before. `capture_hdr = 0` forces SDR, `1`
 HDR where possible (launcher: "Couleur HDR"). Not yet run on HDR hardware.
 
-For capture, `mode` defaults to extrapolation, then the config file and
+For capture, `mode` defaults to interpolation (as in the layer), then the config file and
 `BDEX_FG_MODE` take precedence. An explicit `--mode` wins over those settings
 and over `--preset`; the mode selected in the launcher wins over all of them.
 
