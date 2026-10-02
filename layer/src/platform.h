@@ -33,6 +33,11 @@ std::string platformExpandPath(const std::string& in);
 // `foundName` (optional) with the matching process name.
 bool platformAntiCheatPresent(std::string* foundName);
 
+// True for a competitive multiplayer game's executable name (normalised:
+// lower case, no directory or extension) — games whose anti-cheat has no
+// process to detect (VAC, Vanguard, Ricochet...) or runs inside the game.
+bool platformIsCompetitiveGame(const std::string& name);
+
 // Directory of the per-process live status files (status.h): Linux
 // $XDG_RUNTIME_DIR/bdex-framegen (else /tmp/bdex-framegen-<uid>), Windows
 // %TEMP%\bdex-framegen; BDEX_FG_STATUS_DIR overrides it, an empty value

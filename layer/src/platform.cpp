@@ -62,6 +62,50 @@ bool isDeniedAntiCheat(const std::string& name) {
     return false;
 }
 
+} // namespace
+
+bool platformIsCompetitiveGame(const std::string& name) {
+    // Competitive multiplayer games, by executable (normalizeName: lower
+    // case, no directory, no extension). Some anti-cheats run no process of
+    // their own to detect — VAC lives in the game and Steam, Ricochet and
+    // Vanguard in a driver or service — and EAC / BattlEye under Proton run
+    // in the game's process. A layer loaded into these games is what gets
+    // accounts banned (CS2 banned AMD Anti-Lag+ users in 2023 for hooking
+    // the game), so the layer stays off in them, whatever the config says.
+    static const char* const kGames[] = {
+        // Valve Anti-Cheat
+        "cs2", "csgo", "csgo_linux64",      // Counter-Strike 2 / CS:GO
+        "dota2",                            // Dota 2
+        "deadlock", "project8",             // Deadlock
+        "tf_linux64", "tf_win64", "tf",     // Team Fortress 2 (64-bit)
+        // Vanguard, Ricochet, Defense Matrix, NetEase
+        "valorant", "valorant-win64-shipping",
+        "league of legends",
+        "cod",                              // Call of Duty (Black Ops 6, Warzone...)
+        "overwatch",                        // Overwatch 2
+        "marvel-win64-shipping",            // Marvel Rivals
+        // EAC / BattlEye, whose processes Proton does not show
+        "r5apex", "r5apex_dx12",            // Apex Legends
+        "fortniteclient-win64-shipping",
+        "rainbowsix", "rainbowsix_vulkan",  // Rainbow Six Siege
+        "tslgame",                          // PUBG
+        "rustclient",                       // Rust
+        "deadbydaylight-win64-shipping",
+        "haloinfinite",
+        "destiny2",
+        "escapefromtarkov",
+        "rocketleague",
+        "squadgame",                        // Squad
+        "aces",                             // War Thunder
+        "worldoftanks",
+    };
+    for (const char* g : kGames)
+        if (name == g) return true;
+    return false;
+}
+
+namespace {
+
 #ifdef _WIN32
 std::string narrow(const wchar_t* w) {
     if (!w) return "";
@@ -224,6 +268,13 @@ long platformPid() {
 }
 
 bool platformAntiCheatPresent(std::string* foundName) {
+    // This process is a competitive game (its executable or, under Proton,
+    // the Windows .exe on its command line).
+    for (const std::string& n : platformProcessNames())
+        if (platformIsCompetitiveGame(n)) {
+            if (foundName) *foundName = n + " (competitive game)";
+            return true;
+        }
 #ifdef _WIN32
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snap == INVALID_HANDLE_VALUE) return false;
