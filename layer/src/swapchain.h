@@ -192,7 +192,8 @@ private:
     void resumeFeedback();
     bool fastGame(double hz);           // skip_fast: the game already at (nearly) the refresh rate
     double fastGameHz();                // the refresh rate skip_fast uses
-    bool variableRefresh();             // vrr_hold: displayed when presented (no refresh grid)
+    bool variableRefresh();
+    void sleepUntilPrecise(clock::time_point target);             // vrr_hold: displayed when presented (no refresh grid)
     double displayHz();                 // measured refresh rate, 0 if unknown (VRR, no feedback)
     bool displayGrid(double& lastMs, double& periodMs);  // the refresh grid, if known
     static double msOf(clock::time_point t) {
@@ -371,7 +372,8 @@ private:
     uint64_t statsAppFrames_ = 0;
     std::atomic<uint64_t> statsOutFrames_{0};
     std::atomic<uint64_t> statsRealDelayUs_{0};
-    std::atomic<uint64_t> statsSkipped_{0};  // sum of (real frame present call - app present call)
+    std::atomic<uint64_t> statsSkipped_{0};
+    std::atomic<uint64_t> statsWakeLateUs_{0}, statsWakes_{0};  // sleepUntilPrecise: how late the worker woke  // sum of (real frame present call - app present call)
     double statsCpuMs_ = 0;
     int dumpCount_ = 0;
     uint32_t dumpId_ = 0;

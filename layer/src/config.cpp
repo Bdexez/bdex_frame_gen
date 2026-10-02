@@ -201,6 +201,7 @@ const std::vector<OptionDef>& registry() {
     F("interp_hold", nullptr, &Config::interpHold, -1.f, 1.f, kLive),
     B("skip_fast", nullptr, &Config::skipFast, kLive),
     B("vrr_hold", nullptr, &Config::vrrHold, kLive),
+    B("precise_wake", nullptr, &Config::preciseWake, kLive),
     B("crash_log", nullptr, &Config::crashLog),
     B("flow_confidence", nullptr, &Config::flowConfidence),
     F("confidence_fallback", nullptr, &Config::confidenceFallback, 0.f, 1.f, kLive),

@@ -171,6 +171,11 @@ les images répétées (`dedup`) et commande des passes en dispatch indirect,
     rafraîchissement d'écart (exactement un : 1,2 image/s perdue sur 80), et
     seulement si le gain dépasse 2 ms ; mesuré ×2 à 144 Hz : 30 i/s 56,7 →
     48,3 ms, 40 i/s 43,8 → 40,7, aucune image perdue, 60 i/s inchangé ;
+  - **`precise_wake`** (03/10, défaut 1) : `PR_SET_TIMERSLACK` à 1 ns sur le
+    thread de présentation ; retard de réveil 56 → 7 µs (repos), 130 → 38 µs
+    (12 processus occupés). Attente active des 0,5 dernière ms : **refusée**
+    (sous charge, le `yield` rend le CPU : 1 ms de retard, 114,7 images
+    affichées sur 120) ;
   - **`vrr_hold`** (03/10, défaut 1) : écran sans grille fixe mais avec
     retour d'affichage (≥ 120 images vues, `variableRefresh`) → `interp_hold`
     1 traité comme auto ; simulé (`pacing_vrr_auto_hold`) : réelle 3,8 ms plus
