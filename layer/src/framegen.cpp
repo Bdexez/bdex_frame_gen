@@ -120,11 +120,13 @@ static void checkPassLimits(const VkPhysicalDeviceLimits& lim, const uint32_t* s
 }
 
 // lean: also build Pass::lean, the same shader with its specialization
-// constant 0 (a bool) set to false — a variant with the opt-in terms compiled
-// out (block_match.comp: kOptIns). leanOnly: only that variant, as
-// Pass::pipeline (a GPU with too little shared memory for the full one).
+// constants 0 and 1 (bools) set to false — a variant with the opt-in terms
+// compiled out (block_match.comp: kOptIns, kRot; a shader without constant 1
+// ignores it). leanOnly: only that variant, as Pass::pipeline (a GPU with too
+// little shared memory for the full one). rot: also Pass::rot, constant 0
+// false and 1 true (the matcher's rotation re-ranking alone).
 FrameGen::Pass FrameGen::makePass(const uint32_t* spv, size_t spvSize, const std::vector<VkDescriptorType>& bindings,
-                                  bool lean, bool leanOnly) {
+                                  bool lean, bool leanOnly, bool rot) {
     checkPassLimits(dev_.props.limits, spv, spvSize, bindings);
     Pass p;
     std::vector<VkDescriptorSetLayoutBinding> b(bindings.size());
@@ -154,15 +156,20 @@ FrameGen::Pass FrameGen::makePass(const uint32_t* spv, size_t spvSize, const std
     VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
     ci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, mod, "main", nullptr};
     ci.layout = p.layout;
-    const VkBool32 off = VK_FALSE;
-    const VkSpecializationMapEntry entry{0, 0, sizeof(off)};
-    const VkSpecializationInfo spec{1, &entry, sizeof(off), &off};
+    const VkBool32 off[2] = {VK_FALSE, VK_FALSE}, rotOnly[2] = {VK_FALSE, VK_TRUE};
+    const VkSpecializationMapEntry entries[2] = {{0, 0, sizeof(VkBool32)}, {1, sizeof(VkBool32), sizeof(VkBool32)}};
+    const VkSpecializationInfo spec{2, entries, sizeof(off), off};
+    const VkSpecializationInfo rotSpec{2, entries, sizeof(rotOnly), rotOnly};
     if (leanOnly) ci.stage.pSpecializationInfo = &spec;
     const VkPipelineCache cache = dev_.pipelineCache();  // pipeline_cache
     VkResult r = dev_.vt.CreateComputePipelines(dev_.device, cache, 1, &ci, nullptr, &p.pipeline);
     if (r >= 0 && lean && !leanOnly) {
         ci.stage.pSpecializationInfo = &spec;
         r = dev_.vt.CreateComputePipelines(dev_.device, cache, 1, &ci, nullptr, &p.lean);
+    }
+    if (r >= 0 && rot && !leanOnly) {
+        ci.stage.pSpecializationInfo = &rotSpec;
+        r = dev_.vt.CreateComputePipelines(dev_.device, cache, 1, &ci, nullptr, &p.rot);
     }
     dev_.vt.DestroyShaderModule(dev_.device, mod, nullptr);
     if (r < 0) throw VkError(r, "vkCreateComputePipelines");
@@ -190,12 +197,12 @@ void FrameGen::createPipelines() {
         if (lumaFormat_ == VK_FORMAT_R16_SFLOAT) {
             downsample_ = makePass(downsample_comp_f16, downsample_comp_f16_size, {CIS, SI});
             blockMatch_ = makePass(block_match_comp_f16, block_match_comp_f16_size, {SI, SI, CIS, SI, SI, CIS, CIS, CIS, SB}, true,
-                                   !matcherFull_);
+                                   !matcherFull_, true);
             refine_ = makePass(flow_refine_comp_f16, flow_refine_comp_f16_size, {CIS, CIS, SI, SI, SI});
         } else {
             downsample_ = makePass(downsample_comp_f32, downsample_comp_f32_size, {CIS, SI});
             blockMatch_ = makePass(block_match_comp_f32, block_match_comp_f32_size, {SI, SI, CIS, SI, SI, CIS, CIS, CIS, SB}, true,
-                                   !matcherFull_);
+                                   !matcherFull_, true);
             refine_ = makePass(flow_refine_comp_f32, flow_refine_comp_f32_size, {CIS, CIS, SI, SI, SI});
         }
         smooth_ = makePass(flow_smooth_comp, flow_smooth_comp_size, {SI, SI});
@@ -580,6 +587,7 @@ void FrameGen::destroyPipeline(FgPipeline& p) {
     auto& vt = dev_.vt;
     if (p.pipeline) vt.DestroyPipeline(dev_.device, p.pipeline, nullptr);
     if (p.lean) vt.DestroyPipeline(dev_.device, p.lean, nullptr);
+    if (p.rot) vt.DestroyPipeline(dev_.device, p.rot, nullptr);
     if (p.layout) vt.DestroyPipelineLayout(dev_.device, p.layout, nullptr);
     if (p.setLayout) vt.DestroyDescriptorSetLayout(dev_.device, p.setLayout, nullptr);
     p = FgPipeline{};
@@ -682,6 +690,7 @@ void FrameGen::destroyAll() {
                     &sceneHist_}) {
         if (p->pipeline) vt.DestroyPipeline(d, p->pipeline, nullptr);
         if (p->lean) vt.DestroyPipeline(d, p->lean, nullptr);
+        if (p->rot) vt.DestroyPipeline(d, p->rot, nullptr);
         if (p->layout) vt.DestroyPipelineLayout(d, p->layout, nullptr);
         if (p->setLayout) vt.DestroyDescriptorSetLayout(d, p->setLayout, nullptr);
         *p = Pass{};
@@ -1030,10 +1039,11 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity, int costSlot) {
     }
     // The lean matcher when none of its opt-in terms is on (same results).
     const float chromaWeight = chroma_ ? cfg.chromaWeight : 0.f;
-    const VkPipeline matcher = cfg.gradWeight == 0.f && cfg.censusWeight == 0.f && cfg.rotWeight == 0.f &&
-                                       chromaWeight == 0.f && !cfg.altVectors && blockMatch_.lean
-                                   ? blockMatch_.lean
-                                   : blockMatch_.pipeline;
+    // (and the rotation-only variant when the rotation is the only one on)
+    const bool leanTerms = cfg.gradWeight == 0.f && cfg.censusWeight == 0.f && chromaWeight == 0.f && !cfg.altVectors;
+    const VkPipeline matcher = leanTerms && cfg.rotWeight == 0.f && blockMatch_.lean ? blockMatch_.lean
+                               : leanTerms && blockMatch_.rot                     ? blockMatch_.rot
+                                                                                   : blockMatch_.pipeline;
     for (int l = levels_ - 1; l >= 0; --l) {
         const Level& lv = levels_v_[l];
         vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, matcher);

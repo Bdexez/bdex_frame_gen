@@ -76,6 +76,7 @@ for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hy
     state="$state BDEX_FG_FLOW_CONFIDENCE=1 BDEX_FG_CONFIDENCE_FALLBACK=0.5"
     state="$state BDEX_FG_LEARNED_CORRECTION=1"
     state="$state BDEX_FG_INTERP_SPLAT=1 BDEX_FG_PIXEL_VECTORS=1"
+    state="$state BDEX_FG_ROT_WEIGHT=1"  # (the matcher's rotation-only variant)
   elif [ "${run#*:}" = async ]; then
     state="BDEX_FG_ASYNC_COMPUTE=1 BDEX_FG_DEDUP=1 BDEX_FG_FLOW_TEMPORAL=1 BDEX_FG_ONLINE_TUNE=1 BDEX_FG_CACHE_DIR= BDEX_FG_HUD_MASK=24 BDEX_FG_SUBPIXEL_LK=2"; demo_args="--repeat 2 --frames 90 --duration 40"; output="BDEX_FG_HUD=0"
   elif [ "$run" != "$mode" ]; then

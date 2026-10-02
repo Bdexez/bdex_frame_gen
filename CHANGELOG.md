@@ -8,6 +8,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Quality
 
+- **`rot_weight` on by default on discrete GPUs, in a matcher variant of its
+  own**: a second specialization constant (`kRot`) builds the lean matcher
+  plus the rotation re-ranking's shared memory (~13.5 KB instead of the full
+  variant's ~21 KB, which halved the occupancy). Flow 2.4x → 1.5x the lean
+  matcher's time. On top of pixel_vectors: occlude +1.17 dB, 8°/frame
+  rotation +1.09, 5 % zoom +1.12, scroll +0.40, subpixel +0.23, demo +0.07
+  to +0.12, nothing lost. Corpus: a `zoom` sequence (2 %/frame).
 - **`interp_splat`** (on by default on discrete GPUs): softmax-style
   splatting for interpolation. The extrapolation's splat pass also pushes
   every pixel of prev (forward flow) and of cur (backward flow) to the

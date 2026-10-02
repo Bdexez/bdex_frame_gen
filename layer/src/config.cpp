@@ -135,6 +135,12 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
     // interpolated frames (03/10): on top of pixel_vectors occlusions +0.22,
     // scrolling text +0.41, popup +0.06, the demo +0.01 to +0.03, HUD -0.12;
     // alone +0.05 to +0.7. ~0.6 ms at 1440p.
+    // The matcher's rotation / scale re-ranking (rot_weight), in its own
+    // variant (03/10: the full one halved the occupancy): on top of
+    // pixel_vectors occlusions +1.17 dB, 8-degree rotation +1.09, 5 % zoom
+    // +1.1, scrolling text +0.40, sub-pixel +0.23, the demo +0.07 to +0.12,
+    // nothing lost; the flow ~1.5x (+0.2 ms at 960x540).
+    if (strong && !(autoOptionsSet & kAutoRot)) rotWeight = 1.f;
     if (strong && !(autoOptionsSet & kAutoInterpSplat)) {
         interpSplat = true;
         interpSplatAuto = true;
@@ -394,6 +400,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "reveal_fill") autoOptionsSet |= kAutoRevealFill;
     if (key == "scene_cut_local") autoOptionsSet |= kAutoLocalCut;
     if (key == "interp_splat") autoOptionsSet |= kAutoInterpSplat;
+    if (key == "rot_weight") autoOptionsSet |= kAutoRot;
     if (const OptionDef* d = findOption(key)) {
         switch (d->kind) {
         case Kind::Bool:  return parseBool(value, this->*(d->b));
