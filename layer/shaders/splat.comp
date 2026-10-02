@@ -28,6 +28,8 @@ layout(push_constant) uniform PC {
     vec2 flowInvSize;  // 1 / (display pixels covered by the flow textures)
     int timing;        // > 0: s = st.t[timing - 1] - 1 (content time, see frame_state.comp)
     float accel;       // second-order term weight (see extrapDisp in interpolate.comp), 0 = off
+    int mode;          // 0 extrapolation (cur past t = 1); interp_splat: 1 prev to t, 2 cur to t
+    float t;           // interp_splat: the output's time between prev and cur
 } pc;
 
 vec2 fwdAt(vec2 p) { return texture(flowFwd, p * pc.flowInvSize).xy * pc.flowScale; }
@@ -37,6 +39,23 @@ void main() {
     ivec2 p = ivec2(gl_GlobalInvocationID.xy);
     if (any(greaterThanEqual(p, pc.size))) return;
     vec2 src = vec2(p) + 0.5;
+    if (pc.mode != 0) {
+        // interp_splat: every pixel of prev (mode 1, along the forward flow)
+        // or of cur (mode 2, back along the backward flow) pushed to where it
+        // is at time t — the left half of the map for prev, the right half
+        // for cur. Same priority as below: consistent beats inconsistent,
+        // then the faster pixel (the likelier foreground) wins.
+        float t = pc.timing > 0 ? st.t[pc.timing - 1] : pc.t;
+        vec2 v = pc.mode == 1 ? fwdAt(src) : bwdAt(src);
+        vec2 back = pc.mode == 1 ? bwdAt(src + v) : fwdAt(src + v);
+        vec2 dstf = src + (pc.mode == 1 ? t : 1.0 - t) * v;
+        ivec2 dst = ivec2(floor(dstf));
+        if (any(lessThan(dst, ivec2(0))) || any(greaterThanEqual(dst, pc.size))) return;
+        uint prio = length(v + back) > 2.0 ? 511u : 510u - uint(clamp(length(v), 0.0, 510.0));
+        uint index = uint(p.y * pc.size.x + p.x);
+        imageAtomicMin(splatMap, dst + ivec2(pc.mode == 2 ? pc.size.x : 0, 0), (prio << 23) | index);
+        return;
+    }
     vec2 B = bwdAt(src);                    // minus the motion of this pixel
     float s = pc.timing > 0 ? st.t[pc.timing - 1] - 1.0 : pc.s;
     vec2 d = -s * B;

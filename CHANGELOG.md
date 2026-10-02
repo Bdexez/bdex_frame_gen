@@ -8,6 +8,16 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Quality
 
+- **`interp_splat`** (on by default on discrete GPUs): softmax-style
+  splatting for interpolation. The extrapolation's splat pass also pushes
+  every pixel of prev (forward flow) and of cur (backward flow) to the
+  output's time, into the two halves of a map twice the display's width
+  (extrapolation keeps the left half: unchanged); the synthesis tries the
+  trajectories of the pixels that landed on each output pixel where its own
+  is imperfect (error > 0.02) and the splatted one 10 % better. Alone:
+  occlude +0.55 dB, scroll +0.62, rotate +0.26, popup +0.09, demo +0.05 to
+  +0.08, nothing lost; on top of pixel_vectors occlude +0.22, scroll +0.41,
+  popup +0.06, demo +0.01 to +0.03, hud −0.12. +0.09 ms at 960x540.
 - **`luma_match`** (default 0.01): fades and lighting changes no longer break
   the motion. Before the flow, a pass brings the previous frame's luma
   pyramid to the current frame's mean and contrast (`luma_match.comp`, all on

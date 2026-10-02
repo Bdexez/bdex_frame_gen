@@ -9,18 +9,23 @@
 namespace bdex {
 namespace {
 
-struct SplatPC { int32_t size[2]; float s; float flowScale; float flowInvSize[2]; int32_t timing; float accel; };
+struct SplatPC { int32_t size[2]; float s; float flowScale; float flowInvSize[2]; int32_t timing; float accel; int32_t mode; float t; };
 
 class ExtrapolateSplatPass : public FgPass {
 public:
     const char* name() const override { return "extrapolate_splat"; }
-    bool active(const Config& cfg) const override { return (cfg.extrapolate || cfg.hybrid) && cfg.extrapolateSplat; }
+    bool active(const Config& cfg) const override {
+        return ((cfg.extrapolate || cfg.hybrid) && cfg.extrapolateSplat) || cfg.interpSplat;
+    }
 
     void create(FgContext& ctx) override {
         const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
                                SB = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         pipe_ = ctx.makePipeline(splat_comp, splat_comp_size, {CIS, CIS, SI, SB, CIS});
-        map_ = ctx.createImage(VK_FORMAT_R32_UINT, ctx.displayExtent(),
+        // Twice the display's width: extrapolation uses the left half;
+        // interp_splat prev's projection there and cur's on the right.
+        const VkExtent2D d = ctx.displayExtent();
+        map_ = ctx.createImage(VK_FORMAT_R32_UINT, {2 * d.width, d.height},
                                VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
         const FgFineLevel l0 = ctx.fineLevel();
         set_ = ctx.allocSet(pipe_.setLayout);
@@ -38,7 +43,8 @@ public:
 
     void beforeSynthesis(FgContext& ctx, VkCommandBuffer cmd, float t, int32_t timing, bool gated, const Config& cfg,
                          SynthesisInputs& in) override {
-        if (!(t > 1.f) || !cfg.extrapolateSplat) return;
+        const bool extrap = t > 1.f && cfg.extrapolateSplat, interp = t <= 1.f && cfg.interpSplat;
+        if (!extrap && !interp) return;
         auto& vt = ctx.device().vt;
         const FgFineLevel l0 = ctx.fineLevel();
         const VkExtent2D d = ctx.displayExtent(), r = ctx.renderExtent();
@@ -51,10 +57,14 @@ public:
         vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe_.pipeline);
         SplatPC pc{{(int32_t)d.width, (int32_t)d.height}, t - 1.f, fs * sx,
                    {1.f / (l0.fine.width * l0.block * fs * sx), 1.f / (l0.fine.height * l0.block * fs * sy)},
-                   timing, in.accel};
-        vt.CmdPushConstants(cmd, pipe_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+                   timing, extrap ? in.accel : 0.f, 0, t};
         vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe_.layout, 0, 1, &set_, 0, nullptr);
-        ctx.dispatchSynthesisSize(cmd, gated);
+        for (int mode = extrap ? 0 : 1; mode <= (extrap ? 0 : 2); ++mode) {
+            if (mode == 2) ctx.barrier(cmd);  // (one image: the halves are disjoint, the validation cannot tell)
+            pc.mode = mode;
+            vt.CmdPushConstants(cmd, pipe_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+            ctx.dispatchSynthesisSize(cmd, gated);
+        }
         ctx.barrier(cmd);
         in.splat = true;
     }
