@@ -1,0 +1,82 @@
+#version 450
+// learned_correction: a tiny network trained offline (tools/train_correction.py,
+// weights in learned_correction_weights.glsl) moves each generated pixel
+// toward the plain cross-fade of the two inputs where it looks wrong, from
+// its 3x3 neighbourhood. The features are the training's exactly — 8-bit
+// encoded values (an sRGB source is re-encoded after sampling), edges
+// clamped. Two modes over the finished output (8-bit formats, no upscaling):
+// 0 copies it into the scratch image, 1 reads the scratch's neighbourhood and
+// writes the corrected output.
+#extension GL_GOOGLE_include_directive : require  // #include with glslangValidator too
+#include "common.glsl"
+#include "learned_correction_weights.glsl"
+#if LC_MIX != 1
+#error "this shader implements the mix head (tools/train_correction.py --head mix)"
+#endif
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0, r32ui) uniform uimage2D outImg;    // the output (swapchain storage encoding)
+layout(binding = 1, r32ui) uniform uimage2D scratch;   // its copy
+layout(binding = 2) uniform sampler2D prevTex;
+layout(binding = 3) uniform sampler2D curTex;
+
+#define ENC_BGRA8      1u
+#define ENC_SRGB_FLAG  0x100u
+
+layout(push_constant) uniform PC {
+    ivec2 size;
+    uint encoding;
+    int mode;        // 0 copy, 1 correct
+    float t;         // the output's time between the two inputs
+    float strength;  // 0..1: how much of the network's move is applied
+} pc;
+
+vec3 unpackOut(uint v) {
+    vec4 c = unpackUnorm4x8(v);
+    return (pc.encoding & 0xffu) == ENC_BGRA8 ? c.bgr : c.rgb;
+}
+uint packOut(vec3 rgb, uint old) {
+    vec4 c = vec4(rgb, unpackUnorm4x8(old).a);
+    return (pc.encoding & 0xffu) == ENC_BGRA8 ? packUnorm4x8(c.bgra) : packUnorm4x8(c);
+}
+vec3 source(sampler2D tex, ivec2 p) {
+    vec3 c = texture(tex, (vec2(p) + 0.5) / vec2(pc.size)).rgb;
+    // (the training saw the stored bytes: an sRGB view samples decoded light)
+    if ((pc.encoding & ENC_SRGB_FLAG) != 0u) c = linearToSrgb(c);
+    return round(c * 255.0) / 255.0;
+}
+float luma8(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, pc.size))) return;
+    if (pc.mode == 0) {
+        imageStore(scratch, p, imageLoad(outImg, p));
+        return;
+    }
+    uint centre = imageLoad(scratch, p).r;
+    vec3 g = unpackOut(centre);
+    float x[63];
+    vec3 bc = vec3(0.0);
+    for (int dy = 0; dy < 3; ++dy)
+        for (int dx = 0; dx < 3; ++dx) {
+            ivec2 q = clamp(p + ivec2(dx - 1, dy - 1), ivec2(0), pc.size - 1);
+            vec3 gn = unpackOut(imageLoad(scratch, q).r);
+            vec3 pv = source(prevTex, q), cv = source(curTex, q);
+            vec3 bn = pv * (1.0 - pc.t) + cv * pc.t;
+            if (dx == 1 && dy == 1) bc = bn;
+            int k = (dy * 3 + dx) * 7;
+            x[k + 0] = gn.r - g.r; x[k + 1] = gn.g - g.g; x[k + 2] = gn.b - g.b;
+            x[k + 3] = bn.r - g.r; x[k + 4] = bn.g - g.g; x[k + 5] = bn.b - g.b;
+            x[k + 6] = abs(luma8(pv) - luma8(cv));
+        }
+    float s = LC_B2[0];
+    for (int j = 0; j < LC_HIDDEN; ++j) {
+        float h = LC_B1[j];
+        for (int i = 0; i < 63; ++i) h += x[i] * LC_W1[i * LC_HIDDEN + j];
+        s += max(h, 0.0) * LC_W2[j];
+    }
+    float alpha = pc.strength / (1.0 + exp(-s));
+    imageStore(outImg, p, uvec4(packOut(clamp(g + alpha * (bc - g), 0.0, 1.0), centre), 0u, 0u, 0u));
+}

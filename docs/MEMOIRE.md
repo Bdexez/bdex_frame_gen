@@ -795,6 +795,18 @@ fermée (retenir le jeu réduit son attente) ; les images écrasées d'un
 espacement trop serré n'arrivent que quand la couche ne connaît pas la
 grille (seulement la fréquence), la règle d'atterrissage les évite sinon.
 
+**Correction apprise** (02/10, `learned_correction`, expérimental) : réseau
+63 → 8 → 1 entraîné en numpy (`tools/train_correction.py`, données =
+sorties de `bdex_offline`), tête « mix » bornée (déplace le pixel vers le
+fondu, jamais au-delà) ; passe `learned_correction.comp` après la synthèse,
+avant le HUD (le HUD est désormais ajouté en dernier dans le registre).
+Mesuré sur des séquences jamais vues : démo +0,49 dB, autres démos +0,10 /
++0,15, popup −0,59, subpixel −1,73 (le moteur retrouve les chiffres numpy
+au centième près). Essais écartés : résidu libre (subpixel −11 dB), 16
+unités (identique), écarts aux entrées en plus (subpixel −11). Le modèle ne
+généralise pas au-delà de ses données : il faut des enregistrements de vrais
+jeux (`--record`). +0,12 ms à 960×540. Désactivé par défaut.
+
 **Confiance du flux** (02/10, `flow_confidence`, passe `flow_confidence.comp`
 à la résolution du flux) : aller-retour des vecteurs sur contenu texturé
 (zones unies exclues : sinon tout le damier de la démo était « incertain »)
