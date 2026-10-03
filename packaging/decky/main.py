@@ -116,14 +116,78 @@ def multiplier_ceiling(refresh_hz):
     return 4 if refresh_hz <= 165 else 6 if refresh_hz <= 250 else 8
 
 
-def state_from(lines):
-    """The menu's controls from the configuration."""
+# The keys the menu manages, in a game's section as in the global lines.
+MANAGED = ("require_app", "multiplier", "adaptive", "target_fps", "mode", "paused", "overlay", "hud")
+
+
+def _section_span(lines, name):
+    """[start, end) of the last [name] section's body (case-insensitive), or None."""
+    span, start = None, None
+    for i, line in enumerate(lines):
+        m = _SECTION.match(line)
+        if m:
+            if start is not None:
+                span = (start, i)
+                start = None
+            if m.group(1).strip().lower() == name.lower():
+                start = i + 1
+    if start is not None:
+        span = (start, len(lines))
+    return span
+
+
+def get_section(lines, name, key):
+    span = _section_span(lines, name)
+    value = None
+    for i in range(*span) if span else ():
+        m = _KEY.match(lines[i])
+        if m and m.group(1).lower() == key:
+            value = m.group(2).strip()
+    return value
+
+
+def set_section(lines, name, key, value):
+    """Sets (value None: removes) `key` in [name], made at the end if needed."""
+    span = _section_span(lines, name)
+    if span:
+        idx = [i for i in range(*span) if (m := _KEY.match(lines[i])) and m.group(1).lower() == key]
+        for i in reversed(idx[1:] if value is not None else idx):
+            del lines[i]
+        if value is not None:
+            if idx:
+                lines[idx[0]] = f"{key} = {value}"
+            else:
+                end = span[1]
+                while end > span[0] and not lines[end - 1].strip():
+                    end -= 1
+                lines.insert(end, f"{key} = {value}")
+        return
+    if value is not None:
+        while lines and not lines[-1].strip():
+            lines.pop()
+        lines.extend(([""] if lines else []) + [f"[{name}]", f"{key} = {value}"])
+
+
+def per_game(lines, game):
+    """Whether the game's section holds settings of the menu."""
+    return bool(game) and any(get_section(lines, game, k) is not None for k in MANAGED)
+
+
+def state_from(lines, game=None):
+    """The menu's controls from the configuration: for `game` (a process
+    name, as the layer's [sections] match it), its section over the globals."""
+    mine = per_game(lines, game)
+
+    def get(key):
+        v = get_section(lines, game, key) if mine else None
+        return v if v is not None else get_global(lines, key)
+
     enabled = _flag(get_global(lines, "enabled"))
-    require_app = _flag(get_global(lines, "require_app"), True)
-    adaptive = _flag(get_global(lines, "adaptive"))
-    target = (get_global(lines, "target_fps") or "").lower()
+    require_app = _flag(get("require_app"), True)
+    adaptive = _flag(get("adaptive"))
+    target = (get("target_fps") or "").lower()
     try:
-        mult = int(float(get_global(lines, "multiplier") or "2"))
+        mult = int(float(get("multiplier") or "2"))
     except ValueError:
         mult = 2
     if mult <= 1:
@@ -134,50 +198,77 @@ def state_from(lines):
         multiplier = "auto"
     else:
         multiplier = str(min(8, mult))
-    mode = (get_global(lines, "mode") or "interpolate").lower()
+    mode = (get("mode") or "interpolate").lower()
     mode = "extrapolate" if mode.startswith("extrap") else "hybrid" if mode == "hybrid" else "interpolate"
-    hud = get_global(lines, "overlay") or get_global(lines, "hud") or "0"
+    hud = get("overlay") or get("hud") or "0"
     return {
         "generate": enabled and not require_app,
         "multiplier": multiplier,
         "mode": mode,
-        "paused": _flag(get_global(lines, "paused")),
+        "paused": _flag(get("paused")),
         "hud": hud.strip() not in ("0", "off", "false", "no", "none", ""),
+        "game": game or "",
+        "per_game": mine,
     }
 
 
-def apply_state(lines, s, refresh_hz=60.0):
-    """Writes the menu's controls into the configuration (in place)."""
+def apply_state(lines, s, refresh_hz=60.0, game=None):
+    """Writes the menu's controls into the configuration (in place): into the
+    game's section when it has the menu's settings (or `per_game` turns them
+    on, starting from the effective values), else into the global lines."""
+    if game and "per_game" in s:
+        if s["per_game"] and not per_game(lines, game):
+            current = state_from(lines, game)
+            set_section(lines, game, "require_app", "0" if current["generate"] else "1")
+            apply_state(lines, {k: current[k] for k in ("multiplier", "mode", "paused", "hud")} | {"per_game": True},
+                        refresh_hz, game)
+        elif not s["per_game"]:
+            for k in MANAGED:
+                set_section(lines, game, k, None)
+    scoped = bool(game) and per_game(lines, game)
+
+    def put(key, value):
+        if scoped:
+            set_section(lines, game, key, value)
+        else:
+            set_global(lines, key, value)
+
+    def get(key):
+        v = get_section(lines, game, key) if scoped else None
+        return v if v is not None else get_global(lines, key)
+
     if "generate" in s:
         set_global(lines, "enabled", "1")
-        set_global(lines, "require_app", "0" if s["generate"] else "1")
+        if scoped and get_global(lines, "require_app") is None:
+            set_global(lines, "require_app", "1")  # (the other games keep needing the panel)
+        put("require_app", "0" if s["generate"] else "1")
     if "multiplier" in s:
         m = s["multiplier"]
         ceiling = multiplier_ceiling(refresh_hz)
         if m == "off":
-            set_global(lines, "multiplier", "1")
-            set_global(lines, "adaptive", None)
-            set_global(lines, "target_fps", None)
+            put("multiplier", "1")
+            put("adaptive", None)
+            put("target_fps", None)
         elif m == "adaptive":
-            set_global(lines, "multiplier", str(ceiling))
-            set_global(lines, "adaptive", "1")
-            set_global(lines, "target_fps", None)
+            put("multiplier", str(ceiling))
+            put("adaptive", "1")
+            put("target_fps", None)
         elif m == "auto":
-            set_global(lines, "multiplier", str(ceiling))
-            set_global(lines, "adaptive", None)
-            set_global(lines, "target_fps", "auto")
+            put("multiplier", str(ceiling))
+            put("adaptive", None if not scoped else "0")
+            put("target_fps", "auto")
         else:
-            set_global(lines, "multiplier", str(max(2, min(8, int(m)))))
-            set_global(lines, "adaptive", None)
-            if (get_global(lines, "target_fps") or "").lower() in ("auto", "-1"):
-                set_global(lines, "target_fps", None)
+            put("multiplier", str(max(2, min(8, int(m)))))
+            put("adaptive", None if not scoped else "0")
+            if (get("target_fps") or "").lower() in ("auto", "-1") or scoped:
+                put("target_fps", None if not scoped else "0")
     if "mode" in s and s["mode"] in ("interpolate", "hybrid", "extrapolate"):
-        set_global(lines, "mode", s["mode"])
+        put("mode", s["mode"])
     if "paused" in s:
-        set_global(lines, "paused", "1" if s["paused"] else None)
+        put("paused", "1" if s["paused"] else (None if not scoped else "0"))
     if "hud" in s:
-        set_global(lines, "hud", None)
-        set_global(lines, "overlay", "2" if s["hud"] else None)
+        put("hud", None)
+        put("overlay", "2" if s["hud"] else (None if not scoped else "0"))
     return lines
 
 
@@ -267,19 +358,21 @@ def layer_installed(home=None):
 
 class Plugin:
     async def get_state(self):
-        s = state_from(read_lines(config_path()))
+        status = read_status(status_dir())
+        s = state_from(read_lines(config_path()), (status or {}).get("game"))
         s["installed"] = layer_installed()
-        s["status"] = read_status(status_dir())
+        s["status"] = status
         return s
 
     async def set_state(self, changes):
         path = config_path()
         lines = read_lines(path)
         status = read_status(status_dir())
-        apply_state(lines, changes, (status or {}).get("refresh_hz") or 60.0)
+        game = (status or {}).get("game")
+        apply_state(lines, changes, (status or {}).get("refresh_hz") or 60.0, game)
         write_lines(path, lines)
-        log.info("bdex-framegen: %s", changes)
-        return state_from(lines)
+        log.info("bdex-framegen: %s%s", changes, f" ({game})" if game else "")
+        return state_from(lines, game)
 
     async def _main(self):
         log.info("bdex-framegen menu loaded (config %s)", config_path())

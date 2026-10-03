@@ -840,10 +840,10 @@ void VirtualSwapchain::rebuildOutput() {
         historyLost_ = true;
         dynMult_ = 0;
     } catch (const VkError& e) {
-        BDEX_WARN("control panel: output stage not rebuilt (%s)", e.what());
+        BDEX_WARN("settings changed: output stage not rebuilt (%s)", e.what());
         return;
     }
-    BDEX_INFO("control panel: output stage rebuilt (x%d %s, generation %s)", cfg_.multiplier, cfg_.modeName(),
+    BDEX_INFO("settings changed: output stage rebuilt (x%d %s, generation %s)", cfg_.multiplier, cfg_.modeName(),
               generating_ && !cfg_.paused ? "on" : "paused");
 }
 

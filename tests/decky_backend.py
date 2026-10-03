@@ -45,7 +45,8 @@ panel = ["# bdex-framegen — written by the control panel (bdex-framegen-gui)."
          "require_app = 1", "multiplier = 4", "target_fps = auto", "mode = interpolate", "", "[kenshi]",
          "multiplier = 3"]
 s = m.state_from(panel)
-check(s == {"generate": False, "multiplier": "auto", "mode": "interpolate", "paused": False, "hud": False}, f"read {s}")
+check(s == {"generate": False, "multiplier": "auto", "mode": "interpolate", "paused": False, "hud": False,
+            "game": "", "per_game": False}, f"read {s}")
 lines = list(panel)
 m.apply_state(lines, {"generate": True, "multiplier": "3", "mode": "hybrid", "paused": True, "hud": True})
 check(layer_view(lines, "require_app") == "0" and layer_view(lines, "enabled") == "1", "generate")
@@ -59,6 +60,39 @@ check(layer_view(lines, "adaptive") == "1" and layer_view(lines, "multiplier") =
 check(layer_view(lines, "paused") is None and m.state_from(lines)["multiplier"] == "adaptive", "unpaused, adaptive")
 m.apply_state(lines, {"multiplier": "auto"}, refresh_hz=240)
 check(layer_view(lines, "multiplier") == "6" and layer_view(lines, "target_fps") == "auto", "auto at 240 Hz")
+
+# Per game: the game's section over the globals, as the layer applies it.
+def game_view(lines, game, key):
+    """What the layer applies for `game`: its section's last line, else the globals'."""
+    v, inside = None, False
+    for line in lines:
+        t = line.strip()
+        if t.startswith("[") and t.endswith("]"):
+            inside = t[1:-1].strip().lower() == game
+            continue
+        if inside and "=" in t:
+            k, val = t.split("=", 1)
+            if k.strip().lower() == key:
+                v = val.strip()
+    return v if v is not None else layer_view(lines, key)
+
+
+g = list(panel)
+st = m.state_from(g, "kenshi")
+check(st["per_game"] and st["multiplier"] == "auto" and not st["generate"], f"kenshi's section read (the global target_fps = auto applies to it too): {st}")
+m.apply_state(g, {"generate": True, "mode": "extrapolate"}, game="kenshi")
+check(game_view(g, "kenshi", "require_app") == "0" and layer_view(g, "require_app") == "1", "generate for kenshi only")
+check(game_view(g, "kenshi", "mode") == "extrapolate" and layer_view(g, "mode") == "interpolate", "mode for kenshi only")
+m.apply_state(g, {"per_game": False}, game="kenshi")
+check(not m.per_game(g, "kenshi") and game_view(g, "kenshi", "multiplier") == "4", f"back to the globals: {g}")
+g2 = list(panel)
+m.apply_state(g2, {"per_game": True}, game="doom")
+st = m.state_from(g2, "doom")
+check(st["per_game"] and st["multiplier"] == "auto" and g2[:len(panel)] == panel, f"doom's own section from the globals: {g2}")
+m.apply_state(g2, {"multiplier": "2", "paused": True}, game="doom")
+check(game_view(g2, "doom", "multiplier") == "2" and game_view(g2, "doom", "target_fps") == "0" and
+      layer_view(g2, "multiplier") == "4" and layer_view(g2, "paused") is None, f"doom x2, paused: {g2}")
+check(m.state_from(g2, "doom")["multiplier"] == "2" and m.state_from(g2, "doom")["paused"], "doom read back")
 
 # Globals before any section, then a [*] section: both are global; the key
 # is rewritten once (the last one wins in the layer).
