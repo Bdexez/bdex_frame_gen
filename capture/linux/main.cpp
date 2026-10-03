@@ -227,6 +227,8 @@ int main(int argc, char** argv) {
     if (!o.mode.empty() && !cfg.apply("mode", o.mode)) BDEX_WARN("unknown mode %s", o.mode.c_str());
     if (o.hud >= 0) cfg.apply("overlay", std::to_string(o.hud));
     if (cfg.multiplier < 2 && o.multiplier == 0) cfg.multiplier = 2;  // (the panel's x1 means "off" for the layer)
+    if (o.gpu.empty()) o.gpu = cfg.gpu;          // the configuration's GPU (panel, launchers)
+    if (o.hotkey.empty()) o.hotkey = cfg.hotkey;
 
     // Our own Vulkan instance loads the layer too (implicit): it must stay a
     // pass-through there, whatever the configuration or BDEX_FG says.
@@ -253,7 +255,6 @@ int main(int argc, char** argv) {
     };
     resize();
 
-    if (o.hotkey.empty() && std::getenv("BDEX_FG_HOTKEY")) o.hotkey = std::getenv("BDEX_FG_HOTKEY");
     const Hotkey toggle = parseHotkey(dpy, o.hotkey, XK_g), quit = parseHotkey(dpy, "", XK_q);
     grab(dpy, toggle);
     grab(dpy, quit);

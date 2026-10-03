@@ -305,7 +305,8 @@ const std::pair<const char*, const char*> kCustomKeys[] = {
     {"preset", nullptr},      {"fullres", nullptr},    {"flow_scale", nullptr},     {"mode", nullptr},
     {"upscale", nullptr},     {"overlay", "hud"},      {"upscale_filter", nullptr}, {"capture_hdr", nullptr},
     {"log_file", nullptr},    {"target_fps", nullptr}, {"fps_limit", "fps_cap"},    {"dump", "dump_dir"},
-    {"present_mode", nullptr}, {"debug", nullptr},     {"latency_log", nullptr}};
+    {"present_mode", nullptr}, {"debug", nullptr},     {"latency_log", nullptr},    {"gpu", nullptr},
+    {"method", nullptr},       {"hotkey", nullptr}};
 
 const OptionDef* findOption(const std::string& key) {
     for (const auto& d : registry())
@@ -477,6 +478,20 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
         return true;
     }
     if (key == "log_file")                    { logFile = platformExpandPath(value); return true; }
+    if (key == "gpu") {
+        const std::string v = lower(value);
+        gpu = v == "auto" || v == "game" ? std::string() : value;
+        return true;
+    }
+    if (key == "method") {
+        const std::string v = lower(value);
+        if (v == "auto" || v == "0") method = 0;
+        else if (v == "layer" || v == "injection" || v == "inject" || v == "1") method = 1;
+        else if (v == "capture" || v == "2") method = 2;
+        else return false;
+        return true;
+    }
+    if (key == "hotkey")                      { hotkey = value; return true; }
     if (key == "latency_log")                 { latencyLog = platformExpandPath(value); return true; }
     // "auto" (-1): from the refresh rate the present feedback measures.
     // "auto", or any negative number (the UIs' spin buttons write -1 for it).

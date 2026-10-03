@@ -80,6 +80,17 @@ struct Config {
     Debug debug         = Debug::None;
     int   logLevel      = 1;
     std::string logFile;
+    // The tools' choices, shared through the file (the layer itself only
+    // keeps them): the GPU that generates the frames ("" = the game's;
+    // otherwise a part of a GPU's name, or its number for the capture app) and
+    // how — 0 auto (injection by this layer where it runs in the game,
+    // capture otherwise or on another GPU), 1 injection only, 2 capture
+    // only. The control panel and the launchers decide with them;
+    // bdex-capture takes `gpu` when --gpu is not given. `hotkey`: the
+    // capture apps' generation toggle.
+    std::string gpu;
+    int method = 0;
+    std::string hotkey;
     std::string latencyLog;      // latency_log: every displayed frame as "<game's present ms> <display ms> <real 0/1>" (steady clock, present feedback), for tools/latency_report.py
     float sceneCutLow   = 0.05f;  // mean matching cost above which we start fading to the real frame
     float sceneCutHigh  = 0.09f;  // ... and above which the generated frame is a plain duplicate
