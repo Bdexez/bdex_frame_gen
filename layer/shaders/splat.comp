@@ -30,7 +30,7 @@ layout(push_constant) uniform PC {
     vec2 flowInvSize;  // 1 / (display pixels covered by the flow textures)
     int timing;        // > 0: s = st.t[timing - 1] - 1 (content time, see frame_state.comp)
     float accel;       // second-order term weight (see extrapDisp in interpolate.comp), 0 = off
-    int mode;          // 0 extrapolation (cur past t = 1); interp_splat: 1 prev to t, 2 cur to t
+    int mode;          // 0 extrapolation (cur past t = 1); 1 interp_splat (prev and cur to t, half resolution)
     float t;           // interp_splat: the output's time between prev and cur
 } pc;
 
@@ -39,25 +39,37 @@ vec2 bwdAt(vec2 p) { return texture(flowBwd, p * pc.flowInvSize).xy * pc.flowSca
 
 void main() {
     ivec2 p = ivec2(gl_GlobalInvocationID.xy);
-    if (any(greaterThanEqual(p, pc.size))) return;
-    vec2 src = vec2(p) + 0.5;
     if (pc.mode != 0) {
-        // interp_splat: every pixel of prev (mode 1, along the forward flow)
-        // or of cur (mode 2, back along the backward flow) pushed to where it
-        // is at time t — the left half of the map for prev, the right half
-        // for cur. Same priority as below: consistent beats inconsistent,
-        // then the faster pixel (the likelier foreground) wins.
+        // interp_splat: the pixels of prev (along the forward flow) and of
+        // cur (back along the backward flow) pushed to where they are at
+        // time t — prev's in the left half of the map, cur's in the right
+        // half. One pixel per 2x2 block onto a half-resolution grid (one
+        // thread for both): the block flow is the same over the block, the
+        // synthesis only takes a candidate trajectory from the map, and the
+        // full-resolution splat measured the same (+-0.02 dB on the corpus)
+        // for 1.5x the time (1440p: 0.29 -> 0.19 ms). Same priority as below:
+        // consistent beats inconsistent, then the faster pixel (the likelier
+        // foreground) wins.
+        p *= 2;
+        if (any(greaterThanEqual(p, pc.size))) return;
+        vec2 src = vec2(p) + 0.5;
         float t = pc.timing > 0 ? st.t[pc.timing - 1] : pc.t;
-        vec2 v = pc.mode == 1 ? fwdAt(src) : bwdAt(src);
-        vec2 back = pc.mode == 1 ? bwdAt(src + v) : fwdAt(src + v);
-        vec2 dstf = src + (pc.mode == 1 ? t : 1.0 - t) * v;
-        ivec2 dst = ivec2(floor(dstf));
-        if (any(lessThan(dst, ivec2(0))) || any(greaterThanEqual(dst, pc.size))) return;
-        uint prio = length(v + back) > 2.0 ? 511u : 510u - uint(clamp(length(v), 0.0, 510.0));
+        const int hw = (pc.size.x + 1) / 2, hh = (pc.size.y + 1) / 2;
         uint index = uint(p.y * pc.size.x + p.x);
-        atomicMin(splatMap.key[dst.y * 2 * pc.size.x + dst.x + (pc.mode == 2 ? pc.size.x : 0)], (prio << 23) | index);
+        vec2 F = fwdAt(src), B = bwdAt(src);
+        ivec2 dp = ivec2(floor(src + t * F)) / 2, dc = ivec2(floor(src + (1.0 - t) * B)) / 2;
+        if (src.x + t * F.x >= 0.0 && src.y + t * F.y >= 0.0 && all(lessThan(dp, ivec2(hw, hh)))) {
+            uint prio = length(F + bwdAt(src + F)) > 2.0 ? 511u : 510u - uint(clamp(length(F), 0.0, 510.0));
+            atomicMin(splatMap.key[dp.y * 2 * hw + dp.x], (prio << 23) | index);
+        }
+        if (src.x + (1.0 - t) * B.x >= 0.0 && src.y + (1.0 - t) * B.y >= 0.0 && all(lessThan(dc, ivec2(hw, hh)))) {
+            uint prio = length(B + fwdAt(src + B)) > 2.0 ? 511u : 510u - uint(clamp(length(B), 0.0, 510.0));
+            atomicMin(splatMap.key[dc.y * 2 * hw + dc.x + hw], (prio << 23) | index);
+        }
         return;
     }
+    if (any(greaterThanEqual(p, pc.size))) return;
+    vec2 src = vec2(p) + 0.5;
     vec2 B = bwdAt(src);                    // minus the motion of this pixel
     float s = pc.timing > 0 ? st.t[pc.timing - 1] - 1.0 : pc.s;
     vec2 d = -s * B;

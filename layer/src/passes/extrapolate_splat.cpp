@@ -48,19 +48,19 @@ public:
         const FgFineLevel l0 = ctx.fineLevel();
         const VkExtent2D d = ctx.displayExtent(), r = ctx.renderExtent();
         const float sx = float(d.width) / r.width, sy = float(d.height) / r.height, fs = ctx.flowToRender();
-        vt.CmdFillBuffer(cmd, map_.buffer, 0, VK_WHOLE_SIZE, 0xFFFFFFFFu);  // (no key: nothing landed)
+        // (no key: nothing landed) — interp_splat's half-resolution map is a quarter of it
+        const uint32_t hw = (d.width + 1) / 2, hh = (d.height + 1) / 2;
+        vt.CmdFillBuffer(cmd, map_.buffer, 0, extrap ? VK_WHOLE_SIZE : 4 * VkDeviceSize(2 * hw) * hh, 0xFFFFFFFFu);
         ctx.barrier(cmd);
         vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe_.pipeline);
         SplatPC pc{{(int32_t)d.width, (int32_t)d.height}, t - 1.f, fs * sx,
                    {1.f / (l0.fine.width * l0.block * fs * sx), 1.f / (l0.fine.height * l0.block * fs * sy)},
                    timing, extrap ? in.accel : 0.f, 0, t};
         vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe_.layout, 0, 1, &set_, 0, nullptr);
-        for (int mode = extrap ? 0 : 1; mode <= (extrap ? 0 : 2); ++mode) {
-            if (mode == 2) ctx.barrier(cmd);  // (one image: the halves are disjoint, the validation cannot tell)
-            pc.mode = mode;
-            vt.CmdPushConstants(cmd, pipe_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
-            ctx.dispatchSynthesisSize(cmd, gated);
-        }
+        pc.mode = extrap ? 0 : 1;
+        vt.CmdPushConstants(cmd, pipe_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+        if (extrap) ctx.dispatchSynthesisSize(cmd, gated);
+        else vt.CmdDispatch(cmd, (hw + 15) / 16, (hh + 15) / 16, 1);  // (a thread per 2x2 block)
         ctx.barrier(cmd);
         in.splat = true;
     }

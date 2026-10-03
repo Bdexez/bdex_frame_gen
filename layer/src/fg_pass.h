@@ -21,6 +21,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace bdex {
@@ -51,6 +52,10 @@ struct FgPipeline {
     VkPipeline pipeline = VK_NULL_HANDLE;
     VkPipeline lean = VK_NULL_HANDLE;  // specialization constant 0 = false, where the shader has one (see makePass)
     VkPipeline rot = VK_NULL_HANDLE;   // the matcher's rotation-only variant (constants 0 false, 1 true)
+    // The synthesis's variants per set of opt-ins (constant 1 = the set's
+    // bits, FrameGen::synthesisVariant), made from `module` when first used.
+    VkShaderModule module = VK_NULL_HANDLE;
+    mutable std::vector<std::pair<uint32_t, VkPipeline>> variants;
 };
 
 // The finest flow level (level 0 of the pyramid).

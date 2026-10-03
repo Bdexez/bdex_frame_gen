@@ -19,6 +19,25 @@ layout(local_size_x = 16, local_size_y = 16) in;
 // compiled out: the inlined Catmull-Rom taps alone raise the register count of
 // the whole kernel. Same results as the full variant with the options off.
 layout(constant_id = 0) const bool kOptIns = true;
+// Which opt-ins this variant compiles in (FrameGen::synthesisVariant: a
+// pipeline per set of options in use, built when first needed): the full
+// variant has them all, and each one left out frees registers for the rest
+// (1440p, the defaults of a discrete GPU: the full variant cost 0.33 ms more
+// than the lean one for the same work). Bits: SYNTH_* in framegen_internal.h.
+layout(constant_id = 1) const uint kFeatures = 0xFFFFFFFFu;
+const bool kBicubic = (kFeatures & 1u) != 0u;
+const bool kTiming = (kFeatures & 2u) != 0u;
+const bool kLocalCut = (kFeatures & 4u) != 0u;
+const bool kAccel = (kFeatures & 8u) != 0u;
+const bool kReveal = (kFeatures & 16u) != 0u;
+const bool kSplat = (kFeatures & 32u) != 0u;
+const bool kPixelVectors = (kFeatures & 64u) != 0u;
+const bool kAlt = (kFeatures & 128u) != 0u;
+const bool kOcclusion = (kFeatures & 256u) != 0u;
+const bool kConfFallback = (kFeatures & 512u) != 0u;
+const bool kStaticGuard = (kFeatures & 1024u) != 0u;
+const bool kStaticMask = (kFeatures & 2048u) != 0u;
+const bool kDebugConf = (kFeatures & 4096u) != 0u;
 
 layout(binding = 0) uniform sampler2D prevTex;
 layout(binding = 1) uniform sampler2D curTex;
@@ -123,7 +142,7 @@ vec4 sampleCR(sampler2D tex, vec2 uv) {
     return clamp(c, min(min(a, b), min(e, g)), max(max(a, b), max(e, g)));
 }
 // A colour along a trajectory: bilinear (historical) or Catmull-Rom.
-vec4 sampleC(sampler2D tex, vec2 uv) { return kOptIns && pc.bicubic != 0 ? sampleCR(tex, uv) : texture(tex, uv); }
+vec4 sampleC(sampler2D tex, vec2 uv) { return kBicubic && pc.bicubic != 0 ? sampleCR(tex, uv) : texture(tex, uv); }
 
 // Photometric error between two samples, on the scale the thresholds below
 // are tuned for. SDR keeps the historical expression; HDR values (scRGB
@@ -254,13 +273,13 @@ void main() {
     vec2 fsize = vec2(pc.size);
     vec2 q = vec2(p) + 0.5;
     vec2 uv = q / fsize;
-    float t = kOptIns && pc.timing > 0 ? cost.t[pc.timing - 1] : pc.t;
+    float t = kTiming && pc.timing > 0 ? cost.t[pc.timing - 1] : pc.t;
     vec4 cur = texture(curTex, uv);
-    float cut = smoothstep(pc.cutLow, pc.cutHigh, kOptIns && pc.localCut > 0 ? localCost(uv) : cost.meanCost);
+    float cut = smoothstep(pc.cutLow, pc.cutHigh, kLocalCut && pc.localCut > 0 ? localCost(uv) : cost.meanCost);
     vec4 c;
     vec2 F;
 
-    if (kOptIns && pc.timing > 0 && cost.dup != 0u && pc.t <= 1.0) {
+    if (kTiming && pc.timing > 0 && cost.dup != 0u && pc.t <= 1.0) {
         // dedup, interpolation: the game repeated its frame. The two images
         // are identical and the flow is the previous pair's (kept for
         // extrapolation), so warping would move the picture: show it as is.
@@ -280,7 +299,7 @@ void main() {
         float s = t - 1.0;
         vec2 B = bwdAt(q);
         vec2 pb;
-        if (kOptIns && pc.accel > 0.0) {  // uniform branch; the constant-velocity path below is the historical one
+        if (kAccel && pc.accel > 0.0) {  // uniform branch; the constant-velocity path below is the historical one
             pb = q - extrapDisp(q, s, B);
             for (int i = 0; i < pc.iterations; ++i) { B = bwdAt(pb); pb = q - extrapDisp(pb, s, B); }
         } else {
@@ -297,13 +316,13 @@ void main() {
             // but its trajectory stays consistent (the forward flow at the
             // source leads back) — the demo's spinning square lost 0.4 dB
             // without this test.
-            if (kOptIns && pc.revealFill != 0 && pc.iterations > 0 && distance(pb, pbPrev) > 1.0 &&
+            if (kReveal && pc.revealFill != 0 && pc.iterations > 0 && distance(pb, pbPrev) > 1.0 &&
                 length(B + fwdAt(pb + B)) > 2.0) {
                 vec2 Bpb = bwdAt(pb), BpbPrev = bwdAt(pbPrev);
                 if (length(BpbPrev) < length(Bpb)) { pb = pbPrev; B = Bprev; }
             }
         }
-        if (kOptIns && pc.splat != 0) {
+        if (kSplat && pc.splat != 0) {
             uint key = splatMap.key[p.y * 2 * pc.size.x + p.x];
             if (key != 0xFFFFFFFFu) {
                 // A pixel of cur landed here: sample it, shifted by the
@@ -311,7 +330,7 @@ void main() {
                 uint index = key & 0x7FFFFFu;
                 vec2 src = vec2(float(index % uint(pc.size.x)), float(index / uint(pc.size.x))) + 0.5;
                 B = bwdAt(src);
-                if (pc.accel > 0.0) pb = src + (q - (src + extrapDisp(src, s, B)));
+                if (kAccel && pc.accel > 0.0) pb = src + (q - (src + extrapDisp(src, s, B)));
                 else pb = src + (q - (src - s * B));
             }
         }
@@ -338,7 +357,7 @@ void main() {
     vec4 cb2 = sampleC(prevTex, (pb + B) / fsize);
     float eb = colourError(cb, cb2);
 
-    if (kOptIns && pc.splat != 0) {
+    if (kSplat && pc.splat != 0) {
         // interp_splat: the pixels of prev and of cur the motion carries onto
         // q at time t (splat.comp: the left and right halves of the map) —
         // the layer in front at an object's edge, which the lookup at q often
@@ -349,7 +368,10 @@ void main() {
         // trajectory — without it HUD -0.12 dB on top of pixel_vectors).
         // (The error test first: the candidates, 4 samples, are only
         // evaluated where they can be kept — same output, a third less work.)
-        uint kp = ef > 0.02 ? splatMap.key[p.y * 2 * pc.size.x + p.x] : 0xFFFFFFFFu;
+        // (A half-resolution map, see splat.comp.)
+        const int hw = (pc.size.x + 1) / 2;
+        const ivec2 hp = p / 2;
+        uint kp = ef > 0.02 ? splatMap.key[hp.y * 2 * hw + hp.x] : 0xFFFFFFFFu;
         if (kp != 0xFFFFFFFFu) {
             uint index = kp & 0x7FFFFFu;
             vec2 src = vec2(float(index % uint(pc.size.x)), float(index / uint(pc.size.x))) + 0.5;
@@ -359,7 +381,7 @@ void main() {
             float e = colourError(a, b);
             if (e < 0.9 * ef) { ef = e; F = Fs; pf = ps; cf = a; cf2 = b; }
         }
-        uint kc = eb > 0.02 ? splatMap.key[p.y * 2 * pc.size.x + p.x + pc.size.x] : 0xFFFFFFFFu;
+        uint kc = eb > 0.02 ? splatMap.key[hp.y * 2 * hw + hp.x + hw] : 0xFFFFFFFFu;
         if (kc != 0xFFFFFFFFu) {
             uint index = kc & 0x7FFFFFu;
             vec2 src = vec2(float(index % uint(pc.size.x)), float(index / uint(pc.size.x))) + 0.5;
@@ -371,7 +393,7 @@ void main() {
         }
     }
 
-    if (kOptIns && pc.pixelVectors != 0) {
+    if (kPixelVectors && pc.pixelVectors != 0) {
         // At an object boundary the bilinear flow lookup blends two motions
         // into a vector that is wrong for both. Try the unblended vectors of
         // the four flow texels around the source position and keep, per
@@ -444,7 +466,7 @@ void main() {
     // per-candidate weight below discards that trajectory anyway. The blend
     // amount is gated by the trajectory's own consistency so an occluded sample
     // never contaminates the candidate it belongs to.
-    if (kOptIns && pc.altVectors != 0) {
+    if (kAlt && pc.altVectors != 0) {
         // alt_vectors: the block's second hypothesis, a motion 2 px or more
         // from the one the matcher kept — kept per pixel where its two
         // endpoints agree better (fast motion over repeating or flat texture,
@@ -477,7 +499,7 @@ void main() {
     const float eps = 0.01;
     float wf = (1.0 - t) / ((ef + eps) * (ef + eps));
     float wb = t / ((eb + eps) * (eb + eps));
-    if (kOptIns && pc.occlusionStrength > 0.0) {
+    if (kOcclusion && pc.occlusionStrength > 0.0) {
         // A trajectory crossing an occlusion often matches a similar colour
         // on the wrong object. Reject it when the reverse flow does not bring
         // its endpoint back to its source, even if the colour error is low.
@@ -504,14 +526,14 @@ void main() {
     // confidence_fallback: where the flow itself is not trusted (its vectors
     // do not round-trip, or pair different luma), the plain cross-fade —
     // a soft blur instead of a confidently wrong warp.
-    if (kOptIns && pc.confFallback > 0.0)
+    if (kConfFallback && pc.confFallback > 0.0)
         c = mix(c, mix(texture(prevTex, uv), cur, t), pc.confFallback * (1.0 - confidenceAt(q)));
     }
 
     // Interpolation only: an unchanged pixel says nothing about the frame
     // after cur, where the flow may bring an object in (measured: the guard
     // costs 0.5-0.8 dB on the demo in extrapolation).
-    if (kOptIns && pc.staticGuard > 0.0 && pc.t <= 1.0) {
+    if (kStaticGuard && pc.staticGuard > 0.0 && pc.t <= 1.0) {
         // Only where the flow *at q itself* says the content there moves: a
         // static pixel inside moving content is an overlay (HUD glyph). A
         // static background pixel that a small object crosses between the
@@ -521,7 +543,7 @@ void main() {
         c = mix(c, cur, pc.staticGuard * staticness(uv) * moving);
     }
     // hud_mask: a learned static overlay pixel is not moved with the flow.
-    if (kOptIns && pc.staticFrames > 0.0) {
+    if (kStaticMask && pc.staticFrames > 0.0) {
         ivec2 ms = textureSize(staticMask, 0);
         if (texelFetch(staticMask, min(ivec2(uv * vec2(ms)), ms - 1), 0).r >= pc.staticFrames) c = cur;
     }
@@ -535,7 +557,7 @@ void main() {
     } else if (pc.debugMode == DBG_SPLIT) {
         if (p.x > pc.size.x / 2) c = cur;
         if (abs(p.x - pc.size.x / 2) < 2) c = vec4(1.0, 0.0, 1.0, 1.0);
-    } else if (kOptIns && pc.debugMode == DBG_CONF) {
+    } else if (kDebugConf && pc.debugMode == DBG_CONF) {
         c.rgb = mix(c.rgb, vec3(1.0, 0.12, 0.08), 0.75 * (1.0 - confidenceAt(vec2(p) + 0.5)));
     }
     // (The fps HUD is drawn over the finished output by passes/fps_hud.cpp.)

@@ -8,6 +8,23 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Performance
 
+- **The synthesis compiled for the options in use**: `interpolate.comp`'s
+  opt-ins are each a bit of a specialization constant, and the engine binds a
+  pipeline built for exactly the set the frame uses (pre-built with the other
+  pipelines; kept in the pipeline cache) instead of the one with every
+  opt-in compiled in — whose registers cost the occupancy of every pixel.
+  Discrete GPU defaults (pixel_vectors, interp_splat, local scene cut):
+  1440p x2 0.99 → 0.66 ms, 4K x2 2.14 → 1.43 ms per generated frame — the
+  whole generation at 1440p 1.42 → 1.09 ms. Same frames (the lean and full
+  variants unchanged; a specialised one within 1 LSB on NVIDIA, a few
+  pixels of the HUD scene). `reveal_fill`, an extrapolation option, no
+  longer keeps the interpolated frames off the lean variant.
+- **`interp_splat` at half resolution**: one pixel per 2x2 block, both
+  frames in one dispatch, onto a half-resolution map (a quarter of the fill):
+  0.29 → 0.11 ms at 1440p, same quality (within ±0.02 dB of the
+  full-resolution splat on the corpus at 960x540, `PRESET=auto`).
+  With the two items above, the whole generation on a discrete GPU's
+  defaults (RTX 3060 Ti, x2): **1440p 1.63 → 0.92 ms, 4K 2.96 → 1.84 ms**.
 - **Synthesis 20 % cheaper on discrete GPUs** (1440p x2, RTX 3060 Ti:
   1.20 → 0.95 ms; the whole generation 1.63 → 1.38 ms), same frames bit for
   bit: the splat map of `interp_splat` / `extrapolate_splat` is a storage
