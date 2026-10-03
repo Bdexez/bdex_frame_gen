@@ -38,6 +38,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <cwchar>
 #include <cwctype>
 #include <filesystem>
@@ -589,6 +590,9 @@ int runInjection(HWND target) {
     if (!tray.create()) LOGW("notification-area icon unavailable");
     bool on = true;
     tray.setGeneration(on);
+    tray.setRecordable(true);
+    std::string recording;  // a recording under way: its directory
+    ULONGLONG recordStart = 0;
     LOGI("injection: the Vulkan layer generates in pid %lu — Ctrl+Alt+Q to stop",
          static_cast<unsigned long>(pid));
     ULONGLONG last = 0;
@@ -603,11 +607,47 @@ int runInjection(HWND target) {
                 tray.setGeneration(on);
                 last = 0;  // (written at once)
                 LOGI("frame generation %s", on ? "on" : "off");
+            } else if (msg.message == bdex::Tray::kMsgRecord && recording.empty()) {
+                // The layer records the game's next real frames (<pid>.record,
+                // DeviceData::pollRecordRequest), for the evaluation corpus.
+                char stamp[32];
+                const std::time_t now = std::time(nullptr);
+                std::strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", std::localtime(&now));
+                const std::string rel = std::string("rec-") + bdex::narrow(bdex::processName(pid)) + "-" + stamp;
+                std::ofstream req(dir + "\\" + std::to_string(pid) + ".record", std::ios::trunc);
+                req << 150 << " " << rel << "\n";
+                recording = dir + "\\" + rel;
+                recordStart = GetTickCount64();
+                LOGI("recording asked: %s", recording.c_str());
             }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
         const ULONGLONG now = GetTickCount64();
+        if (!recording.empty() && now - recordStart > 1000) {
+            std::error_code rec;
+            if (std::filesystem::exists(recording + "\\DONE", rec)) {
+                // Done: kept under %LOCALAPPDATA%\bdex-framegen\recordings
+                // (tools/corpus_pack.py packs it for the corpus).
+                char buf[MAX_PATH];
+                const DWORD n = GetEnvironmentVariableA("LOCALAPPDATA", buf, MAX_PATH);
+                std::string dest = recording;
+                if (n && n < MAX_PATH) {
+                    const std::filesystem::path d = std::filesystem::path(std::string(buf, n)) / "bdex-framegen" / "recordings";
+                    std::filesystem::create_directories(d, rec);
+                    const std::filesystem::path to = d / std::filesystem::path(recording).filename().string().substr(4);
+                    std::filesystem::rename(recording, to, rec);
+                    if (!rec) dest = to.string();
+                }
+                LOGI("recording ready: %s", dest.c_str());
+                MessageBoxW(nullptr, (T(L"Enregistrement prêt :\n", L"Recording ready:\n") + utf16(dest)).c_str(),
+                            L"bdex framegen", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
+                recording.clear();
+            } else if (now - recordStart > 120000) {
+                LOGW("the recording did not finish");
+                recording.clear();
+            }
+        }
         if (now - last >= 1000) {
             last = now;
             const std::string tmp = session + ".tmp";

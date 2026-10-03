@@ -140,7 +140,7 @@ public:
     // buffer; writeDump() decodes it to a PPM file once the GPU is done.
     // `which`: 0..outputs_-1 = generated outputs, outputs_ = real frame.
     void recordDump(VkCommandBuffer cmd, uint32_t which, uint32_t cur);
-    bool writeDump(const std::string& path, uint32_t which);
+    bool writeDump(const std::string& path, uint32_t which, uint32_t downscale = 1);
     uint32_t outputCount() const { return outputs_; }
 
     int levels() const { return levels_; }

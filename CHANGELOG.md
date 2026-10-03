@@ -39,6 +39,18 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   clipboard and shown in Explorer, then the pre-filled issue form (the same
   fields as `bdex-framegen --issue-url`).
 
+### Recording for the corpus
+
+- **« Enregistrer » on a running game**: the Linux panel (a button on each
+  game the layer has; text mode `e`) and the Windows tray during an
+  injection ask the layer for the game's next 150 real frames
+  (`<status dir>/<pid>.record`, taken by `DeviceData::pollRecordRequest`):
+  written as `fNNNN.ppm` at most 960 pixels wide (box filter) while
+  generation goes on, then `DONE`. The panel moves them to
+  `~/.cache/bdex-framegen/recordings` and packs them with
+  `tools/corpus_pack.py` when it and Pillow are there (Windows:
+  `%LOCALAPPDATA%\bdex-framegen\recordings`). Test `record_live`.
+
 ### Battery
 
 - **`battery_saver`** (default 1): on battery, the automatic preset takes

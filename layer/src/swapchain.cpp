@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <fstream>
 #include <functional>
 
 namespace bdex {
@@ -73,6 +74,10 @@ VirtualSwapchain::VirtualSwapchain(DeviceData& dev, const VkSwapchainCreateInfoK
     }
     statsStart_ = clock::now();
     dumping_ = !cfg_.dumpDir.empty();
+    {
+        std::lock_guard<std::mutex> lk(dev_.configMutex);
+        recSeen_ = dev_.recordSerial;  // (a request before this swapchain is not its own)
+    }
     publishStatus(cfg_.multiplier);
     static uint32_t nextDumpId = 0;
     dumpId_ = nextDumpId++;
@@ -625,6 +630,28 @@ VkResult VirtualSwapchain::consumeSemaphores(const VkSemaphore* sems, uint32_t c
     return dev_.submit(si, VK_NULL_HANDLE);
 }
 
+// One real frame of a recording, for the corpus: fNNNN.ppm (the corpus'
+// layout), at most 960 pixels wide (a box filter: the corpus is scored at
+// 480), then DONE once the count is reached.
+void VirtualSwapchain::recordFrame(FrameSlot& slot) {
+    dev_.vt.WaitForFences(dev_.device, 1, &slot.fence, VK_TRUE, UINT64_MAX);
+    const uint32_t ds = std::max(1u, (displayExtent_.width + 959) / 960);
+    char name[32];
+    snprintf(name, sizeof(name), "/f%04d.ppm", recCount_);
+    if (!fg_->writeDump(recDir_ + name, fg_->outputCount(), ds)) {
+        BDEX_WARN("recording: could not write %s%s — stopped", recDir_.c_str(), name);
+        recLeft_ = 0;
+        return;
+    }
+    ++recCount_;
+    if (--recLeft_ == 0) {
+        std::ofstream done(recDir_ + "/DONE");
+        done << "frames=" << recCount_ << "\nwidth=" << displayExtent_.width / ds << "\nheight=" << displayExtent_.height / ds
+             << "\ngame_fps=" << (frameIntervalMs_ > 0.0 ? 1000.0 / frameIntervalMs_ : 0.0) << "\n";
+        BDEX_INFO("recording done: %d frames in %s", recCount_, recDir_.c_str());
+    }
+}
+
 void VirtualSwapchain::dumpFrame(FrameSlot& slot, bool generated, float t, uint32_t output) {
     if (dumpCount_ >= cfg_.dumpFrames) { dumping_ = false; return; }
     dev_.vt.WaitForFences(dev_.device, 1, &slot.fence, VK_TRUE, UINT64_MAX);
@@ -851,6 +878,18 @@ void VirtualSwapchain::rebuildOutput() {
 VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& info, bool consumeWaitSemaphores) {
     dev_.pollConfig();
     dev_.snapshotConfig(cfg_, cfgVersion_);
+    {
+        // A recording asked for (DeviceData::pollRecordRequest): the real
+        // frames from this present on.
+        std::lock_guard<std::mutex> lk(dev_.configMutex);
+        if (dev_.recordSerial != recSeen_) {
+            recSeen_ = dev_.recordSerial;
+            recDir_ = dev_.recordDir;
+            recLeft_ = dev_.recordFrames;
+            recCount_ = 0;
+        }
+    }
+    recording_ = recLeft_ > 0;
     if (cfg_.fpsLimit != 0.f) limitFrameRate();  // before mutex_: never block acquire while sleeping
     std::unique_lock<std::mutex> lock(mutex_);
     const auto t0 = clock::now();
@@ -1083,8 +1122,8 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         // Resample the real frame into the internal image the worker presents
         // (for upscaling, or so the HUD can be drawn on it).
         if (fg_->packReal()) fg_->recordUpscaleReal(slot.cmd, imageIndex, interpolate ? prev : -1);
-        if (dumping_) {
-            if (interpolate)
+        if (dumping_ || recording_) {
+            if (dumping_ && interpolate)
                 for (int i = 0; i < mult - 1; ++i) fg_->recordDump(slot.cmd, static_cast<uint32_t>(i), imageIndex);
             fg_->recordDump(slot.cmd, fg_->outputCount(), imageIndex);
         }
@@ -1093,9 +1132,9 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         // No frame generation: still process the one real frame (upscale / HUD).
         fg_->recordAcquireSources(slot.cmd, -1, static_cast<int>(imageIndex));
         fg_->recordUpscaleReal(slot.cmd, imageIndex);
-        if (dumping_) fg_->recordDump(slot.cmd, fg_->outputCount(), imageIndex);
+        if (dumping_ || recording_) fg_->recordDump(slot.cmd, fg_->outputCount(), imageIndex);
         fg_->recordReleaseSources(slot.cmd, -1, static_cast<int>(imageIndex));
-    } else if (dumping_) {
+    } else if (dumping_ || recording_) {
         // Ground-truth runs use multiplier=1: copy the unmodified source into
         // the dump buffer while the image is temporarily in GENERAL layout.
         fg_->recordAcquireSources(slot.cmd, -1, static_cast<int>(imageIndex));
@@ -1114,7 +1153,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     // flow and synthesis (their GPU time is the latency saved). Here only the
     // game's semaphores are consumed, which orders the worker's copy after
     // its rendering. Not while dumping (dumpFrame waits on the slot at once).
-    const bool deferSynthesis = cfg_.extrapolate && interpolate && !fg_->packReal() && !dumping_;
+    const bool deferSynthesis = cfg_.extrapolate && interpolate && !fg_->packReal() && !dumping_ && !recording_;
     if (!deferSynthesis) {
         // A deferred extrapolation job still copying its predicted frames
         // straight from the outputs (lazyOutputs_) would read what this
@@ -1203,6 +1242,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             }
         }
     }
+    if (recording_) recordFrame(slot);
 
     // Hand the presentation over to the worker.
     Job job;
