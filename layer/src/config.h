@@ -117,7 +117,8 @@ struct Config {
     bool  pixelVectors  = false;  // interpolation: per-pixel choice among neighbouring blocks' vectors (on by default on discrete GPUs, see pixelVectorsAuto)
     // Options the GPU auto-tuning turns on for discrete GPUs unless the user
     // set them (autoConfigure leaves those alone): bits of kAuto*.
-    enum : uint32_t { kAutoPixelVectors = 1, kAutoSplat = 2, kAutoRevealFill = 4, kAutoLocalCut = 8, kAutoInterpSplat = 16, kAutoRot = 32 };
+    enum : uint32_t { kAutoPixelVectors = 1, kAutoSplat = 2, kAutoRevealFill = 4, kAutoLocalCut = 8, kAutoInterpSplat = 16, kAutoRot = 32,
+                       kAutoTemporalPrediction = 64 };
     uint32_t autoOptionsSet = 0;
     bool  pixelVectorsAuto = false; // runtime: pixel_vectors turned on by autoConfigure; FrameGen drops it where the synthesis would cost too much (display pixels x generated frames above 4K x2)
     bool  interpSplatAuto = false;  // runtime: interp_splat turned on by autoConfigure; dropped with pixelVectorsAuto

@@ -44,6 +44,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Quality
 
+- **`temporal_prediction` on by default on discrete GPUs** (automatic
+  preset): the coarsest matching level searches around the previous pair's
+  motion. No GPU cost; on the 960x540 corpus and demo recordings, with the
+  other automatic options: interpolation x2 occlusions +3.7 dB, zoom +4.4,
+  fade +5.4, swing +1.7, demo +0.15 / +0.19; extrapolation occlusions +0.8,
+  zoom +3.9; hybrid x3 HUD +9.8, pan +11.7, menu +5.3. Losses up to −0.4 dB
+  (rotation, a menu, a swinging camera in hybrid).
 - **`rot_weight` on by default on discrete GPUs, in a matcher variant of its
   own**: a second specialization constant (`kRot`) builds the lean matcher
   plus the rotation re-ranking's shared memory (~13.5 KB instead of the full

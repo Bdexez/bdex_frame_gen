@@ -143,6 +143,14 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
     // +1.1, scrolling text +0.40, sub-pixel +0.23, the demo +0.07 to +0.12,
     // nothing lost; the flow ~1.5x (+0.2 ms at 960x540).
     if (strong && !(autoOptionsSet & kAutoRot)) rotWeight = 1.f;
+    // The coarsest matching level searched around the previous pair's motion
+    // (03/10, on top of the options above, 960x540 corpus + demo, no GPU
+    // cost): interpolation x2 occlusions +3.7 dB, zoom +4.4, fade +5.4,
+    // swing +1.7, demo +0.15 / +0.19; extrapolation occlusions +0.8, swing
+    // +1.3, zoom +3.9; hybrid x3 (larger motion a pair) HUD +9.8, pan +11.7,
+    // menu +5.3. Losses: rotation -0.16, menu -0.18 (x2), swing -0.37
+    // (hybrid). Nothing either way with the performance preset's coarse flow.
+    if (strong && !(autoOptionsSet & kAutoTemporalPrediction)) temporalPrediction = true;
     if (strong && !(autoOptionsSet & kAutoInterpSplat)) {
         interpSplat = true;
         interpSplatAuto = true;
@@ -411,6 +419,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "scene_cut_local") autoOptionsSet |= kAutoLocalCut;
     if (key == "interp_splat") autoOptionsSet |= kAutoInterpSplat;
     if (key == "rot_weight") autoOptionsSet |= kAutoRot;
+    if (key == "temporal_prediction") autoOptionsSet |= kAutoTemporalPrediction;
     if (const OptionDef* d = findOption(key)) {
         switch (d->kind) {
         case Kind::Bool:  return parseBool(value, this->*(d->b));
