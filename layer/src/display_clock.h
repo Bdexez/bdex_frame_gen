@@ -13,6 +13,22 @@ namespace bdex {
 // of the thread that observes them. A variable-refresh display (VRR/FreeSync/
 // G-Sync) or a compositor that does not present on a grid has no such period:
 // the clock then stays invalid and nothing relies on it.
+// target_fps: the multiplier after `current` (0 = none chosen yet) for a
+// game frame interval that allows `ratio` output frames at the target rate
+// (target x interval): the largest one at or under the target, within 2 %,
+// up to `maxMult`; stepping up waits for a 3 % margin (no flip-flopping at a
+// boundary). Above the refresh rate a mailbox display drops frames unevenly.
+inline int dynamicMultiplier(int current, double ratio, int maxMult) {
+    auto clampInt = [maxMult](double v) {
+        const int i = static_cast<int>(v);
+        return i < 1 ? 1 : i > maxMult ? maxMult : i;
+    };
+    const int fits = clampInt(ratio * 1.02);
+    if (current == 0 || fits < current) return fits;
+    if (current < maxMult && ratio * 0.97 >= current + 1) return clampInt(ratio * 0.97);
+    return current;
+}
+
 class DisplayClock {
 public:
     void add(double displayedMs);      // one displayed frame (not a replaced one)

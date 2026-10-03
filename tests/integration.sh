@@ -16,7 +16,8 @@ LOG="$(mktemp)"
 . "$(dirname "$0")/../tools/layer_env.sh"
 bdex_use_layer "$LAYER_DIR"
 trap 'rm -rf "$LOG" "$BDEX_LAYER_XDG"' EXIT
-BDEX_FG=1 BDEX_FG_LOG=2 BDEX_FG_STATS_INTERVAL=2 \
+# BDEX_FG_CONFIG=/dev/null: the defaults, whatever the user's config says.
+BDEX_FG=1 BDEX_FG_CONFIG=/dev/null BDEX_FG_LOG=2 BDEX_FG_STATS_INTERVAL=2 \
   timeout 60 "$DEMO" --fps 30 --frames 150 --duration 40 --deterministic >"$LOG" 2>&1
 status=$?
 if [ $status -ne 0 ]; then

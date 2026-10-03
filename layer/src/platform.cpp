@@ -265,6 +265,8 @@ AppSession platformAppSession() {
     long panel = 0, target = 0;
     if (!(in >> panel) || panel <= 0) return s;
     if (!(in >> target)) target = 0;
+    double hz = 0.0;
+    if (!(in >> hz) || !(hz > 0.0 && hz < 1000.0)) hz = 0.0;
     // The panel rewrites the file every second: a stale one means it is gone
     // (crashed or killed). A heartbeat rather than a process lookup, which a
     // game in Steam's container could not do on the panel's process.
@@ -276,7 +278,10 @@ AppSession platformAppSession() {
 #endif
     if (ec) return s;
     s.open = std::filesystem::file_time_type::clock::now() - written < std::chrono::seconds(5);
-    if (s.open) s.target = target;
+    if (s.open) {
+        s.target = target;
+        s.displayHz = hz;
+    }
     return s;
 }
 

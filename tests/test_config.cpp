@@ -90,6 +90,8 @@ TEST(config_apply_values) {
     CHECK(c.apply("chroma_weight", "1") && c.chromaWeight == 1.f);
     CHECK(c.apply("gpu_budget", "0.3") && c.gpuBudget == 0.3f);
     CHECK(c.apply("target_fps", "auto") && c.targetFps < 0.f);
+    CHECK(c.apply("target_fps", "-1") && c.targetFps < 0.f);  // the UIs' spin buttons
+    CHECK(c.apply("fps_limit", "-1") && c.fpsLimit < 0.f);
     CHECK(c.apply("FPS_LIMIT", "Auto") && c.fpsLimit < 0.f);
     CHECK(c.apply("fps_limit", "72") && c.fpsLimit == 72.f);
     CHECK(c.presentFeedback && c.apply("present_feedback", "0") && !c.presentFeedback);

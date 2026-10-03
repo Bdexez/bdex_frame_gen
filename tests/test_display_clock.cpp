@@ -49,3 +49,23 @@ TEST(display_clock_rejects_variable_refresh) {
     CHECK(!c.valid());
     CHECK(c.nextRefresh(123.0) == 123.0);
 }
+
+// target_fps: the output never goes above the target (the refresh rate), where
+// a mailbox display drops frames unevenly; hysteresis at the boundaries.
+TEST(dynamic_multiplier_stays_under_the_target) {
+    using bdex::dynamicMultiplier;
+    auto ratio = [](double gameFps) { return 144.0 / gameFps; };  // 144 Hz target
+    CHECK(dynamicMultiplier(0, ratio(60), 4) == 2);   // 120
+    CHECK(dynamicMultiplier(0, ratio(72), 4) == 2);   // 144
+    CHECK(dynamicMultiplier(0, ratio(50), 4) == 2);   // 100, not 150
+    CHECK(dynamicMultiplier(0, ratio(48), 4) == 3);   // 144
+    CHECK(dynamicMultiplier(0, ratio(36), 4) == 4);   // 144
+    CHECK(dynamicMultiplier(0, ratio(20), 4) == 4);   // capped at the multiplier
+    CHECK(dynamicMultiplier(0, ratio(90), 4) == 1);   // x2 would be 180
+    CHECK(dynamicMultiplier(0, ratio(36), 2) == 2);   // capped at x2
+    // Down at once when the output would exceed the target...
+    CHECK(dynamicMultiplier(3, ratio(52), 4) == 2);
+    // ... up only with a margin: 47.5 fps x3 = 142.5 fits, but not by 3 %.
+    CHECK(dynamicMultiplier(2, ratio(47.5), 4) == 2);
+    CHECK(dynamicMultiplier(2, ratio(46), 4) == 3);
+}
