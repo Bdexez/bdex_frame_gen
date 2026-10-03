@@ -14,7 +14,8 @@ layout(local_size_x = 16, local_size_y = 16) in;
 
 layout(binding = 0) uniform sampler2D flowFwd;  // prev -> cur
 layout(binding = 1) uniform sampler2D flowBwd;  // cur -> prev
-// The map: 2W x H keys, row by row (a buffer: cleared by vkCmdFillBuffer,
+// The map, row by row: W x H keys in extrapolation, two half-resolution
+// grids side by side for interp_splat (a buffer: cleared by vkCmdFillBuffer,
 // and buffer atomics — 0.35 ms less than an r32ui image at 1440p, NVIDIA).
 layout(std430, binding = 2) buffer SplatMap { uint key[]; } splatMap;
 layout(std430, binding = 3) readonly buffer State {
@@ -90,5 +91,5 @@ void main() {
     float inconsistency = length(B + fwdAt(src + B));
     uint prio = inconsistency > 2.0 ? 511u : 510u - uint(clamp(length(B), 0.0, 510.0));
     uint index = uint(p.y * pc.size.x + p.x);   // < 2^23 (checked on the host)
-    atomicMin(splatMap.key[dst.y * 2 * pc.size.x + dst.x], (prio << 23) | index);
+    atomicMin(splatMap.key[dst.y * pc.size.x + dst.x], (prio << 23) | index);  // (W x H: half the fill)
 }

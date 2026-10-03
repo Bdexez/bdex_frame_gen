@@ -815,6 +815,7 @@ d'affichage tournent dans `gamescope --backend headless` ou dans Docker
 | Entrée → écran, démo 40 i/s, 144 Hz (02/10, `tools/latency_bench.sh`, médianes premier photon / image réelle) | ×1 6,8 / 6,8 ms ; interpolation ×2 10,0 / 19,9 ; `interp_hold=auto` 9,2 / 16,2 ; extrapolation ×2 6,7 / 6,7 |
 | `interp_hold = 0,5`, gamescope 144 Hz (02/10) | 40 i/s ×2 : image→écran 43,4 → 37,6 ms (79,3/80 affichées) ; 40 i/s ×3 : 47,7 → 45,0 ; 60 i/s ×2 : 30,3 → 29,8 |
 | Coût GPU, variantes allégées (1440p, quality) | 2,7 → 1,35 ms |
+| Coût GPU de la génération, défauts GPU dédié, ×2 (03/10, RTX 3060 Ti, `bdex_offline` + `BDEX_FG_PROFILE=1`) | 1440p 1,63 → 0,92 ms ; 4K 2,96 → 1,84 ms (analyse + flux + synthèse). Synthèse 1440p 1,20 → 0,49 ms : carte de splat en tampon (−0,25), variante compilée par jeu d'options (−0,33), `interp_splat` à demi-résolution (−0,18). Préréglage explicite `balanced` (sans les options auto) : synthèse 0,21 ms |
 | Jeu limité par le GPU, 4K lourd, avant/après le cadencement GPU | 66 → 132 images affichées/s |
 | `latency_limiter`, 4K lourd | image → écran 26,8 → 18,3 ms, 97 → 101 i/s |
 | Hybride ×3, jeu limité par le GPU | 116 → 283 images affichées/s, jeu 58 → 94 i/s |
