@@ -32,6 +32,7 @@ struct InstanceData {
     InstanceDispatch vt;
     VkInstance instance = VK_NULL_HANDLE;
     uint32_t apiVersion = VK_API_VERSION_1_0;
+    bool surfaceCaps2 = false;  // the application enabled VK_KHR_get_surface_capabilities2 (DXVK, VKD3D-Proton do)
     Config config;  // loaded at instance creation; the render-scale hook needs it before the device exists
     std::atomic<bool> renderScaleAllowed{true};  // disabled if a device needs pass-through present extensions
     std::mutex surfMutex;
@@ -116,6 +117,7 @@ struct DeviceData {
 
     VkCommandPool cmdPool = VK_NULL_HANDLE;
     bool hasSwapchainMaintenance1 = false;
+    bool presentTiming = false;    // VK_EXT_present_timing too (hidden from the game): the display's own times and refresh
     bool presentFeedback = false;  // VK_KHR_present_id/present_wait enabled for the layer's own swapchains (hidden from the game)
     // Presenting through gamescope's WSI layer, which answers
     // vkGetRefreshCycleDurationGOOGLE for our swapchains (gamescope.h).

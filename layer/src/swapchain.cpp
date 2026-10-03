@@ -229,13 +229,134 @@ void VirtualSwapchain::createReal(const VkSwapchainCreateInfoKHR& appInfo) {
     dev_.inst->vt.GetPhysicalDeviceSurfaceSupportKHR(dev_.physDev, dev_.queueFamily, appInfo.surface, &supported);
     if (!supported) throw VkError(VK_ERROR_FEATURE_NOT_PRESENT, "layer queue family cannot present to this surface");
 
+    const uint32_t ptFlag = presentTimingFlags(appInfo.surface);
+    ci.flags |= ptFlag;
     VkResult r = dev_.vt.CreateSwapchainKHR(dev_.device, &ci, nullptr, &real_);
+    if (r < 0 && ptFlag) {
+        BDEX_WARN("real swapchain with present timing failed (%s); retrying without", vkResultName(r));
+        ci.flags &= ~ptFlag;
+        ptStage_ = 0;
+        ptWanted_ = false;
+        r = dev_.vt.CreateSwapchainKHR(dev_.device, &ci, nullptr, &real_);
+    }
     if (r < 0) throw VkError(r, "vkCreateSwapchainKHR (real)");
     realNow_ = real_;
     realInfo_ = ci;
     realInfo_.pNext = nullptr;
     realInfo_.oldSwapchain = VK_NULL_HANDLE;
     createRealImages();
+    setupPresentTiming();
+}
+
+uint32_t VirtualSwapchain::presentTimingFlags(VkSurfaceKHR surface) {
+    ptStage_ = 0;
+    ptWanted_ = false;
+#ifdef VK_EXT_present_timing
+    if (!dev_.presentTiming || !dev_.presentFeedback) return 0;
+    if (!dev_.inst->surfaceCaps2 || !dev_.inst->vt.GetPhysicalDeviceSurfaceCapabilities2KHR) {
+        BDEX_DBG("present timing: the application did not enable VK_KHR_get_surface_capabilities2");
+        return 0;
+    }
+    VkPresentTimingSurfaceCapabilitiesEXT ptc{VK_STRUCTURE_TYPE_PRESENT_TIMING_SURFACE_CAPABILITIES_EXT};
+    VkSurfaceCapabilities2KHR caps{VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_2_KHR};
+    caps.pNext = &ptc;
+    VkPhysicalDeviceSurfaceInfo2KHR info{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SURFACE_INFO_2_KHR};
+    info.surface = surface;
+    if (dev_.inst->vt.GetPhysicalDeviceSurfaceCapabilities2KHR(dev_.physDev, &info, &caps) != VK_SUCCESS ||
+        !ptc.presentTimingSupported) {
+        BDEX_INFO("present timing: not supported on this surface");
+        return 0;
+    }
+    // The first pixel becoming visible (the eye's moment), else leaving the
+    // display engine.
+    // (Neither — an X11 surface, a compositor: the refresh duration alone.)
+    if (ptc.presentStageQueries & VK_PRESENT_STAGE_IMAGE_FIRST_PIXEL_VISIBLE_BIT_EXT)
+        ptStage_ = VK_PRESENT_STAGE_IMAGE_FIRST_PIXEL_VISIBLE_BIT_EXT;
+    else if (ptc.presentStageQueries & VK_PRESENT_STAGE_IMAGE_FIRST_PIXEL_OUT_BIT_EXT)
+        ptStage_ = VK_PRESENT_STAGE_IMAGE_FIRST_PIXEL_OUT_BIT_EXT;
+    ptWanted_ = true;
+    return VK_SWAPCHAIN_CREATE_PRESENT_TIMING_BIT_EXT;
+#else
+    (void)surface;
+    return 0;
+#endif
+}
+
+// After the real swapchain's creation: the queue of timing results, its
+// refresh duration (the display clock's hint) and the time domain matching
+// the steady clock — without one, no display times.
+void VirtualSwapchain::setupPresentTiming() {
+    ptActive_ = false;
+    ptRefreshHz_ = 0.0;
+#ifdef VK_EXT_present_timing
+    if (!ptWanted_ || !(realInfo_.flags & VK_SWAPCHAIN_CREATE_PRESENT_TIMING_BIT_EXT) ||
+        !dev_.vt.SetSwapchainPresentTimingQueueSizeEXT || !dev_.vt.GetSwapchainTimingPropertiesEXT ||
+        !dev_.vt.GetSwapchainTimeDomainPropertiesEXT || !dev_.vt.GetPastPresentationTimingEXT)
+        return;
+    VkSwapchainTimingPropertiesEXT tp{VK_STRUCTURE_TYPE_SWAPCHAIN_TIMING_PROPERTIES_EXT};
+    uint64_t counter = 0;
+    if (dev_.vt.GetSwapchainTimingPropertiesEXT(dev_.device, real_, &tp, &counter) == VK_SUCCESS && tp.refreshDuration > 0)
+        ptRefreshHz_ = 1e9 / double(tp.refreshDuration);
+    BDEX_INFO("present timing: refresh %s, display times %s", tp.refreshDuration ? (std::to_string(1e9 / double(tp.refreshDuration)).substr(0, 6) + " Hz").c_str() : "variable or unknown",
+              ptStage_ ? "from the driver" : "not reported on this surface");
+    if (!ptStage_ || dev_.vt.SetSwapchainPresentTimingQueueSizeEXT(dev_.device, real_, 64) != VK_SUCCESS) return;
+    VkSwapchainTimeDomainPropertiesEXT dp{VK_STRUCTURE_TYPE_SWAPCHAIN_TIME_DOMAIN_PROPERTIES_EXT};
+    uint64_t domains = 0;
+    if (dev_.vt.GetSwapchainTimeDomainPropertiesEXT(dev_.device, real_, &dp, &domains) != VK_SUCCESS || !dp.timeDomainCount)
+        return;
+    std::vector<VkTimeDomainKHR> kinds(dp.timeDomainCount);
+    std::vector<uint64_t> ids(dp.timeDomainCount);
+    dp.pTimeDomains = kinds.data();
+    dp.pTimeDomainIds = ids.data();
+    if (dev_.vt.GetSwapchainTimeDomainPropertiesEXT(dev_.device, real_, &dp, &domains) < 0) return;
+#ifdef _WIN32
+    const VkTimeDomainKHR want = VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_KHR;  // (MSVC's steady_clock)
+    LARGE_INTEGER f;
+    QueryPerformanceFrequency(&f);
+    ptTicksPerMs_ = double(f.QuadPart) / 1000.0;
+#else
+    const VkTimeDomainKHR want = VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR;  // (libstdc++'s steady_clock)
+    ptTicksPerMs_ = 1e6;
+#endif
+    for (uint32_t i = 0; i < dp.timeDomainCount; ++i)
+        if (kinds[i] == want) {
+            ptDomainId_ = ids[i];
+            ptActive_ = true;
+        }
+    if (!ptActive_) BDEX_INFO("present timing: no time domain shared with the steady clock (display times from present waits)");
+#endif
+}
+
+// The display time (steady-clock ms) of present `presentId`, once the driver
+// reports it (the feedback thread, after vkWaitForPresentKHR).
+bool VirtualSwapchain::presentTimingMs(uint64_t presentId, double& ms) {
+#ifdef VK_EXT_present_timing
+    if (!ptActive_) return false;
+    VkPastPresentationTimingInfoEXT info{VK_STRUCTURE_TYPE_PAST_PRESENTATION_TIMING_INFO_EXT};
+    info.swapchain = real_;
+    VkPastPresentationTimingPropertiesEXT props{VK_STRUCTURE_TYPE_PAST_PRESENTATION_TIMING_PROPERTIES_EXT};
+    if (dev_.vt.GetPastPresentationTimingEXT(dev_.device, &info, &props) < 0 || !props.presentationTimingCount) return false;
+    std::vector<VkPastPresentationTimingEXT> t(props.presentationTimingCount, {VK_STRUCTURE_TYPE_PAST_PRESENTATION_TIMING_EXT});
+    std::vector<VkPresentStageTimeEXT> stages(props.presentationTimingCount);
+    for (size_t i = 0; i < t.size(); ++i) {
+        t[i].presentStageCount = 1;
+        t[i].pPresentStages = &stages[i];
+    }
+    props.pPresentationTimings = t.data();
+    if (dev_.vt.GetPastPresentationTimingEXT(dev_.device, &info, &props) < 0) return false;
+    bool found = false;
+    for (uint32_t i = 0; i < props.presentationTimingCount; ++i)
+        if (t[i].presentId == presentId && t[i].reportComplete && t[i].presentStageCount && stages[i].time &&
+            t[i].timeDomainId == ptDomainId_) {
+            ms = double(stages[i].time) / ptTicksPerMs_;
+            found = true;
+        }
+    return found;
+#else
+    (void)presentId;
+    (void)ms;
+    return false;
+#endif
 }
 
 void VirtualSwapchain::createRealImages() {
@@ -334,6 +455,7 @@ void VirtualSwapchain::followSurface() {
     historyLost_ = true;
     try {
         createRealImages();
+        setupPresentTiming();
         prepareStaging();
     } catch (const VkError& e) {
         BDEX_WARN("real swapchain images unavailable after resize (%s)", e.what());
@@ -906,7 +1028,8 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
 
     // The refresh rate the system reports: gamescope's cycle, else the
     // control panel's reading (require_app).
-    if (const double hint = gsHz_.load() > 0.0 ? gsHz_.load() : cfg_.panelDisplayHz; hint != clockHintHz_) {
+    if (const double hint = gsHz_.load() > 0.0 ? gsHz_.load() : ptRefreshHz_.load() > 0.0 ? ptRefreshHz_.load() : cfg_.panelDisplayHz;
+        hint != clockHintHz_) {
         clockHintHz_ = hint;
         std::lock_guard<std::mutex> fbLock(fbMutex_);
         displayClock_.setHint(clockHintHz_);
@@ -1898,7 +2021,13 @@ void VirtualSwapchain::feedbackLoop() {
         // a frame not shown within ~0.5 s (minimised window) is given up.
         for (int k = 0; k < 25 && r == VK_TIMEOUT && !fbPaused_; ++k)
             r = dev_.vt.WaitForPresentKHR(dev_.device, real_, entry.id, 20'000'000ull);
-        const double now = msOf(clock::now());
+        double now = msOf(clock::now());
+        // The driver's own display time (VK_EXT_present_timing): the moment
+        // the frame became visible, not this thread's wake-up after it.
+        if (r >= 0 && r != VK_TIMEOUT && ptActive_.load()) {
+            double shown = 0.0;
+            if (presentTimingMs(entry.id, shown) && shown <= now + 1.0 && now - shown < 250.0) now = shown;
+        }
         bool quit = false;
         {
             std::lock_guard<std::mutex> lock(fbMutex_);
@@ -2244,6 +2373,22 @@ VkResult VirtualSwapchain::presentCopied(const Job& job, const Copied& c) {
         *tail = &presentMode;
         tail = bdexNext(presentMode);
     }
+#ifdef VK_EXT_present_timing
+    // The driver times this frame's display (the feedback thread reads it).
+    VkPresentTimingInfoEXT timingInfo{VK_STRUCTURE_TYPE_PRESENT_TIMING_INFO_EXT};
+    VkPresentTimingsInfoEXT timings{VK_STRUCTURE_TYPE_PRESENT_TIMINGS_INFO_EXT};
+    const bool timed = ptActive_.load() && feedbackId;
+    const void** timingsLink = nullptr;  // (the last link: cut on a full timing queue)
+    if (timed) {
+        timingInfo.timeDomainId = ptDomainId_;
+        timingInfo.presentStageQueries = ptStage_;
+        timings.swapchainCount = 1;
+        timings.pTimingInfos = &timingInfo;
+        timingsLink = tail;
+        *tail = &timings;
+        tail = bdexNext(timings);
+    }
+#endif
     // Steam's framerate limit (gamescope): gamescope shows one frame per
     // cycle of the limit and queues the others, first in first out — a
     // frame goes out once the previous one is on screen, so one frame waits
@@ -2262,6 +2407,16 @@ VkResult VirtualSwapchain::presentCopied(const Job& job, const Copied& c) {
     {
         std::lock_guard<std::mutex> qlock(dev_.queueMutex(dev_.queue));
         r = dev_.vt.QueuePresentKHR(dev_.queue, &pi);
+#ifdef VK_EXT_present_timing
+        if (r == VK_ERROR_PRESENT_TIMING_QUEUE_FULL_EXT && timed) {
+            // The results were not read back in time (the feedback thread
+            // paused): present without them from now on.
+            ptActive_ = false;
+            *timingsLink = nullptr;
+            BDEX_WARN("present timing queue full: display times from present waits only");
+            r = dev_.vt.QueuePresentKHR(dev_.queue, &pi);
+        }
+#endif
     }
     // For the spacing of the next present (paceTarget): when this one went
     // out, and the refresh it was due to show on.

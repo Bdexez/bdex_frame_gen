@@ -100,6 +100,8 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateInstance(const VkInstanceCreateInfo* pCreat
     data->config = Config::load();
     if (pCreateInfo->pApplicationInfo && pCreateInfo->pApplicationInfo->apiVersion)
         data->apiVersion = pCreateInfo->pApplicationInfo->apiVersion;
+    for (uint32_t i = 0; i < pCreateInfo->enabledExtensionCount; ++i)
+        data->surfaceCaps2 |= strcmp(pCreateInfo->ppEnabledExtensionNames[i], "VK_KHR_get_surface_capabilities2") == 0;
     {
         std::lock_guard<std::mutex> lock(g_mapMutex);
         g_instances[dispatchKey(*pInstance)] = std::move(data);
@@ -149,7 +151,8 @@ VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceLayerProperties(VkPhysicalDevice, 
 bool isHiddenPresentExtension(const char* name) {
     return strcmp(name, "VK_EXT_swapchain_maintenance1") == 0 || strcmp(name, "VK_KHR_swapchain_maintenance1") == 0 ||
            strcmp(name, "VK_KHR_present_id") == 0 || strcmp(name, "VK_KHR_present_wait") == 0 ||
-           strcmp(name, "VK_KHR_present_id2") == 0 || strcmp(name, "VK_KHR_present_wait2") == 0;
+           strcmp(name, "VK_KHR_present_id2") == 0 || strcmp(name, "VK_KHR_present_wait2") == 0 ||
+           strcmp(name, "VK_EXT_present_timing") == 0;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceExtensionProperties(VkPhysicalDevice physDev, const char* pLayerName,
@@ -445,6 +448,15 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
     VkPhysicalDevicePresentIdFeaturesKHR presentIdFeat{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR};
     VkPhysicalDevicePresentWaitFeaturesKHR presentWaitFeat{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR};
     bool feedback = false;
+    // VK_EXT_present_timing with them (where the driver has it): when each
+    // frame's first pixel was really shown, in the steady clock's domain, and
+    // the display's refresh duration — not the moment a waiting thread woke.
+    bool timing = false;
+#if defined(VK_EXT_present_timing) && defined(VK_KHR_present_id2)
+    // (It requires VK_KHR_present_id2 and VK_KHR_calibrated_timestamps.)
+    VkPhysicalDevicePresentTimingFeaturesEXT timingFeat{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_TIMING_FEATURES_EXT};
+    VkPhysicalDevicePresentId2FeaturesKHR id2Feat{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_2_FEATURES_KHR};
+#endif
     {
         VkPhysicalDeviceProperties pp{};
         inst->vt.GetPhysicalDeviceProperties(physDev, &pp);
@@ -455,17 +467,31 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
             inst->vt.EnumerateDeviceExtensionProperties(physDev, nullptr, &n, nullptr);
             std::vector<VkExtensionProperties> avail(n);
             inst->vt.EnumerateDeviceExtensionProperties(physDev, nullptr, &n, avail.data());
-            bool hasId = false, hasWait = false;
+            bool hasId = false, hasWait = false, hasTiming = false, hasId2 = false, hasCalibrated = false;
             for (const auto& e : avail) {
                 hasId |= strcmp(e.extensionName, VK_KHR_PRESENT_ID_EXTENSION_NAME) == 0;
                 hasWait |= strcmp(e.extensionName, VK_KHR_PRESENT_WAIT_EXTENSION_NAME) == 0;
+                hasTiming |= strcmp(e.extensionName, "VK_EXT_present_timing") == 0;
+                hasId2 |= strcmp(e.extensionName, "VK_KHR_present_id2") == 0;
+                hasCalibrated |= strcmp(e.extensionName, "VK_KHR_calibrated_timestamps") == 0;
             }
+            hasTiming = hasTiming && hasId2 && hasCalibrated && data->config.presentTiming;
             if (hasId && hasWait) {
                 presentIdFeat.pNext = &presentWaitFeat;
+#if defined(VK_EXT_present_timing) && defined(VK_KHR_present_id2)
+                if (hasTiming) {
+                    presentWaitFeat.pNext = &timingFeat;
+                    timingFeat.pNext = &id2Feat;
+                }
+#endif
                 VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
                 f2.pNext = &presentIdFeat;
                 inst->vt.GetPhysicalDeviceFeatures2(physDev, &f2);
                 feedback = presentIdFeat.presentId && presentWaitFeat.presentWait;
+#if defined(VK_EXT_present_timing) && defined(VK_KHR_present_id2)
+                timing = feedback && hasTiming && timingFeat.presentTiming && id2Feat.presentId2;
+#endif
+                presentWaitFeat.pNext = nullptr;
             }
         }
     }
@@ -473,24 +499,52 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
     auto create = [&]() {
         VkResult res = VK_ERROR_INITIALIZATION_FAILED;
         data->presentFeedback = false;
+        data->presentTiming = false;
         if (feedback) {
             VkDeviceCreateInfo fci = ci;
             std::vector<const char*> fexts(ci.ppEnabledExtensionNames, ci.ppEnabledExtensionNames + ci.enabledExtensionCount);
             fexts.push_back(VK_KHR_PRESENT_ID_EXTENSION_NAME);
             fexts.push_back(VK_KHR_PRESENT_WAIT_EXTENSION_NAME);
-            fci.enabledExtensionCount = static_cast<uint32_t>(fexts.size());
-            fci.ppEnabledExtensionNames = fexts.data();
             presentIdFeat.presentId = VK_TRUE;
             presentWaitFeat.presentWait = VK_TRUE;
             presentIdFeat.pNext = &presentWaitFeat;
             presentWaitFeat.pNext = const_cast<void*>(ci.pNext);
+#if defined(VK_EXT_present_timing) && defined(VK_KHR_present_id2)
+            if (timing) {
+                fexts.push_back("VK_KHR_present_id2");
+                fexts.push_back("VK_KHR_calibrated_timestamps");
+                fexts.push_back("VK_EXT_present_timing");
+                timingFeat = VkPhysicalDevicePresentTimingFeaturesEXT{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_TIMING_FEATURES_EXT};
+                timingFeat.presentTiming = VK_TRUE;
+                id2Feat = VkPhysicalDevicePresentId2FeaturesKHR{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_2_FEATURES_KHR};
+                id2Feat.presentId2 = VK_TRUE;
+                id2Feat.pNext = const_cast<void*>(ci.pNext);
+                timingFeat.pNext = &id2Feat;
+                presentWaitFeat.pNext = &timingFeat;
+            }
+#endif
+            fci.enabledExtensionCount = static_cast<uint32_t>(fexts.size());
+            fci.ppEnabledExtensionNames = fexts.data();
             fci.pNext = &presentIdFeat;
             res = createDevice(physDev, &fci, pAllocator, pDevice);
+            if (res != VK_SUCCESS && timing && !(res == VK_ERROR_NOT_PERMITTED_EXT && prioInfo >= 0)) {
+                // (present timing is the newest piece: without it first)
+                BDEX_WARN("device creation with present timing failed (%s); retrying without it", vkResultName(res));
+                timing = false;
+                fexts.resize(fexts.size() - 3);
+                presentWaitFeat.pNext = const_cast<void*>(ci.pNext);
+                fci.enabledExtensionCount = static_cast<uint32_t>(fexts.size());
+                fci.ppEnabledExtensionNames = fexts.data();
+                res = createDevice(physDev, &fci, pAllocator, pDevice);
+            }
             // (a refused queue priority is not the feedback's doing: the
             // caller drops the priority and keeps the feedback)
             if (res == VK_ERROR_NOT_PERMITTED_EXT && prioInfo >= 0) return res;
             if (res != VK_SUCCESS) BDEX_WARN("device creation with present feedback failed (%s); retrying without", vkResultName(res));
-            else data->presentFeedback = true;
+            else {
+                data->presentFeedback = true;
+                data->presentTiming = timing;
+            }
         }
         if (!data->presentFeedback) res = createDevice(physDev, &ci, pAllocator, pDevice);
         return res;
@@ -570,7 +624,7 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
     BDEX_INFO("device '%s': layer %s (queue family %u index %u, %s%s)", data->props.deviceName,
               data->layerUsable ? "active" : "inactive", data->queueFamily, data->queueIndex,
               data->queueShared ? "shared with the application" : "private",
-              data->presentFeedback ? ", present feedback" : "");
+              data->presentTiming ? ", present feedback + timing" : data->presentFeedback ? ", present feedback" : "");
     if (!hasSwapchainExt) BDEX_DBG("VK_KHR_swapchain not enabled on this device");
 
     std::lock_guard<std::mutex> lock(g_mapMutex);

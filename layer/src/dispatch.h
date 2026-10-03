@@ -129,6 +129,15 @@ namespace bdex {
 #else
 #define BDEX_DEVICE_FUNCS_ANTI_LAG(X)
 #endif
+#ifdef VK_EXT_present_timing
+#define BDEX_DEVICE_FUNCS_PRESENT_TIMING(X)    \
+    X(SetSwapchainPresentTimingQueueSizeEXT)   \
+    X(GetSwapchainTimingPropertiesEXT)         \
+    X(GetSwapchainTimeDomainPropertiesEXT)     \
+    X(GetPastPresentationTimingEXT)
+#else
+#define BDEX_DEVICE_FUNCS_PRESENT_TIMING(X)
+#endif
 
 struct InstanceDispatch {
 #define X(name) PFN_vk##name name = nullptr;
@@ -148,6 +157,7 @@ struct DeviceDispatch {
     BDEX_DEVICE_FUNCS_LOW_LATENCY2(X)
     BDEX_DEVICE_FUNCS_PRESENT_WAIT2(X)
     BDEX_DEVICE_FUNCS_ANTI_LAG(X)
+    BDEX_DEVICE_FUNCS_PRESENT_TIMING(X)
 #undef X
     void load(VkDevice device, PFN_vkGetDeviceProcAddr gdpa) {
         GetDeviceProcAddr = gdpa;
@@ -156,6 +166,7 @@ struct DeviceDispatch {
         BDEX_DEVICE_FUNCS_LOW_LATENCY2(X)
         BDEX_DEVICE_FUNCS_PRESENT_WAIT2(X)
         BDEX_DEVICE_FUNCS_ANTI_LAG(X)
+        BDEX_DEVICE_FUNCS_PRESENT_TIMING(X)
 #undef X
     }
 };

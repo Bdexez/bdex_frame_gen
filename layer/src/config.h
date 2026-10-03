@@ -82,6 +82,7 @@ struct Config {
     bool  asyncCompute  = false;  // run the synthesis on a compute-only queue family alongside the game's graphics (where the GPU has one)
     bool  presentQueue  = true;   // copies and presents on a queue of their own (same family as the synthesis), so a present's GPU work never waits behind the next synthesis
     bool  synthPriority = true;   // with async_compute: the synthesis queue at a high global priority (VK_KHR/EXT_global_priority), so a GPU-bound game's next frame does not delay the generated and real frames; drivers grant it to privileged processes only (NVIDIA, amdgpu without CAP_SYS_NICE: refused, normal priority)
+    bool  presentTiming = true;   // with present_feedback: VK_EXT_present_timing where the driver has it (the display's own times and refresh duration)
     bool  presentFeedback = true; // measure when frames are really displayed (VK_KHR_present_wait, where supported): refresh rate, drops, vblank-aligned pacing
     bool  pacing        = true;   // sleep-based pacing when the present mode is not FIFO
     Debug debug         = Debug::None;
