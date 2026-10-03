@@ -11,10 +11,18 @@ Install (per user, into ~/.local; no root, nothing to compile):
 Remove:
     ./uninstall.sh
 
-Then turn it on, globally or per game:
-    bdex-framegen-gui                      the control panel (GTK 4)
-    BDEX_FG=1 %command%                    Steam launch options, one game
+Then, like the Windows launcher:
+    1. launch your game normally (Steam...);
+    2. open the control panel: bdex-framegen-gui (application menu:
+       "bdex-framegen");
+    3. « Actualiser la liste », pick the game in « Jeux détectés », set the
+       options, « Démarrer ». « Arrêter » or closing the panel stops it.
+Nothing generates while the panel is closed. Without the panel, per game:
+    BDEX_FG=1 %command%                    Steam launch options
     bdex-framegen --preset latency -- <game>
+Upscaling (render scale) only helps native Vulkan games started while the
+panel is open; for Proton games lower the game's own resolution and upscale
+with gamescope (-F fsr) or the game's FSR/DLSS.
 
 Modes: interpolation (default: the smoothest, holds each real frame half a
 game frame) or extrapolation (preset "latency": ~0 ms added hold, may show
