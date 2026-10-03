@@ -40,7 +40,11 @@ elif command -v pacman >/dev/null; then
     shaderc python >/dev/null
   pacman -S --noconfirm --needed glfw xorg-server-xvfb vulkan-swrast >/dev/null 2>&1 || true
 elif command -v zypper >/dev/null; then
-  zypper -n -q in cmake make gcc-c++ clang pkgconf vulkan-devel glslang-devel python3 gawk findutils diffutils >/dev/null
+  # (107: installed, but a package's post-install script failed — a
+  # rolling release's passing state, reported "Installation has completed
+  # with error": the build and tests tell whether what is needed is there.)
+  zypper -n -q in cmake make gcc-c++ clang pkgconf vulkan-devel glslang-devel python3 gawk findutils diffutils >/dev/null ||
+    { rc=$?; [ $rc -eq 107 ] || exit $rc; echo "zypper: a post-install script failed (107), going on"; }
   zypper -n -q in shaderc >/dev/null 2>&1 || true
   zypper -n -q in libglfw-devel xorg-x11-server-Xvfb Mesa-vulkan-device-select libvulkan_lvp >/dev/null 2>&1 || true
 elif command -v apk >/dev/null; then
