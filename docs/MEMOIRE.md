@@ -487,6 +487,15 @@ ou multiplicateur *Adaptatif*.
 **Non validé sur un vrai Deck** : tout a été mesuré dans un gamescope
 headless de la même génération.
 
+**Plugin Decky** (03/10, `packaging/decky`) : menu d'accès rapide du Deck
+en mode Jeu — génération dans tous les jeux (`require_app = 0` dans `[*]`),
+multiplicateur, mode, pause, compteur, état du jeu en cours (fichiers de
+statut). Le backend `main.py` édite la configuration comme le panneau
+(clé réécrite une seule fois dans les lignes globales, sections des jeux
+gardées) ; construit par `tools/ci/decky-check.sh` (Docker Node 20, pnpm,
+`tsc`), zip joint aux releases, testé sans Decky (`decky_backend`). **Jamais
+lancé sur un vrai Deck** : à valider (Decky « Installer depuis un ZIP »).
+
 ### 4.5 Distributions, musl et ARM64
 
 **Archives précompilées**

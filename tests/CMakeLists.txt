@@ -76,6 +76,8 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME panel_logic COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/panel_logic.py"
              "${CMAKE_SOURCE_DIR}/tools/bdex-framegen-gui")
     set_tests_properties(panel_logic PROPERTIES SKIP_RETURN_CODE 77)
+    # The Steam Deck menu's backend (packaging/decky/main.py), without Decky.
+    add_test(NAME decky_backend COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/decky_backend.py")
   endif()
 endif()
 
