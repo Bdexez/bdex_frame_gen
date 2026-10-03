@@ -62,13 +62,18 @@ done
 export BDEX_FG_STATUS_DIR=/tmp/run
 textenv=(BDEX_FG_GUI_TEXT=1)
 [ -n "$gtk" ] || textenv=()
-printf 'm\n5\nq\n' | env ${textenv[@]+"${textenv[@]}"} script -qec "python3 /work/bdex-framegen-gui" /dev/null >/tmp/text.log 2>&1 || true
-if grep -q '^multiplier = 3' "$XDG_CONFIG_HOME/bdex-framegen.conf" && grep -q 'mode texte' /tmp/text.log &&
-   ! grep -q Traceback /tmp/text.log && [ ! -e /tmp/run/app.session ]; then
-  echo "panel (text mode): options saved, session closed"
-else
-  echo "panel (text mode): failed"; tail -20 /tmp/text.log; status=1
-fi
+# In French (BDEX_LANG=fr), then in English (the containers' C locale).
+for lang in fr en; do
+  rm -f "$XDG_CONFIG_HOME/bdex-framegen.conf"
+  want='mode texte'; [ $lang = en ] && want='text-mode panel'
+  printf 'm\n5\nq\n' | env BDEX_LANG=$lang ${textenv[@]+"${textenv[@]}"} script -qec "python3 /work/bdex-framegen-gui" /dev/null >/tmp/text.log 2>&1 || true
+  if grep -q '^multiplier = 3' "$XDG_CONFIG_HOME/bdex-framegen.conf" && grep -q "$want" /tmp/text.log &&
+     ! grep -q Traceback /tmp/text.log && [ ! -e /tmp/run/app.session ]; then
+    echo "panel (text mode, $lang): options saved, session closed"
+  else
+    echo "panel (text mode, $lang): failed"; tail -20 /tmp/text.log; status=1
+  fi
+done
 printf '[*]\nenabled = 1\nrequire_app = 0\n[mygame]\nrequire_app = 0\n' > "$XDG_CONFIG_HOME/bdex-framegen.conf"
 python3 /work/panel_logic.py /work/bdex-framegen-gui || status=1
 exit $status

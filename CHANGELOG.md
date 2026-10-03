@@ -231,6 +231,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Linux distributions
 
+- **The control panel and the Windows launcher in English** when the
+  system language is not French (`LANGUAGE`, `LC_ALL`, `LC_MESSAGES`,
+  `LANG`; on Windows the display language), French otherwise;
+  `BDEX_LANG=fr|en` chooses. The option texts come from
+  `layer/options_ui.en.conf` (the build fails on an option without one),
+  the panel's own through `tr()`, the status lines of the launcher too
+  (`statusDescribe(…, english)`, which also names the hybrid mode now).
+  Checked in both languages by `panel-check` (GTK 4 with and without
+  libadwaita, text mode).
 - **The Proton path in CI** (`tools/ci/proton-check.sh`, CI job
   `source-packages`): a Direct3D 11 program cross-compiled with MinGW
   (`tests/proton/d3d11_probe.cpp`) runs under Wine 9 with DXVK 2.5.3, and

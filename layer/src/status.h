@@ -56,6 +56,6 @@ struct StatusFile {
 };
 StatusFile statusParse(const std::string& text);
 // What a status file says, in French, a line per point worth showing.
-std::vector<std::string> statusDescribe(const StatusFile& file);
+std::vector<std::string> statusDescribe(const StatusFile& file, bool english = false);
 
 } // namespace bdex

@@ -59,6 +59,13 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/options_ui_conf.h"
      "#pragma once\n// Generated from layer/options_ui.conf (layer/CMakeLists.txt).\n"
      "static const unsigned char kOptionsUiConf[] = {${BDEX_OPTIONS_UI_BYTES}0x00};\n")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/layer/options_ui.conf")
+# ... and its English texts (layer/options_ui.en.conf).
+file(READ "${CMAKE_SOURCE_DIR}/layer/options_ui.en.conf" BDEX_OPTIONS_UI_EN_HEX HEX)
+string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," BDEX_OPTIONS_UI_EN_BYTES "${BDEX_OPTIONS_UI_EN_HEX}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/options_ui_en_conf.h"
+     "#pragma once\n// Generated from layer/options_ui.en.conf (layer/CMakeLists.txt).\n"
+     "static const unsigned char kOptionsUiEnConf[] = {${BDEX_OPTIONS_UI_EN_BYTES}0x00};\n")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/layer/options_ui.en.conf")
 
 # Device-independent parts, shared with the unit tests.
 add_library(bdex_core STATIC
