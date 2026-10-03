@@ -626,6 +626,10 @@ syntaxe Linux n'y vaut pas).
   `winevulkan.dll` n'existe pas), mais sous Wine DXVK + le chargeur officiel
   plantent même sans la couche (03/10, appel à l'adresse 0 juste après
   `vkGetInstanceProcAddr`) : à essayer sur un vrai Windows.
+  La DLL 32 bits se construit et se lie avec MinGW i686, mais le chargeur
+  officiel x86 ne trouve pas `winevulkan` dans un préfixe Wine 32 bits
+  (`vkCreateInstance` → `INCOMPATIBLE_DRIVER`, alors que le `vulkan-1` de
+  Wine fonctionne) : non exécutée (03/10).
 
 ### 4.7 Windows, mode 2 — `bdex_capture.exe`
 
