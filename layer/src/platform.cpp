@@ -323,7 +323,7 @@ bool platformIsNonGame(const std::string& name) {
         "steam", "steamwebhelper", "gamescope", "gamescopereaper", "gamescope-wl", "mangoapp",
         "steam-runtime-check-requirements", "chrome", "chromium",
         "firefox", "librewolf", "brave", "zen", "electron", "discord", "vesktop", "code",
-        "obs", "vulkaninfo", "vkcube", "bdex-framegen-gui", "bdex-capture",
+        "obs", "vulkaninfo", "vkcube", "bdex-framegen-gui", "bdex-capture", "bdex_capture",
     };
     for (const char* n : kNonGames)
         if (name == n) return true;

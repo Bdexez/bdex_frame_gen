@@ -631,6 +631,38 @@ syntaxe Linux n'y vaut pas).
   (`vkCreateInstance` → `INCOMPATIBLE_DRIVER`, alors que le `vulkan-1` de
   Wine fonctionne) : non exécutée (03/10).
 
+### 4.6 bis Injection ou capture, et le GPU de génération (03/10)
+
+Demande utilisateur : « injection quand c'est possible (surtout sur Linux),
+sinon capture (surtout sur Windows), pour maximiser le gain de latence ; avec
+deux GPU, pouvoir générer sur l'un ou l'autre ». La couche est dans la
+présentation du jeu (0 image de latence), la capture ajoute ~1 image.
+
+- **Décision** (`plan()` du panneau, `chooseInjection` de `bdex_capture`,
+  même règle) : `method = layer` → couche ; `capture` → capture ; `auto` :
+  capture si le GPU choisi n'est pas celui du jeu (`device=` du statut),
+  si anti-triche, si aucune swapchain armée (`ready`/`generating`/`paused`)
+  dans `<pid>.status` ; couche sinon.
+- **Linux** : le panneau lance/arrête `bdex-capture --pid N [--gpu NOM]`
+  (sortie dans `~/.cache/bdex-framegen/capture.log`), « Capturer une autre
+  fenêtre… » (clic sur la fenêtre). Méthode et GPU dans le panneau et le mode
+  texte (`c`, `g`, `w`, `a`).
+- **Windows** : le launcher a « Méthode » et « GPU de génération » en tête
+  de la colonne de droite ; s'il trouve la couche enregistrée
+  (`HKLM/HKCU\SOFTWARE\Khronos\Vulkan\ImplicitLayers`) il écrit
+  `enabled = 1` + `require_app = 1` (les jeux Vulkan sont armés). Injection =
+  `runInjection` : `app.session` « pid cible Hz » réécrit chaque seconde
+  jusqu'à la fermeture du jeu ou Ctrl+Alt+Q (Ctrl+Alt+G écrit la cible 0),
+  icône de notification ; non vérifié sur Windows (MinGW seulement).
+- **Piège corrigé** : sous `require_app = 1`, les applis de capture
+  chargeaient leur config comme un jeu non ciblé (en pause, HUD coupé) ; elles
+  posent `BDEX_FG=1` avant `Config::load` (Windows : `_putenv_s`, que
+  `getenv` voit — pas `SetEnvironmentVariable`). Cas « armed » de
+  `tests/capture_linux.sh`.
+- Vérifié (gamescope headless, HOME isolé) : méthode injection → le jeu
+  « 30 → 60 i/s (×2) » par la couche ; capture → couche ×1,00 et
+  bdex-capture ×2,00.
+
 ### 4.7 Windows, mode 2 — `bdex_capture.exe`
 
 **Chaîne de traitement**

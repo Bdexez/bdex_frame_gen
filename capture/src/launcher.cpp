@@ -14,6 +14,7 @@
 
 #include <windows.h>
 #include <dwmapi.h>
+#include <vulkan/vulkan.h>
 
 #include <algorithm>
 #include <cctype>
@@ -288,12 +289,12 @@ const std::vector<ExtraOpt>& extraOptions();
 
 // Window layout, from the column's content (rows of 22 px, headers 20 px).
 struct Layout {
-    int columnGroupH;   // the "Options avancées" group
+    int columnGroupH;   // the "Options avancées" group (the method and GPU rows at its top)
     int buttonsY;
     int clientH;
 };
 Layout launcherLayout() {
-    int h = 48;
+    int h = 48 + 56;  // (the method and GPU rows)
     for (const ExtraOpt& o : extraOptions()) h += o.key.empty() ? 20 : 22;
     Layout l;
     l.columnGroupH = std::max(770, h + 4);
@@ -500,6 +501,8 @@ enum {
     ID_SFINE,
     ID_FITER,
     ID_RUNNING,
+    ID_METHOD,
+    ID_GPU,
     ID_TIMER_RUNNING = 1,
 };
 
@@ -517,6 +520,8 @@ struct Ui {
     HWND lb = nullptr, perGame = nullptr, gen = nullptr, preset = nullptr, mult = nullptr, mode = nullptr;
     HWND size = nullptr, scaleEd = nullptr, filter = nullptr, sharpEd = nullptr;
     HWND fifo = nullptr, hud = nullptr;
+    HWND method = nullptr, gpu = nullptr;
+    std::vector<std::string> gpuNames;  // the GPU combo's entries after « Auto »
     HWND grad = nullptr, scLow = nullptr, scHigh = nullptr, smooth = nullptr;
     HWND zbias = nullptr, sfine = nullptr, fiter = nullptr;
     std::vector<HWND> extra;  // one control per extraOptions() entry (nullptr for headers)
@@ -659,6 +664,9 @@ void applyScopeToChoice(const std::vector<std::pair<std::string, std::string>>& 
         } else if (k == "sharpness" || k == "sharpen") c.sharpness = std::clamp(toF(v, c.sharpness), 0.f, 1.f);
         else if (k == "overlay" || k == "hud") c.hud = std::clamp(toI(v, c.hud), 0, 4);
         else if (k == "present_mode") c.fifo = (v == "fifo" || v == "vsync");
+        else if (k == "gpu") c.gpu = (v == "auto" || v == "game") ? std::string() : trim(p.second);
+        else if (k == "method")
+            c.method = (v == "layer" || v == "injection" || v == "1") ? 1 : (v == "capture" || v == "2") ? 2 : 0;
         else if (k == "grad_weight") c.gradWeight = std::clamp(toF(v, c.gradWeight), 0.f, 8.f);
         else if (k == "smoothness") c.smoothness = std::clamp(toF(v, c.smoothness), 0.f, 1.f);
         else if (k == "zero_bias") c.zeroBias = std::clamp(toF(v, c.zeroBias), 0.f, 1.f);
@@ -707,6 +715,11 @@ void fillFromChoice(Ui& ui) {
     SendMessageW(ui.filter, CB_SETCURSEL, f, 0);
     SendMessageW(ui.fifo, BM_SETCHECK, c.fifo ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(ui.hud, CB_SETCURSEL, std::clamp(c.hud, 0, 4), 0);
+    SendMessageW(ui.method, CB_SETCURSEL, std::clamp(c.method, 0, 2), 0);
+    int g = 0;
+    for (size_t i = 0; i < ui.gpuNames.size() && !c.gpu.empty(); ++i)
+        if (wideLower(wideUtf8(ui.gpuNames[i])).find(wideLower(wideUtf8(c.gpu))) != std::wstring::npos) g = int(i) + 1;
+    SendMessageW(ui.gpu, CB_SETCURSEL, g, 0);
     setNum(ui.grad, c.gradWeight);
     setNum(ui.scLow, c.sceneCutLow);
     setNum(ui.scHigh, c.sceneCutHigh);
@@ -746,6 +759,8 @@ void persist(const LaunchChoice& c) {
     kv.emplace_back("sharpness", num);
     kv.emplace_back("overlay", std::to_string(c.hud));
     if (!c.preset.empty()) kv.emplace_back("preset", c.preset);
+    kv.emplace_back("gpu", c.gpu.empty() ? "auto" : c.gpu);
+    kv.emplace_back("method", c.method == 1 ? "layer" : c.method == 2 ? "capture" : "auto");
     if (c.fifo) kv.emplace_back("present_mode", "fifo");
     // Advanced flow keys: written only when they differ from the default, so an
     // untouched panel keeps the file minimal and the engine on its own defaults
@@ -783,6 +798,14 @@ void persist(const LaunchChoice& c) {
     if (!saveGlobalConfig(kv)) LOGW("could not write the config file");
 }
 
+// The layer registered: Vulkan games load it, armed (virtual swapchain,
+// frames passed through) until the launcher targets one (require_app, as
+// the Linux control panel does) — so that injection is there to choose.
+static void armLayer() {
+    if (!layerRegistered()) return;
+    if (!saveGlobalConfig({{"enabled", "1"}, {"require_app", "1"}})) LOGW("could not write the config file");
+}
+
 void gather(Ui& ui) {
     LaunchChoice& c = *ui.choice;
     const int was = static_cast<int>(SendMessageW(ui.lb, LB_GETCURSEL, 0, 0));
@@ -808,6 +831,9 @@ void gather(Ui& ui) {
     c.sharpness = std::clamp(readInt(ui.sharpEd, 0), 0, 100) / 100.f;
     c.fifo = SendMessageW(ui.fifo, BM_GETCHECK, 0, 0) == BST_CHECKED;
     c.hud = sel(ui.hud);
+    c.method = std::clamp(sel(ui.method), 0, 2);
+    const int g = sel(ui.gpu);
+    c.gpu = g > 0 && g <= static_cast<int>(ui.gpuNames.size()) ? ui.gpuNames[size_t(g - 1)] : std::string();
     c.gradWeight = std::clamp(readFloat(ui.grad, 0.f), 0.f, 8.f);
     c.sceneCutLow = std::clamp(readFloat(ui.scLow, 0.05f), 0.f, 1.f);
     c.sceneCutHigh = std::clamp(readFloat(ui.scHigh, 0.09f), 0.f, 1.f);
@@ -926,6 +952,24 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SS_LEFT, 508, 26, 452, 16, 0);
         ui->extra.assign(extra.size(), nullptr);
         int y = 48;
+        // How and where: injection by the Vulkan layer (inside the game's
+        // presentation: the lowest latency) where it has the game, else
+        // capture; the GPU that generates (another one than the game's:
+        // capture on it — the two-GPU setup).
+        add(L"STATIC", T(L"Méthode", L"Method"), SS_LEFT, 508, y + 3, 186, 16, 0);
+        ui->method = combo(700, y, 260, ID_METHOD);
+        for (const wchar_t* s : {T(L"Auto — injection si possible, sinon capture", L"Auto — injection if possible, else capture"),
+                                 T(L"Injection (couche Vulkan) seulement", L"Injection (Vulkan layer) only"),
+                                 T(L"Capture seulement", L"Capture only")})
+            SendMessageW(ui->method, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
+        y += 26;
+        add(L"STATIC", T(L"GPU de génération", L"Generation GPU"), SS_LEFT, 508, y + 3, 190, 16, 0);
+        ui->gpu = combo(700, y, 260, ID_GPU);
+        SendMessageW(ui->gpu, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(T(L"Auto — celui du jeu", L"Auto — the game's")));
+        ui->gpuNames = vulkanGpuNames();
+        for (const auto& n : ui->gpuNames)
+            SendMessageW(ui->gpu, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(wideUtf8(n).c_str()));
+        y += 30;
         for (size_t i = 0; i < extra.size(); ++i) {
             const ExtraOpt& o = extra[i];
             const int id = 300 + static_cast<int>(i);
@@ -1002,6 +1046,7 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             ui->choice->ok = true;
             persist(*ui->choice);
+            armLayer();
             DestroyWindow(hwnd);
             return 0;
         }
@@ -1024,6 +1069,46 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 } // namespace
+
+std::vector<std::string> vulkanGpuNames() {
+    std::vector<std::string> out;
+    VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+    app.pApplicationName = "bdex_capture";
+    app.apiVersion = VK_API_VERSION_1_1;
+    VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+    ici.pApplicationInfo = &app;
+    VkInstance inst = VK_NULL_HANDLE;
+    if (vkCreateInstance(&ici, nullptr, &inst) != VK_SUCCESS) return out;
+    uint32_t n = 0;
+    vkEnumeratePhysicalDevices(inst, &n, nullptr);
+    std::vector<VkPhysicalDevice> pds(n);
+    vkEnumeratePhysicalDevices(inst, &n, pds.data());
+    for (VkPhysicalDevice pd : pds) {
+        VkPhysicalDeviceProperties p;
+        vkGetPhysicalDeviceProperties(pd, &p);
+        if (p.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU) continue;
+        if (std::find(out.begin(), out.end(), std::string(p.deviceName)) == out.end()) out.push_back(p.deviceName);
+    }
+    vkDestroyInstance(inst, nullptr);
+    return out;
+}
+
+bool layerRegistered() {
+    for (HKEY root : {HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER}) {
+        HKEY key = nullptr;
+        if (RegOpenKeyExW(root, L"SOFTWARE\\Khronos\\Vulkan\\ImplicitLayers", 0, KEY_READ, &key) != ERROR_SUCCESS) continue;
+        bool found = false;
+        wchar_t name[1024];
+        for (DWORD i = 0; !found; ++i) {
+            DWORD len = static_cast<DWORD>(std::size(name));
+            if (RegEnumValueW(key, i, name, &len, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS) break;
+            found = wideLower(name).find(L"vk_layer_bdex_framegen") != std::wstring::npos;
+        }
+        RegCloseKey(key);
+        if (found) return true;
+    }
+    return false;
+}
 
 bool runLauncher(LaunchChoice& choice) {
     choice.ok = false;  // stays false when the window is closed

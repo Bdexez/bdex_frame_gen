@@ -6,6 +6,30 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Injection or capture, and the GPU that generates
+
+- **Injection where possible, capture otherwise**, on both systems: the
+  Vulkan layer inside the game's own presentation adds no frame of latency,
+  so the Linux control panel and the Windows launcher use it wherever it has
+  the game's swapchain (a Vulkan game, Proton through DXVK / VKD3D-Proton),
+  and capture the window otherwise — a D3D / OpenGL game on Windows, a game
+  the layer stays out of (anti-cheat), or another GPU than the game's.
+  New config key `method` (`auto`, `layer`, `capture`); each detected game
+  in the panel says which and why. The panel starts and stops
+  `bdex-capture` itself (« Capturer une autre fenêtre… » for a program the
+  layer does not see); the launcher drives the layer through the same
+  session file as the panel (`app.session`, heartbeat every second), and
+  arms Vulkan games (`enabled`, `require_app`) when the layer is registered.
+  `bdex_capture.exe --method auto|layer|capture`.
+- **The GPU that generates** (`gpu`, a part of its name; panel « GPU de
+  génération », launcher « GPU de génération », `--gpu <n|name>`): on a
+  two-GPU machine, the frames can be generated on the other GPU than the
+  game's — by capture, the game keeps rendering on its own.
+- The capture apps read their settings as explicitly enabled: under the
+  panel's arming (`require_app = 1`) they were paused, HUD off, like an
+  untargeted game (`capture_linux` checks it).
+- `hotkey` is a config key on Linux too (bdex-capture's toggle).
+
 ### Performance
 
 - **The synthesis compiled for the options in use**: `interpolate.comp`'s

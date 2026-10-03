@@ -50,7 +50,7 @@ public:
     // the best GPU (discrete first); otherwise the n-th usable one. `cfg` is
     // the frame-generation configuration (multiplier, mode, preset, HUD...).
     // False = logged reason (no usable GPU, missing extensions).
-    bool init(HWND overlay, int gpuIndex, bool preferFifo, const Config& cfg);
+    bool init(HWND overlay, int gpuIndex, bool preferFifo, const Config& cfg, const std::string& gpuName = {});
     void shutdown();
 
     // LUID of the selected GPU, for creating the D3D11 device on the same

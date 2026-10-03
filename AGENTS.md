@@ -409,7 +409,14 @@ pacing comme `presentOne` (résolution du timer à 1 ms, `timeBeginPeriod`,
 et attentes « dormir puis tourner » `sleepUntil`/`frameBefore` : à 15,6 ms,
 défaut par process depuis Windows 10 2004, une attente de 16,7 ms finissait
 à 31 ms — image générée collée à la réelle, réelle en retard). Sélection GPU discrète par LUID commun D3D/Vulkan
-(`--gpu`). Options CLI : `--list/--title/--pid`, `--multiplier`, `--mode`,
+(`--gpu <n|nom>`, clé `gpu`). **Injection ou capture** (2026-10-03, demande
+utilisateur, latence) : `method` auto|layer|capture ; auto = couche si
+`<pid>.status` montre une swapchain armée sur le GPU choisi, capture sinon
+(GPU autre que celui du jeu, anti-triche, jeu non Vulkan) — même règle dans
+`plan()` du panneau Linux (qui lance `bdex-capture`) et `chooseInjection`
+de `bdex_capture` (`runInjection` = `app.session` réécrit chaque seconde).
+Les applis de capture posent `BDEX_FG=1` avant `Config::load` (sinon
+`require_app` les met en pause). Options CLI : `--list/--title/--pid`, `--multiplier`, `--mode`,
 `--preset`, `--filter`, `--sharpness`, `--hud`, `--scale/--fit`, `--fifo`.
 Sans argument : launcher natif (sélecteur de fenêtre + options avancées flow,
 persistées dans la config partagée). **Hotkey global** : Ctrl+Alt+Q quitte,

@@ -46,6 +46,8 @@ struct LaunchChoice {
     bool fifo = false;      // vsync (FIFO) presentation instead of mailbox
     float scale = 1.f;      // overlay size factor (unused when fit)
     bool fit = false;       // overlay fills the game's monitor
+    std::string gpu;        // the GPU that generates ("" = the best: the game's), a part of its name
+    int method = 0;         // 0 auto (injection where the Vulkan layer has the game, else capture), 1 injection, 2 capture
     bool perGame = false;   // save these options to the target's [game] section
                             // (a per-game profile) instead of the global [*]
     // Advanced optical-flow tuning (defaults mirror Config; a value left at its
@@ -69,6 +71,13 @@ struct LaunchChoice {
 // to the config file's [*] section (game sections and unknown keys are
 // preserved). Returns choice.ok.
 bool runLauncher(LaunchChoice& choice);
+
+// The Vulkan GPUs of this machine (software renderers left out), by name.
+std::vector<std::string> vulkanGpuNames();
+// The Vulkan layer (VkLayer_bdex_framegen.dll) is registered as an implicit
+// layer (register-layer.ps1): Vulkan games load it, and the launcher can
+// generate in them by injection.
+bool layerRegistered();
 
 // Value of a key in the config file's global ([*] / preamble) section, or ""
 // when unset. Lets the launcher prefill from a hand-written config.
