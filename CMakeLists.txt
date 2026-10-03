@@ -89,6 +89,7 @@ option(BDEX_BUILD_OFFLINE "Build bdex_offline (headless engine on PPM sequences,
 option(BDEX_BUILD_CAPTURE "Build the Windows capture PoC (bdex_capture.exe, MSVC only)" ON)
 option(BDEX_WERROR      "Treat compiler warnings as errors in the layer, tests and capture app (the CI turns it on)" OFF)
 option(BDEX_STATIC_RUNTIME "Link libstdc++/libgcc statically into the Linux layer (release archives: games and the Steam runtime may bring an older libstdc++)" OFF)
+option(BDEX_FUZZ        "Build the parser fuzz targets with libFuzzer (Clang; tools/ci/fuzz.sh) instead of their replay driver" OFF)
 option(BDEX_32BIT       "Build the 32-bit layer (for 32-bit games); needs a multilib toolchain (ignored on Windows, where the arch comes from the generator platform)" OFF)
 
 # The 32-bit build gets its own library dir / manifest suffix. On Linux it is

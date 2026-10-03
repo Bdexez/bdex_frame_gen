@@ -1,0 +1,6 @@
+zero_bias_contrast 0.1 dropped 0 0
+temporal_prediction 1 kept 0.02 0
+subpixel 1 dropped 0 0
+flow_temporal 1 dropped 0 0
+subpixel_lk 2 kept 0.2 0.3
+subpixel_lk+synth_bicubic 2+1 kept 0.01

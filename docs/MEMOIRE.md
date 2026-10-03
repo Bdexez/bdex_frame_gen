@@ -661,12 +661,12 @@ l'impose.
 - `tools/run_eval.sh` : évaluation en ligne ; `tools/make_corpus.py`,
   `tools/corpus_pack.py` : corpus ; `tools/tune.py` : réglage automatique.
 
-**Tests ctest (15)**
+**Tests ctest (20)**
 
 | Groupe | Tests |
 |---|---|
-| Sans fenêtre | `unit`, `matcher` (vrai shader contre modèle C++ du départage), `eval_quality`, `offline`, `corpus`, `formats`, `min_limits`, `determinism` (chaque option deux fois), `option_keys`, `panel_logic` |
-| Avec affichage | `integration` (×2 à travers la couche), `validation` (couches Khronos + synchronisation, toutes les options), `acquire_timeout`, `multithread_config` |
+| Sans fenêtre | `fuzz_config`, `fuzz_status`, `fuzz_options_ui`, `fuzz_online_tune` (03/10 : rejouent le corpus de `tests/fuzz/corpus/`, graines et entrées qui ont échoué ; `tools/ci/fuzz.sh` = libFuzzer + ASan + UBSan, job CI `fuzz` ; propriétés : options dans leurs bornes, profil qui n'active jamais la couche, cache relu à l'identique ; a trouvé `debug = confidence` lu hors du tableau de `describe()`), `unit`, `matcher` (vrai shader contre modèle C++ du départage), `eval_quality`, `offline`, `corpus`, `formats`, `min_limits`, `determinism` (chaque option deux fois), `option_keys`, `panel_logic` |
+| Avec affichage | `integration` (×2 à travers la couche), `validation` (couches Khronos + synchronisation, toutes les options), `acquire_timeout`, `multithread_config`, `swapchain_stress` (03/10 : `bdex_demo --stress` — redimensionnements, recréations avec autre mode et nombre d'images, surfaces et fenêtres refaites, plein écran, minimisation — sous validation, puis ×N retrouvé ; a trouvé `FIFO_LATEST_READY` transmis tel quel) |
 | Hors écran, sautés s'ils ne peuvent pas tourner | `gamescope_limit` (limite Steam rejouée dans un gamescope headless) |
 
 **Règle** : jamais de fenêtre sur l'écran de l'utilisateur. Les tests

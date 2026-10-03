@@ -10,6 +10,24 @@ bdex_strict(bdex_tests)
 target_compile_definitions(bdex_tests PRIVATE BDEX_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME unit COMMAND bdex_tests)
 
+# The parsers' fuzz targets (fuzz/fuzz.cpp: configuration, status files,
+# options_ui.conf, online_tune cache). Every build replays their corpus —
+# seeds and the inputs that once failed (fuzz/corpus/<target>) — as ctest
+# fuzz_<target>; with BDEX_FUZZ, libFuzzer binaries instead (tools/ci/fuzz.sh).
+foreach(t config status options_ui online_tune)
+  add_executable(bdex_fuzz_${t} fuzz/fuzz.cpp)
+  target_link_libraries(bdex_fuzz_${t} PRIVATE bdex_core)
+  target_compile_definitions(bdex_fuzz_${t} PRIVATE BDEX_FUZZ_TARGET="${t}")
+  if(BDEX_FUZZ)
+    target_compile_definitions(bdex_fuzz_${t} PRIVATE BDEX_LIBFUZZER)
+    target_compile_options(bdex_fuzz_${t} PRIVATE -fsanitize=fuzzer)
+    target_link_options(bdex_fuzz_${t} PRIVATE -fsanitize=fuzzer)
+  else()
+    file(GLOB corpus CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/fuzz/corpus/${t}/*")
+    add_test(NAME fuzz_${t} COMMAND bdex_fuzz_${t} ${corpus})
+  endif()
+endforeach()
+
 # The real block_match shader against a C++ model of its winner selection
 # (tie-breaking included). Needs a Vulkan device, not a display. Linux only,
 # like the other GPU tests: the Windows runners have no GPU, and nothing else
@@ -85,6 +103,11 @@ if(TARGET bdex_demo)
   add_test(NAME validation
            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/validation.sh" "$<TARGET_FILE:bdex_demo>" "${CMAKE_BINARY_DIR}/layer")
   set_tests_properties(validation PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+  # What games do to their swapchain (resizes, recreations, new surfaces and
+  # windows, fullscreen, minimization: bdex_demo --stress), under validation.
+  add_test(NAME swapchain_stress
+           COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/swapchain_stress.sh" "$<TARGET_FILE:bdex_demo>" "${CMAKE_BINARY_DIR}/layer")
+  set_tests_properties(swapchain_stress PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)
   if(NOT WIN32)
     # This build's layer for the loader, whatever its version (see
     # tools/layer_env.sh): old loaders ignore VK_IMPLICIT_LAYER_PATH but

@@ -103,6 +103,7 @@ tools/ci/archive-check.sh ARCHIVE [image|suite...]     # installe une archive ai
 tools/ci/distro-check.sh [image...]                    # build + tests + démo dans d'autres distributions (job CI `distros`)
 tools/ci/proton-check.sh                               # D3D11 (DXVK) et D3D12 (VKD3D-Proton) sous Wine à travers la couche (lavapipe, Xorg dummy 60 Hz : Xvfb = 0 Hz, DXVK divise par 0)
 tools/ci/lib32-check.sh                                # couche 32 bits exécutée (vkcube i386)
+tools/ci/fuzz.sh [secondes] [cible...]                # libFuzzer + ASan/UBSan sur les analyseurs (config, statut, options_ui, cache online_tune) ; entrée fautive -> tests/fuzz/corpus/
 tools/ci/panel-check.sh build/options_ui.json [image]  # panneau sur écran virtuel en conteneur (versions SteamOS : Arch)
 bdex-framegen --always-on [JEU] | --always-off [JEU]   # générer sans le panneau (mode Jeu SteamOS)
 bdex-framegen --gpu screen|discrete|integrated|list -- <jeu>  # portable hybride (pas de copie PRIME)
@@ -599,7 +600,7 @@ x2/x3/x4), sauf le correctif HDR (les chemins SDR restent identiques).
   multithread). En local : `ctest -R 'unit|matcher|eval_quality|offline|
   corpus|formats|determinism|min_limits|option_keys'` directement, les tests
   d'affichage dans `gamescope --backend headless -- env -u WAYLAND_DISPLAY
-  ctest -R 'integration|validation|acquire|multithread'`, ou Docker.
+  ctest -R 'integration|validation|swapchain_stress|acquire|multithread'`, ou Docker.
 - **Archives** (`tools/ci/package-release.sh`, job CI `package`) : SPIR-V
   compilé par glslc sous Ubuntu 24.04 (le build testé), couches liées sous
   Ubuntu 20.04 (glibc 2.31, GCC 10 via liens `/usr/local/bin`, CMake Kitware)

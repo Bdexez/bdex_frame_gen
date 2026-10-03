@@ -194,6 +194,27 @@ jobs:
   # in a minute what the MSVC jobs (windows.yml) would fail on — the Win32
   # handle casts, the capture target's include order — so both kinds of
   # breakage surface on every push, next to the Linux results.
+  # The parsers (configuration and profiles, status files, options_ui.conf,
+  # online_tune cache) under libFuzzer + ASan + UBSan, from the seed corpus,
+  # a minute each. A failing input is uploaded; commit it to
+  # tests/fuzz/corpus/<target>/ with the fix (every build replays them).
+  fuzz:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends cmake clang libclang-rt-18-dev glslc libvulkan-dev
+      - name: Fuzz
+        run: tools/ci/fuzz.sh 60
+      - name: Failing inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-failures
+          path: tests/fuzz/corpus/*/crash-*
+
   windows-syntax:
     runs-on: ubuntu-24.04
     steps:

@@ -86,6 +86,24 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Diagnostics
 
+- **Parser fuzzing** (`tests/fuzz/fuzz.cpp`, `tools/ci/fuzz.sh`, CI job
+  `fuzz`): libFuzzer with ASan and UBSan on what the layer reads from files —
+  the configuration and the shipped profiles, the status files, the panel's
+  `options_ui.conf`, the online_tune cache — with properties beyond not
+  crashing: every option within its declared range whatever the input
+  (`Config::outOfBounds`), a profile never turning the layer on, a cache
+  that reads back to itself. Every build replays the seed corpus and the
+  inputs that once failed (ctest `fuzz_config`, `fuzz_status`,
+  `fuzz_options_ui`, `fuzz_online_tune`).
+- **Swapchain stress test** (`tests/swapchain_stress.sh`, ctest
+  `swapchain_stress`): what games do to their swapchain, through the layer
+  under the Khronos validation layer — the demo's new `--stress` modes
+  (window resizes, swapchains recreated from the old one with another
+  present mode and image count, surfaces and windows destroyed and made
+  again, fullscreen toggles, minimization) every few frames, in
+  interpolation, extrapolation, hybrid x3 with upscaling and HUD, x8 and
+  adaptive; each run must exit cleanly with no VUID or SYNC message and
+  generate at the multiplier again once the storm is over.
 - **Flow confidence** (`flow_confidence`, opt-in pass at the flow's
   resolution): per flow texel, the backward vector and the forward one at its
   endpoint must cancel out on textured content (flat areas, which any vector
@@ -456,6 +474,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`debug = confidence` read past a table** in the configuration summary
+  logged at start-up (four names for five values). Found by the fuzzer.
+- **`FIFO_LATEST_READY` reached the real swapchain.** A game asking for it
+  (a FIFO mode recent drivers report, VK_KHR_present_mode_fifo_latest_ready)
+  slipped past "never present the real swapchain in FIFO", which only knew
+  FIFO and FIFO_RELAXED — and the worker then queued its frames behind the
+  vblank. It is now replaced by mailbox (or immediate) like them, and named
+  in the log (it read "auto"). Found by the swapchain stress test.
 - **Generated frames were lost whenever the GPU was busy.** The frames of a
   present were timed from the game's present call, but the game's rendering
   and the synthesis end on the GPU later — a frame later for a GPU-bound
