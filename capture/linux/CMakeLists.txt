@@ -16,4 +16,14 @@ target_include_directories(bdex-capture PRIVATE
 target_link_libraries(bdex-capture PRIVATE bdex_core Vulkan::Vulkan PkgConfig::BDEX_X11 Threads::Threads ${CMAKE_DL_LIBS})
 target_compile_options(bdex-capture PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
 bdex_strict(bdex-capture)
+# Native Wayland windows through the screen-cast portal and PipeWire
+# (--wayland), when libpipewire and GIO are there.
+pkg_check_modules(BDEX_PW IMPORTED_TARGET libpipewire-0.3 gio-2.0 gio-unix-2.0)
+if(BDEX_PW_FOUND)
+  target_sources(bdex-capture PRIVATE pw_capture.cpp)
+  target_compile_definitions(bdex-capture PRIVATE BDEX_PIPEWIRE=1)
+  target_link_libraries(bdex-capture PRIVATE PkgConfig::BDEX_PW)
+else()
+  message(STATUS "libpipewire-0.3 / gio-2.0 not found: bdex-capture without Wayland capture (--wayland)")
+endif()
 install(TARGETS bdex-capture RUNTIME DESTINATION bin)

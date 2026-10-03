@@ -22,6 +22,9 @@
 
 #include "presenter.h"
 #include "x11_capture.h"
+#ifdef BDEX_PIPEWIRE
+#include "pw_capture.h"
+#endif
 
 #include <X11/Xutil.h>
 #include <X11/extensions/Xfixes.h>
@@ -57,6 +60,8 @@ struct Options {
     long pid = 0;
     Window window = 0;
     bool pick = false, list = false, listGpus = false, fifo = false;
+    bool wayland = false, waylandScreen = false;  // --wayland: the screen-cast portal (a native Wayland window)
+    int rect[4] = {0, 0, 0, 0};                    // --rect: where the overlay goes (Wayland)
     int multiplier = 0, hud = -1;
     double duration = 0.0;
 };
@@ -66,7 +71,10 @@ void usage() {
         "usage: bdex-capture [--name TEXT | --pid PID | --window 0xID | --pick] [--gpu N|NAME]\n"
         "                    [-m N] [--mode interpolate|extrapolate|hybrid] [--preset P] [--hud N]\n"
         "                    [--fifo] [--hotkey ctrl+alt+g] [--duration S] [--list] [--list-gpus]\n"
-        "Frame generation for a game window by capture (X11 / Xwayland). Without a window\n"
+        "                    [--wayland [--screen] [--rect X,Y,W,H]]\n"
+        "Frame generation for a game window by capture (X11 / Xwayland; --wayland: a native\n"
+        "Wayland window through the desktop's screen-cast portal, chosen in its dialog, the\n"
+        "overlay over --rect, by default the whole screen — a fullscreen game). Without a window\n"
         "choice: click the game's window. --gpu: generate on that GPU (number or part of\n"
         "its name; --list-gpus) — another one than the game's: two-GPU frame generation.\n"
         "Ctrl+Alt+G: generation on/off, Ctrl+Alt+Q: quit.\n");
@@ -96,6 +104,14 @@ bool parse(int argc, char** argv, Options& o) {
         else if (a == "--duration") o.duration = std::atof(value().c_str());
         else if (a == "--list") o.list = true;
         else if (a == "--list-gpus") o.listGpus = true;
+        else if (a == "--wayland") o.wayland = true;
+        else if (a == "--screen") o.waylandScreen = true;
+        else if (a == "--rect") {
+            if (std::sscanf(value().c_str(), "%d,%d,%d,%d", &o.rect[0], &o.rect[1], &o.rect[2], &o.rect[3]) != 4) {
+                std::fprintf(stderr, "--rect X,Y,W,H\n");
+                return false;
+            }
+        }
         else if (a == "-h" || a == "--help") { usage(); std::exit(0); }
         else {
             std::fprintf(stderr, "unknown option %s\n", a.c_str());
@@ -176,79 +192,13 @@ void sleepUntil(Clock::time_point t) {
     while (Clock::now() < t) std::this_thread::yield();
 }
 
-} // namespace
-
-int main(int argc, char** argv) {
+// The capture loop, for either source (X11Capture, PwCapture): each new
+// frame synthesised and its frames presented, paced like the Windows capture
+// (capture/src/main.cpp) and the layer's worker.
+template <class Cap>
+int generate(Cap& cap, Display* dpy, Window overlay, bdex::Presenter& vk, const bdex::Config& cfg, const Options& o,
+             const bdex::X11Window& target) {
     using namespace bdex;
-    Options o;
-    if (!parse(argc, argv, o)) return 2;
-    std::signal(SIGINT, onSignal);
-    std::signal(SIGTERM, onSignal);
-
-    Display* dpy = XOpenDisplay(nullptr);
-    if (!dpy) {
-        std::fprintf(stderr, "bdex-capture: cannot open the X display (DISPLAY=%s)\n",
-                     std::getenv("DISPLAY") ? std::getenv("DISPLAY") : "");
-        return 1;
-    }
-    XSetErrorHandler(onXError);
-    X11Capture cap(dpy);
-    if (o.list) {
-        for (const auto& w : cap.list())
-            std::printf("0x%08lx  pid %-7ld %-20s %4dx%-4d  %s\n", w.id, w.pid, w.process.c_str(), w.width, w.height,
-                        w.title.c_str());
-        return 0;
-    }
-
-    X11Window target;
-    bool found = false;
-    if (o.window || o.pid || !o.name.empty()) {
-        // (a game just started may not have mapped its window yet: a few tries)
-        for (int i = 0; i < 50 && !found && !g_stop; ++i) {
-            found = cap.find(target, o.window, o.pid, o.name);
-            if (!found) std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        }
-    } else if (!o.listGpus) {
-        std::fprintf(stderr, "bdex-capture: click the game's window\n");
-        found = cap.pick(target);
-    }
-    if (!found && !o.listGpus) {
-        std::fprintf(stderr, "bdex-capture: no such window (--list shows them)\n");
-        return 1;
-    }
-
-    // Settings: the configuration file with the game's section, then the
-    // environment (Config::load), then the command line.
-    // Read as explicitly enabled (BDEX_FG=1): generating is this program's
-    // purpose, and require_app (the panel's arming of games for the layer)
-    // would otherwise pause it and turn its HUD off.
-    setenv("BDEX_FG", "1", 1);
-    Config cfg = Config::load(target.process);
-    log_set_level(cfg.logLevel);
-    cfg.enabled = true;
-    if (!o.preset.empty() && !cfg.applyPreset(o.preset)) BDEX_WARN("unknown preset %s", o.preset.c_str());
-    if (o.multiplier > 0) cfg.apply("multiplier", std::to_string(o.multiplier));
-    if (!o.mode.empty() && !cfg.apply("mode", o.mode)) BDEX_WARN("unknown mode %s", o.mode.c_str());
-    if (o.hud >= 0) cfg.apply("overlay", std::to_string(o.hud));
-    if (cfg.multiplier < 2 && o.multiplier == 0) cfg.multiplier = 2;  // (the panel's x1 means "off" for the layer)
-    if (o.gpu.empty()) o.gpu = cfg.gpu;          // the configuration's GPU (panel, launchers)
-    if (o.hotkey.empty()) o.hotkey = cfg.hotkey;
-
-    // Our own Vulkan instance loads the layer too (implicit): it must stay a
-    // pass-through there, whatever the configuration or BDEX_FG says.
-    setenv("BDEX_FG", "0", 1);
-
-    const Window overlay = makeOverlay(dpy, found ? target : X11Window{0, 0, "", "", 0, 0, 64, 64});
-    if (o.listGpus) {
-        int i = 0;
-        for (const auto& g : Presenter::listGpus(dpy, overlay)) std::printf("%d: %s\n", i++, g.c_str());
-        return 0;
-    }
-    Presenter vk;
-    if (!vk.init(dpy, overlay, o.gpu, o.fifo, cfg) || !cap.start(target)) {
-        vk.shutdown();
-        return 1;
-    }
     auto resize = [&]() {
         const X11Window& w = cap.window();
         XMoveResizeWindow(dpy, overlay, w.x, w.y, static_cast<unsigned>(std::max(1, w.width)),
@@ -273,7 +223,7 @@ int main(int argc, char** argv) {
     int latencyN = 0, slot = 0;
     bool hidden = false;
     struct Pending {
-        X11Capture* cap;
+        Cap* cap;
         Display* dpy;
     } pending{&cap, dpy};
     auto framePending = [](void* c) {
@@ -317,7 +267,7 @@ int main(int argc, char** argv) {
         vk.waitSlot(slot);
         X11Capture::Frame frame;
         if (!cap.grab(slot, frame)) continue;
-        slot = (slot + 1) % X11Capture::kSlots;
+        slot = (slot + 1) % Cap::kSlots;
         int r = vk.synthesize(frame);
         if (r == 1) {
             resize();
@@ -390,9 +340,117 @@ int main(int argc, char** argv) {
         }
     }
 
+    return 0;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    using namespace bdex;
+    Options o;
+    if (!parse(argc, argv, o)) return 2;
+    std::signal(SIGINT, onSignal);
+    std::signal(SIGTERM, onSignal);
+
+    Display* dpy = XOpenDisplay(nullptr);
+    if (!dpy) {
+        std::fprintf(stderr, "bdex-capture: cannot open the X display (DISPLAY=%s)\n",
+                     std::getenv("DISPLAY") ? std::getenv("DISPLAY") : "");
+        return 1;
+    }
+    XSetErrorHandler(onXError);
+    X11Capture cap(dpy);
+    if (o.list) {
+        for (const auto& w : cap.list())
+            std::printf("0x%08lx  pid %-7ld %-20s %4dx%-4d  %s\n", w.id, w.pid, w.process.c_str(), w.width, w.height,
+                        w.title.c_str());
+        return 0;
+    }
+
+    X11Window target;
+    bool found = false;
+    if (o.wayland) {
+#ifndef BDEX_PIPEWIRE
+        std::fprintf(stderr, "bdex-capture: built without PipeWire (libpipewire-0.3, gio-2.0): no --wayland\n");
+        return 1;
+#endif
+        // The window is chosen in the portal's dialog; the overlay goes
+        // over --rect, else the whole screen. --name names the game's
+        // [section] of the configuration.
+        target.process = o.name;
+        target.title = o.name;
+        target.x = o.rect[0];
+        target.y = o.rect[1];
+        target.width = o.rect[2] > 0 ? o.rect[2] : DisplayWidth(dpy, DefaultScreen(dpy));
+        target.height = o.rect[3] > 0 ? o.rect[3] : DisplayHeight(dpy, DefaultScreen(dpy));
+        found = true;
+    } else if (o.window || o.pid || !o.name.empty()) {
+        // (a game just started may not have mapped its window yet: a few tries)
+        for (int i = 0; i < 50 && !found && !g_stop; ++i) {
+            found = cap.find(target, o.window, o.pid, o.name);
+            if (!found) std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+    } else if (!o.listGpus) {
+        std::fprintf(stderr, "bdex-capture: click the game's window\n");
+        found = cap.pick(target);
+    }
+    if (!found && !o.listGpus) {
+        std::fprintf(stderr, "bdex-capture: no such window (--list shows them)\n");
+        return 1;
+    }
+
+    // Settings: the configuration file with the game's section, then the
+    // environment (Config::load), then the command line.
+    // Read as explicitly enabled (BDEX_FG=1): generating is this program's
+    // purpose, and require_app (the panel's arming of games for the layer)
+    // would otherwise pause it and turn its HUD off.
+    setenv("BDEX_FG", "1", 1);
+    Config cfg = Config::load(target.process);
+    log_set_level(cfg.logLevel);
+    cfg.enabled = true;
+    if (!o.preset.empty() && !cfg.applyPreset(o.preset)) BDEX_WARN("unknown preset %s", o.preset.c_str());
+    if (o.multiplier > 0) cfg.apply("multiplier", std::to_string(o.multiplier));
+    if (!o.mode.empty() && !cfg.apply("mode", o.mode)) BDEX_WARN("unknown mode %s", o.mode.c_str());
+    if (o.hud >= 0) cfg.apply("overlay", std::to_string(o.hud));
+    if (cfg.multiplier < 2 && o.multiplier == 0) cfg.multiplier = 2;  // (the panel's x1 means "off" for the layer)
+    if (o.gpu.empty()) o.gpu = cfg.gpu;          // the configuration's GPU (panel, launchers)
+    if (o.hotkey.empty()) o.hotkey = cfg.hotkey;
+
+    // Our own Vulkan instance loads the layer too (implicit): it must stay a
+    // pass-through there, whatever the configuration or BDEX_FG says.
+    setenv("BDEX_FG", "0", 1);
+
+    const Window overlay = makeOverlay(dpy, found ? target : X11Window{0, 0, "", "", 0, 0, 64, 64});
+    if (o.listGpus) {
+        int i = 0;
+        for (const auto& g : Presenter::listGpus(dpy, overlay)) std::printf("%d: %s\n", i++, g.c_str());
+        return 0;
+    }
+    Presenter vk;
+    if (!vk.init(dpy, overlay, o.gpu, o.fifo, cfg)) {
+        vk.shutdown();
+        return 1;
+    }
+    int rc = 1;
+#ifdef BDEX_PIPEWIRE
+    if (o.wayland) {
+        PwCapture pw;
+        if (pw.start(o.waylandScreen, target)) rc = generate(pw, dpy, overlay, vk, cfg, o, target);
+        vk.shutdown();
+        pw.stop();
+        XDestroyWindow(dpy, overlay);
+        XCloseDisplay(dpy);
+        return rc;
+    }
+#endif
+    if (!cap.start(target)) {
+        vk.shutdown();
+        return 1;
+    }
+    rc = generate(cap, dpy, overlay, vk, cfg, o, target);
     vk.shutdown();
     cap.stop();
     XDestroyWindow(dpy, overlay);
     XCloseDisplay(dpy);
-    return 0;
+    return rc;
 }
