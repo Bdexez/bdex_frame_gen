@@ -17,6 +17,8 @@ struct UiOption {
     std::string def;                                          // default config value
     std::vector<std::pair<std::string, std::string>> choices; // (value, label)
     bool gui = true, launcher = false;
+    std::string labelEn, helpEn;           // English texts (layer/options_ui.en.conf)
+    std::vector<std::string> choicesEn;    // ... of the choices, in their order
 };
 
 struct UiSection {
@@ -24,6 +26,7 @@ struct UiSection {
     bool expanded = false;
     bool gui = true, launcher = false;
     std::vector<UiOption> options;
+    std::string titleEn, subtitleEn;
 };
 
 // Parses the file's text and fills what it leaves out from the registry.
@@ -31,7 +34,17 @@ struct UiSection {
 // a range) go to `errors`; the options concerned are left out.
 std::vector<UiSection> parseOptionsUi(const std::string& text, std::vector<std::string>& errors);
 
-// The sections as JSON (tools/options/bdex_options.cpp, for the GTK panel).
+// The English texts (layer/options_ui.en.conf: `section | id | title |
+// subtitle`, `option | key | label | help | value:Label/...`) into the
+// sections. Every section and option needs one, with the same choice
+// values: `errors` otherwise (the build fails, so no text stays French only).
+void applyOptionsUiEnglish(const std::string& text, std::vector<UiSection>& sections, std::vector<std::string>& errors);
+
+// The texts shown: the English ones swapped in when `english`.
+void localizeOptionsUi(std::vector<UiSection>& sections, bool english);
+
+// The sections as JSON (tools/options/bdex_options.cpp, for the GTK panel),
+// English texts in "<field>_en".
 std::string optionsUiJson(const std::vector<UiSection>& sections);
 
 } // namespace bdex
