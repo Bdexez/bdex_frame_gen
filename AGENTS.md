@@ -58,11 +58,17 @@ tous les shaders de `layer/shaders/`.
   GPU de LS), `main.cpp` (fenêtre override-redirect sans région d'entrée,
   boucle cadencée comme `capture/src/main.cpp`, raccourcis XGrabKey). Pas
   sous gamescope (sa couche WSI présente hors de la fenêtre X), pas de
-  Wayland natif (portail PipeWire à faire). Test `capture_linux` (Xvfb ;
-  GPU : gamescope headless **sans** `ENABLE_GAMESCOPE_WSI`).
+  Wayland natif : `--wayland` (`pw_capture.cpp`, portail ScreenCast par
+  GDBus + flux PipeWire, overlay sur `--rect`). Test `capture_linux` (Xvfb ;
+  GPU : gamescope headless **sans** `ENABLE_GAMESCOPE_WSI`) ;
+  `tools/ci/wayland-capture-check.sh` (sway headless, xdpw, PipeWire).
 - `capture/src/` — `capture.cpp` (WGC, frame pool, ring D3D11), `vkctx.cpp`
   (interop D3D11→Vulkan + pilote `FrameGen` + swapchain overlay), `launcher.cpp`
-  (fenêtre de config native Win32), `main.cpp`.
+  (fenêtre de config native Win32 ; calibration, rapport, retrait des
+  injections), `injection.cpp` (inspection du jeu, DXVK/VKD3D-Proton,
+  enregistrement de la couche HKCU), `report.cpp`, `main.cpp` (`planRun`).
+- `tools/calibrate/` — `bdex-calibrate` (Linux + Windows) : coût du moteur
+  sur ce GPU, preset et multiplicateur recommandés.
 - `tools/offline/bdex_offline.cpp` — le moteur `FrameGen` sans fenêtre ni layer
   sur une séquence PPM (1 frame sur `multiplier` en entrée, les autres = vérité
   terrain) ; piloté par `tools/eval_sequence.py` (PSNR global / mouvement /
@@ -101,6 +107,11 @@ bdex-framegen --tuned-profile [JEU] [--apply]           # décisions d'online_tu
 bdex-framegen --record DIR [N] -- <jeu>                 # enregistre N images réelles (corpus)
 tools/corpus_pack.py DIR out.tar.gz --name X            # séquence -> archive (release GitHub "corpus", notée en CI)
 tools/eval_sequence.py <dir_ppm> --variant KEY=VAL     # éval hors ligne (bdex_offline, sans fenêtre) sur séquence enregistrée
+tools/replay_bench.py SEQ [--multiplier M] [--other-layer NAME]  # éval EN LIGNE : séquence rejouée comme un jeu (bdex_demo --replay) à travers la couche
+bdex-framegen --calibrate [--apply]                     # bdex-calibrate : coût sur ce GPU, preset/multiplicateur recommandés
+tools/train_flow.py [--write]                           # entraîne learned_flow (numpy, flux vrai de synthèse, bdex_offline --dump-flow)
+tools/fetch_translation_layers.py OUT                   # DXVK + VKD3D-Proton épinglés (paquet Windows : injection D3D)
+tools/ci/wayland-capture-check.sh                       # bdex-capture --wayland de bout en bout (sway headless, portail wlr, PipeWire)
 tools/package-linux.sh [outdir] [version]              # archive Linux précompilée (sur la machine même)
 tools/package-native.sh ARCHIVE [outdir] [version]     # .deb + .rpm depuis une archive (dpkg-deb/rpmbuild, sinon Docker)
 tools/ci/archive-check.sh PAQUET.deb|.rpm [image...]   # installe le paquet (apt/dnf/zypper) : charge, profils lus, x2
