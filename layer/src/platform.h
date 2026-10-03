@@ -38,10 +38,21 @@ bool platformAntiCheatPresent(std::string* foundName);
 // process to detect (VAC, Vanguard, Ricochet...) or runs inside the game.
 bool platformIsCompetitiveGame(const std::string& name);
 
-// True while the control panel runs with frame generation started: it keeps
-// <platformStatusDir()>/app.session holding its process id, removed when it
-// stops; a stale file (process gone) counts as stopped.
-bool platformAppSessionActive();
+// The control panel's session (require_app), like the Windows launcher: while
+// it is open it keeps <platformStatusDir()>/app.session = "<its pid> <target
+// pid>", the target being the game where « Démarrer » started the generation
+// (0 = none). A stale file (panel gone, or a recycled pid) reads as closed.
+struct AppSession {
+    bool open = false;  // the panel is running
+    long target = 0;    // process generating frames, 0 = none
+};
+AppSession platformAppSession();
+
+// Vulkan programs that are not games (browsers, Steam, compositors...): with
+// require_app the layer arms every other Vulkan program, never these.
+bool platformIsNonGame(const std::string& name);
+// This process is a desktop application that draws with Vulkan (GTK 4).
+bool platformIsDesktopApp();
 
 // Directory of the per-process live status files (status.h): Linux
 // $XDG_RUNTIME_DIR/bdex-framegen (else /tmp/bdex-framegen-<uid>), Windows

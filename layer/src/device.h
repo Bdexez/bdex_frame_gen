@@ -132,8 +132,6 @@ struct DeviceData {
     std::mutex configMutex;
     std::chrono::steady_clock::time_point configChecked{};
     int64_t configStamp = -1;  // mtime of the file last seen, -1 = none yet, -2 = missing
-    bool filePaused = false;   // `paused` as the file says; config.paused adds the require_app session
-    bool appSession = true;    // require_app: the control panel's session was running at the last poll
 
     // Allocates a primary command buffer from `pool` (default cmdPool) with a
     // valid dispatch pointer. A command pool must not be used from two

@@ -516,6 +516,38 @@ void Config::applyLive(const Config& n) {
     if (chromaWeight > 0.f && n.chromaWeight > 0.f) chromaWeight = n.chromaWeight;  // likewise (chroma pyramid)
 }
 
+Config Config::keepingCreationSettings(Config n) const {
+    n.enabled = enabled;
+    n.antiCheatDisabled = antiCheatDisabled;
+    n.requireApp = requireApp;
+    n.renderScale = renderScale;
+    n.presentMode = presentMode;
+    n.hidePresentExt = hidePresentExt;
+    n.asyncCompute = asyncCompute;
+    n.presentFeedback = presentFeedback;
+    n.syncPresent = syncPresent;
+    n.onlineTune = onlineTune;  // DeviceData's OnlineTune, created with the device
+    n.tuneName = tuneName;
+    n.captureHdr = captureHdr;
+    n.logLevel = logLevel;
+    n.logFile = logFile;
+    n.dumpDir = dumpDir;
+    n.dumpFrames = dumpFrames;
+    if (!(gpuBudget > 0.f && n.gpuBudget > 0.f)) n.gpuBudget = gpuBudget;  // as applyLive
+    n.rebuildGen = rebuildGen;
+    return n;
+}
+
+bool Config::sameOutputSettings(const Config& o) const {
+    for (const auto& d : registry()) {
+        if (d.b && this->*(d.b) != o.*(d.b)) return false;
+        if (d.i && this->*(d.i) != o.*(d.i)) return false;
+        if (d.f && this->*(d.f) != o.*(d.f)) return false;
+    }
+    return extrapolate == o.extrapolate && flowScale == o.flowScale && upscaleFilter == o.upscaleFilter &&
+           overlayMode == o.overlayMode && debug == o.debug;
+}
+
 Config Config::loadWithDefaults(Config c, const std::string& extraProcess) {
     const std::string profiles = platformBundledProfilesPath();
     if (!profiles.empty()) c.loadFile(profiles, extraProcess, true);
@@ -531,10 +563,24 @@ Config Config::loadWithDefaults(Config c, const std::string& extraProcess) {
         c.antiCheatDisabled = true;
         BDEX_WARN("anti-cheat '%s' detected: layer disabled for this process", antiCheat.c_str());
     }
-    // require_app: the control panel must be open with generation started.
-    if (c.enabled && c.requireApp && !platformAppSessionActive()) {
-        c.enabled = false;
-        BDEX_INFO("control panel not started (require_app): layer inactive for this process");
+    // require_app (the control panel, like the Windows launcher): games are
+    // armed — virtual swapchain, real frames passed through — and generate
+    // once « Démarrer » targets this process. Upscaling changes what the game
+    // renders, so it only applies to games started while the panel is open.
+    if (c.enabled && c.requireApp) {
+        bool nonGame = platformIsDesktopApp();
+        for (const auto& n : processNames()) nonGame = nonGame || platformIsNonGame(n);
+        if (nonGame) {
+            c.enabled = false;
+        } else {
+            const AppSession s = platformAppSession();
+            if (!s.open) c.renderScale = 1.0f;
+            c.appTargeted = s.target != 0 && s.target == platformPid();
+            if (!c.appTargeted) {
+                c.paused = true;
+                c.overlayMode = 0;
+            }
+        }
     }
     if (c.sceneCutHigh < c.sceneCutLow) c.sceneCutHigh = c.sceneCutLow;
     if (!extraProcess.empty()) c.tuneName = baseName(extraProcess);
