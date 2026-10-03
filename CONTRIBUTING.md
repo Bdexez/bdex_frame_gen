@@ -139,5 +139,7 @@ Measurements on real games beat the synthetic scenes. To add one:
 
 ## License
 
-By contributing, you agree that your code is released under the project's MIT
-license.
+The project is proprietary (see `LICENSE`). Contributions are accepted only
+from people the author invited; by contributing you assign the copyright of
+your contribution to the project's author, so the project can stay under a
+single owner.

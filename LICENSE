@@ -1,1 +1,24 @@
+bdex-framegen — proprietary software
 
+Copyright (c) 2026 Bdexez. All rights reserved.
+
+This software, its source code and its documentation are private and
+confidential. No license is granted: nobody may use, copy, modify, merge,
+publish, distribute, sublicense or sell copies of it, in whole or in part,
+in source or binary form, without the prior written permission of the
+copyright holder.
+
+Earlier releases: versions up to and including 0.5.5 were published under
+the MIT License. Copies of those versions already received keep the rights
+the MIT License granted for them; this notice applies to every later
+version and to the content of this repository from 3 October 2026 on.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR ITS USE —
+INCLUDING ANY ACTION AN ANTI-CHEAT SYSTEM OR A GAME PUBLISHER TAKES AGAINST
+AN ACCOUNT.
+
+Third-party components keep their own licenses: see THIRD_PARTY_NOTICES.md.

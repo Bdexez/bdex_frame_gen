@@ -14,7 +14,7 @@
   <developer id="io.github.bdexez">
     <name>Bdexez</name>
   </developer>
-  <project_license>MIT</project_license>
+  <project_license>LicenseRef-proprietary</project_license>
   <metadata_license>CC0-1.0</metadata_license>
   <releases>
     <release version="0.5.5" date="2026-09-26"/>

@@ -4,7 +4,7 @@
 
 **Frame generation for Vulkan games on Linux — one layer, no changes to the game.**
 
-[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: proprietary](https://img.shields.io/badge/license-proprietary-red.svg)](LICENSE)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C.svg?logo=cplusplus&logoColor=white)](#)
 [![Vulkan](https://img.shields.io/badge/Vulkan-1.0%2B-AC162C.svg?logo=vulkan&logoColor=white)](#)
 [![Platform](https://img.shields.io/badge/platform-Linux-FCC624.svg?logo=linux&logoColor=black)](#)
@@ -826,6 +826,6 @@ performance measurements) and code conventions. The version history is in
 
 <div align="center">
 
-[MIT](LICENSE) licensed.
+Proprietary software — all rights reserved ([LICENSE](LICENSE); versions up to 0.5.5 were MIT). Third-party components: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 </div>
