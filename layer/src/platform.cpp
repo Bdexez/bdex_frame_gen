@@ -280,6 +280,19 @@ AppSession platformAppSession() {
     return s;
 }
 
+std::string platformExeName() {
+#ifdef _WIN32
+    wchar_t exe[MAX_PATH];
+    return GetModuleFileNameW(nullptr, exe, MAX_PATH) ? normalizeName(narrow(exe)) : std::string();
+#else
+    char exe[512];
+    const ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+    if (n <= 0) return "";
+    exe[n] = '\0';
+    return normalizeName(exe);
+#endif
+}
+
 bool platformIsDesktopApp() {
 #ifdef _WIN32
     return false;

@@ -568,7 +568,7 @@ Config Config::loadWithDefaults(Config c, const std::string& extraProcess) {
     // once « Démarrer » targets this process. Upscaling changes what the game
     // renders, so it only applies to games started while the panel is open.
     if (c.enabled && c.requireApp) {
-        bool nonGame = platformIsDesktopApp();
+        bool nonGame = platformIsDesktopApp() || platformIsNonGame(platformExeName());
         for (const auto& n : processNames()) nonGame = nonGame || platformIsNonGame(n);
         if (nonGame) {
             c.enabled = false;

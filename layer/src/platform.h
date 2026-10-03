@@ -51,6 +51,9 @@ AppSession platformAppSession();
 // Vulkan programs that are not games (browsers, Steam, compositors...): with
 // require_app the layer arms every other Vulkan program, never these.
 bool platformIsNonGame(const std::string& name);
+// The current executable's name, normalised like platformProcessNames (its
+// command line can be rewritten: Electron / Chromium put it in one string).
+std::string platformExeName();
 // This process is a desktop application that draws with Vulkan (GTK 4).
 bool platformIsDesktopApp();
 

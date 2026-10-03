@@ -6,6 +6,22 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Control panel without libadwaita** (SteamOS, Debian 12, Ubuntu 22.04:
+  none, or older than 1.4): it stopped at start-up with « Namespace Adw not
+  available ». The widgets it uses are now also built from plain GTK 4
+  (`_Compat`), used when libadwaita 1.4+ is missing; the panel needs only
+  Python 3, PyGObject and GTK 4. `BDEX_FG_GUI_NO_ADW=1` forces that path.
+- **Electron / Chromium apps (Discord) were armed as games**: their command
+  line is rewritten as one string, so the name checks missed them. The layer
+  also checks its executable's name (`platformExeName`), the panel the
+  binary and the first word.
+- Panel: no horizontal scrolling, long texts wrap to the window's width.
+- The prebuilt archive's README gives the real requirements (glibc 2.36+,
+  GTK 4; libadwaita optional) and says Flatpak / Snap Steam cannot see the
+  layer.
+
 ## [0.5.0] - 2026-09-26
 
 ### Added
