@@ -117,6 +117,10 @@ if(TARGET bdex_demo)
   add_test(NAME record_live
            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/record_live.sh" "$<TARGET_FILE:bdex_demo>" "${CMAKE_BINARY_DIR}/layer")
   set_tests_properties(record_live PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+  # The online benchmark: a recorded sequence replayed as a game through the layer.
+  add_test(NAME replay_bench
+           COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/replay_bench.sh" "$<TARGET_FILE:bdex_demo>" "${CMAKE_BINARY_DIR}/layer")
+  set_tests_properties(replay_bench PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
   add_test(NAME validation
            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/validation.sh" "$<TARGET_FILE:bdex_demo>" "${CMAKE_BINARY_DIR}/layer")
   set_tests_properties(validation PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
