@@ -663,6 +663,18 @@ présentation du jeu (0 image de latence), la capture ajoute ~1 image.
   « 30 → 60 i/s (×2) » par la couche ; capture → couche ×1,00 et
   bdex-capture ×2,00.
 
+- **`zero_bias = 0` sur GPU dédié** (même jour, accord de l'utilisateur) :
+  le bonus gratuit du candidat « immobile » gagnait sur les contenus doux en
+  mouvement rapide (fondu fantôme) ; le HUD statique reste immobile (coût
+  exact nul à zéro). Corpus 960×540 avec les autres options auto : zoom +1,6
+  / +1,7 / +2,2 dB (interp / hybride / extrap), panoramique +0,5 / +1,5 /
+  +1,6 ; pertes : occlusions −0,1 / −0,3, HUD −0,13 en hybride.
+- **Correctif CI (`swapchain_stress`, plein écran)** : après une
+  présentation `OUT_OF_DATE`, le job suivant acquérait encore sur la vraie
+  swapchain périmée ; la validation compte les images d'une présentation
+  échouée comme tenues → VUID-...-07783. `realOutOfDate_` : plus
+  d'acquisition sur elle, le jeu recrée sa swapchain.
+
 ### 4.7 Windows, mode 2 — `bdex_capture.exe`
 
 **Chaîne de traitement**
