@@ -46,6 +46,14 @@ bool platformAntiCheatException(const std::string& name);
 // (platformAntiCheatPresent also counts this process being a competitive game.)
 std::string platformAntiCheatRunning();
 
+// The machine runs on its battery: 1, on mains: 0, unknown (a desktop, no
+// power supply information): -1. Linux /sys/class/power_supply, Windows
+// GetSystemPowerStatus; BDEX_POWER=battery|mains pretends (tests).
+int platformOnBattery();
+// A Steam Deck (its DMI board: Valve Jupiter / Galileo): a handheld, where
+// the battery is the normal state — battery_saver leaves it alone.
+bool platformIsSteamDeck();
+
 // The control panel's session (require_app), like the Windows launcher: while
 // it is open it keeps <platformStatusDir()>/app.session = "<its pid> <target
 // pid> <refresh Hz>", the target being the game where « Démarrer » started the generation

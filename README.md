@@ -583,6 +583,7 @@ them).
 | `DUMP` / `DUMP_FRAMES` | – / `24` | write the presented frames (PPM) into a directory |
 | `SHARED_QUEUE` | `0` | force sharing the game's queue (testing) |
 | `SYNC_PRESENT` | `0` | block the game's present call until the worker presented the frame (compatibility test) |
+| `BATTERY_SAVER` | `1` | On battery (laptops; `/sys/class/power_supply`, Windows' power status): `1` = the automatic preset takes the `performance` flow whatever the GPU (the flow is most of the generation's GPU time, so of its power); `2` = and the multiplier is capped at x2; `0` = off. Plugging in or out switches within 5 s (the output stage is rebuilt). Never on a Steam Deck (DMI board Jupiter / Galileo), where the battery is the normal state. |
 | `IGNORE_ANTICHEAT` | `0` | `1` keeps the layer on when a multiplayer anti-cheat (EAC, BattlEye…) or a listed competitive game is detected. **At your own risk**: the layer sits inside the game process, where the anti-cheat can see it — account bans are possible. For anti-cheat games on Windows, the capture app (`bdex_capture.exe`) is the safe route |
 | `HIDE_PRESENT_EXT` | `1` | hide the present-timing extensions (`swapchain_maintenance1`, `present_id`/`present_wait`) from the game: they would target the real swapchain, and VKD3D-Proton hangs otherwise |
 | `CAPTURE_HDR` | `auto` | Windows capture app: `auto` captures in scRGB HDR when the game's display is in HDR mode, `0` always SDR, `1` HDR if possible |

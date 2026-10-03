@@ -113,7 +113,9 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
     // Discrete GPUs with a healthy amount of VRAM run the balanced flow (itself
     // resolution-adaptive); integrated, software and small/old GPUs get the
     // cheaper performance flow. Everything stays overridable.
-    const bool strong = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && vram >= (2ull << 30);
+    // On battery (battery_saver): the performance flow, as for a small GPU —
+    // the flow is most of the generation's GPU time, so its power too.
+    const bool strong = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && vram >= (2ull << 30) && !onBattery;
     const std::string preset = strong ? "balanced" : "performance";
     applyPreset(preset);   // clears autoTune
     autoTune = true;       // keep the marker: this was auto-tuned, not user-pinned
@@ -250,6 +252,7 @@ const std::vector<OptionDef>& registry() {
     B("sync_present", "sync", &Config::syncPresent),
     B("hide_present_ext", nullptr, &Config::hidePresentExt),
     B("ignore_anticheat", nullptr, &Config::ignoreAntiCheat),
+    I("battery_saver", nullptr, &Config::batterySaver, 0, 2),
     I("search", "search_radius", &Config::searchRadius, 1, 4),
     I("search_fine", nullptr, &Config::searchFine, 1, 4),
     F("render_scale", nullptr, &Config::renderScale, 0.5f, 1.0f),
@@ -703,6 +706,12 @@ Config Config::loadWithDefaults(Config c, const std::string& extraProcess) {
     const std::string path = filePath();
     if (!path.empty()) c.loadFile(path, extraProcess);
     c.loadEnv();
+    // battery_saver: the power state now (pollConfig reloads when it changes).
+    c.onBattery = c.batterySaver > 0 && !platformIsSteamDeck() && platformOnBattery() == 1;
+    if (c.onBattery && c.batterySaver >= 2 && c.multiplier > 2) {
+        BDEX_INFO("on battery: multiplier x%d capped at x2 (battery_saver = 2)", c.multiplier);
+        c.multiplier = 2;
+    }
     // Multiplayer anti-cheat present: stay a pass-through for this process,
     // whatever the config/env says. Injection into a protected process is
     // what anti-cheats flag, so the safe side wins (see platform.cpp).
@@ -802,6 +811,7 @@ std::string Config::describe() const {
     if (sceneCutLocal) o << " scene_cut_local=1";
     if (dedup) o << " dedup=1";
     if (antiCheatDisabled) o << " [disabled: anti-cheat detected]";
+    if (onBattery) o << " [on battery: battery_saver=" << batterySaver << "]";
     return o.str();
 }
 
