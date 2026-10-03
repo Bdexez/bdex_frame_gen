@@ -55,6 +55,10 @@
 // --verbose prints the engine's per-frame state (repeat flag, t of each slot).
 // --score-real lists the real frames in the manifest too, as the engine
 // outputs them (upscaled with --render-scale): scores the upscaler.
+// --dump-flow DIR writes, per input pair k, DIR/flow_<k>.bin: the finest
+// forward / backward flow and the level-0 lumas the flow was measured on
+// (tools/train_flow.py) — header "BFLW", u32 w h block lw lh, f32 scale,
+// then w*h*2 floats twice and lw*lh floats twice.
 // --bench N repeats the flow N times per input, back to back (with
 // temporal_prediction or accel the repetitions differ slightly).
 // BDEX_FG_PROFILE=1 prints the mean GPU time per stage (analysis, flow,
@@ -228,6 +232,7 @@ int main(int argc, char** argv) {
     uint64_t seed = 1;
     bool verbose = false, steadyContent = false, scoreReal = false;
     int benchReps = 1;
+    std::string flowDumpDir;
     bool hudCounter = false, refreshKnown = false;
     double refreshHz = 0.0;
     std::string fmtName = "rgba8", csName = "srgb";
@@ -252,6 +257,7 @@ int main(int argc, char** argv) {
         else if (a == "--score-real") scoreReal = true;
         else if (a == "--steady-content") steadyContent = true;
         else if (a == "--bench" && i + 1 < argc) benchReps = std::max(1, atoi(argv[++i]));
+        else if (a == "--dump-flow" && i + 1 < argc) flowDumpDir = argv[++i];
         else if (a == "--hud-counter") hudCounter = true;
         else if (a == "--refresh" && i + 1 < argc) refreshHz = atof(argv[++i]);
         else if (a == "--refresh-known") refreshKnown = true;
@@ -546,6 +552,7 @@ int main(int argc, char** argv) {
                     // --bench: the same flow computed back to back keeps the GPU
                     // at full clock; the last repetition is the one used.
                     for (int r = 0; r < benchReps; ++r) fg.recordFlow(cmd, parity);
+                    if (!flowDumpDir.empty()) fg.recordFlowDump(cmd, parity);
                     fg.profileMark(cmd, 0, FrameGen::StageFlow);
                     for (int i = 1; i < mult; ++i)
                         fg.recordInterpolate(cmd, static_cast<uint32_t>(prev), static_cast<uint32_t>(cur),
@@ -559,6 +566,22 @@ int main(int argc, char** argv) {
                 fg.recordReleaseSources(cmd, prev, cur);
             });
             fg.profileCollect(0);
+            if (generate && !flowDumpDir.empty()) {
+                FrameGen::FlowDump d;
+                if (fg.readFlowDump(d)) {
+                    fs::create_directories(flowDumpDir);
+                    char name[64];
+                    snprintf(name, sizeof name, "flow_%04zu.bin", k);
+                    std::ofstream f(fs::path(flowDumpDir) / name, std::ios::binary);
+                    const uint32_t hdr[6] = {0x574C4642u /* BFLW */, d.w, d.h, d.block, d.lw, d.lh};
+                    f.write(reinterpret_cast<const char*>(hdr), sizeof hdr);
+                    f.write(reinterpret_cast<const char*>(&d.scale), 4);
+                    f.write(reinterpret_cast<const char*>(d.fwd.data()), std::streamsize(d.fwd.size() * 4));
+                    f.write(reinterpret_cast<const char*>(d.bwd.data()), std::streamsize(d.bwd.size() * 4));
+                    f.write(reinterpret_cast<const char*>(d.lumaPrev.data()), std::streamsize(d.lumaPrev.size() * 4));
+                    f.write(reinterpret_cast<const char*>(d.lumaCur.data()), std::streamsize(d.lumaCur.size() * 4));
+                }
+            }
             if (generate) {
                 // What the player should see on each displayed frame: the
                 // layer's pacing (swapchain.cpp) spreads the frames of a

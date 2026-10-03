@@ -1,0 +1,114 @@
+#version 450
+// learned_flow: a small network (tools/train_flow.py) corrects each vector
+// of the finest flow. Block matching finds whole-pixel vectors, one per
+// block: a smooth motion (a zoom, a slow pan) is followed by steps, a
+// sub-pixel one rounded. Per flow texel the network sees the vector's
+// neighbourhood (the 8 neighbours relative to it), how well it explains the
+// pair and how that changes one pixel away in each direction (the matching
+// error's slope), and its fractional part; it outputs a correction of at
+// most 1.5 level pixels. Trained on synthetic motions whose true flow is
+// known; the weights are in learned_flow_weights.glsl (all zero: no change).
+// Two stages (pc.stage): the corrections into `delta` (the neighbours read
+// unmodified), then added to the flows.
+#extension GL_GOOGLE_include_directive : require  // #include with glslangValidator too
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0, rg32f) uniform image2D flowFwd;   // finest level, at previous-frame positions
+layout(binding = 1, rg32f) uniform image2D flowBwd;   // at current-frame positions
+layout(binding = 2, rgba32f) uniform image2D delta;    // xy forward, zw backward
+layout(binding = 3) uniform sampler2D lumaPrev;
+layout(binding = 4) uniform sampler2D lumaCur;
+
+layout(push_constant) uniform PC {
+    ivec2 size;      // flow texels
+    ivec2 luma;      // level-0 luma size
+    int block;       // level pixels per flow texel
+    int stage;       // 0: corrections, 1: apply
+    float strength;  // 0..1, the share of the correction applied
+} pc;
+
+#include "learned_flow_weights.glsl"
+
+const int N_IN = 23;
+
+float lumaAt(sampler2D t, ivec2 q) { return texelFetch(t, clamp(q, ivec2(0), pc.luma - 1), 0).r; }
+
+// The matching error of integer vector v + d over the 8x8 window around the block.
+float errorAt(sampler2D refTex, sampler2D tgtTex, ivec2 origin, ivec2 v, ivec2 d) {
+    int m = (8 - pc.block) / 2;
+    float s = 0.0;
+    for (int y = -m; y < pc.block + m; ++y)
+        for (int x = -m; x < pc.block + m; ++x) {
+            ivec2 q = origin + ivec2(x, y);
+            s += abs(lumaAt(refTex, q) - lumaAt(tgtTex, q + v + d));
+        }
+    return s / 64.0;
+}
+
+vec2 correct(bool fwd, ivec2 p) {
+    float x[N_IN];
+    vec2 c = fwd ? imageLoad(flowFwd, p).xy : imageLoad(flowBwd, p).xy;
+    for (int k = 0, i = 0; k < 9; ++k) {
+        if (k == 4) continue;
+        ivec2 o = ivec2(k % 3 - 1, k / 3 - 1);
+        ivec2 q = clamp(p + o, ivec2(0), pc.size - 1);
+        vec2 n = fwd ? imageLoad(flowFwd, q).xy : imageLoad(flowBwd, q).xy;
+        vec2 r = clamp(n - c, vec2(-8.0), vec2(8.0)) * 0.25;
+        x[i++] = r.x;
+        x[i++] = r.y;
+    }
+    ivec2 origin = p * pc.block;
+    ivec2 vi = ivec2(floor(c + 0.5));  // (not round(): its halves are implementation-defined; the training rounds the same)
+    int m = (8 - pc.block) / 2;
+    float contrast = 0.01;
+    for (int y = -m; y < pc.block + m; ++y)
+        for (int xx = -m; xx < pc.block + m; ++xx) {
+            ivec2 q = origin + ivec2(xx, y);
+            float r0 = fwd ? lumaAt(lumaPrev, q) : lumaAt(lumaCur, q);
+            float rx = fwd ? lumaAt(lumaPrev, q + ivec2(1, 0)) : lumaAt(lumaCur, q + ivec2(1, 0));
+            float ry = fwd ? lumaAt(lumaPrev, q + ivec2(0, 1)) : lumaAt(lumaCur, q + ivec2(0, 1));
+            contrast += (abs(rx - r0) + abs(ry - r0)) / 64.0;
+        }
+    float e0, ex, exm, ey, eym;
+    if (fwd) {
+        e0 = errorAt(lumaPrev, lumaCur, origin, vi, ivec2(0, 0));
+        ex = errorAt(lumaPrev, lumaCur, origin, vi, ivec2(1, 0));
+        exm = errorAt(lumaPrev, lumaCur, origin, vi, ivec2(-1, 0));
+        ey = errorAt(lumaPrev, lumaCur, origin, vi, ivec2(0, 1));
+        eym = errorAt(lumaPrev, lumaCur, origin, vi, ivec2(0, -1));
+    } else {
+        e0 = errorAt(lumaCur, lumaPrev, origin, vi, ivec2(0, 0));
+        ex = errorAt(lumaCur, lumaPrev, origin, vi, ivec2(1, 0));
+        exm = errorAt(lumaCur, lumaPrev, origin, vi, ivec2(-1, 0));
+        ey = errorAt(lumaCur, lumaPrev, origin, vi, ivec2(0, 1));
+        eym = errorAt(lumaCur, lumaPrev, origin, vi, ivec2(0, -1));
+    }
+    x[16] = e0 / contrast;
+    x[17] = (ex - e0) / contrast;
+    x[18] = (exm - e0) / contrast;
+    x[19] = (ey - e0) / contrast;
+    x[20] = (eym - e0) / contrast;
+    x[21] = c.x - float(vi.x);
+    x[22] = c.y - float(vi.y);
+    float h[LF_HIDDEN];
+    for (int j = 0; j < LF_HIDDEN; ++j) {
+        float a = LF_B1[j];
+        for (int i = 0; i < N_IN; ++i) a += LF_W1[j * N_IN + i] * x[i];
+        h[j] = max(a, 0.0);
+    }
+    vec2 y = vec2(LF_B2[0], LF_B2[1]);
+    for (int j = 0; j < LF_HIDDEN; ++j) y += vec2(LF_W2[j], LF_W2[LF_HIDDEN + j]) * h[j];
+    return clamp(y, vec2(-1.5), vec2(1.5));
+}
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, pc.size))) return;
+    if (pc.stage == 0) {
+        imageStore(delta, p, vec4(correct(true, p), correct(false, p)));
+        return;
+    }
+    vec4 d = imageLoad(delta, p) * pc.strength;
+    imageStore(flowFwd, p, vec4(imageLoad(flowFwd, p).xy + d.xy, 0.0, 0.0));
+    imageStore(flowBwd, p, vec4(imageLoad(flowBwd, p).xy + d.zw, 0.0, 0.0));
+}

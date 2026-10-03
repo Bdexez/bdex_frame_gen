@@ -48,6 +48,17 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   `rot_weight` and `pixel_vectors` (45.23 / 51.34 dB either way) —: kept
   as an option for real-game recordings to decide.
 
+- **`learned_flow`** (off): a small network (23 → 16 → 2, `tools/train_flow.py`,
+  numpy) corrects each vector of the finest flow by at most 1.5 level
+  pixels, from its neighbourhood, the matching error and its slope, and its
+  fractional part (`learned_flow.comp`, two stages: corrections, then
+  added). Trained on synthetic motions with their true flow
+  (`bdex_offline --dump-flow` exports the flow and the level-0 lumas):
+  held-out end-point error 0.52 → 0.21 level px. On the corpus, never
+  trained on: zoom +1.0 to +2.6 dB, sub-pixel +0.5 to +2.2, fade +1.4, the
+  demo ±0.03, rotation −0.13 (interpolation); +0.3 ms a generated frame at
+  1440p. Off until trained on real games' recordings.
+
 ### Wayland capture
 
 - **`bdex-capture --wayland`**: native Wayland windows through the

@@ -24,6 +24,7 @@ bdex_add_shaders(bdex_layer_shaders
     shaders/hud_mask.comp
     shaders/flow_confidence.comp
     shaders/learned_correction.comp
+    shaders/learned_flow.comp
     shaders/flow_upsample.comp
     shaders/luma_match.comp:f32
     shaders/luma_match.comp:f16:LUMA_FMT=r16f
@@ -39,7 +40,7 @@ bdex_add_shaders(bdex_layer_shaders
     shaders/cas.comp:u64:OUT_64
     shaders/hud_overlay.comp:u32
     shaders/hud_overlay.comp:u64:OUT_64
-  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/common.glsl" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/learned_correction_weights.glsl" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/learned_correction_extrap_weights.glsl"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/common.glsl" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/learned_correction_weights.glsl" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/learned_correction_extrap_weights.glsl" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/learned_flow_weights.glsl"
 )
 
 if(MSVC)
@@ -112,6 +113,7 @@ set(BDEX_ENGINE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/hud_mask.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/flow_confidence.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/learned_correction.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/learned_flow.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/luma_match.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/flow_upsample.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/extrapolate_accel.cpp

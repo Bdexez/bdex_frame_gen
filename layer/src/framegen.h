@@ -78,6 +78,16 @@ public:
         uint32_t repeats = 0; // repeated frames detected since the output stage was built
     };
     bool readState(State& out) const;
+    // bdex_offline --dump-flow (tools/train_flow.py): the finest forward /
+    // backward flow (level pixels) and the level-0 lumas of the pair, copied
+    // after recordFlow and read once that submission completed.
+    struct FlowDump {
+        uint32_t w = 0, h = 0, block = 0, lw = 0, lh = 0;
+        float scale = 1.f;  // display pixels per level pixel
+        std::vector<float> fwd, bwd, lumaPrev, lumaCur;
+    };
+    void recordFlowDump(VkCommandBuffer cmd, uint32_t parity);
+    bool readFlowDump(FlowDump& out);
     // Mean matching cost of the last flow read back (the scene-cut input), a
     // few frames old; negative when none yet. collectMeanCost(slot) takes the
     // value recordFlow(..., slot) copied, once that slot's fence has signalled.
@@ -235,6 +245,8 @@ private:
     float flowScale_ = 1.f;
     bool flowValid_ = false;    // the flow images hold a computed flow (temporal candidate source)
     VkFormat lumaFormat_ = VK_FORMAT_R32_SFLOAT;
+    AllocatedBuffer flowDumpBuf_;  // recordFlowDump's copy
+    void* flowDumpMapped_ = nullptr;
 
     struct Source {
         VkImage image = VK_NULL_HANDLE;

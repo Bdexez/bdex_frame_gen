@@ -17,6 +17,7 @@ std::unique_ptr<FgPass> makeFlowConfidencePass();
 std::unique_ptr<FgPass> makeLearnedCorrectionPass();
 std::unique_ptr<FgPass> makeLumaMatchPass();
 std::unique_ptr<FgPass> makeFlowUpsamplePass();
+std::unique_ptr<FgPass> makeLearnedFlowPass();
 
 std::vector<std::unique_ptr<FgPass>> createOptionalPasses(const Config& cfg, DeviceData& dev, uint32_t outputs,
                                                           bool upscaling, VkExtent2D display) {
@@ -34,6 +35,7 @@ std::vector<std::unique_ptr<FgPass>> createOptionalPasses(const Config& cfg, Dev
     if (cfg.onlineTune) passes.push_back(makeOnlineTunePass());
     passes.push_back(makeFlowTemporalPass());  // flow_temporal can be switched on live
     passes.push_back(makeSubpixelLkPass());    // likewise; after flow_temporal (it keeps whole-pixel vectors only)
+    if (cfg.learnedFlow > 0.f) passes.push_back(makeLearnedFlowPass());  // the finest flow as the others left it
     // Extrapolation's trajectory, then the splat along it (it reads the
     // acceleration weight). accel can be switched on live.
     passes.push_back(makeExtrapolateAccelPass());

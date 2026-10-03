@@ -1078,6 +1078,22 @@ du test `corpus` recalculées sous lavapipe (conteneur CI) : les anciennes
 dataient d'avant les gains de septembre. Toujours les calculer sous lavapipe
 (un GPU dédié active d'autres options en auto).
 
+**Flux appris** (03/10, `learned_flow`, désactivé) : MLP 23 → 16 → 2 qui
+corrige chaque vecteur du flux le plus fin (≤ 1,5 px de niveau) d'après les
+8 voisins relatifs, l'erreur de matching et sa pente à ±1 px, la partie
+fractionnaire. Entraîné en numpy (`tools/train_flow.py`) sur des
+mouvements de synthèse au flux vrai connu (panoramiques 1 à 27 px/image,
+sous-pixel, balancement, zoom ; autres graines que le corpus) via
+`bdex_offline --dump-flow` (flux + luminances du niveau 0) : EPE tenue à
+part 0,52 → 0,21. Corpus : zoom +1,0 à +2,6, sous-pixel +0,5 à +2,2, fondu
++1,4, démo ±0,03, rotation −0,13 (interp) ; +0,3 ms/image générée en 1440p
+(la synthèse coûte plus aussi : vecteurs fractionnaires → plus de tests de
+frontière de pixel_vectors). Pas de PyTorch sur la machine. À réentraîner sur
+des enregistrements de vrais jeux (« Enregistrer ») avant tout défaut.
+`affine_flow` (même jour, désactivé) : candidat affine 3×3 dans
+pixel_vectors, mesuré neutre (les vecteurs entiers laissent un résidu ≥ 0,5
+px : il passe rarement le test, et rot_weight + pixel_vectors suivent déjà).
+
 **Correction apprise** (02/10, `learned_correction`, expérimental) : réseau
 63 → 8 → 1 entraîné en numpy (`tools/train_correction.py`, données =
 sorties de `bdex_offline`), tête « mix » bornée (déplace le pixel vers le
