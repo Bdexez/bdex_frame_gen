@@ -65,10 +65,11 @@ FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, Vk
         throw;
     }
     if (outputs_ > 0)
-        BDEX_INFO("frame generation ready: render %ux%u, %d flow levels (finest %ux%u blocks, scale %.0f), output %s%s",
+        BDEX_INFO("frame generation ready: render %ux%u, %d flow levels (finest %ux%u blocks, scale %.0f), output %s%s; "
+                  "%.0f MiB of GPU memory held by the layer",
                   extent_.width, extent_.height, levels_, levels_v_[0].blocks.width, levels_v_[0].blocks.height,
                   flowScale_, enc_.is64 ? "rg32ui" : "r32ui",
-                  upscaling_ ? " (upscaled)" : "");
+                  upscaling_ ? " (upscaled)" : "", double(dev_.memoryInUse.load()) / (1 << 20));
     if (upscaling_) {
         static const char* filt[] = {"bilinear", "Catmull-Rom", "Lanczos-2"};
         BDEX_INFO("upscaling %ux%u -> %ux%u (%.0f%%, %s%s)", extent_.width, extent_.height, displayExtent_.width,
