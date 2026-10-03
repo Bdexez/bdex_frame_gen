@@ -1434,11 +1434,13 @@ double FrameGen::takeGpuMs() {
 Config FrameGen::effectiveConfig() const {
     Config c = (*cfgp_);
     // pixel_vectors turned on by the GPU auto-tuning: not where the synthesis
-    // would cost too much — display pixels x generated frames above 4K x2
-    // (e.g. 4K x3, 1440p x4: several milliseconds a game frame). Nor the
-    // automatic scene_cut_local there: alone, it would keep the synthesis
-    // off its lean variant.
-    if (double(displayExtent_.width) * displayExtent_.height * outputs_ > 8.3e6) {
+    // would cost too much — display pixels x generated frames above 4K x3
+    // (e.g. 4K x4, 1440p x6: over 3 ms a game frame). Nor the automatic
+    // scene_cut_local there: alone, it would keep the synthesis off its lean
+    // variant. (4K x2 until 03/10; the synthesis then got twice as cheap —
+    // RTX 3060 Ti, 4K x3 with them: 2.9 ms a game frame, what 4K x2 cost
+    // before.)
+    if (double(displayExtent_.width) * displayExtent_.height * outputs_ > 16.6e6) {
         if (c.pixelVectorsAuto) c.pixelVectors = false;
         if (c.sceneCutLocalAuto) c.sceneCutLocal = false;
         if (c.interpSplatAuto) c.interpSplat = false;
