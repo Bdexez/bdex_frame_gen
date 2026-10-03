@@ -50,6 +50,16 @@ tous les shaders de `layer/shaders/`.
   `flow_refine`, `reduce_cost`, `interpolate`, `upscale`, `cas`,
   `common.glsl`. Embrasés en SPIR-V au build (`cmake/EmbedShader.cmake`,
   cibles `*_f32` / `f16` / `u32` / `u64` selon le format de stockage luma).
+- `capture/linux/` — **`bdex-capture` Linux** (2026-10-03) : `x11_capture.cpp`
+  (XComposite redirect automatique + XDamage + XShm, anneau de 3 segments
+  alignés page), `presenter.cpp` (équivalent Linux de `VkCtx` : surface Xlib,
+  segments importés en mémoire hôte `VK_EXT_external_memory_host` sinon
+  copiés, `FrameGen` inchangé, `--gpu` = un autre GPU que le jeu = mode deux
+  GPU de LS), `main.cpp` (fenêtre override-redirect sans région d'entrée,
+  boucle cadencée comme `capture/src/main.cpp`, raccourcis XGrabKey). Pas
+  sous gamescope (sa couche WSI présente hors de la fenêtre X), pas de
+  Wayland natif (portail PipeWire à faire). Test `capture_linux` (Xvfb ;
+  GPU : gamescope headless **sans** `ENABLE_GAMESCOPE_WSI`).
 - `capture/src/` — `capture.cpp` (WGC, frame pool, ring D3D11), `vkctx.cpp`
   (interop D3D11→Vulkan + pilote `FrameGen` + swapchain overlay), `launcher.cpp`
   (fenêtre de config native Win32), `main.cpp`.
@@ -103,6 +113,7 @@ tools/ci/archive-check.sh ARCHIVE [image|suite...]     # installe une archive ai
 tools/ci/distro-check.sh [image...]                    # build + tests + démo dans d'autres distributions (job CI `distros`)
 tools/ci/proton-check.sh                               # D3D11 (DXVK) et D3D12 (VKD3D-Proton) sous Wine à travers la couche (lavapipe, Xorg dummy 60 Hz : Xvfb = 0 Hz, DXVK divise par 0)
 tools/ci/lib32-check.sh                                # couche 32 bits exécutée (vkcube i386)
+bdex-capture --list | --pid PID [--gpu N] [-m N]        # génération par capture (X11/Xwayland), autre GPU possible
 tools/ci/decky-check.sh [outdir]                       # plugin Decky (packaging/decky) : tsc + rollup (Docker Node), zip
 tools/ci/fuzz.sh [secondes] [cible...]                # libFuzzer + ASan/UBSan sur les analyseurs (config, statut, options_ui, cache online_tune) ; entrée fautive -> tests/fuzz/corpus/
 tools/ci/panel-check.sh build/options_ui.json [image]  # panneau sur écran virtuel en conteneur (versions SteamOS : Arch)

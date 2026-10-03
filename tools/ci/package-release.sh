@@ -44,7 +44,7 @@ setup='
   cd /work/src
   echo "$(g++ --version | head -1), cmake $(cmake --version | head -1 | cut -d" " -f3), $(ldd --version | head -1)"'
 echo "== x86_64 (Ubuntu 20.04)"
-docker run --rm -v "$work:/work" -v "$OUT:/out" -e PACKAGES="gcc-10 g++-10 g++-10-multilib gcc-multilib g++-multilib" -e CROSS="" \
+docker run --rm -v "$work:/work" -v "$OUT:/out" -e PACKAGES="gcc-10 g++-10 g++-10-multilib gcc-multilib g++-multilib pkg-config libvulkan-dev libx11-dev libxcomposite-dev libxdamage-dev libxext-dev libxfixes-dev" -e CROSS="" \
   ubuntu:20.04 bash -euc "$setup"'
   BDEX_ARCH=x86_64 tools/package-linux.sh /out "$1"
   chown '"$owner"' /out/*.tar.gz' _ "$VERSION"

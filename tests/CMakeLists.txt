@@ -102,6 +102,12 @@ if(TARGET bdex_demo)
   add_test(NAME gamescope_limit
            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/gamescope_limit.sh" "$<TARGET_FILE:bdex_demo>" "${CMAKE_BINARY_DIR}/layer")
   set_tests_properties(gamescope_limit PROPERTIES SKIP_RETURN_CODE 77)
+  # bdex-capture (Linux) on the demo: x2 and the overlay showing the game.
+  if(TARGET bdex-capture)
+    add_test(NAME capture_linux
+             COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/capture_linux.sh" "$<TARGET_FILE:bdex-capture>" "$<TARGET_FILE:bdex_demo>")
+    set_tests_properties(capture_linux PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
+  endif()
   add_test(NAME validation
            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/validation.sh" "$<TARGET_FILE:bdex_demo>" "${CMAKE_BINARY_DIR}/layer")
   set_tests_properties(validation PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)

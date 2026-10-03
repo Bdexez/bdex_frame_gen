@@ -32,7 +32,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake g++ pkg-config glslc libvulkan-dev vulkan-tools \
-            mesa-vulkan-drivers libglfw3-dev xvfb python3-numpy python3-pil vulkan-validationlayers
+            mesa-vulkan-drivers libglfw3-dev libxcomposite-dev libxdamage-dev libxfixes-dev libxext-dev xvfb python3-numpy python3-pil vulkan-validationlayers
 
       # The runners have no GPU; force Mesa's software Vulkan (lavapipe).
       # Resolve the ICD path rather than hardcoding it — it varies across
@@ -170,7 +170,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake g++ pkg-config glslc libvulkan-dev vulkan-tools \
-            mesa-vulkan-drivers libglfw3-dev xvfb python3-numpy python3-pil
+            mesa-vulkan-drivers libglfw3-dev libxcomposite-dev libxdamage-dev libxfixes-dev libxext-dev xvfb python3-numpy python3-pil
       - name: Build
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo \
