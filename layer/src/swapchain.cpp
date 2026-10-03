@@ -1,6 +1,7 @@
 #include "swapchain.h"
 #include "frame_order.h"
 #include "pacing.h"
+#include "platform.h"
 #include "thread_priority.h"
 #include "gamescope.h"
 #include "online_tune.h"
@@ -1432,6 +1433,14 @@ void VirtualSwapchain::workerLoop() {
     // (precise_wake: no 50 us of timer slack on this thread's sleeps)
     if (cfg_.preciseWake) prctl(PR_SET_TIMERSLACK, 1UL, 0UL, 0UL, 0UL);
 #endif
+    // precise_wake on Windows: the paced sleeps and waits at 1 ms rather than
+    // the default 15.6 ms timer (an interpolated frame 4 ms ahead of its slot
+    // would otherwise be shown up to 15 ms late), for as long as this worker runs.
+    struct FineTimer {
+        bool on;
+        explicit FineTimer(bool o) : on(o) { if (on) platformFineTimer(true); }
+        ~FineTimer() { if (on) platformFineTimer(false); }
+    } fineTimer(cfg_.preciseWake);
     // thread_priority: the presents' moments matter more than any other
     // thread's work of the game (thread_priority.h).
     if (cfg_.threadPriority) {

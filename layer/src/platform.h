@@ -69,6 +69,12 @@ std::string platformStatusDir();
 // %LOCALAPPDATA%\bdex-framegen; BDEX_FG_CACHE_DIR overrides it, an empty
 // value disables the cache. "" when no location is known.
 std::string platformCacheDir();
+
+// Windows: the 1 ms timer resolution for this process while `on` (calls
+// nest: timeBeginPeriod / timeEndPeriod, winmm loaded at run time) — the
+// default 15.6 ms makes a 4 ms sleep last 15. Elsewhere a no-op (Linux
+// sleeps are precise; see prctl in the worker).
+void platformFineTimer(bool on);
 long platformPid();
 
 } // namespace bdex

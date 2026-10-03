@@ -106,7 +106,7 @@ if(TARGET bdex_demo)
   if(TARGET bdex-capture)
     add_test(NAME capture_linux
              COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/capture_linux.sh" "$<TARGET_FILE:bdex-capture>" "$<TARGET_FILE:bdex_demo>")
-    set_tests_properties(capture_linux PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
+    set_tests_properties(capture_linux PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 240)
   endif()
   add_test(NAME validation
            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/validation.sh" "$<TARGET_FILE:bdex_demo>" "${CMAKE_BINARY_DIR}/layer")

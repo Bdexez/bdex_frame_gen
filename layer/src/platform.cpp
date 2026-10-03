@@ -330,6 +330,19 @@ bool platformIsNonGame(const std::string& name) {
     return false;
 }
 
+void platformFineTimer(bool on) {
+#ifdef _WIN32
+    using Period = UINT(WINAPI*)(UINT);
+    static const HMODULE winmm = LoadLibraryW(L"winmm.dll");
+    if (!winmm) return;
+    auto fn = reinterpret_cast<Period>(
+        reinterpret_cast<void*>(GetProcAddress(winmm, on ? "timeBeginPeriod" : "timeEndPeriod")));
+    if (fn) fn(1);
+#else
+    (void)on;
+#endif
+}
+
 std::string platformCacheDir() {
     if (const char* p = std::getenv("BDEX_FG_CACHE_DIR")) return p;
 #ifdef _WIN32
