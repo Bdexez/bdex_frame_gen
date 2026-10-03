@@ -307,7 +307,7 @@ private:
         confUncertain_ += uncertain;
         confTotal_ += total;
     }
-    void setSplatMap(VkImageView view) override;
+    void setSplatMap(VkBuffer map) override;
     void dispatchSynthesisSize(VkCommandBuffer cmd, bool gated) override;
     VkImageView outputView(int output) const override { return output < 0 ? outReal_.view : out_[output].view; }
     OutputEncoding outputEncoding() const override { return enc_; }
@@ -364,8 +364,8 @@ private:
     std::vector<VkDescriptorSet> dsSmooth_[2];        // [dir] per level
     std::vector<VkDescriptorSet> dsRefine_[2][2];     // [parity][dir] per level
     VkDescriptorSet dsReduce_ = VK_NULL_HANDLE;
-    AllocatedImage splatDummy_;              // 1x1: the synthesis's splat map without extrapolate_splat
-    VkImageView splatMap_ = VK_NULL_HANDLE;  // bound at binding 6 of every synthesis set
+    AllocatedBuffer splatDummy_;             // 16 bytes: the synthesis's splat map without extrapolate_splat
+    VkBuffer splatMap_ = VK_NULL_HANDLE;  // bound at binding 6 of every synthesis set
     AllocatedImage prevBwd_;   // extrapolate_accel: the previous pair's finest backward flow
     std::vector<VkDescriptorSet> dsInterp_;           // [(prev * N + cur) * outputs + output]
     std::vector<VkDescriptorSet> dsUpscale_;          // [source]; only when upscaling_

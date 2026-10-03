@@ -14,7 +14,9 @@ layout(local_size_x = 16, local_size_y = 16) in;
 
 layout(binding = 0) uniform sampler2D flowFwd;  // prev -> cur
 layout(binding = 1) uniform sampler2D flowBwd;  // cur -> prev
-layout(binding = 2, r32ui) uniform uimage2D splatMap;
+// The map: 2W x H keys, row by row (a buffer: cleared by vkCmdFillBuffer,
+// and buffer atomics — 0.35 ms less than an r32ui image at 1440p, NVIDIA).
+layout(std430, binding = 2) buffer SplatMap { uint key[]; } splatMap;
 layout(std430, binding = 3) readonly buffer State {
     float meanCost; uint dup; uint diffCount; float ageLast; float agePrev; float interval; uint repeats; float histDiff;
     float t[8];
@@ -53,7 +55,7 @@ void main() {
         if (any(lessThan(dst, ivec2(0))) || any(greaterThanEqual(dst, pc.size))) return;
         uint prio = length(v + back) > 2.0 ? 511u : 510u - uint(clamp(length(v), 0.0, 510.0));
         uint index = uint(p.y * pc.size.x + p.x);
-        imageAtomicMin(splatMap, dst + ivec2(pc.mode == 2 ? pc.size.x : 0, 0), (prio << 23) | index);
+        atomicMin(splatMap.key[dst.y * 2 * pc.size.x + dst.x + (pc.mode == 2 ? pc.size.x : 0)], (prio << 23) | index);
         return;
     }
     vec2 B = bwdAt(src);                    // minus the motion of this pixel
@@ -76,5 +78,5 @@ void main() {
     float inconsistency = length(B + fwdAt(src + B));
     uint prio = inconsistency > 2.0 ? 511u : 510u - uint(clamp(length(B), 0.0, 510.0));
     uint index = uint(p.y * pc.size.x + p.x);   // < 2^23 (checked on the host)
-    imageAtomicMin(splatMap, dst, (prio << 23) | index);
+    atomicMin(splatMap.key[dst.y * 2 * pc.size.x + dst.x], (prio << 23) | index);
 }

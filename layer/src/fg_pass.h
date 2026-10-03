@@ -121,7 +121,7 @@ public:
     virtual void setStaticMask(VkImageView view) = 0;
     // The forward-splat map (r32ui, display size) every synthesis reads when
     // SynthesisInputs::splat is set (a 1x1 image until a pass provides one).
-    virtual void setSplatMap(VkImageView view) = 0;
+    virtual void setSplatMap(VkBuffer map) = 0;
     // flow_confidence's map (r32f, finest flow size, 0..1) every synthesis
     // reads for confidence_fallback and debug=confidence (a 1x1 one until a
     // pass provides it), and its counts: uncertain / all flow texels of a frame.
