@@ -227,7 +227,8 @@ void FrameGen::prebuildSynthesisVariants() {
                                (cfg.occlusionStrength != 0.f ? SYNTH_OCCLUSION : 0u) |
                                (!extrap && hasConfMap_ && cfg.confidenceFallback != 0.f ? SYNTH_CONF_FALLBACK : 0u) |
                                (cfg.staticGuard != 0.f ? SYNTH_STATIC_GUARD : 0u) |
-                               (hasStaticMask_ && cfg.hudMask != 0 ? SYNTH_STATIC_MASK : 0u);
+                               (hasStaticMask_ && cfg.hudMask != 0 ? SYNTH_STATIC_MASK : 0u) |
+                               (!extrap && cfg.pixelVectors && cfg.affineFlow ? SYNTH_AFFINE : 0u);
             if (f) synthesisVariant(interp_, f);
         }
     }
@@ -1285,7 +1286,8 @@ void FrameGen::recordSynthesisImpl(VkCommandBuffer cmd, const Pass& pipe, VkDesc
                 timing, cfg.sceneCutLocal ? (int32_t)kCutTiles : 0, t > 1.f ? in.accel : 0.f,
                 cfg.synthBicubic ? 1 : 0, hasStaticMask_ ? float(cfg.hudMask) : 0.f, cfg.revealFill && t > 1.f ? 1 : 0,
                 hasConfMap_ && t <= 1.f ? cfg.confidenceFallback : 0.f, cfg.altVectors && t <= 1.f ? 1 : 0,
-                {(int32_t)fine.blocks.width, (int32_t)fine.blocks.height}};
+                {(int32_t)fine.blocks.width, (int32_t)fine.blocks.height},
+                cfg.affineFlow && cfg.pixelVectors && t <= 1.f ? 1 : 0};
     // The variant with exactly the opt-ins in use compiled in: the lean one
     // when none is (same results as the full one), else one per set.
     const uint32_t features = (pc.bicubic ? SYNTH_BICUBIC : 0u) | (pc.timing ? SYNTH_TIMING : 0u) |
@@ -1295,7 +1297,8 @@ void FrameGen::recordSynthesisImpl(VkCommandBuffer cmd, const Pass& pipe, VkDesc
                               (pc.occlusionStrength != 0.f ? SYNTH_OCCLUSION : 0u) |
                               (pc.confFallback != 0.f ? SYNTH_CONF_FALLBACK : 0u) |
                               (pc.staticGuard != 0.f ? SYNTH_STATIC_GUARD : 0u) |
-                              (pc.staticFrames != 0.f ? SYNTH_STATIC_MASK : 0u) | (pc.debugMode == 3 ? SYNTH_DEBUG_CONF : 0u);
+                              (pc.staticFrames != 0.f ? SYNTH_STATIC_MASK : 0u) | (pc.debugMode == 3 ? SYNTH_DEBUG_CONF : 0u) |
+                              (pc.affine ? SYNTH_AFFINE : 0u);
     const VkPipeline bound = features == 0 && pipe.lean ? pipe.lean : synthesisVariant(pipe, features);
     vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, bound);
     vt.CmdPushConstants(cmd, pipe.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);

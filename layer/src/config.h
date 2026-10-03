@@ -51,6 +51,7 @@ struct Config {
     bool  latencyLimiter = true;  // with maxFrameLatency: a GPU-bound game's present returns just in time for its next frame to reach the GPU as it frees up (fresher input, same frame rate)
     bool  flowConfidence = false; // per flow texel confidence (round trip of the vectors, luma match): the share of uncertain pixels in the statistics, the panel and --report; on with debug=confidence or confidence_fallback
     bool  interpSplat   = false;  // interpolation: both frames forward-splatted to t (the extrapolation's splat map, twice as wide); each output pixel also tries the trajectories of the prev and cur pixels that landed on it (the right layer at an object's edge)
+    bool  affineFlow    = false;  // interpolation, with pixel_vectors: also try an affine fit of the 3x3 flow texels around the source (rotation, zoom)
     bool  altVectors    = false;  // the matcher also keeps its best candidate 2 px or more from the winner; the synthesis tries that trajectory per pixel and keeps it where its endpoints agree better (ambiguous fast motion)
     float flowUpsample  = 0.0f;   // the finest flow brought to the luma resolution along the picture's edges (joint bilateral, this brightness scale; 0 = off): an object's edge keeps its own motion
     float lumaMatch     = 0.01f;  // the previous frame's luma brought to the current one's mean and contrast before the flow when the whole picture's mean moved by at least this much (0..1 luma; 0 = off): fades, lighting changes
