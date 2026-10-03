@@ -16,6 +16,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   `app.session` (the panel's pid) in the status directory; a dead or
   recycled pid counts as stopped. `BDEX_FG=1` (Steam option, CLI) bypasses
   it.
+- **Control panel: « Jeux détectés »** (replaces « En cours »), like the
+  Windows launcher's window list: the running programs the layer is loaded
+  into (every Vulkan program, native or Proton; `/proc/<pid>/maps`), minus
+  known non-games, refreshed with « Actualiser la liste ». Each row says
+  what the layer does there — or why not (panel stopped, game not enabled,
+  started before « Lancer ») — and has a switch to enable the game (added
+  to the per-game list, applied at its next launch). Before, only games
+  where generation was active appeared.
 
 - **The layer stays off in competitive multiplayer games**, matched by
   executable name, where the anti-cheat has no process to detect: VAC
