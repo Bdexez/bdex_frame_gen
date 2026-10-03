@@ -29,6 +29,16 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   artifact, `bdex-framegen-windows-complete`, adds the 32-bit layer to the
   x64 package.
 
+### Reports
+
+- **« Signaler un problème » in the Windows launcher**, as the Linux panel
+  has: the diagnostic report (version, Windows build, GPUs, the layer's
+  registration, the games with an injection, what runs now, the settings,
+  the end of `log_file`) written to
+  `%LOCALAPPDATA%\bdex-framegen\bdex-framegen-report.txt`, copied to the
+  clipboard and shown in Explorer, then the pre-filled issue form (the same
+  fields as `bdex-framegen --issue-url`).
+
 ### Battery
 
 - **`battery_saver`** (default 1): on battery, the automatic preset takes
