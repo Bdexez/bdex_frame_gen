@@ -11,6 +11,10 @@ set -u
 CAP="$1"
 DEMO="$2"
 if [ -z "${DISPLAY:-}" ]; then echo "no X display, skipping"; exit 77; fi
+# Inside gamescope (headless, the GPU bench) its WSI layer presents the
+# programs' frames to gamescope directly, past the X window the capture reads:
+# off for the demo and the capture app, as on an X11 / Xwayland desktop.
+unset ENABLE_GAMESCOPE_WSI
 LOG="$(mktemp)" DLOG="$(mktemp)"
 trap 'kill $demo 2>/dev/null; rm -f "$LOG" "$DLOG"' EXIT
 BDEX_FG=0 BDEX_FG_CONFIG=/dev/null timeout 120 "$DEMO" --fps 30 --size 640x400 --duration 90 >"$DLOG" 2>&1 &
