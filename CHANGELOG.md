@@ -6,6 +6,8 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-26
+
 ### Fixed
 
 - **Control panel without libadwaita** (SteamOS, Debian 12, Ubuntu 22.04:
@@ -1193,7 +1195,8 @@ First release.
 - Swapchain image layout transition ordered after the acquire semaphore's
   wait stage (synchronization validation).
 
-[Unreleased]: https://github.com/Bdexez/bdex_frame_gen/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Bdexez/bdex_frame_gen/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/Bdexez/bdex_frame_gen/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Bdexez/bdex_frame_gen/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Bdexez/bdex_frame_gen/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Bdexez/bdex_frame_gen/compare/v0.2.0...v0.3.0
