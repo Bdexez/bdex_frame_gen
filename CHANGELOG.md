@@ -6,6 +6,18 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `bdex-framegen --report` starts with a **quick read** (in French, like the
+  panel) of the usual causes of « no generated frames »: « Auto » at x1
+  because the layer's refresh rate is at or under the game's fps, a refresh
+  rate that differs from the desktop's (screen misdetected) or is unknown,
+  the panel closed or targeting another process, the game on a GPU no
+  screen is plugged into (hybrid laptops / iGPU + dGPU desktops). The report
+  also lists the screens (kscreen-doctor, xrandr), which GPU each connected
+  output is on, the GPUs (lspci) and the panel's session (target pid and the
+  refresh rate it read).
+
 ## [0.5.2] - 2026-09-26
 
 ### Added
