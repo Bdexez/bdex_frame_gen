@@ -6,6 +6,35 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Windows: injection by default
+
+- **Injection is the default on Windows** (`method = auto`): the launcher
+  registers the Vulkan layer for the user (HKCU, the 32-bit one too in the
+  *complete* package) and arms Vulkan games. A Vulkan game is injected into
+  at once; a Direct3D 9/10/11 game gets DXVK 2.5.3 next to its executable,
+  a Direct3D 12 one VKD3D-Proton 3.0.1 with DXVK's dxgi — injected into
+  from its next start, captured meanwhile. Nothing already next to the game
+  is replaced; « Retirer les injections » removes them all. OpenGL: capture.
+- **Games with an anti-cheat: capture by default** (Easy Anti-Cheat,
+  BattlEye — its files beside the game, its modules, its process — and the
+  competitive titles), **except Rocket League**, where injection stays on
+  for now (`platformAntiCheatException`, Windows only: the layer stays on
+  there as with `ignore_anticheat`). **A warning comes up before
+  generation starts on any game with an anti-cheat** — launcher, Linux
+  panel (dialog) and text mode — and the launch goes ahead. The layer
+  reports an anti-cheat it runs beside (`anticheat=` in the status file,
+  « ⚠ Anti-triche détecté » in the status lines and the tray).
+- The Windows package carries DXVK and VKD3D-Proton
+  (`tools/fetch_translation_layers.py`, pinned, SHA256 checked); a new CI
+  artifact, `bdex-framegen-windows-complete`, adds the 32-bit layer to the
+  x64 package.
+
+### License
+
+- **The software is now proprietary**, all rights reserved (`LICENSE`);
+  versions up to 0.5.5 were published under the MIT License and stay so
+  for those who have them. Third-party components: `THIRD_PARTY_NOTICES.md`.
+
 ### Injection or capture, and the GPU that generates
 
 - **Injection where possible, capture otherwise**, on both systems: the

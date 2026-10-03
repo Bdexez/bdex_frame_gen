@@ -29,6 +29,7 @@ struct StatusEntry {
     std::string passes;      // optional passes running (fg_pass.h), comma-separated
     std::string tune;        // online_tune: its decisions, or the option on trial
     std::string target;      // capture: the captured game's executable
+    std::string antiCheat;   // an anti-cheat runs with the game and the layer / capture stays on: its name (a warning)
 };
 
 // Keys: any Vulkan handle or pointer, on 64- and 32-bit builds alike (a

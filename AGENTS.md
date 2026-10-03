@@ -416,7 +416,14 @@ utilisateur, latence) : `method` auto|layer|capture ; auto = couche si
 `plan()` du panneau Linux (qui lance `bdex-capture`) et `chooseInjection`
 de `bdex_capture` (`runInjection` = `app.session` réécrit chaque seconde).
 Les applis de capture posent `BDEX_FG=1` avant `Config::load` (sinon
-`require_app` les met en pause). Options CLI : `--list/--title/--pid`, `--multiplier`, `--mode`,
+`require_app` les met en pause). **Windows, depuis le 2026-10-03 : injection
+par défaut** (`planRun`, `capture/src/injection.{h,cpp}`) — couche
+enregistrée par le lanceur, DXVK/VKD3D-Proton copiés à côté des jeux D3D
+(injectés au prochain lancement, capturés en attendant) ; anti-triche →
+capture, **sauf Rocket League** (`platformAntiCheatException`, demande
+utilisateur) ; avertissement avant tout lancement sur un jeu avec
+anti-triche, sans bloquer. Logiciel **propriétaire** depuis le même jour
+(`LICENSE`, `THIRD_PARTY_NOTICES.md` à tenir à jour). Options CLI : `--list/--title/--pid`, `--multiplier`, `--mode`,
 `--preset`, `--filter`, `--sharpness`, `--hud`, `--scale/--fit`, `--fifo`.
 Sans argument : launcher natif (sélecteur de fenêtre + options avancées flow,
 persistées dans la config partagée). **Hotkey global** : Ctrl+Alt+Q quitte,

@@ -364,6 +364,15 @@ long platformPid() {
 #endif
 }
 
+bool platformAntiCheatException(const std::string& name) {
+#ifdef _WIN32
+    return name == "rocketleague";
+#else
+    (void)name;
+    return false;
+#endif
+}
+
 bool platformAntiCheatPresent(std::string* foundName) {
     // This process is a competitive game (its executable or, under Proton,
     // the Windows .exe on its command line).
@@ -372,18 +381,23 @@ bool platformAntiCheatPresent(std::string* foundName) {
             if (foundName) *foundName = n + " (competitive game)";
             return true;
         }
+    const std::string running = platformAntiCheatRunning();
+    if (!running.empty() && foundName) *foundName = running;
+    return !running.empty();
+}
+
+std::string platformAntiCheatRunning() {
 #ifdef _WIN32
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snap == INVALID_HANDLE_VALUE) return false;
-    bool found = false;
+    if (snap == INVALID_HANDLE_VALUE) return "";
+    std::string found;
     PROCESSENTRY32W pe;
     pe.dwSize = sizeof(pe);
     if (Process32FirstW(snap, &pe)) {
         do {
             std::string n = normalizeName(narrow(pe.szExeFile));
             if (isDeniedAntiCheat(n)) {
-                if (foundName) *foundName = n;
-                found = true;
+                found = n;
                 break;
             }
         } while (Process32NextW(snap, &pe));
@@ -394,8 +408,8 @@ bool platformAntiCheatPresent(std::string* foundName) {
     // Also catches Wine/Proton, where the anti-cheat's .exe shows up as a
     // regular /proc entry whose exe link points into the prefix.
     DIR* proc = opendir("/proc");
-    if (!proc) return false;
-    bool found = false;
+    if (!proc) return "";
+    std::string found;
     while (dirent* e = readdir(proc)) {
         if (!std::isdigit(static_cast<unsigned char>(e->d_name[0]))) continue;
         char link[16 + 256], exe[512];
@@ -405,8 +419,7 @@ bool platformAntiCheatPresent(std::string* foundName) {
         exe[n] = '\0';
         std::string name = normalizeName(exe);
         if (isDeniedAntiCheat(name)) {
-            if (foundName) *foundName = name;
-            found = true;
+            found = name;
             break;
         }
     }

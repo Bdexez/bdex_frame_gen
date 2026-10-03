@@ -19,9 +19,11 @@
 // the BDEX_FG_* environment, like the layer.
 #include "capture.h"
 #include "config.h"
+#include "injection.h"
 #include "launcher.h"
 #include "log.h"
 #include "platform.h"
+#include "status.h"
 #include "tray.h"
 #include "vkctx.h"
 
@@ -40,6 +42,7 @@
 #include <cwctype>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <utility>
 #include <vector>
@@ -425,9 +428,10 @@ void setDpiAware() {
 // device runs on, and whether a swapchain of it is armed — the layer
 // virtualises it and generates frames as soon as a session targets the game.
 struct LayerView {
-    bool armed = false;
-    bool antiCheat = false;
-    std::string device;
+    bool armed = false;      // a swapchain the layer virtualises (it generates once targeted)
+    bool antiCheat = false;  // the layer stayed out (anti-cheat)
+    std::string device;      // the GPU the game's device runs on
+    std::string antiCheatKept;  // the layer runs beside an anti-cheat (Rocket League, ignore_anticheat): its name
 };
 
 LayerView layerView(DWORD pid) {
@@ -435,20 +439,20 @@ LayerView layerView(DWORD pid) {
     const std::string dir = bdex::platformStatusDir();
     if (dir.empty() || !pid) return v;
     std::ifstream in(dir + "\\" + std::to_string(pid) + ".status");
-    std::string line, kind;
-    while (std::getline(in, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        if (line.size() > 2 && line.front() == '[') {
-            kind = line.substr(1, line.find(']') - 1);
-            continue;
-        }
-        const size_t eq = line.find('=');
-        if (eq == std::string::npos) continue;
-        const std::string k = line.substr(0, eq), val = line.substr(eq + 1);
-        if (kind == "device" && k == "device") v.device = val;
-        if (kind == "device" && k == "state" && val == "anti-cheat") v.antiCheat = true;
-        if (kind == "swapchain" && k == "state" && (val == "ready" || val == "generating" || val == "paused"))
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    for (const auto& sec : bdex::statusParse(text).sections) {
+        auto get = [&](const char* k) {
+            auto it = sec.values.find(k);
+            return it == sec.values.end() ? std::string() : it->second;
+        };
+        const std::string state = get("state");
+        if (sec.kind == "device") {
+            v.device = get("device");
+            v.antiCheat = v.antiCheat || state == "anti-cheat";
+            if (!get("anticheat").empty()) v.antiCheatKept = get("anticheat");
+        } else if (sec.kind == "swapchain" && (state == "ready" || state == "generating" || state == "paused")) {
             v.armed = true;
+        }
     }
     return v;
 }
@@ -465,23 +469,95 @@ std::string lowerAscii(std::string s) {
     return s;
 }
 
-// Injection or capture, as the Linux control panel decides (plan()): the
-// layer inside the game's own presentation adds no frame of latency, so it
-// wins wherever it has the game's swapchain on the GPU chosen; capture
-// otherwise (a D3D / OpenGL game, an anti-cheat the layer stays out of,
-// another GPU than the game's). `why` for the log.
-bool chooseInjection(int method, const std::string& gpu, DWORD pid, std::string& why) {
-    const LayerView v = layerView(pid);
-    if (method == 2) { why = "capture chosen"; return false; }
-    if (method == 1) { why = "injection chosen"; return true; }
-    if (!gpu.empty() && !v.device.empty() && lowerAscii(v.device).find(lowerAscii(gpu)) == std::string::npos) {
-        why = "capture on " + gpu + " (the game renders on " + v.device + ")";
-        return false;
+template <typename C> const C* T(const C* fr, const C* en) { return bdex::launcherFrench() ? fr : en; }
+
+// What to run for a game. Injection by default (the user's choice, 03/10):
+// the Vulkan layer inside the game's own presentation adds no frame of
+// latency, where capture adds one. A Vulkan game the layer has armed is
+// injected into at once; a Direct3D game gets DXVK / VKD3D-Proton next to
+// its executable (injection.h) and is injected into from its next start —
+// captured meanwhile. Capture by default for a game with an anti-cheat
+// (except platformAntiCheatException: Rocket League), an OpenGL game, or
+// another GPU than the game's (the layer runs on the game's own).
+enum class Run { Injection, Capture, Back };
+struct Plan {
+    Run run = Run::Capture;
+    std::string why;      // the log line
+    std::wstring notice;  // shown before running (injection prepared, restart the game...)
+    bool injection = false;  // the anti-cheat warning's wording
+};
+
+Plan planRun(int method, const std::string& gpu, const bdex::GameInfo& g) {
+    const LayerView v = layerView(g.pid);
+    Plan p;
+    std::string antiCheat = g.antiCheat;
+    if (antiCheat.empty() && v.antiCheat) antiCheat = "anti-cheat";
+    if (antiCheat.empty()) antiCheat = v.antiCheatKept;
+    const bool exception = g.antiCheatException || !v.antiCheatKept.empty();
+    if (method == 2) {
+        p.why = "capture chosen";
+        return p;
     }
-    if (v.antiCheat) { why = "capture (anti-cheat: the layer stays out of the game)"; return false; }
-    if (!v.armed) { why = "capture (the Vulkan layer does not have the game's window)"; return false; }
-    why = "injection (the Vulkan layer, on " + v.device + ")";
-    return true;
+    if (method == 0 && !gpu.empty() && !v.device.empty() &&
+        lowerAscii(v.device).find(lowerAscii(gpu)) == std::string::npos) {
+        p.why = "capture on " + gpu + " (the game renders on " + v.device + ")";
+        return p;
+    }
+    if (method == 0 && !antiCheat.empty() && !exception) {
+        p.why = "capture (anti-cheat " + antiCheat + ": nothing is loaded into the game)";
+        return p;
+    }
+    if (v.armed) {
+        p.run = Run::Injection;
+        p.injection = true;
+        p.why = "injection (the Vulkan layer, on " + v.device + ")";
+        return p;
+    }
+    // Not armed yet: get the game ready for its next start.
+    std::string err;
+    if (method == 1 && !antiCheat.empty() && !exception) {
+        p.run = Run::Back;
+        p.why = "the layer stays out of games with an anti-cheat";
+        p.notice = utf16(std::string(T("Anti-triche détecté (", "Anti-cheat detected (")) + antiCheat +
+                         T(") : la couche reste hors du jeu (ignore_anticheat = 1 dans sa section pour forcer, à tes risques). "
+                           "Choisis Auto ou Capture.",
+                           "): the layer stays out of the game (ignore_anticheat = 1 in its section to force it, at your own risk). "
+                           "Choose Auto or Capture."));
+        return p;
+    }
+    const bool registered = bdex::layerRegistered() || (bdex::registerLayerForUser(err) && (bdex::armLayer(), true));
+    if (!registered) {
+        p.why = "capture (the Vulkan layer could not be registered: " + err + ")";
+        p.notice = utf16(std::string(T("Injection impossible : la couche Vulkan n'a pas pu être enregistrée (",
+                                       "Injection impossible: the Vulkan layer could not be registered (")) + err + ").");
+    } else if (g.api == bdex::GameInfo::Vulkan || g.translated) {
+        p.why = std::string("the layer does not have ") + g.name + " yet (started before it was registered)";
+        p.notice = utf16(g.name) + T(L" : l'injection sera active au prochain lancement du jeu (relance-le).",
+                                     L": injection will be active from the game's next start (restart it).");
+        p.injection = true;
+    } else if (!bdex::translationFiles(g.api).empty()) {
+        if (bdex::installTranslation(g, err)) {
+            p.why = std::string("injection prepared: ") + bdex::apiName(g.api) + " -> Vulkan next to " + g.name;
+            p.notice = utf16(g.name) + T(L" (", L" (") + utf16(bdex::apiName(g.api)) +
+                       T(L") : injection installée (DXVK à côté du jeu). Relance le jeu pour en profiter : "
+                         L"la latence de la capture disparaît.",
+                         L"): injection installed (DXVK next to the game). Restart the game to use it: "
+                         L"capture's latency goes away.");
+            p.injection = true;
+        } else {
+            p.why = "injection impossible: " + err;
+            p.notice = utf16(std::string(T("Injection impossible : ", "Injection impossible: ")) + err);
+        }
+    } else {
+        p.why = std::string("no injection for ") + bdex::apiName(g.api) + " games";
+        if (method == 1)
+            p.notice = utf16(std::string(T("Pas d'injection possible pour un jeu ", "No injection for a game in ")) +
+                             bdex::apiName(g.api) + T(" : choisis Auto ou Capture.", ": choose Auto or Capture."));
+    }
+    // Meanwhile: captured (auto), or back to the launcher (injection forced).
+    p.run = method == 1 ? Run::Back : Run::Capture;
+    if (p.run == Run::Capture) p.why += "; capture meanwhile";
+    return p;
 }
 
 // Injection: the layer generates inside the game, armed by require_app; this
@@ -544,7 +620,9 @@ int runInjection(HWND target) {
             const LayerView v = layerView(pid);
             tray.setStatus(on ? L"bdex framegen — injection" : L"bdex framegen — injection (off)",
                            std::wstring(L"Vulkan layer: ") + (v.armed ? L"armed" : L"not armed") +
-                               L"\nGPU: " + utf16(v.device));
+                               L"\nGPU: " + utf16(v.device) +
+                               (v.antiCheatKept.empty() ? std::wstring()
+                                                        : L"\n\u26a0 anti-cheat: " + utf16(v.antiCheatKept) + L" (at your own risk)"));
         }
         Sleep(50);
     }
@@ -862,6 +940,13 @@ int main(int argc, char** argv) {
     // Never load the implicit layer into this process, even when a global
     // enabled=1 profile is active for games.
     SetEnvironmentVariableA("BDEX_FG_DISABLE", "1");
+    // Injection is the default (03/10): the Vulkan layer registered for this
+    // user and Vulkan games armed, unless capture is chosen.
+    if (bdex::Config::load("").method != 2) {
+        std::string err;
+        if (bdex::registerLayerForUser(err)) bdex::armLayer();
+        else LOGW("Vulkan layer not registered (%s): capture only", err.c_str());
+    }
     // Generating is this program's purpose: its config is read as explicitly
     // enabled, so that require_app (the layer's arming, for injection) does
     // not pause it nor turn its HUD off. The CRT's copy of the environment,
@@ -922,24 +1007,31 @@ int main(int argc, char** argv) {
     for (;;) {
         DWORD pid = 0;
         GetWindowThreadProcessId(target, &pid);
-        const bdex::Config d = bdex::Config::load(bdex::narrow(bdex::processName(pid)));
+        const bdex::GameInfo game = bdex::inspectGame(pid);
+        const bdex::Config d = bdex::Config::load(game.name);
         const int method = useLauncher ? choice.method : o.method >= 0 ? o.method : d.method;
         const std::string gpu = useLauncher ? choice.gpu : !o.gpuName.empty() ? o.gpuName : d.gpu;
-        std::string why;
-        const bool inject = o.gpu < 0 && chooseInjection(method, gpu, pid, why);
-        LOGI("%s", why.c_str());
-        if (inject && method == 1 && !layerView(pid).armed) {
-            const wchar_t* msg = bdex::layerRegistered()
-                ? L"La couche Vulkan n'a pas ce jeu (jeu non Vulkan, ou lancé avant la couche) : relance le jeu, ou choisis Auto / Capture."
-                : L"La couche Vulkan n'est pas enregistrée (register-layer.ps1) : choisis Auto ou Capture.";
-            if (useLauncher) MessageBoxW(nullptr, msg, L"bdex framegen", MB_OK | MB_ICONINFORMATION);
-            else LOGE("%s", bdex::narrow(msg).c_str());
+        Plan plan = o.gpu >= 0 ? Plan{Run::Capture, "capture (--gpu index)", {}, false} : planRun(method, gpu, game);
+        LOGI("%s (%s): %s", game.name.c_str(), bdex::apiName(game.api), plan.why.c_str());
+        auto show = [&](const std::wstring& text, UINT icon) {
+            if (useLauncher) MessageBoxW(nullptr, text.c_str(), L"bdex framegen", MB_OK | icon | MB_SETFOREGROUND);
+            else LOGW("%s", bdex::narrow(text).c_str());
+        };
+        if (!plan.notice.empty()) show(plan.notice, MB_ICONINFORMATION);
+        // Prevention, the launch going ahead: a game with an anti-cheat.
+        const LayerView lv = layerView(pid);
+        if (plan.run != Run::Back && (!game.antiCheat.empty() || lv.antiCheat || !lv.antiCheatKept.empty())) {
+            bdex::GameInfo shown = game;
+            if (shown.antiCheat.empty()) shown.antiCheat = !lv.antiCheatKept.empty() ? lv.antiCheatKept : "anti-cheat";
+            show(bdex::antiCheatWarning(shown, plan.run == Run::Injection), MB_ICONWARNING);
+        }
+        if (plan.run == Run::Back) {
             if (!useLauncher) return 1;
             if (!bdex::runLauncher(choice)) return 0;
             target = choice.target;
             continue;
         }
-        const int rc = inject ? runInjection(target) : runCapture(o, target, useLauncher ? &choice : nullptr);
+        const int rc = plan.run == Run::Injection ? runInjection(target) : runCapture(o, target, useLauncher ? &choice : nullptr);
         if (!useLauncher || rc != 0) return rc;
         if (!bdex::runLauncher(choice)) return 0;
         target = choice.target;

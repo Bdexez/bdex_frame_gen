@@ -79,6 +79,7 @@ std::string statusFormat(const std::string& process, long pid, long long unixTim
         o << "state=" << e.state << "\n";
         if (!e.reason.empty()) o << "reason=" << e.reason << "\n";
         if (!e.device.empty()) o << "device=" << e.device << "\n";
+        if (!e.antiCheat.empty()) o << "anticheat=" << e.antiCheat << "\n";
         if (e.kind == "device") continue;
         if (!e.target.empty()) o << "target=" << e.target << "\n";
         char buf[64];
@@ -156,6 +157,10 @@ std::vector<std::string> statusDescribe(const StatusFile& file, bool english) {
     for (const auto& s : file.sections) {
         const auto& v = s.values;
         const std::string state = get(v, "state");
+        if (!get(v, "anticheat").empty())
+            out.push_back(T("⚠ Anti-triche détecté (", "⚠ Anti-cheat detected (") + get(v, "anticheat") +
+                          T(") : génération maintenue, risque de bannissement à tes risques",
+                            "): generation kept on, ban risk at your own risk"));
         if (s.kind == "device") {
             if (state != "active")
                 out.push_back(T("Couche inactive : ", "Layer inactive: ") + (v.count("reason") ? get(v, "reason") : state));

@@ -4,6 +4,7 @@
 // with the same key names the Linux control panel
 // (tools/bdex-framegen-gui) writes, so the two panels stay interchangeable.
 #include "launcher.h"
+#include "injection.h"
 
 #include "log.h"
 #include "platform.h"
@@ -34,7 +35,7 @@ namespace bdex {
 
 // The launcher's language: French when Windows' display language is
 // (GetUserDefaultUILanguage), English otherwise; BDEX_LANG=fr|en chooses.
-static bool launcherFrench() {
+bool launcherFrench() {
     static const bool french = [] {
         if (const char* v = std::getenv("BDEX_LANG"); v && *v) return (v[0] == 'f' || v[0] == 'F');
         return PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_FRENCH;
@@ -294,7 +295,7 @@ struct Layout {
     int clientH;
 };
 Layout launcherLayout() {
-    int h = 48 + 56;  // (the method and GPU rows)
+    int h = 48 + 56 + 30;  // (the method and GPU rows, the injections button)
     for (const ExtraOpt& o : extraOptions()) h += o.key.empty() ? 20 : 22;
     Layout l;
     l.columnGroupH = std::max(770, h + 4);
@@ -503,6 +504,7 @@ enum {
     ID_RUNNING,
     ID_METHOD,
     ID_GPU,
+    ID_UNINJECT,
     ID_TIMER_RUNNING = 1,
 };
 
@@ -801,9 +803,14 @@ void persist(const LaunchChoice& c) {
 // The layer registered: Vulkan games load it, armed (virtual swapchain,
 // frames passed through) until the launcher targets one (require_app, as
 // the Linux control panel does) — so that injection is there to choose.
-static void armLayer() {
+// (A configuration that already says, e.g. require_app = 0 to generate in
+// every Vulkan game without the launcher, is kept.)
+void armLayer() {
     if (!layerRegistered()) return;
-    if (!saveGlobalConfig({{"enabled", "1"}, {"require_app", "1"}})) LOGW("could not write the config file");
+    std::vector<std::pair<std::string, std::string>> kv;
+    if (globalConfigValue("enabled").empty()) kv.emplace_back("enabled", "1");
+    if (globalConfigValue("require_app").empty()) kv.emplace_back("require_app", "1");
+    if (!kv.empty() && !saveGlobalConfig(kv)) LOGW("could not write the config file");
 }
 
 void gather(Ui& ui) {
@@ -969,7 +976,12 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         ui->gpuNames = vulkanGpuNames();
         for (const auto& n : ui->gpuNames)
             SendMessageW(ui->gpu, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(wideUtf8(n).c_str()));
-        y += 30;
+        y += 28;
+        // Direct3D games get DXVK / VKD3D-Proton next to their executable for
+        // the injection (injection.h): this takes them all away again.
+        add(L"BUTTON", T(L"Retirer les injections (DXVK) des jeux…", L"Remove the injections (DXVK) from the games..."),
+            BS_PUSHBUTTON | WS_TABSTOP, 508, y, 452, 23, ID_UNINJECT);
+        y += 32;
         for (size_t i = 0; i < extra.size(); ++i) {
             const ExtraOpt& o = extra[i];
             const int id = 300 + static_cast<int>(i);
@@ -1048,6 +1060,27 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             persist(*ui->choice);
             armLayer();
             DestroyWindow(hwnd);
+            return 0;
+        }
+        case ID_UNINJECT: {
+            const auto games = injectedGames();
+            if (games.empty()) {
+                MessageBoxW(hwnd, T(L"Aucun jeu n'a d'injection installée.", L"No game has an injection installed."),
+                            L"bdex framegen", MB_OK | MB_ICONINFORMATION);
+                return 0;
+            }
+            std::wstring done, failed;
+            for (const auto& exe : games) {
+                std::string why;
+                if (removeTranslation(exe, why)) done += L"\n  " + exe;
+                else failed += L"\n  " + exe + L" — " + wideUtf8(why);
+            }
+            std::wstring msg;
+            if (!done.empty()) msg += std::wstring(T(L"Injection retirée :", L"Injection removed:")) + done;
+            if (!failed.empty())
+                msg += std::wstring(msg.empty() ? L"" : L"\n\n") + T(L"Non retirée (ferme le jeu et réessaie) :",
+                                                                      L"Not removed (close the game and retry):") + failed;
+            MessageBoxW(hwnd, msg.c_str(), L"bdex framegen", MB_OK | (failed.empty() ? MB_ICONINFORMATION : MB_ICONWARNING));
             return 0;
         }
         case IDCANCEL:

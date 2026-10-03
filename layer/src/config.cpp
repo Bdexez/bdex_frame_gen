@@ -665,6 +665,7 @@ void Config::applyLive(const Config& n) {
 Config Config::keepingCreationSettings(Config n) const {
     n.enabled = enabled;
     n.antiCheatDisabled = antiCheatDisabled;
+    n.antiCheatIgnored = antiCheatIgnored;
     n.ignoreAntiCheat = ignoreAntiCheat;
     n.requireApp = requireApp;
     n.renderScale = renderScale;
@@ -706,10 +707,17 @@ Config Config::loadWithDefaults(Config c, const std::string& extraProcess) {
     // whatever the config/env says. Injection into a protected process is
     // what anti-cheats flag, so the safe side wins (see platform.cpp).
     // ignore_anticheat=1 (opt-in, the player's own risk) keeps the layer on.
+    // platformAntiCheatException: a game the user chose to keep injecting
+    // into (Rocket League on Windows), the same warning.
     std::string antiCheat;
-    if (c.ignoreAntiCheat) {
-        if (platformAntiCheatPresent(&antiCheat))
-            BDEX_WARN("anti-cheat '%s' detected but ignore_anticheat=1: layer stays on (ban risk)", antiCheat.c_str());
+    bool exception = false;
+    for (const auto& n : processNames()) exception = exception || platformAntiCheatException(n);
+    if (c.ignoreAntiCheat || exception) {
+        if (platformAntiCheatPresent(&antiCheat)) {
+            c.antiCheatIgnored = antiCheat;
+            BDEX_WARN("anti-cheat '%s' detected but %s: layer stays on (ban risk: the player's own decision)",
+                      antiCheat.c_str(), exception ? "injection kept for this game" : "ignore_anticheat=1");
+        }
     } else if (platformAntiCheatPresent(&antiCheat)) {
         c.enabled = false;
         c.antiCheatDisabled = true;

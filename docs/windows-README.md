@@ -27,15 +27,32 @@ checklist in `windows-port.md` §3. Please report what happens.
    option: motion quality — contrast-relative stability (0.1 recommended),
    object edges, sub-pixel motion, splatted extrapolation — the experimental
    ones, the flow structure and the debug view) and press **Démarrer**.
-   **Méthode** (top of the right-hand column): *Auto* uses the Vulkan
-   layer (mode 1, no added latency) when it already has the game — a
-   Vulkan game started after `register-layer.ps1` — and the capture
-   otherwise (D3D / OpenGL games); *Injection* / *Capture* force one.
-   **GPU de génération**: *Auto* is the game's (the discrete one); another
-   GPU makes the capture generate on it while the game renders on its own
-   (two-GPU setup). With the layer registered, the launcher arms Vulkan
-   games (`enabled = 1`, `require_app = 1`): they pass their frames
-   through until **Démarrer** targets one. The choices are saved to
+   **Méthode** (top of the right-hand column): **injection by default**
+   (*Auto*) — the Vulkan layer inside the game's own presentation, no frame
+   of latency added. The launcher registers the layer for your account by
+   itself (no `register-layer.ps1` needed; the 32-bit one too with the
+   *complete* package) and arms Vulkan games (`enabled = 1`,
+   `require_app = 1`: they pass their frames through until **Démarrer**
+   targets one).
+   - A **Vulkan** game is injected into at once — if it was started before
+     the layer was registered, restart it once.
+   - A **Direct3D 9/10/11** game gets DXVK copied next to its executable,
+     a **Direct3D 12** one VKD3D-Proton (+ DXVK's `dxgi.dll`): the game then
+     presents through Vulkan and is injected into **from its next start**;
+     it is captured meanwhile. Nothing already there is overwritten (another
+     DXVK, ReShade...: capture then). **Retirer les injections (DXVK) des
+     jeux…** takes them all away again (close the games first).
+   - **Games with an anti-cheat** (Easy Anti-Cheat, BattlEye..., the
+     competitive titles): **capture** by default, nothing loaded into the
+     game — except **Rocket League**, kept on injection for now (its
+     anti-cheat does not flag it today). Either way a **warning** comes up
+     before generation starts, and the launch goes ahead: a ban stays
+     possible, at your own risk.
+   - OpenGL games: capture.
+
+   *Injection* / *Capture* force one. **GPU de génération**: *Auto* is the
+   game's (the discrete one); another GPU makes the capture generate on it
+   while the game renders on its own (two-GPU setup). The choices are saved to
    `%APPDATA%\bdex-framegen\bdex-framegen.conf` (the same keys as the Linux
    control panel); when the capture stops (Ctrl+Alt+Q, game closed) the
    launcher reopens. Its **En cours** frame lists, refreshed every second,

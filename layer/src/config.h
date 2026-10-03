@@ -33,6 +33,7 @@ struct Config {
                                   // output stage; the swapchains rebuild it (like a resize)
     bool  ignoreAntiCheat = false;  // opt-in, at the player's own risk: do not retract when an anti-cheat or a
                                     // competitive game is detected (the layer is visible to the anti-cheat; bans possible)
+    std::string antiCheatIgnored;     // an anti-cheat was found but the layer stays on (ignore_anticheat, platformAntiCheatException): its name
     bool  antiCheatDisabled = false;  // forced off by platformAntiCheatPresent() (multiplayer
                                       // anti-cheat running); wins over enabled, file and env.
     bool  autoTune      = true;   // pick the quality preset from the detected GPU (until the user sets a preset or a flow option)

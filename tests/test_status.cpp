@@ -1,4 +1,5 @@
 #include "status.h"
+#include "platform.h"
 #include "test.h"
 
 #include <string>
@@ -103,4 +104,30 @@ TEST(status_describe_in_english) {
     const auto en = statusDescribe(f, true), fr = statusDescribe(f);
     CHECK(!en.empty() && en[0].find("Paused — 40 → 120 fps (×3, hybrid) · screen 120 Hz") == 0);
     CHECK(!fr.empty() && fr[0].find("En pause — 40 → 120 i/s (×3, hybride)") == 0);
+}
+
+TEST(status_anticheat_warning) {
+    // The layer kept on beside an anti-cheat (ignore_anticheat, Rocket
+    // League on Windows): the warning travels with the device entry.
+    std::map<uint64_t, StatusEntry> m;
+    StatusEntry d;
+    d.kind = "device";
+    d.state = "active";
+    d.device = "GPU";
+    d.antiCheat = "easyanticheat";
+    m[1] = d;
+    const std::string text = statusFormat("rocketleague", 5, 1, m);
+    CHECK(text.find("anticheat=easyanticheat\n") != std::string::npos);
+    const auto fr = statusDescribe(statusParse(text));
+    CHECK(fr.size() == 1 && fr[0].find("Anti-triche détecté (easyanticheat)") != std::string::npos);
+    d.antiCheat.clear();
+    m[1] = d;
+    CHECK(statusFormat("game", 5, 1, m).find("anticheat") == std::string::npos);
+    // Only Windows keeps injection on in Rocket League.
+#ifdef _WIN32
+    CHECK(platformAntiCheatException("rocketleague"));
+#else
+    CHECK(!platformAntiCheatException("rocketleague"));
+#endif
+    CHECK(!platformAntiCheatException("cs2"));
 }
