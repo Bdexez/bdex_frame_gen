@@ -322,6 +322,7 @@ void VirtualSwapchain::followSurface() {
     VkSwapchainKHR oldReal = real_;
     real_ = fresh;
     realNow_ = real_;
+    realOutOfDate_ = VK_NULL_HANDLE;  // (the worker is idle)
     fg_ = std::move(fg);
     fg_->setQualityLevel(budget_.level());
     generating_ = generating;
@@ -2044,7 +2045,9 @@ VkResult VirtualSwapchain::submitCopy(const Job& job, int index, Copied& out, in
 
     FrameSlot& slot = nextSlot(workerSlots_, workerCursor_);
     uint32_t ri = 0;
+    if (real_ == realOutOfDate_) return VK_ERROR_OUT_OF_DATE_KHR;
     VkResult r = dev_.vt.AcquireNextImageKHR(dev_.device, real_, UINT64_MAX, slot.acquireSem, VK_NULL_HANDLE, &ri);
+    if (r == VK_ERROR_OUT_OF_DATE_KHR) realOutOfDate_ = real_;
     if (r < 0) return r;
     // VK_SUBOPTIMAL is deliberately not forwarded: it reports that *our*
     // real swapchain is no longer optimal, but the application's virtual
@@ -2235,6 +2238,7 @@ VkResult VirtualSwapchain::presentCopied(const Job& job, const Copied& c) {
         fbCv_.notify_one();
     }
     if (r == VK_SUBOPTIMAL_KHR) surfaceChanged_.store(true, std::memory_order_relaxed);
+    if (r == VK_ERROR_OUT_OF_DATE_KHR) realOutOfDate_ = real_;
     if (r < 0) return r;
     statsOutFrames_.fetch_add(1, std::memory_order_relaxed);
     return VK_SUCCESS;

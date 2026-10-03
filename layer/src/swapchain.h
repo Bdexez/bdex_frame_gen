@@ -174,6 +174,13 @@ private:
     double lastPresentMs_ = 0.0;   // worker: last present call
     uint32_t surfaceMinImages_ = 1;  // the surface's minImageCount when the real swapchain was made
     int acquireAhead_ = 1;           // real images the worker may hold acquired at once (imageCount - minImageCount + 1)
+    // Worker: the real swapchain an acquire or a present reported out of
+    // date. Nothing is acquired from it again: the jobs queued behind the one
+    // that met it fail at once (the application re-creates its swapchain).
+    // Acquiring from it went past the images the surface lets us hold — the
+    // validation layer counts the images of a failed present as still
+    // acquired (CI, fullscreen toggles: VUID-vkAcquireNextImageKHR-surface-07783).
+    VkSwapchainKHR realOutOfDate_ = VK_NULL_HANDLE;
     double lastLandMs_ = 0.0;      // worker: refresh the last present was due to show on (known grid only)
     // workerMutex_: the application thread needs the synthesis outputs a
     // deferred extrapolation job still reads (lazyOutputs_) — its next
