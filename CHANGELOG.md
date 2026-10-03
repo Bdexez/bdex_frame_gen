@@ -8,23 +8,20 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- **Frame generation only while the control panel runs** (`require_app`,
-  Linux): the panel has a « Lancer / Arrêter » button and always writes
-  `require_app = 1`. Stopped (or closed), games start without the layer —
-  nothing runs at boot; closing it or « Arrêter » pauses the generation in
-  running games within ~0.5 s, « Lancer » resumes it. The session is a file
-  `app.session` (the panel's pid) in the status directory; a dead or
-  recycled pid counts as stopped. `BDEX_FG=1` (Steam option, CLI) bypasses
-  it.
-- **Control panel: « Jeux détectés »** (replaces « En cours »), like the
-  Windows launcher's window list: the running programs the layer is loaded
-  into (every Vulkan program, native or Proton; `/proc/<pid>/maps`), minus
-  known non-games, refreshed with « Actualiser la liste ». Each row says
-  what the layer does there — or why not (panel stopped, game not enabled,
-  started before « Lancer ») — and has a switch to enable the game (added
-  to the per-game list, applied at its next launch). Before, only games
-  where generation was active appeared.
-
+- **Linux control panel works like the Windows launcher** (`require_app`,
+  which the panel writes with `enabled = 1`): launch the game normally,
+  pick it in « Jeux détectés » (the running Vulkan programs, native or
+  Proton, found in `/proc/<pid>/maps`, refreshed with « Actualiser la
+  liste »), « Démarrer » — generation starts in the running game;
+  « Arrêter » or closing the panel stops it. Every Vulkan game is armed
+  (virtual swapchain, frames passed through) except desktop programs
+  (browsers, Steam, GTK 4 apps, which draw with Vulkan); the session file
+  `app.session` = "<panel pid> <target pid>" tells the layer which process
+  generates. Options changed while a game runs apply live: settings that
+  size the output stage (multiplier, mode, flow, HUD) rebuild it, like a
+  resize. Upscaling applies to games started while the panel is open.
+  `BDEX_FG=1` (Steam option, CLI) bypasses it. Covered by a new "panel" run
+  of `tests/validation.sh`.
 - **The layer stays off in competitive multiplayer games**, matched by
   executable name, where the anti-cheat has no process to detect: VAC
   (CS2, CS:GO, Dota 2, Deadlock, TF2), Vanguard (Valorant, League of
