@@ -346,15 +346,15 @@ void main() {
     F = fwdAt(q);
     vec2 pf = q - t * F;
     for (int i = 0; i < pc.iterations; ++i) { F = fwdAt(pf); pf = q - t * F; }
-    vec4 cf = sampleC(prevTex, pf / fsize);
-    vec4 cf2 = sampleC(curTex, (pf + F) / fsize);
+    vec4 cf = texture(prevTex, pf / fsize);
+    vec4 cf2 = texture(curTex, (pf + F) / fsize);
     float ef = colourError(cf, cf2);
 
     vec2 B = bwdAt(q);
     vec2 pb = q - (1.0 - t) * B;
     for (int i = 0; i < pc.iterations; ++i) { B = bwdAt(pb); pb = q - (1.0 - t) * B; }
-    vec4 cb = sampleC(curTex, pb / fsize);
-    vec4 cb2 = sampleC(prevTex, (pb + B) / fsize);
+    vec4 cb = texture(curTex, pb / fsize);
+    vec4 cb2 = texture(prevTex, (pb + B) / fsize);
     float eb = colourError(cb, cb2);
 
     if (kSplat && pc.splat != 0) {
@@ -377,7 +377,7 @@ void main() {
             vec2 src = vec2(float(index % uint(pc.size.x)), float(index / uint(pc.size.x))) + 0.5;
             vec2 Fs = fwdAt(src);
             vec2 ps = q - t * Fs;
-            vec4 a = sampleC(prevTex, ps / fsize), b = sampleC(curTex, (ps + Fs) / fsize);
+            vec4 a = texture(prevTex, ps / fsize), b = texture(curTex, (ps + Fs) / fsize);
             float e = colourError(a, b);
             if (e < 0.9 * ef) { ef = e; F = Fs; pf = ps; cf = a; cf2 = b; }
         }
@@ -387,7 +387,7 @@ void main() {
             vec2 src = vec2(float(index % uint(pc.size.x)), float(index / uint(pc.size.x))) + 0.5;
             vec2 Bs = bwdAt(src);
             vec2 ps = q - (1.0 - t) * Bs;
-            vec4 a = sampleC(curTex, ps / fsize), b = sampleC(prevTex, (ps + Bs) / fsize);
+            vec4 a = texture(curTex, ps / fsize), b = texture(prevTex, (ps + Bs) / fsize);
             float e = colourError(a, b);
             if (e < 0.9 * eb) { eb = e; B = Bs; pb = ps; cb = a; cb2 = b; }
         }
@@ -429,7 +429,7 @@ void main() {
                 if (seen) continue;
             }
             vec2 pk = q - t * Fk;
-            vec4 a = sampleC(prevTex, pk / fsize), b = sampleC(curTex, (pk + Fk) / fsize);
+            vec4 a = texture(prevTex, pk / fsize), b = texture(curTex, (pk + Fk) / fsize);
             float e = colourError(a, b);
             if (e < ef) { ef = e; F = Fk; pf = pk; cf = a; cf2 = b; }
         }
@@ -452,7 +452,7 @@ void main() {
                 if (seen) continue;
             }
             vec2 pk = q - (1.0 - t) * Bk;
-            vec4 a = sampleC(curTex, pk / fsize), b = sampleC(prevTex, (pk + Bk) / fsize);
+            vec4 a = texture(curTex, pk / fsize), b = texture(prevTex, (pk + Bk) / fsize);
             float e = colourError(a, b);
             if (e < eb) { eb = e; B = Bk; pb = pk; cb = a; cb2 = b; }
         }
@@ -474,7 +474,7 @@ void main() {
         ivec2 ai = clamp(ivec2(pf * pc.flowInvSize * vec2(pc.altBlocks)), ivec2(0), pc.altBlocks - 1);
         vec2 Fa = altFwd.v[ai.y * pc.altBlocks.x + ai.x] * pc.flowScale;
         vec2 pa = q - t * Fa;
-        vec4 a = sampleC(prevTex, pa / fsize), b = sampleC(curTex, (pa + Fa) / fsize);
+        vec4 a = texture(prevTex, pa / fsize), b = texture(curTex, (pa + Fa) / fsize);
         // (only where the trajectory kept is poor, and clearly better: where
         // every trajectory nearly agrees — flat areas, smooth texture — the
         // second hypothesis won on noise and tore thin text: scroll -3.0 dB
@@ -484,10 +484,21 @@ void main() {
         ivec2 bi = clamp(ivec2(pb * pc.flowInvSize * vec2(pc.altBlocks)), ivec2(0), pc.altBlocks - 1);
         vec2 Ba = altBwd.v[bi.y * pc.altBlocks.x + bi.x] * pc.flowScale;
         vec2 pba = q - (1.0 - t) * Ba;
-        a = sampleC(curTex, pba / fsize);
-        b = sampleC(prevTex, (pba + Ba) / fsize);
+        a = texture(curTex, pba / fsize);
+        b = texture(prevTex, (pba + Ba) / fsize);
         e = colourError(a, b);
         if (eb > 0.04 && e < 0.75 * eb - 0.004) { eb = e; B = Ba; pb = pba; cb = a; cb2 = b; }
+    }
+    if (kBicubic && pc.bicubic != 0) {
+        // synth_bicubic: the trajectories are chosen on bilinear samples
+        // (the errors that pick them barely change), and only the four
+        // colours blended below are read with Catmull-Rom (13 fetches each):
+        // the sub-pixel detail where it shows, at a third of the cost of
+        // cubic samples for every candidate tried.
+        cf = sampleCR(prevTex, pf / fsize);
+        cf2 = sampleCR(curTex, (pf + F) / fsize);
+        cb = sampleCR(curTex, pb / fsize);
+        cb2 = sampleCR(prevTex, (pb + B) / fsize);
     }
     float mf = (1.0 - smoothstep(0.04, 0.12, ef));
     float mb = (1.0 - smoothstep(0.04, 0.12, eb));
