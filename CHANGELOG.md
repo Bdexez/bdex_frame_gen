@@ -39,6 +39,22 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   clipboard and shown in Explorer, then the pre-filled issue form (the same
   fields as `bdex-framegen --issue-url`).
 
+### Calibration
+
+- **`bdex-calibrate`** (Linux and Windows, installed beside the layer / in
+  the Windows package): the engine on synthetic moving frames at the
+  screen's size, for the automatic preset and each fixed one — analysis +
+  flow per game frame, synthesis per generated frame (GPU timestamps,
+  `FrameGen::profileTake`) — and the recommendation: the automatic preset
+  when it fits, else balanced, else performance, and the highest multiplier
+  within a quarter of the GPU's time with no game under 30 fps. Under a
+  second. RTX 3060 Ti, 1440p: auto 0.43 ms + 0.55 ms a generated frame, x4
+  at 144 Hz (1.8 ms a game frame).
+- Run by itself at the first start of the Linux panel and of the Windows
+  launcher (*Calibration du GPU*: *Mesurer*, *Appliquer*), text mode `k`,
+  `bdex-framegen --calibrate [--apply]`. The panel's *Auto* multiplier
+  never exceeds the calibrated one.
+
 ### Recording for the corpus
 
 - **« Enregistrer » on a running game**: the Linux panel (a button on each

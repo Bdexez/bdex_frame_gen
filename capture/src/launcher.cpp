@@ -26,6 +26,7 @@
 #include <fstream>
 #include <sstream>
 #include <cstdio>
+#include <memory>
 #include <cstdlib>
 #include <cwchar>
 #include <cwctype>
@@ -299,7 +300,7 @@ struct Layout {
     int clientH;
 };
 Layout launcherLayout() {
-    int h = 48 + 56 + 30 + 30;  // (the method and GPU rows, the injections and report buttons)
+    int h = 48 + 56 + 30 + 30 + 66;  // (the method and GPU rows, the injections and report buttons, the calibration)
     for (const ExtraOpt& o : extraOptions()) h += o.key.empty() ? 20 : 22;
     Layout l;
     l.columnGroupH = std::max(770, h + 4);
@@ -510,6 +511,8 @@ enum {
     ID_GPU,
     ID_UNINJECT,
     ID_REPORT,
+    ID_CAL_RUN,
+    ID_CAL_APPLY,
     ID_TIMER_RUNNING = 1,
 };
 
@@ -528,6 +531,7 @@ struct Ui {
     HWND size = nullptr, scaleEd = nullptr, filter = nullptr, sharpEd = nullptr;
     HWND fifo = nullptr, hud = nullptr;
     HWND method = nullptr, gpu = nullptr;
+    HWND calLabel = nullptr, calRun = nullptr, calApply = nullptr;
     std::vector<std::string> gpuNames;  // the GPU combo's entries after « Auto »
     HWND grad = nullptr, scLow = nullptr, scHigh = nullptr, smooth = nullptr;
     HWND zbias = nullptr, sfine = nullptr, fiter = nullptr;
@@ -637,6 +641,108 @@ void refreshList(Ui& ui) {
 }
 
 void fillFromChoice(Ui& ui);  // defined below; onGameSelected refills the panel
+
+// ------------------------------------------------------------ calibration --
+// bdex-calibrate.exe (next to this program): what generation costs on this
+// GPU at the main screen's size and refresh — measured by itself at the
+// first start (in a thread: the window stays usable), again with « Mesurer »;
+// « Appliquer » takes its preset and multiplier.
+constexpr UINT kMsgCalibrated = WM_APP + 30;
+
+std::wstring calibrationPath() {
+    wchar_t buf[MAX_PATH];
+    const DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH);
+    if (!n || n >= MAX_PATH) return L"";
+    return std::wstring(buf, n) + L"\\bdex-framegen\\calibration.json";
+}
+
+std::wstring calibrateExe() {
+    wchar_t exe[MAX_PATH];
+    const DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    if (!n) return L"";
+    std::wstring dir(exe, n);
+    dir = dir.substr(0, dir.find_last_of(L"\\/") + 1);
+    const std::wstring p = dir + L"bdex-calibrate.exe";
+    return GetFileAttributesW(p.c_str()) == INVALID_FILE_ATTRIBUTES ? L"" : p;
+}
+
+struct Calibration {
+    bool ok = false;
+    std::string gpu, preset;
+    int multiplier = 2, w = 0, h = 0;
+    double refresh = 0, costMs = 0;
+};
+
+// The few fields the launcher needs, from the tool's small JSON.
+Calibration readCalibration() {
+    Calibration c;
+    std::ifstream in{std::filesystem::path(calibrationPath())};
+    const std::string j((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    auto str = [&](const std::string& key, size_t from) {
+        const size_t k = j.find("\"" + key + "\"", from);
+        if (k == std::string::npos) return std::string();
+        const size_t a = j.find('"', j.find(':', k) + 1), b = a == std::string::npos ? a : j.find('"', a + 1);
+        return a == std::string::npos || b == std::string::npos ? std::string() : j.substr(a + 1, b - a - 1);
+    };
+    auto num = [&](const std::string& key, size_t from) {
+        const size_t k = j.find("\"" + key + "\"", from);
+        return k == std::string::npos ? 0.0 : std::atof(j.c_str() + j.find(':', k) + 1);
+    };
+    const size_t rec = j.find("\"recommended\"");
+    if (rec == std::string::npos) return c;
+    c.gpu = str("gpu", 0);
+    c.preset = str("preset", rec);
+    c.multiplier = static_cast<int>(num("multiplier", rec));
+    c.costMs = num("cost_ms", rec);
+    c.refresh = num("refresh", 0);
+    const size_t size = j.find("\"size\"");
+    if (size != std::string::npos) std::sscanf(j.c_str() + j.find('[', size), "[%d, %d]", &c.w, &c.h);
+    c.ok = !c.preset.empty() && c.multiplier >= 2;
+    return c;
+}
+
+std::wstring calibrationText(const Calibration& c) {
+    if (!c.ok) return T(L"Calibration du GPU : pas encore mesurée.", L"GPU calibration: not measured yet.");
+    wchar_t buf[512];
+    swprintf(buf, 512, T(L"%ls à %dx%d, %.0f Hz : profil %ls, jusqu'à x%d (%.1f ms de GPU par image du jeu).",
+                         L"%ls at %dx%d, %.0f Hz: %ls preset, up to x%d (%.1f ms of GPU a game frame)."),
+             wideUtf8(c.gpu).c_str(), c.w, c.h, c.refresh, wideUtf8(c.preset).c_str(), c.multiplier, c.costMs);
+    return buf;
+}
+
+// Runs the tool in a thread; the window gets kMsgCalibrated when it is done.
+void startCalibration(HWND hwnd) {
+    const std::wstring exe = calibrateExe(), out = calibrationPath();
+    if (exe.empty() || out.empty()) return;
+    DEVMODEW dm{};
+    dm.dmSize = sizeof dm;
+    EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &dm);
+    wchar_t args[512];
+    swprintf(args, 512, L"\"%ls\" --size %lux%lu --refresh %lu --json \"%ls\"", exe.c_str(),
+             dm.dmPelsWidth ? dm.dmPelsWidth : 1920ul, dm.dmPelsHeight ? dm.dmPelsHeight : 1080ul,
+             dm.dmDisplayFrequency > 1 ? dm.dmDisplayFrequency : 60ul, out.c_str());
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(out).parent_path(), ec);
+    struct Job { HWND hwnd; std::wstring cmd; };
+    auto* job = new Job{hwnd, args};
+    HANDLE th = CreateThread(nullptr, 0, [](LPVOID p) -> DWORD {
+        std::unique_ptr<Job> j(static_cast<Job*>(p));
+        STARTUPINFOW si{sizeof si};
+        PROCESS_INFORMATION pi{};
+        BOOL ok = CreateProcessW(nullptr, j->cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+        DWORD code = 1;
+        if (ok) {
+            WaitForSingleObject(pi.hProcess, 300000);
+            GetExitCodeProcess(pi.hProcess, &code);
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+        }
+        if (IsWindow(j->hwnd)) PostMessageW(j->hwnd, kMsgCalibrated, code == 0, 0);
+        return 0;
+    }, job, 0, nullptr);
+    if (th) CloseHandle(th);
+    else delete job;
+}
 
 // Overlays a config scope's managed keys onto a LaunchChoice (per-game
 // prefill); keys absent from the scope keep their baseline value. Mirrors the
@@ -990,7 +1096,22 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         // A problem: the diagnostic report (written, copied) and the issue form.
         add(L"BUTTON", T(L"Signaler un problème… (rapport de diagnostic)", L"Report a problem... (diagnostic report)"),
             BS_PUSHBUTTON | WS_TABSTOP, 508, y, 452, 23, ID_REPORT);
-        y += 32;
+        y += 30;
+        // The GPU's calibration (bdex-calibrate.exe).
+        {
+            const Calibration cal = readCalibration();
+            ui->calLabel = add(L"STATIC", calibrationText(cal).c_str(), SS_LEFT, 508, y + 2, 288, 32, 0);
+            ui->calRun = add(L"BUTTON", T(L"Mesurer", L"Measure"), BS_PUSHBUTTON | WS_TABSTOP, 800, y, 76, 23, ID_CAL_RUN);
+            ui->calApply = add(L"BUTTON", T(L"Appliquer", L"Apply"), BS_PUSHBUTTON | WS_TABSTOP, 884, y, 76, 23, ID_CAL_APPLY);
+            EnableWindow(ui->calRun, !calibrateExe().empty());
+            EnableWindow(ui->calApply, cal.ok);
+            if (!cal.ok && !calibrateExe().empty()) {
+                SetWindowTextW(ui->calLabel, T(L"Calibration du GPU : mesure en cours…", L"GPU calibration: measuring..."));
+                EnableWindow(ui->calRun, FALSE);
+                startCalibration(hwnd);
+            }
+        }
+        y += 38;
         for (size_t i = 0; i < extra.size(); ++i) {
             const ExtraOpt& o = extra[i];
             const int id = 300 + static_cast<int>(i);
@@ -1043,6 +1164,15 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         refreshRunning(*ui);
         return 0;
     }
+    case kMsgCalibrated:
+        if (ui) {
+            const Calibration cal = readCalibration();
+            SetWindowTextW(ui->calLabel, wp && cal.ok ? calibrationText(cal).c_str()
+                                                      : T(L"Calibration du GPU : la mesure a échoué.", L"GPU calibration: the measurement failed."));
+            EnableWindow(ui->calRun, TRUE);
+            EnableWindow(ui->calApply, cal.ok);
+        }
+        return 0;
     case WM_TIMER:
         if (wp == ID_TIMER_RUNNING && ui) refreshRunning(*ui);
         return 0;
@@ -1069,6 +1199,21 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             persist(*ui->choice);
             armLayer();
             DestroyWindow(hwnd);
+            return 0;
+        }
+        case ID_CAL_RUN:
+            SetWindowTextW(ui->calLabel, T(L"Calibration du GPU : mesure en cours…", L"GPU calibration: measuring..."));
+            EnableWindow(ui->calRun, FALSE);
+            startCalibration(hwnd);
+            return 0;
+        case ID_CAL_APPLY: {
+            const Calibration cal = readCalibration();
+            if (!cal.ok) return 0;
+            gather(*ui);
+            ui->choice->preset = cal.preset == "auto" ? std::string() : cal.preset;
+            if (!ui->choice->adaptive) ui->choice->multiplier = cal.multiplier;
+            fillFromChoice(*ui);
+            updateEnabled(*ui);
             return 0;
         }
         case ID_REPORT: {

@@ -156,6 +156,9 @@ public:
     void profileCollect(uint32_t slot);
     // Average GPU milliseconds per stage since the last call; resets the accumulators.
     std::string profileReport();
+    // The mean GPU ms per stage since the last report or take, then reset
+    // (bdex-calibrate). False without profiling.
+    bool profileTake(double ms[StageCount]);
     // gpu_budget: average GPU milliseconds of the generation (analysis, flow,
     // synthesis) per frame since the last call (0 if unmeasured); resets.
     double takeGpuMs();

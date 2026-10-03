@@ -152,3 +152,25 @@ with tempfile.TemporaryDirectory() as tmp:
         else:
             os.environ["XDG_CACHE_HOME"] = old_cache
 print("panel recording request OK")
+
+# Calibration (03/10): the summary, and « Auto » capped by what the GPU affords.
+import json as _json
+with tempfile.TemporaryDirectory() as tmp:
+    old = os.environ.get("XDG_CACHE_HOME")
+    os.environ["XDG_CACHE_HOME"] = tmp
+    try:
+        assert panel.read_calibration() is None
+        os.makedirs(os.path.join(tmp, "bdex-framegen"))
+        hz = panel.display_hz()
+        with open(panel.calibration_path(), "w") as f:
+            _json.dump({"gpu": "GPU", "size": [1920, 1080], "refresh": hz, "budget": 0.25, "presets": {},
+                        "recommended": {"preset": "performance", "multiplier": 2, "x2_ms": 3.0, "cost_ms": 3.0}}, f)
+        assert panel.read_calibration()["recommended"]["multiplier"] == 2
+        assert panel.auto_ceiling() == 2, panel.auto_ceiling()
+        assert "×2" in panel.calibration_summary(panel.read_calibration())
+    finally:
+        if old is None:
+            os.environ.pop("XDG_CACHE_HOME", None)
+        else:
+            os.environ["XDG_CACHE_HOME"] = old
+print("panel calibration OK")

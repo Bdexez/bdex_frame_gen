@@ -45,6 +45,8 @@
 #                          ./bdex-framegen-report.txt)
 #       --issue-url [FILE] the link to a pre-filled bug report (GitHub issue form)
 #                          from a --report file (default ./bdex-framegen-report.txt)
+#       --calibrate [--apply]  what generation costs on this GPU (bdex-calibrate):
+#                          the recommended preset and multiplier; --apply writes them
 #       --record DIR [N]   record the game's real frames into DIR (N, default
 #                          240; generation off) for the evaluation corpus:
 #                          tools/corpus_pack.py, then eval_sequence.py
@@ -409,6 +411,58 @@ issue_url() {
     "$(urlencode "$session")" "$(urlencode "$install")" "$(urlencode "$quick")"
 }
 
+# What frame generation costs on this GPU, before any game (bdex-calibrate:
+# the engine on synthetic frames at the screen's size and refresh): the
+# recommended preset and multiplier, saved in the cache directory;
+# --apply writes them to [*] of the configuration.
+calibrate() {
+  local apply="${1:-}" bin line size hz out
+  bin="$(dirname "$(realpath "$0")")/bdex-calibrate"
+  [ -x "$bin" ] || bin="$(dirname "$(realpath "$0")")/../build/tools/calibrate/bdex-calibrate"
+  [ -x "$bin" ] || bin="$(command -v bdex-calibrate || true)"
+  [ -n "$bin" ] && [ -x "$bin" ] || { echo "bdex-calibrate not found (installed with the layer, or build/tools/calibrate)" >&2; return 1; }
+  line="$(screens | head -1)"
+  size="$(grep -oE '[0-9]+x[0-9]+' <<<"$line" | head -1)"; size="${size:-1920x1080}"
+  hz="$(grep -oE '@[0-9.]+' <<<"$line" | head -1 | tr -d @)"; hz="${hz:-60}"
+  out="${XDG_CACHE_HOME:-$HOME/.cache}/bdex-framegen/calibration.json"
+  mkdir -p "$(dirname "$out")"
+  echo "Calibration on ${size} at ${hz} Hz (${line:-screen unknown: 1920x1080 at 60 Hz})..."
+  "$bin" --size "$size" --refresh "$hz" --json "$out" || return 1
+  cfg="${BDEX_FG_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/bdex-framegen.conf}"
+  python3 - "$out" "$cfg" "$apply" <<'PY'
+import json, re, sys
+from pathlib import Path
+d = json.load(open(sys.argv[1]))
+r = d["recommended"]
+for name, p in d["presets"].items():
+    print(f"  {name:<12} {p['analysis_ms'] + p['flow_ms']:.2f} ms a game frame + {p['synthesis_ms']:.2f} ms a generated frame"
+          + (f" ({p['resolved']})" if p["resolved"] != name else ""))
+print(f"{d['gpu']}: preset {r['preset']}, up to x{r['multiplier']} ({r['cost_ms']:.2f} ms a game frame at x{r['multiplier']},"
+      f" within {int(d['budget'] * 100)} % of the GPU)")
+if sys.argv[3] != "--apply":
+    print("  bdex-framegen --calibrate --apply writes them to the configuration")
+    sys.exit(0)
+p = Path(sys.argv[2])
+lines = p.read_text().splitlines() if p.exists() else []
+start = next((i for i, l in enumerate(lines) if re.match(r"\s*\[\*\]\s*$", l)), None)
+if start is None:
+    lines[0:0] = ["[*]"] + ([""] if lines else [])
+    start = 0
+end = next((i for i in range(start + 1, len(lines)) if re.match(r"\s*\[.*\]\s*$", lines[i])), len(lines))
+for key, value in (("preset", r["preset"]), ("multiplier", str(r["multiplier"]))):
+    for i in range(start + 1, end):
+        if re.match(rf"\s*{key}\s*=", lines[i]):
+            lines[i] = f"{key} = {value}"
+            break
+    else:
+        lines.insert(start + 1, f"{key} = {value}")
+        end += 1
+p.parent.mkdir(parents=True, exist_ok=True)
+p.write_text("\n".join(lines) + "\n")
+print(f"  written to [*] of {p}")
+PY
+}
+
 # online_tune's cached decisions for a game as a [game] config section.
 tuned_profile() {
   BDEX_TP_CACHE="${BDEX_FG_CACHE_DIR-${XDG_CACHE_HOME:-$HOME/.cache}/bdex-framegen}" \
@@ -730,6 +784,7 @@ while [ $# -gt 0 ]; do
     --report)          report "${2:-}"; exit 0 ;;
     --issue-url)       issue_url "${2:-bdex-framegen-report.txt}"; exit 0 ;;
     --tuned-profile)   shift; tuned_profile "$@"; exit $? ;;
+    --calibrate)       calibrate "${2:-}"; exit $? ;;
     --record)          rec="$2"; mkdir -p "$rec"; rec="$(realpath "$rec")"
                        n=240; case "${3:-}" in ''|*[!0-9]*) shift 2 ;; *) n="$3"; shift 3 ;; esac
                        env_vars+=("BDEX_FG_MULTIPLIER=1" "BDEX_FG_DUMP=$rec" "BDEX_FG_DUMP_FRAMES=$n") ;;

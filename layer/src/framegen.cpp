@@ -1488,6 +1488,17 @@ Config FrameGen::effectiveConfig() const {
     return c;
 }
 
+bool FrameGen::profileTake(double ms[StageCount]) {
+    if (!queryPool_ || !(*cfgp_).profile) return false;
+    std::lock_guard<std::mutex> lock(profileMutex_);
+    for (uint32_t s = 0; s < StageCount; ++s) {
+        ms[s] = profileFrames_[s] ? profileMs_[s] / profileFrames_[s] : 0.0;
+        profileMs_[s] = 0;
+        profileFrames_[s] = 0;
+    }
+    return true;
+}
+
 std::string FrameGen::profileReport() {
     if (!queryPool_ || !(*cfgp_).profile) return "";
     static const char* names[StageCount] = {"analysis", "flow", "interp", "copy"};

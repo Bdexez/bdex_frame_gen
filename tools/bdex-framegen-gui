@@ -64,6 +64,17 @@ _EN = {
  'Enregistrement prêt : {}': 'Recording ready: {}',
  'Aucun jeu armé par la couche à enregistrer.': 'No game armed by the layer to record.',
  'Jeu à enregistrer :': 'Game to record:',
+ 'automatique': 'automatic',
+ '{} à {}×{}, {} Hz : profil {}, jusqu\'à ×{} ({} ms de GPU par image du jeu)': '{} at {}×{}, {} Hz: {} preset, up to ×{} ({} ms of GPU a game frame)',
+ 'Calibration du GPU': 'GPU calibration',
+ 'Pas encore mesurée': 'Not measured yet',
+ 'bdex-calibrate absent': 'bdex-calibrate missing',
+ 'Mesurer': 'Measure',
+ 'Mesure en cours… (quelques secondes)': 'Measuring… (a few seconds)',
+ 'La mesure a échoué': 'The measurement failed',
+ 'Calibration appliquée : profil {}, jusqu\'à ×{}': 'Calibration applied: {} preset, up to ×{}',
+ 'k calibrer le GPU': 'k calibrate the GPU',
+ 'Appliquer ? (o/n) ': 'Apply? (y/n) ',
  'w capturer une autre fenêtre · c méthode · g GPU de génération · e enregistrer (corpus)': 'w capture another window · c method · g generation GPU · e record (corpus)',
  "L'enregistrement n'a pas abouti (le jeu est-il armé ?)": 'The recording did not finish (is the game armed?)',
  'Attention': 'Warning',
@@ -1634,9 +1645,85 @@ def text_mode_rates():
 def auto_ceiling():
     """The multiplier ceiling of « Auto » / « Adaptatif »: enough frames to
     fill the screen from ~40 fps (x4 up to 165 Hz, x6 up to 250 Hz, x8
-    above), without allocating the output images of x8 for a 60 Hz screen."""
+    above), without allocating the output images of x8 for a 60 Hz screen —
+    and no more than the GPU's calibration allows (bdex-calibrate)."""
     hz = display_hz()
-    return 4 if hz <= 165 else 6 if hz <= 250 else 8
+    base = 4 if hz <= 165 else 6 if hz <= 250 else 8
+    cal = read_calibration()
+    if cal and abs(cal.get("refresh", 0) - hz) < 2:
+        return max(2, min(base, int(cal["recommended"]["multiplier"])))
+    return base
+
+
+def calibrate_binary():
+    here = os.path.dirname(os.path.realpath(__file__))
+    for p in (os.path.join(here, "bdex-calibrate"), os.path.join(here, "..", "build", "tools", "calibrate", "bdex-calibrate")):
+        if os.access(p, os.X_OK):
+            return p
+    return shutil.which("bdex-calibrate")
+
+
+def calibration_path():
+    cache = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    return os.path.join(cache, "bdex-framegen", "calibration.json")
+
+
+def read_calibration():
+    try:
+        with open(calibration_path()) as f:
+            d = json.load(f)
+        return d if "recommended" in d else None
+    except (OSError, ValueError):
+        return None
+
+
+def display_size():
+    """The largest monitor's size in pixels (what the calibration measures at)."""
+    if HAVE_GTK:
+        try:
+            monitors = Gdk.Display.get_default().get_monitors()
+            best = (0, 0)
+            for i in range(monitors.get_n_items()):
+                m = monitors.get_item(i)
+                g, sc = m.get_geometry(), m.get_scale_factor()
+                if g.width * g.height * sc * sc > best[0] * best[1]:
+                    best = (g.width * sc, g.height * sc)
+            if best[0]:
+                return best
+        except Exception:
+            pass
+    try:
+        out = subprocess.run(["xrandr", "--query"], capture_output=True, text=True, timeout=5).stdout
+        m = re.search(r"(\d+)x(\d+)\s+\d+\.\d+\*", out)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return 1920, 1080
+
+
+def run_calibration():
+    """bdex-calibrate at the screen's size and refresh: its result (None
+    without the tool or on failure), saved where read_calibration() reads."""
+    binary = calibrate_binary()
+    if not binary:
+        return None
+    w, h = display_size()
+    hz = display_hz() or 60.0
+    os.makedirs(os.path.dirname(calibration_path()), exist_ok=True)
+    try:
+        subprocess.run([binary, "--size", f"{w}x{h}", "--refresh", f"{hz:.1f}", "--json", calibration_path()],
+                       capture_output=True, timeout=300)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return read_calibration()
+
+
+def calibration_summary(d):
+    r = d["recommended"]
+    preset = tr("automatique") if r["preset"] == "auto" else r["preset"]
+    return tr(f"{d['gpu']} à {d['size'][0]}×{d['size'][1]}, {d['refresh']:.0f} Hz : profil {preset}, "
+              f"jusqu'à ×{r['multiplier']} ({r['cost_ms']:.1f} ms de GPU par image du jeu)")
 
 
 def session_dirs():
@@ -2120,6 +2207,25 @@ class Window(Adw.ApplicationWindow):
         gpu_row.add_prefix(Gtk.Image(icon_name="video-display-symbolic", valign=Gtk.Align.CENTER))
         g.add(gpu_row)
 
+        # What generation costs on this GPU (bdex-calibrate): measured once by
+        # itself at the first start, again on demand; « Appliquer » takes its
+        # preset and multiplier (« Auto » follows it anyway).
+        cal = read_calibration()
+        self.cal_row = Adw.ActionRow(
+            title=tr("Calibration du GPU"),
+            subtitle=calibration_summary(cal) if cal else
+            (tr("Pas encore mesurée") if calibrate_binary() else tr("bdex-calibrate absent")))
+        self.cal_row.add_prefix(Gtk.Image(icon_name="utilities-system-monitor-symbolic", valign=Gtk.Align.CENTER))
+        self.cal_btn = Gtk.Button(label=tr("Mesurer"), valign=Gtk.Align.CENTER, sensitive=calibrate_binary() is not None)
+        self.cal_btn.connect("clicked", lambda *_: self.calibrate())
+        self.cal_apply = Gtk.Button(label=tr("Appliquer"), valign=Gtk.Align.CENTER, sensitive=cal is not None)
+        self.cal_apply.connect("clicked", self.on_calibration_apply)
+        self.cal_row.add_suffix(self.cal_btn)
+        self.cal_row.add_suffix(self.cal_apply)
+        g.add(self.cal_row)
+        if cal is None and calibrate_binary():
+            GLib.timeout_add(1500, lambda: self.calibrate() and False)
+
         report_row = Adw.ActionRow(title=tr("Signaler un problème"),
                                    subtitle=tr("Écrit le rapport de diagnostic et ouvre le formulaire pré-rempli "
                                             "(à faire pendant que le jeu tourne)"))
@@ -2128,6 +2234,33 @@ class Window(Adw.ApplicationWindow):
         btn.connect("clicked", self.on_report)
         report_row.add_suffix(btn)
         g.add(report_row)
+
+    def calibrate(self):
+        self.cal_btn.set_sensitive(False)
+        self.cal_row.set_subtitle(tr("Mesure en cours… (quelques secondes)"))
+
+        def work():
+            d = run_calibration()
+
+            def done():
+                self.cal_btn.set_sensitive(True)
+                self.cal_apply.set_sensitive(d is not None)
+                self.cal_row.set_subtitle(calibration_summary(d) if d else tr("La mesure a échoué"))
+                return False
+            GLib.idle_add(done)
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_calibration_apply(self, _btn):
+        d = read_calibration()
+        if not d:
+            return
+        r = d["recommended"]
+        self.opt.preset = r["preset"]
+        self.opt.generate = True
+        if not (self.opt.auto_mult or self.opt.adaptive):
+            self.opt.multiplier = int(r["multiplier"])
+        self.save()
+        self.toast(tr(f"Calibration appliquée : profil {r['preset']}, jusqu'à ×{r['multiplier']}"))
 
     def on_report(self, _btn):
         path, url = write_report()
@@ -2664,6 +2797,7 @@ def text_main():
             print(tr("[numéro] démarrer dans ce jeu · a arrêter · r actualiser · m multiplicateur · "
                   "o mode · p préréglage · h compteur · j mode Jeu · s options Steam · b signaler un problème · q quitter"))
             print(tr("w capturer une autre fenêtre · c méthode · g GPU de génération · e enregistrer (corpus)"))
+            print(tr("k calibrer le GPU"))
             try:
                 cmd = input("> ").strip().lower()
             except EOFError:
@@ -2696,6 +2830,19 @@ def text_main():
                     time.sleep(1)
                 else:
                     print(tr("L'enregistrement n'a pas abouti (le jeu est-il armé ?)"))
+            elif cmd == "k":
+                print(tr("Mesure en cours… (quelques secondes)"))
+                d = run_calibration()
+                if not d:
+                    print(tr("La mesure a échoué") if calibrate_binary() else tr("bdex-calibrate absent"))
+                    continue
+                print(calibration_summary(d))
+                if input(tr("Appliquer ? (o/n) ")).strip().lower() in ("o", "y", "oui", "yes"):
+                    opt.preset = d["recommended"]["preset"]
+                    opt.generate = True
+                    if not (opt.auto_mult or opt.adaptive):
+                        opt.multiplier = int(d["recommended"]["multiplier"])
+                    save()
             elif cmd == "c":
                 opt.method = _text_pick(tr("Méthode :"), METHODS, opt.method)
                 save()

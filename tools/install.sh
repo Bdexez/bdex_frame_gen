@@ -18,6 +18,7 @@ echo "  $PREFIX/share/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen.json"
 echo "  $PREFIX/bin/bdex-framegen"
 echo "  $PREFIX/bin/bdex-framegen-gui  (graphical launcher)"
 [ -x "$PREFIX/bin/bdex-capture" ] && echo "  $PREFIX/bin/bdex-capture  (frame generation by capture: anti-cheat games, a second GPU)"
+[ -x "$PREFIX/bin/bdex-calibrate" ] && echo "  $PREFIX/bin/bdex-calibrate  (what generation costs on this GPU: bdex-framegen --calibrate)"
 
 # 32-bit layer for 32-bit games, when the toolchain allows it: a 32-bit C++
 # shared library with threads links (32-bit glibc + libstdc++ development
