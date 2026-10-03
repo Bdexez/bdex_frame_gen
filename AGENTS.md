@@ -202,7 +202,14 @@ images passées telles quelles, `paused` + HUD coupé) sauf programmes de
 bureau (`platformIsNonGame`, GTK 4 via `platformIsDesktopApp` — GTK 4 dessine
 en Vulkan) ; la GUI sélectionne un jeu détecté (`/proc/*/maps` contenant la
 couche) et « Démarrer » écrit `app.session` = « pid panneau pid cible »
-(`platformAppSession`, pid panneau vérifié par `/proc/<pid>/cmdline`).
+(`platformAppSession` ; heartbeat : la GUI réécrit le fichier chaque
+seconde, plus vieux que 5 s = panneau fermé). **Dossier de session/état
+Linux : `~/.cache/bdex-framegen/run`, pas `$XDG_RUNTIME_DIR`** — le conteneur
+Steam (pressure-vessel, tous les jeux Proton) partage le home mais seulement
+quelques sockets de `/run/user/<uid>` (vérifié : PRAGMATA ne pouvait pas
+démarrer) ; le PID namespace, lui, est partagé par défaut (pids identiques).
+Test en conteneur : `SteamLinuxRuntime_sniper/run -- <binaire>` (fournir
+`libglfw.so.3` via `LD_LIBRARY_PATH` pour la démo).
 `pollConfig` suit la cible ; les réglages qui dimensionnent l'étage de
 sortie (`sameOutputSettings`) incrémentent `Config::rebuildGen` et la
 swapchain reconstruit `FrameGen` (`rebuildOutput`, comme `applyGpuBudget`) ;

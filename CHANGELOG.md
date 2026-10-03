@@ -21,7 +21,18 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   size the output stage (multiplier, mode, flow, HUD) rebuild it, like a
   resize. Upscaling applies to games started while the panel is open.
   `BDEX_FG=1` (Steam option, CLI) bypasses it. Covered by a new "panel" run
-  of `tests/validation.sh`.
+  of `tests/validation.sh`, and checked with the demo inside Steam's
+  container (SteamLinuxRuntime_sniper).
+
+### Changed
+
+- **Linux status / session directory: `~/.cache/bdex-framegen/run`** (was
+  `$XDG_RUNTIME_DIR/bdex-framegen`). Steam's container (pressure-vessel, every
+  Proton game) shares the home but only a few sockets of the runtime
+  directory: Proton games' status never reached the panel and the panel's
+  session never reached them (PRAGMATA could not be started). The session is
+  a heartbeat — the panel rewrites it every second, older than 5 s means
+  closed — instead of a lookup of the panel's process.
 - **The layer stays off in competitive multiplayer games**, matched by
   executable name, where the anti-cheat has no process to detect: VAC
   (CS2, CS:GO, Dota 2, Deadlock, TF2), Vanguard (Valorant, League of

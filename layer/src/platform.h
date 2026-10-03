@@ -41,7 +41,7 @@ bool platformIsCompetitiveGame(const std::string& name);
 // The control panel's session (require_app), like the Windows launcher: while
 // it is open it keeps <platformStatusDir()>/app.session = "<its pid> <target
 // pid>", the target being the game where « Démarrer » started the generation
-// (0 = none). A stale file (panel gone, or a recycled pid) reads as closed.
+// (0 = none), rewritten every second: older than 5 s, the panel is gone.
 struct AppSession {
     bool open = false;  // the panel is running
     long target = 0;    // process generating frames, 0 = none
@@ -55,7 +55,8 @@ bool platformIsNonGame(const std::string& name);
 bool platformIsDesktopApp();
 
 // Directory of the per-process live status files (status.h): Linux
-// $XDG_RUNTIME_DIR/bdex-framegen (else /tmp/bdex-framegen-<uid>), Windows
+// ~/.cache/bdex-framegen/run (shared with Steam's container; else
+// /tmp/bdex-framegen-<uid>), Windows
 // %TEMP%\bdex-framegen; BDEX_FG_STATUS_DIR overrides it, an empty value
 // disables the files. "" when no location is known.
 std::string platformStatusDir();

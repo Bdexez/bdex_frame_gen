@@ -403,11 +403,13 @@ def detect_gpus():
 
 
 def status_dir():
-    """Where the layer publishes one live status file per game (layer/src/status.h)."""
+    """Where the layer publishes one live status file per game (layer/src/status.h)
+    and reads this panel's session: in the home, which Steam's container shares
+    with Proton games (platformStatusDir)."""
     if "BDEX_FG_STATUS_DIR" in os.environ:
         return os.environ["BDEX_FG_STATUS_DIR"]
-    runtime = os.environ.get("XDG_RUNTIME_DIR")
-    return os.path.join(runtime, "bdex-framegen") if runtime else f"/tmp/bdex-framegen-{os.getuid()}"
+    home = os.environ.get("HOME")
+    return os.path.join(home, ".cache", "bdex-framegen", "run") if home else f"/tmp/bdex-framegen-{os.getuid()}"
 
 
 def session_path():
@@ -416,7 +418,8 @@ def session_path():
 
 
 def write_session(target=0):
-    """"<panel pid> <target pid>": the panel is open; `target` generates frames."""
+    """"<panel pid> <target pid>": the panel is open; `target` generates frames.
+    Rewritten every second: the layer takes an older file for a closed panel."""
     os.makedirs(status_dir(), mode=0o700, exist_ok=True)
     tmp = session_path() + ".tmp"
     with open(tmp, "w") as f:
@@ -600,7 +603,15 @@ class Window(Adw.ApplicationWindow):
         except OSError as e:
             self.toast(f"Session impossible : {e}")
         self._refresh_running()
+        GLib.timeout_add_seconds(1, self._beat)
         self.connect("close-request", self._on_close)
+
+    def _beat(self):
+        try:
+            write_session(self.target[0] if self.target else 0)
+        except OSError:
+            pass
+        return True
 
     def _on_close(self, *_):
         remove_session()       # the targeted game stops generating

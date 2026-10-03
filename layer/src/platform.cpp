@@ -4,8 +4,9 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <chrono>
 #include <fstream>
-#include <iterator>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN  // (bdex_capture defines it for the whole target)
@@ -243,7 +244,11 @@ std::string platformStatusDir() {
     if (tmp && *tmp) return std::string(tmp) + "\\bdex-framegen";
     return "";
 #else
-    if (const char* x = std::getenv("XDG_RUNTIME_DIR"); x && *x) return std::string(x) + "/bdex-framegen";
+    // In the home, not $XDG_RUNTIME_DIR: Steam's container (pressure-vessel,
+    // every Proton game) shares the home but only a few sockets of the
+    // runtime directory, and the control panel must see the games' status
+    // files and they its session file.
+    if (const char* h = std::getenv("HOME"); h && *h) return std::string(h) + "/.cache/bdex-framegen/run";
     return "/tmp/bdex-framegen-" + std::to_string(static_cast<long>(getuid()));
 #endif
 }
@@ -260,17 +265,17 @@ AppSession platformAppSession() {
     long panel = 0, target = 0;
     if (!(in >> panel) || panel <= 0) return s;
     if (!(in >> target)) target = 0;
+    // The panel rewrites the file every second: a stale one means it is gone
+    // (crashed or killed). A heartbeat rather than a process lookup, which a
+    // game in Steam's container could not do on the panel's process.
+    std::error_code ec;
 #ifdef _WIN32
-    HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(panel));
-    if (!h) return s;
-    s.open = WaitForSingleObject(h, 0) == WAIT_TIMEOUT;
-    CloseHandle(h);
+    const auto written = std::filesystem::last_write_time(dir + "\\app.session", ec);
 #else
-    // Alive and still the control panel (not a recycled process id).
-    std::ifstream cmd("/proc/" + std::to_string(panel) + "/cmdline", std::ios::binary);
-    const std::string line((std::istreambuf_iterator<char>(cmd)), std::istreambuf_iterator<char>());
-    s.open = line.find("bdex-framegen") != std::string::npos;
+    const auto written = std::filesystem::last_write_time(dir + "/app.session", ec);
 #endif
+    if (ec) return s;
+    s.open = std::filesystem::file_time_type::clock::now() - written < std::chrono::seconds(5);
     if (s.open) s.target = target;
     return s;
 }

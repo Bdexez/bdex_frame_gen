@@ -76,11 +76,12 @@ done
 # "panel": the control panel's session (require_app), like the Windows
 # launcher — the game starts armed, « Démarrer » targets it, the options
 # change while it runs (multiplier, mode, HUD: the output stage is rebuilt),
-# « Arrêter » stops it. A process named bdex-framegen-gui stands in for the panel.
+# « Arrêter » stops it. A sleeping process and a touch loop stand in for the panel.
 PANEL_DIR="$(mktemp -d)"
 printf '[*]\nenabled = 1\nrequire_app = 1\nmultiplier = 2\noverlay = 2\n' > "$PANEL_DIR/conf"
 bash -c 'exec -a bdex-framegen-gui sleep 120' & panel=$!
 echo "$panel 0" > "$PANEL_DIR/app.session"
+( while kill -0 $panel 2>/dev/null; do touch "$PANEL_DIR/app.session"; sleep 1; done ) &  # the heartbeat
 env VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true \
   BDEX_FG_CONFIG="$PANEL_DIR/conf" BDEX_FG_STATUS_DIR="$PANEL_DIR" BDEX_FG_LOG=2 \
   timeout 120 "$DEMO" --fps 30 --deterministic --frames 400 --duration 40 >"$LOG" 2>&1 &
