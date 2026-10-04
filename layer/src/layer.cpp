@@ -305,29 +305,37 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
 
     int chosen = -1;
     std::vector<std::vector<float>> prioStorage;
+    // One more queue of family f for the layer, after the application's
+    // (and the layer's) others: its index.
+    std::vector<uint32_t> added(nf, 0);
+    auto addQueue = [&](uint32_t f) {
+        const uint32_t index = requested[f] + added[f]++;
+        bool found = false;
+        for (auto& q : qcis) {
+            if (q.queueFamilyIndex != f || found) continue;
+            found = true;
+            prioStorage.emplace_back(q.pQueuePriorities, q.pQueuePriorities + q.queueCount);
+            prioStorage.back().push_back(1.0f);
+            q.queueCount += 1;
+            q.pQueuePriorities = prioStorage.back().data();
+        }
+        if (!found) {
+            prioStorage.emplace_back(1, 1.0f);
+            VkDeviceQueueCreateInfo q{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+            q.queueFamilyIndex = f;
+            q.queueCount = 1;
+            q.pQueuePriorities = prioStorage.back().data();
+            qcis.push_back(q);
+        }
+        return index;
+    };
+    auto spare = [&](uint32_t f) { return requested[f] + added[f] < data->families[f].queueCount; };
     for (uint32_t f = 0; f < nf && chosen < 0 && !data->config.sharedQueue; ++f) {
         if (!(data->families[f].queueFlags & VK_QUEUE_COMPUTE_BIT)) continue;
-        if (requested[f] < data->families[f].queueCount) {
+        if (spare(f)) {
             chosen = static_cast<int>(f);
-            data->queueIndex = requested[f];
+            data->queueIndex = addQueue(f);
             data->queueShared = false;
-            bool found = false;
-            for (auto& q : qcis) {
-                if (q.queueFamilyIndex != f || found) continue;
-                found = true;
-                prioStorage.emplace_back(q.pQueuePriorities, q.pQueuePriorities + q.queueCount);
-                prioStorage.back().push_back(1.0f);
-                q.queueCount += 1;
-                q.pQueuePriorities = prioStorage.back().data();
-            }
-            if (!found) {
-                prioStorage.emplace_back(1, 1.0f);
-                VkDeviceQueueCreateInfo q{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
-                q.queueFamilyIndex = f;
-                q.queueCount = 1;
-                q.pQueuePriorities = prioStorage.back().data();
-                qcis.push_back(q);
-            }
         }
     }
     for (uint32_t f = 0; f < nf && chosen < 0; ++f) {
@@ -340,37 +348,34 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
     }
     if (chosen >= 0) data->queueFamily = static_cast<uint32_t>(chosen);
 
-    // async_compute: the synthesis goes to a queue of a compute-only family
-    // (hardware that runs it alongside the game's graphics work), the copies
-    // and presents stay on the queue chosen above. Only with a spare queue in
-    // such a family, and a different family from the main queue.
-    if (chosen >= 0 && data->config.asyncCompute) {
+    // The synthesis on a queue of its own, the copies and presents staying on
+    // the queue chosen above: a present's own GPU work (the driver's
+    // presentation blit on X11 / Xwayland, for one) then never waits behind
+    // the next frame's synthesis, which the pacing now often has queued
+    // before it presents (measured: the real frame shown ~9 ms late, half the
+    // generated frames replaced, with a 9 ms synthesis; none replaced on two
+    // queues).
+    // async_compute: that queue belongs to a compute-only family (hardware
+    // that runs it alongside the game's graphics work). Otherwise
+    // (present_queue, the default) it is a second queue of the same family,
+    // when the family has one to spare.
+    if (chosen >= 0 && !data->queueShared && data->config.asyncCompute) {
         for (uint32_t f = 0; f < nf; ++f) {
             const VkQueueFlags fl = data->families[f].queueFlags;
             if (int(f) == chosen || !(fl & VK_QUEUE_COMPUTE_BIT) || (fl & VK_QUEUE_GRAPHICS_BIT)) continue;
-            if (requested[f] >= data->families[f].queueCount) continue;
+            if (!spare(f)) continue;
             data->computeFamily = f;
-            data->computeIndex = requested[f];
-            bool found = false;
-            for (auto& q : qcis) {
-                if (q.queueFamilyIndex != f || found) continue;
-                found = true;
-                prioStorage.emplace_back(q.pQueuePriorities, q.pQueuePriorities + q.queueCount);
-                prioStorage.back().push_back(1.0f);
-                q.queueCount += 1;
-                q.pQueuePriorities = prioStorage.back().data();
-            }
-            if (!found) {
-                prioStorage.emplace_back(1, 1.0f);
-                VkDeviceQueueCreateInfo q{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
-                q.queueFamilyIndex = f;
-                q.queueCount = 1;
-                q.pQueuePriorities = prioStorage.back().data();
-                qcis.push_back(q);
-            }
+            data->computeIndex = addQueue(f);
             data->asyncCompute = true;
             break;
         }
+    }
+    if (chosen >= 0 && !data->queueShared && !data->asyncCompute && data->config.presentQueue &&
+        spare(static_cast<uint32_t>(chosen))) {
+        data->computeFamily = static_cast<uint32_t>(chosen);
+        data->computeIndex = addQueue(static_cast<uint32_t>(chosen));
+        data->asyncCompute = true;
+        data->splitQueue = true;
     }
 
     VkDeviceCreateInfo ci = *pCreateInfo;
@@ -456,7 +461,10 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
             else data->asyncCompute = false;
         }
     }
-    if (data->asyncCompute)
+    if (data->asyncCompute && data->splitQueue)
+        BDEX_INFO("synthesis on queue %u, copies and presents on queue %u (family %u)", data->computeIndex,
+                  data->queueIndex, data->queueFamily);
+    else if (data->asyncCompute)
         BDEX_INFO("async compute: synthesis on queue family %u, presentation on family %u", data->computeFamily,
                   data->queueFamily);
     if (data->config.enabled || data->config.antiCheatDisabled) {

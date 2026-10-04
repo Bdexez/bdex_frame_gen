@@ -532,7 +532,11 @@ VkResult VirtualSwapchain::acquire(uint64_t timeout, VkSemaphore semaphore, VkFe
         VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
         si.signalSemaphoreCount = semaphore ? 1 : 0;
         si.pSignalSemaphores = &semaphore;
-        VkResult r = dev_.submit(si, fence);
+        // On the synthesis queue: a signal waits for every earlier submission
+        // of its queue, so the game's next frame starts on the GPU after the
+        // synthesis already queued — which the frame being paced needs first
+        // (the image itself is free: its last reader's fence was checked).
+        VkResult r = submitOn(dev_.asyncCompute ? dev_.computeQueue : dev_.queue, si, fence);
         if (r < 0) {
             vi.acquired = false;
             acquireCv_.notify_all();
@@ -737,7 +741,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     dev_.pollConfig();
     dev_.snapshotConfig(cfg_, cfgVersion_);
     if (cfg_.fpsLimit != 0.f) limitFrameRate();  // before mutex_: never block acquire while sleeping
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_);
     const auto t0 = clock::now();
     const VkSemaphore* appWaits = consumeWaitSemaphores ? info.pWaitSemaphores : nullptr;
     const uint32_t appWaitCount = consumeWaitSemaphores ? info.waitSemaphoreCount : 0;
@@ -750,6 +754,11 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     vi.acquired = false;
     acquireCv_.notify_all();
 
+    if (cfg_.panelDisplayHz != clockHintHz_) {  // the refresh rate the system reports (require_app)
+        clockHintHz_ = cfg_.panelDisplayHz;
+        std::lock_guard<std::mutex> fbLock(fbMutex_);
+        displayClock_.setHint(clockHintHz_);
+    }
     if (surfaceChanged_.exchange(false)) followSurface();
     if (cfg_.rebuildGen != outputGen_) rebuildOutput();
     if (cfg_.gpuBudget > 0.f && generating_) applyGpuBudget();
@@ -760,10 +769,16 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     VkResult pending;
     {
         std::unique_lock<std::mutex> wlock(workerMutex_);
+        // This newer real frame makes the predicted frames extrapolation still
+        // holds back obsolete: the worker drops them at once (their copies
+        // were not submitted, so the synthesis below may rewrite their images).
+        cancelPredicted_ = true;
+        workerCv_.notify_all();
         // Low-latency: do not let the game run ahead of the presentation
         // engine (with FIFO, queued frames are pure display latency).
         if (cfg_.lowLatency) waitWorkerIdle(wlock);
         else waitWorkerSubmitted(wlock);
+        cancelPredicted_ = false;
         pending = pendingResult_;
         if (pending != VK_ERROR_OUT_OF_DATE_KHR) pendingResult_ = VK_SUCCESS;
     }
@@ -794,8 +809,28 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         if (dt > 0.5 && dt < 500.0) updateHudLows(dt);
         const int gfps = frameIntervalMs_ > 0.05 ? static_cast<int>(1000.0 / frameIntervalMs_ + 0.5) : 0;
         const double latency = displayLatencyMs();
-        fg_->setHud(gfps, gfps * (interpolate ? mult : 1), hudLow1_, hudLow01_,
-                    latency < 0.0 ? -1 : static_cast<int>(latency + 0.5));
+        // The output rate the screen really shows when the present feedback
+        // tells (frames replaced before being displayed do not count), else
+        // the nominal game fps x multiplier.
+        int outFps = gfps * (interpolate ? mult : 1);
+        if (feedback_) {
+            if (t0 - hudRateAt_ >= std::chrono::seconds(1)) {
+                uint64_t shown;
+                bool ever;
+                {
+                    std::lock_guard<std::mutex> fbLock(fbMutex_);
+                    shown = fbDisplayed_;
+                    ever = fbEverDisplayed_;
+                }
+                const double secs = std::chrono::duration<double>(t0 - hudRateAt_).count();
+                if (ever && hudRateAt_.time_since_epoch().count() != 0 && secs < 3.0)
+                    hudDisplayedFps_ = static_cast<int>(double(shown - hudDisplayed_) / secs + 0.5);
+                hudDisplayed_ = shown;
+                hudRateAt_ = t0;
+            }
+            if (hudDisplayedFps_ >= 0) outFps = hudDisplayedFps_;
+        }
+        fg_->setHud(gfps, outFps, hudLow1_, hudLow01_, latency < 0.0 ? -1 : static_cast<int>(latency + 0.5));
     }
 
     // Synthesis: analyse the application's frame (in place, no copy) and
@@ -930,6 +965,8 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     // every wait on its fence happens after that (nextSlot comes after
     // waitWorkerSubmitted; acquire only polls; waitIdle waits for the worker).
     slot.submitted = true;
+    recentSlots_.push_back({slotIdx, slot.generation});
+    while (recentSlots_.size() > kAppSlots) recentSlots_.pop_front();
     // The previous frame was read for the last time by this submission; the
     // current one stays held until the next present reads it as `prev`.
     if (prev >= 0) {
@@ -964,9 +1001,11 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     job.generated = interpolate;
     job.realFirst = cfg_.extrapolate;
     job.start = t0;
+    job.frameStartMs = lastReturnMs_;
     job.intervalMs = frameIntervalMs_;
     job.pacing = cfg_.pacing;
     if (deferSynthesis) job.synthSlot = static_cast<int>(slotIdx);
+    job.slot = static_cast<int>(slotIdx);
     if (dev_.asyncCompute) {
         job.asyncSlot = static_cast<int>(slotIdx);
         job.synthWaits = std::move(copyWaits);  // deferred: the synthesis the worker submits waits them
@@ -982,6 +1021,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
                 presentMode_ = pm->pPresentModes[0];  // the pacing logic follows the switch
             }
     }
+    job.fifo = presentMode_ == VK_PRESENT_MODE_FIFO_KHR || presentMode_ == VK_PRESENT_MODE_FIFO_RELAXED_KHR;
     {
         std::lock_guard<std::mutex> wlock(workerMutex_);
         jobs_.push_back(job);
@@ -1020,7 +1060,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             const uint64_t out = statsOutFrames_.exchange(0);
             const uint64_t delayUs = statsRealDelayUs_.exchange(0);
             const uint64_t skipped = statsSkipped_.exchange(0);
-            char skip[384] = "";
+            char skip[640] = "";
             int len = 0;
             if (skipped) len = snprintf(skip, sizeof(skip), ", %llu predicted frame(s) skipped", static_cast<unsigned long long>(skipped));
             if (feedback_) {
@@ -1037,6 +1077,21 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
                     fbLatencySum_ = 0.0;
                     fbLatencyCount_ = 0;
                 }
+                if (fbFrameLatencyCount_) {
+                    // From when the game began the frame (its previous present
+                    // returned: where most games read their input) to the screen.
+                    char lat[64];
+                    const int m = snprintf(lat, sizeof lat, ", frame-to-screen %.1f ms", fbFrameLatencySum_ / fbFrameLatencyCount_);
+                    if (m > 0 && len + m < int(sizeof(skip))) { memcpy(skip + len, lat, size_t(m) + 1); len += m; }
+                    fbFrameLatencySum_ = 0.0;
+                    fbFrameLatencyCount_ = 0;
+                }
+                if (fbEverDisplayed_) {
+                    char shown[48];
+                    const int m = snprintf(shown, sizeof shown, ", displayed %.1f fps", double(fbDisplayed_ - statsDisplayed_) / elapsed);
+                    if (m > 0 && len + m < int(sizeof(skip))) { memcpy(skip + len, shown, size_t(m) + 1); len += m; }
+                }
+                statsDisplayed_ = fbDisplayed_;
                 const uint64_t replaced = fbReplaced_ - statsReplaced_;
                 statsReplaced_ = fbReplaced_;
                 if (replaced) len += snprintf(skip + len, sizeof(skip) - size_t(len), ", %llu frame(s) replaced before display",
@@ -1068,6 +1123,24 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             statsCpuMs_ = 0;
         }
     }
+    // max_frame_latency, like a driver's low-latency mode: the game begins
+    // its next frame — and reads its input — only once the GPU has finished
+    // the frame max_frame_latency presents back (its rendering and our
+    // synthesis: the slot's fence). A GPU-bound game otherwise runs up to a
+    // few frames ahead of the GPU, each one a frame interval of input lag.
+    // Waited without mutex_ (the game may acquire meanwhile); bounded.
+    // Only while generating: an armed game the control panel has not started
+    // keeps the pass-through behaviour.
+    VkFence latencyFence = VK_NULL_HANDLE;
+    const size_t behind = static_cast<size_t>(std::max(0, cfg_.maxFrameLatency));
+    if (behind > 0 && interpolate && recentSlots_.size() > behind) {
+        const SlotUse& u = recentSlots_[recentSlots_.size() - 1 - behind];
+        const FrameSlot& fs = slots_[u.slot];
+        if (fs.generation == u.generation && fs.submitted) latencyFence = fs.fence;
+    }
+    lock.unlock();
+    if (latencyFence) dev_.vt.WaitForFences(dev_.device, 1, &latencyFence, VK_TRUE, 100'000'000ull);
+    lastReturnMs_ = msOf(clock::now());
     return pending;  // VK_SUCCESS or VK_SUBOPTIMAL_KHR from an earlier real present
 }
 
@@ -1097,7 +1170,7 @@ void VirtualSwapchain::workerLoop() {
 
 void VirtualSwapchain::runJob(const Job& job) {
     bool submitted = false;
-    std::function<void()> markSubmitted = [&] {
+    auto markSubmitted = [&] {
         if (submitted) return;
         submitted = true;
         {
@@ -1106,9 +1179,9 @@ void VirtualSwapchain::runJob(const Job& job) {
         }
         idleCv_.notify_all();
     };
-    // async_compute: every semaphore a present would have waited must be
-    // waited even when that present is skipped or fails before its copy is
-    // submitted, or it stays signalled into its next use.
+    // async_compute: every semaphore a copy would have waited must be waited
+    // even when that frame is dropped or fails before its copy, or it stays
+    // signalled into its next use.
     std::vector<bool> copied(static_cast<size_t>(job.frames), false);
     auto consumeUnused = [&] {
         if (job.asyncSlot < 0) return;
@@ -1116,55 +1189,162 @@ void VirtualSwapchain::runJob(const Job& job) {
         std::vector<VkSemaphore> left;
         for (int k = 0; k < job.frames; ++k) {
             if (copied[size_t(k)]) continue;
+            copied[size_t(k)] = true;
             const bool realK = job.realFirst ? k == 0 : k == job.frames - 1;
             left.push_back((job.synthSlot >= 0 && realK) ? synth.realIn : synth.synthDone[k]);
         }
         if (!left.empty()) consumeSemaphores(left.data(), static_cast<uint32_t>(left.size()));
     };
-    for (int i = 0; i < job.frames; ++i) {
-        lastCopySubmitted_ = false;
-        VkResult r = presentOne(job, i, i == job.frames - 1 ? &markSubmitted : nullptr);
-        copied[size_t(i)] = lastCopySubmitted_;
-        // After the real frame (index 0 of a deferred job), whatever its
-        // outcome: the slot's fence must signal for the application thread.
-        if (i == 0 && job.synthSlot >= 0) {
-            const VkResult sr = submitDeferredSynthesis(job);
-            if (r >= 0 && sr < 0) r = sr;
+    auto fail = [&](VkResult r) {
+        consumeUnused();
+        markSubmitted();
+        // A genuine out-of-date on the real swapchain means the window
+        // changed (e.g. a resize). On Wayland, drop the reduced-extent flag
+        // so the app's recreation re-learns the new true window size before
+        // we reduce again (see WaylandSurfaceState).
+        if (r == VK_ERROR_OUT_OF_DATE_KHR && surface_ != VK_NULL_HANDLE) {
+            std::lock_guard<std::mutex> lk(dev_.inst->surfMutex);
+            auto it = dev_.inst->waylandSurfaces.find(surface_);
+            if (it != dev_.inst->waylandSurfaces.end()) it->second.reduce = false;
         }
-        if (r == VK_EVENT_RESET) {  // predicted frame skipped: a newer real frame is waiting
-            statsSkipped_.fetch_add(1, std::memory_order_relaxed);
-            break;
+        std::lock_guard<std::mutex> wlock(workerMutex_);
+        pendingResult_ = r;
+        acquireCv_.notify_all();
+    };
+    // With FIFO the presentation engine paces the frames; otherwise they are
+    // spread over the game's frame interval.
+    const bool paced = job.pacing && !job.fifo && job.frames > 1;
+
+    if (!job.realFirst) {
+        // Interpolation (and a lone real frame): every copy is submitted at
+        // once, in display order, right behind the synthesis on the queue.
+        // The application thread only waits for the copies to be submitted
+        // before it records the next synthesis (which rewrites what they
+        // read), so the pacing below never holds the game back.
+        std::vector<Copied> out(static_cast<size_t>(job.frames));
+        int n = 0;
+        VkResult err = VK_SUCCESS;
+        for (int i = 0; i < job.frames; ++i) {
+            const VkResult r = submitCopy(job, i, out[size_t(i)]);
+            if (r < 0) { err = r; break; }
+            copied[size_t(i)] = true;
+            ++n;
         }
+        consumeUnused();
+        markSubmitted();
+        // The frames are timed from when the GPU finished the synthesis (the
+        // copies follow within a fraction of a millisecond), not from the
+        // game's present call: the game's rendering and the synthesis may end
+        // long after that call (a GPU-bound game runs a frame ahead of the
+        // GPU), and frames timed from it became ready together — the
+        // generated one replaced before being displayed, x2 announced and x1
+        // shown. Evenly spaced too when the GPU keeps up: the generated frame
+        // went out when ready, the real one half a frame after the call.
+        clock::time_point origin = clock::now();
+        if (paced && n > 0) waitGpu(job.slot >= 0 ? slots_[size_t(job.slot)].fence : out[0].fence, false, origin);
+        for (int i = 0; i < n; ++i) {
+            if (paced) std::this_thread::sleep_until(paceTarget(job, origin, i));
+            const VkResult r = presentCopied(job, out[size_t(i)]);
+            if (r < 0 && err == VK_SUCCESS) err = r;
+        }
+        if (err < 0) fail(err);
+        return;
+    }
+
+    // Extrapolation: the real frame goes out at once...
+    Copied real;
+    VkResult r = submitCopy(job, 0, real);
+    if (r >= 0) {
+        copied[0] = true;
+        if (job.frames == 1) markSubmitted();
+        r = presentCopied(job, real);
+    }
+    // ...then the synthesis the application thread left to us (Job::synthSlot):
+    // after the real frame's copy on the queue, whatever the present's
+    // outcome, since the slot's fence must signal for the application thread.
+    if (job.synthSlot >= 0) {
+        const VkResult sr = submitDeferredSynthesis(job);
+        if (r >= 0 && sr < 0) r = sr;
+    }
+    if (r < 0) {
+        fail(r);
+        return;
+    }
+    // The predicted frames at their times after the real frame is ready on
+    // the GPU. A newer real frame makes the ones still waiting obsolete:
+    // present() raises cancelPredicted_ and they are dropped, never copied
+    // (so the next synthesis may rewrite the images they would have read).
+    clock::time_point origin = clock::now();
+    bool cancelled = job.frames > 1 && (paced ? !waitGpu(real.fence, true, origin) : predictedCancelled());
+    uint64_t dropped = 0;
+    for (int i = 1; i < job.frames; ++i) {
+        if (!cancelled) cancelled = paced ? !waitUntilOrCancelled(paceTarget(job, origin, i)) : predictedCancelled();
+        if (cancelled) {
+            ++dropped;
+            continue;
+        }
+        Copied c;
+        r = submitCopy(job, i, c);
         if (r < 0) {
-            consumeUnused();
-            markSubmitted();
-            // A genuine out-of-date on the real swapchain means the window
-            // changed (e.g. a resize). On Wayland, drop the reduced-extent flag
-            // so the app's recreation re-learns the new true window size before
-            // we reduce again (see WaylandSurfaceState).
-            if (r == VK_ERROR_OUT_OF_DATE_KHR && surface_ != VK_NULL_HANDLE) {
-                std::lock_guard<std::mutex> lk(dev_.inst->surfMutex);
-                auto it = dev_.inst->waylandSurfaces.find(surface_);
-                if (it != dev_.inst->waylandSurfaces.end()) it->second.reduce = false;
-            }
-            std::lock_guard<std::mutex> wlock(workerMutex_);
-            pendingResult_ = r;
-            acquireCv_.notify_all();
+            fail(r);
             return;
         }
-        // VK_SUBOPTIMAL is deliberately not forwarded: it reports that *our*
-        // real swapchain is no longer optimal, but the application's virtual
-        // swapchain is unaffected, so we must not push it into recreating (some
-        // D3D translation layers hang while recreating). Instead the
-        // application thread re-creates the real swapchain if the surface
-        // changed size (followSurface). A genuine change fails the
-        // acquire/present with OUT_OF_DATE (r < 0 above), which we do
-        // propagate so the application recreates and we rebuild the real one.
-        if (r == VK_SUBOPTIMAL_KHR) surfaceChanged_.store(true, std::memory_order_relaxed);
-        statsOutFrames_.fetch_add(1, std::memory_order_relaxed);
+        copied[size_t(i)] = true;
+        if (i == job.frames - 1) markSubmitted();
+        r = presentCopied(job, c);
+        if (r < 0) {
+            fail(r);
+            return;
+        }
     }
+    if (dropped) statsSkipped_.fetch_add(dropped, std::memory_order_relaxed);
     consumeUnused();
     markSubmitted();
+}
+
+bool VirtualSwapchain::predictedCancelled() {
+    std::lock_guard<std::mutex> wlock(workerMutex_);
+    return cancelPredicted_ || stop_;
+}
+
+bool VirtualSwapchain::waitUntilOrCancelled(clock::time_point target) {
+    std::unique_lock<std::mutex> wlock(workerMutex_);
+    return !workerCv_.wait_until(wlock, target, [this] { return cancelPredicted_ || stop_; });
+}
+
+// Bounded: a frame the GPU has not finished within 250 ms is paced from then
+// (a hang is not ours to diagnose, and the pacing must not stall on it).
+bool VirtualSwapchain::waitGpu(VkFence fence, bool cancellable, clock::time_point& doneAt) {
+    const auto limit = clock::now() + std::chrono::milliseconds(250);
+    for (;;) {
+        // Short waits: vkWaitForFences returns as soon as the fence signals,
+        // so doneAt stays within the driver's wake-up time of the GPU's end.
+        const VkResult r = dev_.vt.WaitForFences(dev_.device, 1, &fence, VK_TRUE, 500'000);
+        if (r != VK_TIMEOUT) break;
+        if (cancellable && predictedCancelled()) return false;
+        if (clock::now() >= limit) break;
+    }
+    doneAt = clock::now();
+    return true;
+}
+
+// Frame k goes out k/m of the frame interval after the origin (when the GPU
+// finished the job's first frame), never less than half a slot after the
+// previous present (a job whose GPU work ended early must not land on the
+// previous frame's refresh), and, with a known refresh grid, well before the
+// refresh it should show on (a present landing just after a refresh would
+// slip a whole period) and on a refresh of its own.
+VirtualSwapchain::clock::time_point VirtualSwapchain::paceTarget(const Job& job, clock::time_point origin, int k) {
+    const double slot = job.intervalMs / std::max(1, job.frames);
+    double t = msOf(origin) + slot * k;
+    if (lastPresentMs_ > 0.0) t = std::max(t, lastPresentMs_ + 0.5 * slot);
+    double lastMs, periodMs;
+    if (feedback_ && displayGrid(lastMs, periodMs)) {
+        double land = lastMs + std::ceil((t - lastMs) / periodMs) * periodMs;
+        if (lastLandMs_ > 0.0 && land < lastLandMs_ + 0.5 * periodMs) land = lastLandMs_ + periodMs;
+        t = land - 0.3 * periodMs;
+    }
+    return clock::time_point(std::chrono::duration_cast<clock::duration>(std::chrono::duration<double, std::milli>(t)));
 }
 
 // ---------------------------------------------------------------------------
@@ -1206,10 +1386,16 @@ void VirtualSwapchain::feedbackLoop() {
                     fbLatencyMs_ = fbLatencyMs_ < 0.0 ? latency : fbLatencyMs_ * 0.9 + latency * 0.1;
                     fbLatencySum_ += latency;
                     ++fbLatencyCount_;
+                    const double frameLatency = now - entry.frameStartMs;
+                    if (entry.frameStartMs > 0.0 && frameLatency >= 0.0 && frameLatency < 1000.0) {
+                        fbFrameLatencySum_ += frameLatency;
+                        ++fbFrameLatencyCount_;
+                    }
                 }
                 if (fbLastMs_ > 0.0 && now - fbLastMs_ < 0.5) {
                     ++fbReplaced_;
                 } else {
+                    ++fbDisplayed_;
                     displayClock_.add(now);
                     fbLastMs_ = now;
                 }
@@ -1312,54 +1498,33 @@ VkResult VirtualSwapchain::submitDeferredSynthesis(const Job& job) {
     return r;
 }
 
-// Presents frame `index` of the job. Interpolation: generated frames first,
-// the real one last. Extrapolation: the real frame first, then the
-// predicted ones.
-VkResult VirtualSwapchain::presentOne(const Job& job, int index, const std::function<void()>* onSubmitted) {
+// Acquires a real swapchain image and submits the copy of frame `index` of
+// the job into it. Interpolation: generated frames first, the real one last.
+// Extrapolation: the real frame first, then the predicted ones.
+VkResult VirtualSwapchain::submitCopy(const Job& job, int index, Copied& out) {
     const bool real = job.realFirst ? index == 0 : index == job.frames - 1;
     const uint32_t output = job.realFirst ? static_cast<uint32_t>(index - 1) : static_cast<uint32_t>(index);
-
-    // With FIFO the presentation engine paces the frames; otherwise spread
-    // them evenly over the game's frame interval. A predicted frame is
-    // obsolete as soon as the next real one has arrived: skip it instead of
-    // delaying the real frame behind it.
-    if (index > 0 && job.pacing && presentMode_ != VK_PRESENT_MODE_FIFO_KHR &&
-        presentMode_ != VK_PRESENT_MODE_FIFO_RELAXED_KHR) {
-        auto target = job.start + std::chrono::duration_cast<clock::duration>(
-                                      std::chrono::duration<double, std::milli>(job.intervalMs * index / job.frames));
-        // With a known refresh grid (present feedback, fixed refresh), aim
-        // at the refresh this frame should show on and present well before
-        // it: a present landing just after a refresh would slip a whole
-        // period (judder). Unknown grid (VRR, no feedback): as scheduled.
-        double lastMs, periodMs;
-        if (feedback_ && displayGrid(lastMs, periodMs)) {
-            const double land = lastMs + std::ceil((msOf(target) - lastMs) / periodMs) * periodMs;
-            target = clock::time_point(std::chrono::duration_cast<clock::duration>(
-                std::chrono::duration<double, std::milli>(land - 0.3 * periodMs)));
-        }
-        std::unique_lock<std::mutex> wlock(workerMutex_);
-        if (job.realFirst) {
-            if (workerCv_.wait_until(wlock, target, [this] { return !jobs_.empty() || stop_; })) return VK_EVENT_RESET;
-        } else {
-            wlock.unlock();
-            std::this_thread::sleep_until(target);
-        }
-    } else if (!real && job.realFirst) {
-        std::lock_guard<std::mutex> wlock(workerMutex_);
-        if (!jobs_.empty()) return VK_EVENT_RESET;
-    }
 
     FrameSlot& slot = nextSlot(workerSlots_, workerCursor_);
     uint32_t ri = 0;
     VkResult r = dev_.vt.AcquireNextImageKHR(dev_.device, real_, UINT64_MAX, slot.acquireSem, VK_NULL_HANDLE, &ri);
     if (r < 0) return r;
-    const bool suboptimal = (r == VK_SUBOPTIMAL_KHR);
+    // VK_SUBOPTIMAL is deliberately not forwarded: it reports that *our*
+    // real swapchain is no longer optimal, but the application's virtual
+    // swapchain is unaffected, so we must not push it into recreating (some
+    // D3D translation layers hang while recreating). Instead the application
+    // thread re-creates the real swapchain if the surface changed size
+    // (followSurface). A genuine change fails the acquire/present with
+    // OUT_OF_DATE, which we do propagate.
+    if (r == VK_SUBOPTIMAL_KHR) surfaceChanged_.store(true, std::memory_order_relaxed);
 
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     dev_.vt.BeginCommandBuffer(slot.cmd, &bi);
     const uint32_t profSlot = static_cast<uint32_t>(slots_.size() + (&slot - workerSlots_.data()));
-    fg_->profileBegin(slot.cmd, profSlot);
+    // Without the passes' slot hooks: they belong to the application
+    // thread's synthesis slots (online_tune reads back its sums there).
+    fg_->profileBegin(slot.cmd, profSlot, false);
     if (real) fg_->recordCopySource(slot.cmd, job.source, realImages_[ri].image);
     else fg_->recordCopyOutput(slot.cmd, output, realImages_[ri].image);
     fg_->profileMark(slot.cmd, profSlot, FrameGen::StageCopy);
@@ -1386,7 +1551,36 @@ VkResult VirtualSwapchain::presentOne(const Job& job, int index, const std::func
     si.pCommandBuffers = &slot.cmd;
     si.signalSemaphoreCount = async ? 2 : 1;
     si.pSignalSemaphores = signals;
+    {
+        std::lock_guard<std::mutex> qlock(dev_.queueMutex(dev_.queue));
+        r = dev_.vt.QueueSubmit(dev_.queue, 1, &si, slot.fence);
+        if (r < 0) return r;
+        // The application's present fence (VK_EXT_swapchain_maintenance1)
+        // signals when its swapchain image is free to reuse. Its image is our
+        // *virtual* image, freed once our copy has read it — not when the
+        // real frame finishes displaying. So we signal that fence ourselves
+        // after the copy (queue-ordered) instead of tying it to the real
+        // present; otherwise the game blocks forever waiting on a display
+        // completion that our async worker owns. A deferred synthesis still
+        // reads it: submitDeferredSynthesis signals then.
+        if (real && job.presentFence && job.synthSlot < 0) {
+            VkSubmitInfo fs{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+            dev_.vt.QueueSubmit(dev_.queue, 1, &fs, job.presentFence);
+        }
+    }
+    if (async) {
+        std::lock_guard<std::mutex> wlock(workerMutex_);
+        pendingCopyDone_.push_back(slot.copyDone);
+    }
+    slot.submitted = true;
+    out.image = ri;
+    out.real = real;
+    out.fence = slot.fence;
+    return VK_SUCCESS;
+}
 
+VkResult VirtualSwapchain::presentCopied(const Job& job, const Copied& c) {
+    uint32_t ri = c.image;
     VkPresentIdKHR presentId{VK_STRUCTURE_TYPE_PRESENT_ID_KHR};
     VkSwapchainPresentModeInfoEXT presentMode{VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODE_INFO_EXT};
     const VkPresentModeKHR presentModeValue = static_cast<VkPresentModeKHR>(job.presentMode);
@@ -1398,7 +1592,7 @@ VkResult VirtualSwapchain::presentOne(const Job& job, int index, const std::func
     pi.pImageIndices = &ri;
     const void** tail = &pi.pNext;
     uint64_t feedbackId = 0;
-    if (real && job.presentId) {
+    if (c.real && job.presentId) {
         presentId.swapchainCount = 1;
         presentId.pPresentIds = &job.presentId;
         *tail = &presentId;
@@ -1411,50 +1605,40 @@ VkResult VirtualSwapchain::presentOne(const Job& job, int index, const std::func
         *tail = &presentId;
         tail = &presentId.pNext;
     }
-    // The application's present fence (VK_EXT_swapchain_maintenance1) signals
-    // when its swapchain image is free to reuse. Its image is our *virtual*
-    // image, freed once our copy has read it — not when the real frame finishes
-    // displaying. So we signal that fence ourselves after the copy (below),
-    // instead of tying it to the real present; otherwise the game blocks
-    // forever waiting on a display completion that our async worker owns.
     if (job.presentMode >= 0) {
         presentMode.swapchainCount = 1;
         presentMode.pPresentModes = &presentModeValue;
         *tail = &presentMode;
         tail = &presentMode.pNext;
     }
-
-    std::lock_guard<std::mutex> qlock(dev_.queueMutex(dev_.queue));
-    r = dev_.vt.QueueSubmit(dev_.queue, 1, &si, slot.fence);
-    if (r < 0) return r;
-    lastCopySubmitted_ = true;
-    if (async) {
-        std::lock_guard<std::mutex> wlock(workerMutex_);
-        pendingCopyDone_.push_back(slot.copyDone);
-    }
-    // Signal the application's present fence after the copy (queue-ordered): its
-    // virtual image is then free to reuse, so its next frame can proceed. A
-    // deferred synthesis still reads it: submitDeferredSynthesis signals then.
-    if (real && job.presentFence && job.synthSlot < 0) {
-        VkSubmitInfo fs{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-        dev_.vt.QueueSubmit(dev_.queue, 1, &fs, job.presentFence);
-    }
-    slot.submitted = true;
-    if (onSubmitted) (*onSubmitted)();
-    if (real)
+    const auto now = clock::now();
+    if (c.real)
         statsRealDelayUs_.fetch_add(
-            static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(clock::now() - job.start).count()),
+            static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(now - job.start).count()),
             std::memory_order_relaxed);
-    r = dev_.vt.QueuePresentKHR(dev_.queue, &pi);
+    VkResult r;
+    {
+        std::lock_guard<std::mutex> qlock(dev_.queueMutex(dev_.queue));
+        r = dev_.vt.QueuePresentKHR(dev_.queue, &pi);
+    }
+    // For the spacing of the next present (paceTarget): when this one went
+    // out, and the refresh it was due to show on.
+    lastPresentMs_ = msOf(now);
+    double lastMs, periodMs;
+    lastLandMs_ = feedback_ && displayGrid(lastMs, periodMs)
+                      ? lastMs + std::ceil((lastPresentMs_ - lastMs) / periodMs) * periodMs
+                      : 0.0;
     if (feedbackId && r >= 0) {
         {
             std::lock_guard<std::mutex> lock(fbMutex_);
-            if (!fbPaused_) fbPending_.push_back({feedbackId, msOf(job.start), real});
+            if (!fbPaused_) fbPending_.push_back({feedbackId, msOf(job.start), job.frameStartMs, c.real});
         }
         fbCv_.notify_one();
     }
-    if (r == VK_SUCCESS && suboptimal) r = VK_SUBOPTIMAL_KHR;
-    return r;
+    if (r == VK_SUBOPTIMAL_KHR) surfaceChanged_.store(true, std::memory_order_relaxed);
+    if (r < 0) return r;
+    statsOutFrames_.fetch_add(1, std::memory_order_relaxed);
+    return VK_SUCCESS;
 }
 
 } // namespace bdex
