@@ -44,4 +44,25 @@ for f in layer/src/*.cpp layer/src/passes/*.cpp; do
   n=$((n + 1))
 done
 echo "capture include order: $n files checked"
+# Linkage, which a syntax check cannot see (vécu: a function the launcher's
+# header declares, defined inside an anonymous namespace — LNK2019 under
+# MSVC only): every bdex:: function main.cpp calls that the capture app's
+# own headers declare must be defined, with external linkage, in one of its
+# objects. (capture.cpp — C++/WinRT — is not compiled here: its class's
+# members are left out.)
+obj=$(mktemp -d)
+for f in capture/src/main.cpp capture/src/launcher.cpp capture/src/injection.cpp capture/src/report.cpp capture/src/tray.cpp capture/src/vkctx.cpp; do
+  x86_64-w64-mingw32-g++-posix -std=c++20 -c -o "$obj/$(basename "$f" .cpp).o" -DWIN32_LEAN_AND_MEAN -DNOMINMAX     -DVK_USE_PLATFORM_WIN32_KHR -DBDEX_LAYER_NAME='"VK_LAYER_BDEX_framegen"' -DBDEX_LAYER_VERSION_STR='"0"' -DBDEX_VERSION_STR='"0"'     -Ilayer/src -Ibuild-gen/layer/generated -Icapture/src -isystem /tmp/vkinc "$f" 2>/dev/null || { echo "FAIL [objects] $f"; status=1; }
+done
+declared=$(grep -hoE "\b[a-zA-Z_][a-zA-Z0-9_]*\(" capture/src/launcher.h capture/src/injection.h capture/src/report.h capture/src/tray.h capture/src/vkctx.h | tr -d '(' | sort -u)
+defined=$(for o in "$obj"/*.o; do x86_64-w64-mingw32-nm -C --defined-only "$o"; done | awk '$2 == "T" { $1 = ""; $2 = ""; print }')
+missing=0
+for sym in $(x86_64-w64-mingw32-nm -C --undefined-only "$obj/main.o" | grep -oE "bdex::[A-Za-z_][A-Za-z0-9_:]*" | sort -u); do
+  name=${sym##*::}
+  grep -qx "$name" <<<"$declared" || continue
+  case $sym in bdex::Capture::*) continue ;; esac
+  grep -qE "${sym}(\[abi:[a-z0-9]+\])?\(" <<<"$defined" || { echo "FAIL [link] $sym: called by main.cpp, defined nowhere with external linkage"; missing=1; }
+done
+rm -rf "$obj"
+[ $missing -eq 0 ] && echo "capture linkage: main.cpp's calls into the capture app's headers resolved" || status=1
 exit $status

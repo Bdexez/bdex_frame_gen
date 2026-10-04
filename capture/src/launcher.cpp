@@ -916,7 +916,7 @@ void persist(const LaunchChoice& c) {
 // the Linux control panel does) — so that injection is there to choose.
 // (A configuration that already says, e.g. require_app = 0 to generate in
 // every Vulkan game without the launcher, is kept.)
-void armLayer() {
+void armLayerConfig() {
     if (!layerRegistered()) return;
     std::vector<std::pair<std::string, std::string>> kv;
     if (globalConfigValue("enabled").empty()) kv.emplace_back("enabled", "1");
@@ -1197,7 +1197,7 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             ui->choice->ok = true;
             persist(*ui->choice);
-            armLayer();
+            armLayerConfig();
             DestroyWindow(hwnd);
             return 0;
         }
@@ -1287,6 +1287,9 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 } // namespace
+
+// (launcher.h: main.cpp arms the layer when it registers it.)
+void armLayer() { armLayerConfig(); }
 
 std::vector<std::string> vulkanGpuNames() {
     std::vector<std::string> out;
