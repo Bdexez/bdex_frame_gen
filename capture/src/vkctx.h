@@ -85,8 +85,22 @@ public:
     };
     const Job& job() const { return job_; }
     // Presents frame `index` of the current job. 0 = ok, 1 = swapchain out of
-    // date (resize and retry), -1 = fatal.
+    // date (resize and retry), -1 = fatal. A suboptimal swapchain still
+    // presents (0): see suboptimal().
     int present(int index);
+    // The pacing origin: waits (bounded) for the GPU to finish the last
+    // synthesis (interpolation: before the generated frames) or the last
+    // present's copy (extrapolation: the real frame), and returns when it
+    // did. The frames of a job are timed from there, not from the capture:
+    // the GPU, shared with the game, may end the work much later, and frames
+    // timed from their submission then reach the display together.
+    // `cancel` (optional): polled while waiting; true gives up (returns now).
+    clock::time_point waitSynthesis();
+    clock::time_point waitLastCopy(bool (*cancel)(void*) = nullptr, void* ctx = nullptr);
+    // A present reported VK_SUBOPTIMAL_KHR since the last call; the swapchain
+    // only needs re-creating when the window's size changed (sizeChanged()).
+    bool takeSuboptimal() { const bool s = suboptimal_; suboptimal_ = false; return s; }
+    bool sizeChanged() const;
 
     // HUD figures (captured fps, output fps).
     void setHud(int gameFps, int outFps);
@@ -150,6 +164,11 @@ private:
     static constexpr uint32_t kHistory = 3;
     AllocatedImage history_[kHistory];
     uint32_t captureW_ = 0, captureH_ = 0;  // history / engine render extent
+    uint32_t engineW_ = 0, engineH_ = 0;    // display extent the engine was built for
+    VkFence lastSynthFence_ = VK_NULL_HANDLE;  // the last synthesize()'s submission
+    VkFence lastCopyFence_ = VK_NULL_HANDLE;   // the last present()'s copy
+    bool suboptimal_ = false;
+    clock::time_point waitFence(VkFence fence, bool (*cancel)(void*), void* ctx);
     int prev_ = -1;                          // history index of the previous frame
     uint32_t cur_ = 0;                       // history index of the last frame
     uint32_t parity_ = 0;

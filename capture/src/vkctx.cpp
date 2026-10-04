@@ -379,8 +379,9 @@ bool VkCtx::createSwapchain(uint32_t w, uint32_t h) {
     LOGI("swapchain %ux%u, %u images, %s", width_, height_, nImg, presentModeName());
 
     // The engine's display extent changed: rebuild it (the history is lost,
-    // the next frame is analysed without a predecessor).
-    if (captureW_ && !rebuildEngine(captureW_, captureH_)) return false;
+    // the next frame is analysed without a predecessor). A swapchain
+    // re-created at the same size keeps the engine.
+    if (captureW_ && (width_ != engineW_ || height_ != engineH_) && !rebuildEngine(captureW_, captureH_)) return false;
     return true;
 }
 
@@ -421,6 +422,8 @@ void VkCtx::destroyEngine() {
     prev_ = -1;
     parity_ = 0;
     generated_ = false;
+    engineW_ = engineH_ = 0;
+    lastSynthFence_ = lastCopyFence_ = VK_NULL_HANDLE;
 }
 
 bool VkCtx::rebuildEngine(uint32_t cw, uint32_t ch) {
@@ -447,6 +450,8 @@ bool VkCtx::rebuildEngine(uint32_t cw, uint32_t ch) {
         destroyEngine();
         return false;
     }
+    engineW_ = width_;
+    engineH_ = height_;
     LOGI("engine: capture %ux%u -> display %ux%u, %d frame(s) per capture", cw, ch, width_,
          height_, std::max(1, layerDev_.config.multiplier));
     return true;
@@ -657,6 +662,7 @@ int VkCtx::synthesize(const Capture::Frame& f, bool& consumed) {
         LOGE("synthesis submit failed (%s)", vkResultName(sr));
         return -1;
     }
+    lastSynthFence_ = s.fence;
     consumed = true;
 
     job_.frames = interpolate ? mult : 1;
@@ -717,6 +723,7 @@ int VkCtx::present(int index) {
         LOGE("present submit failed (%s)", vkResultName(sr));
         return -1;
     }
+    lastCopyFence_ = s.fence;
 
     VkSwapchainKHR sw = swapchain_;
     VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
@@ -726,12 +733,44 @@ int VkCtx::present(int index) {
     pi.pSwapchains = &sw;
     pi.pImageIndices = &img;
     VkResult pr = vkQueuePresentKHR(queue_, &pi);
-    if (pr == VK_ERROR_OUT_OF_DATE_KHR || pr == VK_SUBOPTIMAL_KHR) return 1;
+    if (pr == VK_ERROR_OUT_OF_DATE_KHR) return 1;
+    // Suboptimal still presented: the main loop re-creates the swapchain only
+    // if the window's size changed (re-creating on every suboptimal present,
+    // which some drivers report continuously, rebuilt the engine each frame).
+    if (pr == VK_SUBOPTIMAL_KHR) {
+        suboptimal_ = true;
+        pr = VK_SUCCESS;
+    }
     if (pr != VK_SUCCESS) {
         LOGE("vkQueuePresentKHR failed (%s)", vkResultName(pr));
         return -1;
     }
     return 0;
+}
+
+bool VkCtx::sizeChanged() const {
+    if (!swapchain_) return true;
+    VkSurfaceCapabilitiesKHR caps;
+    if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys_, surface_, &caps) != VK_SUCCESS) return false;
+    return caps.currentExtent.width != UINT32_MAX &&
+           (caps.currentExtent.width != width_ || caps.currentExtent.height != height_);
+}
+
+VkCtx::clock::time_point VkCtx::waitFence(VkFence fence, bool (*cancel)(void*), void* ctx) {
+    if (!fence) return clock::now();
+    const auto limit = clock::now() + std::chrono::milliseconds(250);
+    for (;;) {
+        // Short waits: vkWaitForFences returns as soon as the fence signals.
+        if (vkWaitForFences(dev_, 1, &fence, VK_TRUE, 500'000) != VK_TIMEOUT) break;
+        if ((cancel && cancel(ctx)) || clock::now() >= limit) break;
+    }
+    return clock::now();
+}
+
+VkCtx::clock::time_point VkCtx::waitSynthesis() { return waitFence(lastSynthFence_, nullptr, nullptr); }
+
+VkCtx::clock::time_point VkCtx::waitLastCopy(bool (*cancel)(void*), void* ctx) {
+    return waitFence(lastCopyFence_, cancel, ctx);
 }
 
 // ------------------------------------------------------------- shutdown ---
