@@ -19,19 +19,21 @@ namespace fg {
 constexpr int kMaxFrames = 8;
 
 struct DownsamplePC { int32_t size[2]; int32_t fromColor; int32_t transfer; };
-struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; float gradWeight; float censusWeight; float censusMargin; float rotWeight; int32_t temporal; float zeroBiasContrast; float chromaWeight; int32_t chromaHistory; float zeroBiasCap; int32_t altVector; };
+struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; float gradWeight; float censusWeight; float censusMargin; float rotWeight; int32_t temporal; float zeroBiasContrast; float chromaWeight; int32_t chromaHistory; float zeroBiasCap; };
 struct SizePC { int32_t size[2]; };
 struct HistPC { int32_t size[2]; int32_t tiles; };
 struct ReducePC { int32_t size[2]; int32_t tiles; float cutHist; float cutLow; };
 
 struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; int32_t subpixel; };
 // interpolate.comp's kFeatures bits: the opt-ins a synthesis variant compiles in.
+// (128, 512 and 8192 were alt_vectors, confidence_fallback and affine_flow,
+// removed on 2026-10-04 after measuring negative or neutral.)
 enum : uint32_t {
     SYNTH_BICUBIC = 1u, SYNTH_TIMING = 2u, SYNTH_LOCAL_CUT = 4u, SYNTH_ACCEL = 8u, SYNTH_REVEAL = 16u, SYNTH_SPLAT = 32u,
-    SYNTH_PIXEL_VECTORS = 64u, SYNTH_ALT = 128u, SYNTH_OCCLUSION = 256u, SYNTH_CONF_FALLBACK = 512u,
-    SYNTH_STATIC_GUARD = 1024u, SYNTH_STATIC_MASK = 2048u, SYNTH_DEBUG_CONF = 4096u, SYNTH_AFFINE = 8192u,
+    SYNTH_PIXEL_VECTORS = 64u, SYNTH_OCCLUSION = 256u,
+    SYNTH_STATIC_GUARD = 1024u, SYNTH_STATIC_MASK = 2048u, SYNTH_DEBUG_CONF = 4096u,
 };
-struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; float occlusionStrength; float staticGuard; float extrapHold; int32_t splat; int32_t pixelVectors; int32_t transfer; int32_t timing; int32_t localCut; float accel; int32_t bicubic; float staticFrames; int32_t revealFill; float confFallback; int32_t altVectors; int32_t altBlocks[2]; int32_t affine; };
+struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; float occlusionStrength; float staticGuard; int32_t splat; int32_t pixelVectors; int32_t transfer; int32_t timing; int32_t localCut; float accel; int32_t bicubic; float staticFrames; int32_t revealFill; };
 struct UpscalePC { int32_t outSize[2]; int32_t srcSize[2]; uint32_t encoding; int32_t filter; };
 struct FrameStatePC { int32_t size[2]; int32_t mode; int32_t multiplier; float sinceLastMs; float intervalMs; int32_t flags; int32_t gateCount; uint32_t dupMaxPixels; float displayMs[kMaxFrames]; int32_t realPos; };
 struct CasPC { int32_t size[2]; uint32_t encoding; float sharpness; };

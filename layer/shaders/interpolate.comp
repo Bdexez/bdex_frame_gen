@@ -32,13 +32,10 @@ const bool kAccel = (kFeatures & 8u) != 0u;
 const bool kReveal = (kFeatures & 16u) != 0u;
 const bool kSplat = (kFeatures & 32u) != 0u;
 const bool kPixelVectors = (kFeatures & 64u) != 0u;
-const bool kAlt = (kFeatures & 128u) != 0u;
 const bool kOcclusion = (kFeatures & 256u) != 0u;
-const bool kConfFallback = (kFeatures & 512u) != 0u;
 const bool kStaticGuard = (kFeatures & 1024u) != 0u;
 const bool kStaticMask = (kFeatures & 2048u) != 0u;
 const bool kDebugConf = (kFeatures & 4096u) != 0u;
-const bool kAffine = (kFeatures & 8192u) != 0u;
 
 layout(binding = 0) uniform sampler2D prevTex;
 layout(binding = 1) uniform sampler2D curTex;
@@ -69,8 +66,6 @@ layout(std430, binding = 6) readonly buffer SplatMap { uint key[]; } splatMap;  
 layout(binding = 7) uniform sampler2D prevBwdTex;  // previous pair's backward flow (extrapolate_accel)
 layout(binding = 8) uniform sampler2D staticMask;  // hud_mask: frames each render pixel stayed unchanged (1x1 zero when off)
 layout(binding = 9) uniform sampler2D confMap;     // flow_confidence: trust in the finest flow, 0..1 (1x1 one when off)
-layout(std430, binding = 10) readonly buffer AltFwd { vec2 v[]; } altFwd;  // alt_vectors: the matcher's second hypothesis per block, forward
-layout(std430, binding = 11) readonly buffer AltBwd { vec2 v[]; } altBwd;  // ... backward
 
 #define ENC_RGBA8      0u
 #define ENC_BGRA8      1u
@@ -97,7 +92,6 @@ layout(push_constant) uniform PC {
     int iterations;    // fixed-point iterations of the flow lookup
     float occlusionStrength; // 0 keeps the historical interpolation path
     float staticGuard;       // 0 keeps the historical path; see staticness()
-    float extrapHold;        // extrapolation: keep inconsistent pixels in place (1 = historical)
     int splat;               // extrapolation: take the source from the forward-splat map where one landed
     int pixelVectors;        // interpolation: per-pixel choice among the neighbouring blocks' vectors
     int transfer;            // TRANSFER_* of the sampled values (HDR: errors on a perceptual scale)
@@ -107,38 +101,7 @@ layout(push_constant) uniform PC {
     int bicubic;             // synth_bicubic: Catmull-Rom sampling along the trajectories (0 = bilinear, historical)
     float staticFrames;      // hud_mask: pixels unchanged for at least this many frames stay as in cur (0 = off)
     int revealFill;          // extrapolation: a revealed pixel takes the slower-moving (background) of the last two sources
-    float confFallback;      // interpolation: fade to the plain cross-fade where confMap is low (0 = off, historical)
-    int altVectors;          // interpolation: also try the matcher's second hypotheses (altFwd / altBwd)
-    ivec2 altBlocks;         // their grid (the finest level's blocks)
-    int affine;              // interpolation, with pixelVectors: also try the affine fit of the flow around the source
 } pc;
-
-// affine_flow: the motion of a rotation or a zoom changes inside a block,
-// which the blocks' vectors (and their bilinear blend) follow by steps. The
-// affine field (least squares) of the 3x3 flow texels around texel position
-// u, evaluated at u — in display pixels. False where it adds nothing (a
-// uniform motion) or cannot hold (two motions: a residual over 2 px — the
-// block vectors are whole level pixels, so a smooth field never fits exactly).
-bool affineAt(sampler2D flow, ivec2 ts, vec2 u, out vec2 v) {
-    ivec2 c = ivec2(floor(u));
-    vec2 f = u - vec2(c) - 0.5;
-    vec2 vals[9];
-    vec2 sum = vec2(0.0), sx = vec2(0.0), sy = vec2(0.0);
-    for (int k = 0; k < 9; ++k) {
-        ivec2 o = ivec2(k % 3 - 1, k / 3 - 1);
-        vec2 w = texelFetch(flow, clamp(c + o, ivec2(0), ts - 1), 0).xy;
-        vals[k] = w;
-        sum += w;
-        sx += float(o.x) * w;
-        sy += float(o.y) * w;
-    }
-    vec2 a = sum / 9.0, jx = sx / 6.0, jy = sy / 6.0;
-    float r = 0.0;
-    for (int k = 0; k < 9; ++k) r = max(r, length(vals[k] - (a + jx * float(k % 3 - 1) + jy * float(k / 3 - 1))));
-    if (r * pc.flowScale > 2.0 || (length(jx) + length(jy)) * pc.flowScale < 0.1) return false;
-    v = (a + jx * f.x + jy * f.y) * pc.flowScale;
-    return true;
-}
 
 // flow_confidence's trust at display pixel p (the map covers the flow's area).
 float confidenceAt(vec2 p) { return texture(confMap, p * pc.flowInvSize).r; }
@@ -323,8 +286,8 @@ void main() {
         // shows a moving object at its old position next to its warped copy
         // (a double image). Following the warp everywhere instead (it
         // stretches disoccluded areas rather than ghosting them) measured
-        // +2.0 dB on the demo, +1.1 dB fast, +0.5 dB on a HUD scene;
-        // extrapolate_hold = 1 restores the historical behaviour.
+        // +2.0 dB on the demo, +1.1 dB fast, +0.5 dB on a HUD scene (the
+        // old behaviour, extrapolate_hold, was removed on 2026-10-04).
         float s = t - 1.0;
         vec2 B = bwdAt(q);
         vec2 pb;
@@ -363,10 +326,7 @@ void main() {
                 else pb = src + (q - (src - s * B));
             }
         }
-        vec4 ce = sampleC(curTex, pb / fsize);
-        float inconsistency = length(B + fwdAt(pb + B));
-        float w = pc.extrapHold * smoothstep(2.0, 6.0, inconsistency);
-        c = mix(ce, cur, w);
+        c = sampleC(curTex, pb / fsize);
         F = -B;
     } else {
     // The flow fields are indexed by source-frame position, but we need the
@@ -449,15 +409,6 @@ void main() {
             lo = min(lo, triedF[k]);
             hi = max(hi, triedF[k]);
         }
-        if (kAffine && pc.affine != 0) {
-            vec2 Fa;
-            if (affineAt(flowFwd, fts, pf * pc.flowInvSize * vec2(fts), Fa)) {
-                vec2 pk = q - t * Fa;
-                vec4 a = texture(prevTex, pk / fsize), b = texture(curTex, (pk + Fa) / fsize);
-                float e = colourError(a, b);
-                if (e < ef) { ef = e; F = Fa; pf = pk; cf = a; cf2 = b; }
-            }
-        }
         bool boundaryF = any(greaterThan(hi - lo, vec2(0.5)));
         for (int k = 0; k < 4 && boundaryF; ++k) {
             vec2 Fk = triedF[k];
@@ -480,15 +431,6 @@ void main() {
             triedB[k] = texelFetch(flowBwd, clamp(b0 + ivec2(k & 1, k >> 1), ivec2(0), bts - 1), 0).xy * pc.flowScale;
             lo = min(lo, triedB[k]);
             hi = max(hi, triedB[k]);
-        }
-        if (kAffine && pc.affine != 0) {
-            vec2 Ba;
-            if (affineAt(flowBwd, bts, pb * pc.flowInvSize * vec2(bts), Ba)) {
-                vec2 pk = q - (1.0 - t) * Ba;
-                vec4 a = texture(curTex, pk / fsize), b = texture(prevTex, (pk + Ba) / fsize);
-                float e = colourError(a, b);
-                if (e < eb) { eb = e; B = Ba; pb = pk; cb = a; cb2 = b; }
-            }
         }
         bool boundaryB = any(greaterThan(hi - lo, vec2(0.5)));
         for (int k = 0; k < 4 && boundaryB; ++k) {
@@ -513,29 +455,6 @@ void main() {
     // per-candidate weight below discards that trajectory anyway. The blend
     // amount is gated by the trajectory's own consistency so an occluded sample
     // never contaminates the candidate it belongs to.
-    if (kAlt && pc.altVectors != 0) {
-        // alt_vectors: the block's second hypothesis, a motion 2 px or more
-        // from the one the matcher kept — kept per pixel where its two
-        // endpoints agree better (fast motion over repeating or flat texture,
-        // where the lowest cost is not the true motion).
-        ivec2 ai = clamp(ivec2(pf * pc.flowInvSize * vec2(pc.altBlocks)), ivec2(0), pc.altBlocks - 1);
-        vec2 Fa = altFwd.v[ai.y * pc.altBlocks.x + ai.x] * pc.flowScale;
-        vec2 pa = q - t * Fa;
-        vec4 a = texture(prevTex, pa / fsize), b = texture(curTex, (pa + Fa) / fsize);
-        // (only where the trajectory kept is poor, and clearly better: where
-        // every trajectory nearly agrees — flat areas, smooth texture — the
-        // second hypothesis won on noise and tore thin text: scroll -3.0 dB
-        // without the margin, subpixel -2.7 without the poor-trajectory test)
-        float e = colourError(a, b);
-        if (ef > 0.04 && e < 0.75 * ef - 0.004) { ef = e; F = Fa; pf = pa; cf = a; cf2 = b; }
-        ivec2 bi = clamp(ivec2(pb * pc.flowInvSize * vec2(pc.altBlocks)), ivec2(0), pc.altBlocks - 1);
-        vec2 Ba = altBwd.v[bi.y * pc.altBlocks.x + bi.x] * pc.flowScale;
-        vec2 pba = q - (1.0 - t) * Ba;
-        a = texture(curTex, pba / fsize);
-        b = texture(prevTex, (pba + Ba) / fsize);
-        e = colourError(a, b);
-        if (eb > 0.04 && e < 0.75 * eb - 0.004) { eb = e; B = Ba; pb = pba; cb = a; cb2 = b; }
-    }
     if (kBicubic && pc.bicubic != 0) {
         // synth_bicubic: the trajectories are chosen on bilinear samples
         // (the errors that pick them barely change), and only the four
@@ -581,11 +500,6 @@ void main() {
     // newly revealed pixels it avoids blending in the hidden endpoint.
     float bad = smoothstep(0.12, 0.25, min(ef, eb)) * (1.0 - pc.occlusionStrength);
     c = mix(c, mix(texture(prevTex, uv), cur, t), bad);
-    // confidence_fallback: where the flow itself is not trusted (its vectors
-    // do not round-trip, or pair different luma), the plain cross-fade —
-    // a soft blur instead of a confidently wrong warp.
-    if (kConfFallback && pc.confFallback > 0.0)
-        c = mix(c, mix(texture(prevTex, uv), cur, t), pc.confFallback * (1.0 - confidenceAt(q)));
     }
 
     // Interpolation only: an unchanged pixel says nothing about the frame

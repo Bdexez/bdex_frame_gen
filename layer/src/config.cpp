@@ -243,12 +243,8 @@ const std::vector<OptionDef>& registry() {
     B("pipeline_cache", nullptr, &Config::pipelineCache),
     B("crash_log", nullptr, &Config::crashLog),
     B("flow_confidence", nullptr, &Config::flowConfidence),
-    F("confidence_fallback", nullptr, &Config::confidenceFallback, 0.f, 1.f, kLive),
     F("learned_correction", nullptr, &Config::learnedCorrection, 0.f, 1.f, kLive),
     F("luma_match", nullptr, &Config::lumaMatch, 0.f, 0.5f, kLive),
-    F("flow_upsample", nullptr, &Config::flowUpsample, 0.f, 0.5f, kLive),
-    B("alt_vectors", nullptr, &Config::altVectors, kLive),
-    B("affine_flow", nullptr, &Config::affineFlow, kLive),
     F("learned_flow", nullptr, &Config::learnedFlow, 0.f, 1.f, kLive),
     B("interp_splat", nullptr, &Config::interpSplat, kLive),
     B("sync_present", "sync", &Config::syncPresent),
@@ -283,7 +279,6 @@ const std::vector<OptionDef>& registry() {
     F("occlusion_strength", nullptr, &Config::occlusionStrength, 0.f, 1.f, kLive, Tune::SynthInterpolation, "1", 10),
     B("temporal_prediction", nullptr, &Config::temporalPrediction, kLive, Tune::Always, "1", 2),
     B("extrapolate_splat", nullptr, &Config::extrapolateSplat, kLive, Tune::SynthExtrapolation, "1", 10),
-    F("extrapolate_hold", nullptr, &Config::extrapolateHold, 0.f, 1.f, kLive),
     F("extrapolate_accel", nullptr, &Config::extrapolateAccel, 0.f, 1.f, kLive, Tune::SynthExtrapolation, "1", 11),
     F("flow_temporal", nullptr, &Config::flowTemporal, 0.f, 1.f, kLive, Tune::Always, "1", 4),
     I("subpixel_lk", nullptr, &Config::subpixelLk, 0, 4, kLive, Tune::Extrapolation, "2", 5),
@@ -796,7 +791,6 @@ std::string Config::describe() const {
     if (zeroBiasContrast > 0.f) o << " zero_bias_contrast=" << zeroBiasContrast;
     if (temporalPrediction) o << " temporal_prediction=1";
     if (extrapolateSplat) o << " extrapolate_splat=1";
-    if (extrapolateHold > 0.f) o << " extrapolate_hold=" << extrapolateHold;
     if (extrapolateAccel > 0.f) o << " extrapolate_accel=" << extrapolateAccel;
     if (flowTemporal > 0.f) o << " flow_temporal=" << flowTemporal;
     if (subpixelLk > 0) o << " subpixel_lk=" << subpixelLk;

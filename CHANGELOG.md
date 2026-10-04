@@ -6,6 +6,19 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed: the rejected experiments
+
+- **`alt_vectors`, `affine_flow`, `flow_upsample`, `confidence_fallback`
+  and `extrapolate_hold` are gone** (option, shader code, pass, panel and
+  launcher entries). Each was measured negative or neutral and left off
+  (`docs/MEMOIRE.md` §9 keeps the measurements); the code still cost
+  shader variants, determinism and validation runs and panel surface. The
+  matcher no longer writes a second hypothesis buffer, the synthesis binds
+  two storage buffers less, extrapolation no longer fetches the forward
+  flow for the old hold. Every other setting gives the same frames bit for
+  bit (276 settings × sequences × modes compared, RTX 3060 Ti). A
+  configuration file still naming one of them is warned about and ignored.
+
 ### Windows: injection by default
 
 - **Injection is the default on Windows** (`method = auto`): the launcher
