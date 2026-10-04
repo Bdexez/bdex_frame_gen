@@ -7,7 +7,8 @@ reprendre le projet sans re-dérivation. Sources de vérité complémentaires :
 fonctionnement par système, historique, chiffres, problèmes ouverts — à tenir
 à jour à chaque session), `README.md` (options, usage Linux), `docs/windows-port.md` (mode 1),
 `docs/windows-capture.md` (mode 2, checklists de validation hardware),
-`docs/windows-README.md` (usage Windows), `ROADMAP.md` (état + mesures),
+`docs/windows-README.md` (usage Windows), `ROADMAP.md` (état et reste à faire),
+`docs/corpus-jeux.md` (enregistrer des jeux, trancher les options en attente),
 `CHANGELOG.md` (journal par version).
 
 ---
@@ -38,6 +39,8 @@ tous les shaders de `layer/shaders/`.
 
 - `layer/src/` — la couche : `layer.cpp` (négociation loader, dispatch,
   `vkGetInstanceProcAddr`), `swapchain.cpp` (virtualisation des swapchains,
+  côté thread du jeu : création, acquire, `present`) + `swapchain_worker.cpp`
+  (le worker : `runJob`, copies, présentations cadencées, retour d'affichage ;
   pacing), `present_slice.{h,cpp}` (réindexation des tableaux `pNext` lors
   d'un present multi-swapchain), `framegen.cpp` (orchestration du pipeline ;
   `framegen_output.cpp` = étage de sortie de l'image réelle, CAS ;
@@ -107,6 +110,7 @@ bdex-framegen --tuned-profile [JEU] [--apply]           # décisions d'online_tu
 bdex-framegen --record DIR [N] -- <jeu>                 # enregistre N images réelles (corpus)
 tools/corpus_pack.py DIR out.tar.gz --name X            # séquence -> archive (release GitHub "corpus", notée en CI)
 tools/eval_sequence.py <dir_ppm> --variant KEY=VAL     # éval hors ligne (bdex_offline, sans fenêtre) sur séquence enregistrée
+tools/pending_decisions.py SEQ... [--only K,...]       # options en attente notées sur des jeux enregistrés : verdict par option
 tools/replay_bench.py SEQ [--multiplier M] [--other-layer NAME]  # éval EN LIGNE : séquence rejouée comme un jeu (bdex_demo --replay) à travers la couche
 bdex-framegen --calibrate [--apply]                     # bdex-calibrate : coût sur ce GPU, preset/multiplicateur recommandés
 tools/train_flow.py [--write]                           # entraîne learned_flow (numpy, flux vrai de synthèse, bdex_offline --dump-flow)
@@ -385,7 +389,7 @@ refine_all 0, iterations 0), `latency` (extrapolation + x2), `auto`
 (iGPU→performance, dGPU avec ≥2 Gio de VRAM→balanced). Les knobs flow
 avisés (`levels`, `search*`, `refine*`, `flow_scale`, `flow_iterations`)
 désactivent l'auto-tune. Voir `Config` dans `layer/src/config.h` pour la liste
-complète (multiplier 1-4, render_scale, upscale_filter, sharpness, scene cut
+complète (multiplier 1-8, render_scale, upscale_filter, sharpness, scene cut
 0.05/0.09, overlay, debug=flow|split|passthrough, dump PPM…).
 
 **Ajouter une option** (depuis le 2026-09-25) : le membre dans `Config`,
@@ -513,7 +517,8 @@ réintroduire) :
 - **Options opt-in (défaut 0 = bit à bit)** : `zero_bias_contrast`,
   `subpixel`, `pixel_vectors`, `static_guard` (gardé par le flow au pixel),
   `temporal_prediction`, `extrapolate_splat` ; **défaut changé** :
-  l'extrapolation suit le warp partout (`extrapolate_hold=1` = ancien).
+  l'extrapolation suit le warp partout (l'ancien `extrapolate_hold` a été
+  retiré le 2026-10-04).
   Produit : `fps_limit`, `target_fps` (multiplicateur dynamique), `paused` +
   rechargement à chaud de la config, profils fournis `layer/profiles.conf`.
 - **Push constants** : plage de 96 octets (`kPushSize`), `static_assert` sur
@@ -878,7 +883,7 @@ env BDEX_FG_PROFILE=1 BDEX_FG_LOG=2 bdex_demo --size 2560x1440
   arêtes en mouvement).
 - Extrapolation (2026-09-24) : l'ancien repli « pixel incohérent → garder le
   pixel en place » dessinait l'objet à son ancienne position (double image,
-  cf. retour Kenshi). Supprimé (`extrapolate_hold=0` par défaut, 1 = ancien) :
+  cf. retour Kenshi). Supprimé (l'option `extrapolate_hold` aussi, le 2026-10-04) :
   +1,8 dB normal / +1,0 rapide en ligne, zones révélées 7,6 → 20,3 dB.
 - `zero_bias` (0,002 absolu, non normalisé par le contraste) est la cause
   principale des échecs en mouvement rapide : sur contenu peu contrasté le
@@ -911,46 +916,22 @@ env BDEX_FG_PROFILE=1 BDEX_FG_LOG=2 bdex_demo --size 2560x1440
 
 ## 11. Axes d'amélioration
 
-**Qualité du flow (le levier principal)**
-1. **Côté synthèse** : valider le prototype opt-in d'occlusion sur GPU stable
-   et sur jeux réels ; une gestion explicite de visibilité par direction reste
-   à explorer après les mesures census/grad.
-2. Matcher invariant aux rotations/zoom (modèle affine local par bloc).
-3. Étendre les métriques locales existantes (zones révélées / rotation) à des
-   scènes plus variées ; le PSNR global masque encore le tearing.
-4. Régression qualité automatisée : runner CI auto-hébergé avec GPU tournant
-   `run_eval.sh` à chaque push (ou nuit), traquer les dB.
-5. Test hôte du block matcher (référence CPU des coûts + tie-breaking dans
-   `tests/`) — aurait attrapé la régression `0549e44` sans GPU.
-
-**Produit Windows capture (mode 2)**
-6. Phase 3 restante : tray, fallback Desktop Duplication, HDR/VRR, multi-GPU,
-   borderless plein écran, installateur + signing Authenticode, passe Input
-   robuste (le `--fit` et les clics via `WS_EX_TRANSPARENT` à durcir). Faits :
-   hotkey global (toggle) et profils par jeu.
-7. Évaluer la qualité phase 2 sur hardware : flow vs build Linux, régime bas
-   fps (x2 à 30 fps), multipliers x3/x4, interpolation vs extrapolation.
-8. Compléter la mesure de latence de la chaîne capture : le log actuel mesure
-   la sortie du pool WGC jusqu'au retour de `vkQueuePresentKHR`, mais pas le
-   délai entre la présentation du jeu et WGC, ni le balayage écran.
-
-**Windows mode 1 (layer)**
-9. Validation hardware complète (checklist §3 de `docs/windows-port.md`) —
-   le DLL est compilé en CI mais jamais lancé sur Windows.
-10. Forward de `VK_EXT_full_screen_exclusive` à travers la swapchain
-    virtualisée ; build 32-bit + `WOW6432Node` ; outil de config Windows (la
-    GUI GTK est Linux-only) ; installateur.
-
-**Plateforme / infra**
-11. Packaging Linux : publication AUR, COPR/OBS (faits : archives glibc
-    2.29/arm64, .deb/.rpm, PKGBUILD -bin/-git, flake NixOS, panneau texte,
-    couche dans les lanceurs Flatpak/Snap ; Flatpak du panneau impossible :
-    espace de PID du bac à sable) ; polish de `windows-README.md` (section Windows
-    dans le README principal). Steam Deck : plugin Decky fait (2026-10-03,
-    `packaging/decky`, jamais lancé sur un Deck) ; validation sur un vrai
-    Deck (performance de la synthèse sur RDNA2 8 CU, HDR OLED).
-12. Piste phase 4 (optionnelle, fragile) : present-hook injection D3D11/12 en
-    mode low-latency opt-in par jeu solo — jamais par défaut (anti-cheat).
+Tenus à jour dans `ROADMAP.md` (où en est le projet, ce qui reste) et
+`docs/MEMOIRE.md` §9 (problèmes ouverts, essais à ne pas refaire). Retenir :
+- **Options retirées le 2026-10-04** (mesurées négatives ou neutres) :
+  `alt_vectors`, `affine_flow`, `flow_upsample`, `confidence_fallback`,
+  `extrapolate_hold`. Bits `SYNTH_*` 128, 512, 8192 libres. Vérification :
+  hachage des sorties de `bdex_offline` pour chaque réglage de
+  `test_determinism.py` × séquences × modes, avant et après — identiques.
+  Méthode à reprendre pour toute suppression ou refactorisation du moteur.
+- **Où est l'erreur** (2026-10-04, séquences type jeu 1280×720) : la caméra
+  rapide est suivie (34 dB à 80 px par paire) ; 60 à 80 % de l'erreur est
+  au contour des objets qui bougent par eux-mêmes (2 à 4 % des pixels).
+  Sous-pixel, bicubique, `learned_flow`, `levels=5`, `flow_iterations=3`
+  n'y changent rien. Une piste de qualité doit viser ces contours.
+- **Options en attente de vrais jeux** : `tools/pending_decisions.py
+  SEQ…` (verdict par option ; liste `CANDIDATES` à tenir à jour quand une
+  option est tranchée ou ajoutée).
 
 ---
 
