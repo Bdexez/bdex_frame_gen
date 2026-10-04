@@ -2,7 +2,7 @@
 # glibc and musl; 64-bit layer only (Void's 32-bit packages come from its
 # i686 builds, as for every multilib library). tools/ci/void-check.sh
 pkgname=bdex-framegen
-version=0.5.5
+version=0.5.6
 revision=1
 build_style=cmake
 configure_args="-DBDEX_BUILD_DEMO=OFF -DBDEX_BUILD_TESTS=OFF -DBDEX_BUILD_OFFLINE=OFF"

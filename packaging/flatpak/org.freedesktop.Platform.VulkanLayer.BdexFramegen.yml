@@ -49,10 +49,9 @@ modules:
       - -DBDEX_BUILD_OFFLINE=OFF
       - -DBDEX_STATIC_RUNTIME=ON
     sources: &sources
-      # (the first release after 0.5.5: BDEX_INSTALL_LIBDIR is newer than it)
       - type: git
         url: https://github.com/Bdexez/bdex_frame_gen.git
-        branch: main
+        tag: v0.5.6
       # A local checkout instead (tools/ci/flatpak-check.sh):
       # - type: dir
       #   path: ../..

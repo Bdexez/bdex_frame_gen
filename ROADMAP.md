@@ -43,9 +43,9 @@ log is in [`CHANGELOG.md`](CHANGELOG.md).
 5. **Displays**: `present_feedback` on a fixed-refresh screen (the dev box is
    VRR); a real HDR / 10-bit game; Windows capture on an HDR screen;
    `async_compute` and `gpu_budget` on an AMD iGPU.
-6. **A release**: `[Unreleased]` in the changelog holds everything since
-   0.5.5 (2026-09-26). Publishing on the AUR, COPR / OBS, a PPA or Flathub
-   needs a public repository and accounts; the packages are ready.
+6. **Publishing**: 0.5.6 (2026-10-05) is a GitHub release. The AUR,
+   COPR / OBS, a PPA or Flathub need a public repository and accounts; the
+   packages are ready.
 
 ## Next — code
 

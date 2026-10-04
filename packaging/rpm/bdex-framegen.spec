@@ -9,7 +9,7 @@
 %bcond_without lib32
 
 Name:           bdex-framegen
-Version:        0.5.5
+Version:        0.5.6
 Release:        1%{?dist}
 Summary:        Frame generation and upscaling Vulkan layer for games
 License:        LicenseRef-proprietary
@@ -114,5 +114,8 @@ echo "    bdex-framegen --sandboxes"
 %{_datadir}/bdex-framegen/
 
 %changelog
+* Mon Oct 05 2026 Bdexez <elian.marzari@epitech.eu> - 0.5.6-1
+- New upstream release 0.5.6
+
 * Thu Oct 01 2026 Bdexez <elian.marzari@epitech.eu> - 0.5.5-1
 - Source package (COPR, OBS)

@@ -17,7 +17,7 @@ cd /b/src/packaging/flatpak
 python3 - "$ID.yml" <<'PY'
 import re, sys
 s = open(sys.argv[1]).read()
-s, n = re.subn(r"      - type: git\n        url: [^\n]*\n        branch: [^\n]*\n", "      - type: dir\n        path: ../..\n", s)
+s, n = re.subn(r"      - type: git\n        url: [^\n]*\n        (?:branch|tag): [^\n]*\n", "      - type: dir\n        path: ../..\n", s)
 assert n == 1, "git source not found in the manifest"
 open(sys.argv[1], "w").write(s)
 PY

@@ -6,6 +6,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-10-05
+
+Everything since 0.5.5, released together. **From this version on the
+software is proprietary** (`LICENSE`; up to 0.5.5 it was MIT).
+
 ### Removed: the rejected experiments
 
 - **`alt_vectors`, `affine_flow`, `flow_upsample`, `confidence_fallback`
@@ -2131,7 +2136,10 @@ First release.
 - Swapchain image layout transition ordered after the acquire semaphore's
   wait stage (synchronization validation).
 
-[Unreleased]: https://github.com/Bdexez/bdex_frame_gen/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/Bdexez/bdex_frame_gen/compare/v0.5.6...HEAD
+[0.5.6]: https://github.com/Bdexez/bdex_frame_gen/compare/v0.5.5...v0.5.6
+[0.5.5]: https://github.com/Bdexez/bdex_frame_gen/compare/v0.5.4...v0.5.5
+[0.5.4]: https://github.com/Bdexez/bdex_frame_gen/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/Bdexez/bdex_frame_gen/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/Bdexez/bdex_frame_gen/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/Bdexez/bdex_frame_gen/compare/v0.5.0...v0.5.1
