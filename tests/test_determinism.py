@@ -33,6 +33,7 @@ SETTINGS = [
     ("chroma_weight=1", "ie"), ("hud_mask=4", "ie"), ("reveal_fill=1", "e"), ("extrapolate_splat=1", "e"),
     ("extrapolate_accel=1", "e"), ("extrapolate_hold=1", "e"), ("frame_timing=1", "ie"), ("dedup=1", "ie"),
     ("scene_cut_local=1", "ie"), ("smoothness=0.01", "ie"), ("zero_bias=0.004", "ie"),
+    ("zero_bias_cap=0.002", "ie"), ("zero_bias_cap=0", "ie"), ("scene_cut_hist=0.1", "ie"), ("scene_cut_hist=0", "ie"),
     ("census_margin=0.1,census_weight=1", "ie"), ("refine_bias=1", "ie"), ("levels=5", "ie"),
     ("search=3,search_fine=3", "ie"), ("flow_iterations=2", "ie"), ("refine=0", "ie"), ("refine_all=0", "ie"),
     ("scene_cut_low=0.02,scene_cut_high=0.04", "ie"), ("online_tune=1", "ie"),

@@ -62,9 +62,11 @@ struct Config {
     float sceneCutLow   = 0.05f;  // mean matching cost above which we start fading to the real frame
     float sceneCutHigh  = 0.09f;  // ... and above which the generated frame is a plain duplicate
     bool  sceneCutLocal = false;  // scene-cut test per region (8x8 grid) instead of on the frame mean (opt-in)
+    float sceneCutHist  = 0.05f;  // a scene cut also needs the brightness distribution to move this far (luma histogram earth mover's distance; cuts measure 0.18+, grain and fast motion under 0.02): noise and motion raise the flow cost, not this (0 = off: the cost alone decides)
     float smoothness    = 0.004f; // penalty per pixel of deviation from the coarse prediction
     float zeroBias      = 0.002f; // bias toward zero motion (helps static HUDs)
     float zeroBiasContrast = 0.02f; // mean luma gradient at which zero_bias fully applies; lower-contrast blocks get proportionally less (0 = absolute bias, the pre-0.4 path)
+    float zeroBiasCap   = 0.006f; // zero_bias stops growing at this cost (3 px at 0.002/px): a fast true motion pays no more than a small one (0 = uncapped, the pre-0.6 path)
     float gradWeight    = 0.0f;   // weight of the gradient-constancy matching term (0 = plain luma SAD; ~1 sharpens fast motion at some cost to static fidelity)
     float censusWeight  = 0.0f;   // weight of the census re-ranking term: when the block matcher is ambiguous (runner-up within census_margin of the winner), near-winners are re-ranked on census Hamming distance (0 = off, bit-for-bit)
     float censusMargin  = 0.05f;  // relative cost margin that makes a match ambiguous (triggers the census re-ranking)
@@ -89,7 +91,9 @@ struct Config {
     float targetFps     = 0.0f;   // dynamic multiplier: aim at this output rate (the refresh rate), up to `multiplier` (0 = fixed multiplier, -1 = auto: the measured refresh rate)
     float gpuBudget     = 0.0f;   // share of the game's frame interval the generation may take on the GPU; above it the quality steps down (0 = off)
     float fpsLimit      = 0.0f;   // cap the game's frame rate (0 = off; -1 = auto: measured refresh / multiplier); pick a divisor of the refresh rate
-    bool  pixelVectors  = false;  // interpolation: per-pixel choice among neighbouring blocks' vectors (opt-in)
+    bool  pixelVectors  = false;  // interpolation: per-pixel choice among neighbouring blocks' vectors (on by default on discrete GPUs, see pixelVectorsAuto)
+    bool  pixelVectorsSet = false;  // the user set pixel_vectors (autoConfigure leaves it alone)
+    bool  pixelVectorsAuto = false; // runtime: pixel_vectors turned on by autoConfigure; FrameGen drops it where the synthesis would cost too much (display pixels x generated frames above 4K x2)
     bool  subpixel      = false;  // parabolic sub-pixel fit of the finest flow (opt-in; off = bit-for-bit)
     float staticGuard   = 0.0f;   // opt-in per-pixel static guard: pixels identical in both frames (3x3) keep the current frame, so static HUD/UI over moving content does not smear with the block's motion (0 = off, bit-for-bit)
     bool  refine        = true;   // flow refinement pass (better motion boundaries, costs GPU time)

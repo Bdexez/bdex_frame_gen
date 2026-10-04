@@ -189,10 +189,16 @@ void VirtualSwapchain::createReal(const VkSwapchainCreateInfoKHR& appInfo) {
         // the acquire of the real frame blocks behind the generated ones
         // still queued in the presentation engine, which delays it.
         // (require_app: the control panel may raise it to x4 while the game runs.)
+        // The worker also acquires a present's frames ahead of presenting them
+        // (runJob): up to `mult` at once, which the surface allows only with
+        // imageCount - minImageCount >= mult - 1 (VUID-vkAcquireNextImageKHR-
+        // swapchain-01802: more, and the driver may hand back an image still
+        // being presented).
         const uint32_t mult = static_cast<uint32_t>(cfg_.requireApp ? 4 : std::max(1, cfg_.multiplier));
-        uint32_t want = std::max(appInfo.minImageCount, 2u + mult);
+        uint32_t want = std::max({appInfo.minImageCount, 2u + mult, caps.minImageCount + mult - 1});
         if (caps.maxImageCount) want = std::min(want, caps.maxImageCount);
         ci.minImageCount = std::max(want, caps.minImageCount);
+        surfaceMinImages_ = caps.minImageCount;
         if (!(caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
             throw VkError(VK_ERROR_FEATURE_NOT_PRESENT, "surface does not support transfer destination images");
     }
@@ -214,6 +220,9 @@ void VirtualSwapchain::createRealImages() {
     VK_CHECK(dev_.vt.GetSwapchainImagesKHR(dev_.device, real_, &n, nullptr));
     std::vector<VkImage> imgs(n);
     VK_CHECK(dev_.vt.GetSwapchainImagesKHR(dev_.device, real_, &n, imgs.data()));
+    // Images the worker may hold acquired at once without breaking the
+    // surface's forward-progress guarantee (see createReal).
+    acquireAhead_ = std::max(1, static_cast<int>(n) - static_cast<int>(surfaceMinImages_) + 1);
     realImages_.resize(n);
     for (uint32_t i = 0; i < n; ++i) {
         realImages_[i].image = imgs[i];
@@ -277,6 +286,7 @@ void VirtualSwapchain::followSurface() {
     ci.oldSwapchain = real_;
     if (caps.maxImageCount) ci.minImageCount = std::min(ci.minImageCount, caps.maxImageCount);
     ci.minImageCount = std::max(ci.minImageCount, caps.minImageCount);
+    surfaceMinImages_ = caps.minImageCount;
     VkSwapchainKHR fresh = VK_NULL_HANDLE;
     VkResult r = dev_.vt.CreateSwapchainKHR(dev_.device, &ci, nullptr, &fresh);
     if (r < 0) {
@@ -1043,11 +1053,12 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         statsAppFrames_ += 1;
         if (interpolate) {
             const float cost = fg_->lastMeanCost();
+            const float cut = fg_->lastCutWeight();  // with scene_cut_hist's gate
             if (cost >= 0.f) {
                 ++statsGen_;
                 statsCostSum_ += cost;
-                if (cost >= cfg_.sceneCutHigh) ++statsCutFull_;
-                else if (cost > cfg_.sceneCutLow) ++statsCutFade_;
+                if (cut >= 0.999f) ++statsCutFull_;
+                else if (cut > 0.f) ++statsCutFade_;
             }
         }
         statsCpuMs_ += std::chrono::duration<double, std::milli>(clock::now() - t0).count();
@@ -1221,7 +1232,12 @@ void VirtualSwapchain::runJob(const Job& job) {
         // back. Hybrid: the predicted frames after the real one follow like
         // extrapolation's, each copied at its time unless a newer real frame
         // made it obsolete.
-        const int eager = job.frames == 1 ? 1 : job.realIndex + 1;
+        // Never more acquired images at once than the surface allows
+        // (acquireAhead_); the frames up to the real one past that are
+        // copied at their times below, the game waiting for them (they read
+        // what its next synthesis rewrites).
+        const int upToReal = job.frames == 1 ? 1 : job.realIndex + 1;
+        const int eager = std::min(upToReal, acquireAhead_);
         std::vector<Copied> out(static_cast<size_t>(eager));
         int n = 0;
         VkResult err = VK_SUCCESS;
@@ -1254,9 +1270,25 @@ void VirtualSwapchain::runJob(const Job& job) {
             fail(err);
             return;
         }
+        for (int i = eager; i < upToReal; ++i) {
+            if (paced) std::this_thread::sleep_until(paceTarget(job, origin, i));
+            Copied c;
+            VkResult r = submitCopy(job, i, c);
+            if (r < 0) {
+                fail(r);
+                return;
+            }
+            copied[size_t(i)] = true;
+            if (i == job.frames - 1) markSubmitted();
+            r = presentCopied(job, c);
+            if (r < 0) {
+                fail(r);
+                return;
+            }
+        }
         uint64_t dropped = 0;
         bool cancelled = false;
-        for (int i = eager; i < job.frames; ++i) {
+        for (int i = upToReal; i < job.frames; ++i) {
             if (!cancelled) cancelled = paced ? !waitUntilOrCancelled(paceTarget(job, origin, i)) : predictedCancelled();
             if (cancelled) {
                 ++dropped;

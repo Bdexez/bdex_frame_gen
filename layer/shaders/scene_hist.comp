@@ -1,0 +1,56 @@
+#version 450
+// Scene-cut evidence independent of the motion (scene_cut_hist): how far the
+// brightness distribution moved between the previous and the current frame.
+// One workgroup builds a 64-bin luma histogram of each frame (a coarse
+// pyramid level: a few ten thousand pixels) and writes the distance between
+// them — the 1-D earth mover's distance, the L1 difference of the cumulative
+// histograms, in luma units (0 = same distribution, 1 = black to white).
+// Noise, film grain, foliage and fast motion leave it near 0 (the same
+// content, elsewhere); a cut to another scene moves it far. The flow cost
+// alone cannot tell them apart: all of them raise it.
+layout(local_size_x = 256) in;
+
+layout(binding = 0) uniform sampler2D lumaA;  // pyramid slot 0 at the level used
+layout(binding = 1) uniform sampler2D lumaB;  // pyramid slot 1
+// The head of the frame state (frame_state.comp): histDiff is its 8th word.
+layout(std430, binding = 2) buffer State {
+    float meanCost;
+    uint dup;
+    uint diffCount;
+    float ageLast;
+    float agePrev;
+    float interval;
+    uint repeats;
+    float histDiff;
+} st;
+
+layout(push_constant) uniform PC { ivec2 size; } pc;
+
+#define BINS 64
+shared uint hA[BINS];
+shared uint hB[BINS];
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+    if (tid < BINS) { hA[tid] = 0u; hB[tid] = 0u; }
+    barrier();
+    int n = pc.size.x * pc.size.y;
+    for (int i = int(tid); i < n; i += 256) {
+        ivec2 p = ivec2(i % pc.size.x, i / pc.size.x);
+        int a = clamp(int(texelFetch(lumaA, p, 0).r * float(BINS)), 0, BINS - 1);
+        int b = clamp(int(texelFetch(lumaB, p, 0).r * float(BINS)), 0, BINS - 1);
+        atomicAdd(hA[a], 1u);
+        atomicAdd(hB[b], 1u);
+    }
+    barrier();
+    if (tid == 0u) {
+        float ca = 0.0, cb = 0.0, d = 0.0;
+        float inv = 1.0 / float(max(n, 1));
+        for (int k = 0; k < BINS; ++k) {
+            ca += float(hA[k]) * inv;
+            cb += float(hB[k]) * inv;
+            d += abs(ca - cb);
+        }
+        st.histDiff = d / float(BINS);
+    }
+}

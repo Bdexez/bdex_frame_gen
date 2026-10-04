@@ -15,6 +15,20 @@ if ! vulkaninfo 2>/dev/null | grep -q VK_LAYER_KHRONOS_validation; then
   echo "VK_LAYER_KHRONOS_validation not installed, skipping"; exit 77
 fi
 LOG="$(mktemp)"
+# Validation layers before 1.3.290 (Ubuntu 24.04 ships 1.3.275) report
+# SYNC-HAZARD-WRITE-AFTER-PRESENT on the present of a real swapchain image the
+# worker acquired while holding others acquired (a present's frames are
+# acquired and copied ahead, then presented at their times). Traced in that
+# container: every image goes acquire -> copy (waiting the acquire semaphore)
+# -> present, and is acquired again only after its present; the image count
+# allows the images held (imageCount - minImageCount + 1). 1.4.357 reports
+# nothing on the same runs. Ignored with those old layers only.
+IGNORE='^$'
+vvl=$(vulkaninfo 2>/dev/null | grep -m1 "VK_LAYER_KHRONOS_validation" | grep -oE "Vulkan version [0-9.]+" | grep -oE "[0-9]+\.[0-9]+\.[0-9]+")
+if [ -n "$vvl" ] && [ "$(printf '%s\n1.3.290\n' "$vvl" | sort -V | head -1)" = "$vvl" ] && [ "$vvl" != "1.3.290" ]; then
+  IGNORE='SYNC-HAZARD-WRITE-AFTER-PRESENT'
+  echo "validation layer $vvl: ignoring $IGNORE (false positive of layers before 1.3.290, see the script)"
+fi
 . "$(dirname "$0")/../tools/layer_env.sh"
 bdex_use_layer "$LAYER_DIR"
 # online_tune decisions for the flow options, so that the "probe" runs start
@@ -63,9 +77,9 @@ for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hy
   BDEX_FG_TEMPORAL_PREDICTION=1 BDEX_FG_STATIC_GUARD=1 BDEX_FG_OCCLUSION_STRENGTH=1 \
     timeout 120 "$DEMO" --fps 30 --deterministic $demo_args >"$LOG" 2>&1
   rc=$?
-  n=$(grep -cE "VUID-|SYNC-" "$LOG")
+  n=$(grep -E "VUID-|SYNC-" "$LOG" | grep -cvE "$IGNORE")
   echo "$run: demo exit $rc, $n validation message(s)"
-  if [ "$n" -gt 0 ]; then grep -E "VUID-|SYNC-" "$LOG" | head -20; status=1; fi
+  if [ "$n" -gt 0 ]; then grep -E "VUID-|SYNC-" "$LOG" | grep -vE "$IGNORE" | head -20; status=1; fi
   if [ "$rc" -ne 0 ]; then tail -20 "$LOG"; status=1; fi
   # The rebuild levels exist only if the flow is not already at 1/4.
   if [ -n "$state" ] && [ "${run#*:}" = state ] && ! grep -qE "quality level 2 -> 3|level 1 -> 2 \(flow 1/4\)" "$LOG"; then
@@ -92,9 +106,9 @@ sleep 3; echo 'mode = extrapolate' >> "$PANEL_DIR/conf"
 sleep 3; echo "$panel 0" > "$PANEL_DIR/app.session"
 wait $demo; rc=$?
 kill $panel 2>/dev/null
-n=$(grep -cE "VUID-|SYNC-" "$LOG")
+n=$(grep -E "VUID-|SYNC-" "$LOG" | grep -cvE "$IGNORE")
 echo "panel: demo exit $rc, $n validation message(s)"
-if [ "$n" -gt 0 ]; then grep -E "VUID-|SYNC-" "$LOG" | head -20; status=1; fi
+if [ "$n" -gt 0 ]; then grep -E "VUID-|SYNC-" "$LOG" | grep -vE "$IGNORE" | head -20; status=1; fi
 if [ "$rc" -ne 0 ]; then tail -20 "$LOG"; status=1; fi
 for want in "generation target changed (frame generation resumed)" "rebuilt (x4 interpolate, generation on)" \
             "rebuilt (x4 extrapolate, generation on)" "generation target changed (frame generation paused)"; do

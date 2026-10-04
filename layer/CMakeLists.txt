@@ -13,6 +13,7 @@ bdex_add_shaders(bdex_layer_shaders
     shaders/flow_refine.comp:f32
     shaders/flow_refine.comp:f16:LUMA_FMT=r16f
     shaders/reduce_cost.comp
+    shaders/scene_hist.comp
     shaders/splat.comp
     shaders/frame_state.comp
     shaders/downsample_chroma.comp

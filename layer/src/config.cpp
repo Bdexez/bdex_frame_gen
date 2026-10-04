@@ -111,6 +111,14 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
     applyPreset(preset);   // clears autoTune
     autoTune = true;       // keep the marker: this was auto-tuned, not user-pinned
     autoTunedTo = preset;
+    // Per-pixel vectors at motion boundaries (measured: demo +0.3 dB, very
+    // fast +0.6, HUD +0.7, occlusions +2.9 dB and their edges +6.6) cost a
+    // discrete GPU ~0.3-0.6 ms at 1440p, 1-2 ms at 4K per generated frame:
+    // on, where the synthesis stays affordable (FrameGen::effectiveConfig).
+    if (strong && !pixelVectorsSet) {
+        pixelVectors = true;
+        pixelVectorsAuto = true;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -184,9 +192,11 @@ const std::vector<OptionDef>& registry() {
     F("scene_cut_low", nullptr, &Config::sceneCutLow, 0.f, 1.f, kLive),
     F("scene_cut_high", nullptr, &Config::sceneCutHigh, 0.f, 1.f, kLive),
     B("scene_cut_local", nullptr, &Config::sceneCutLocal, kLive),
+    F("scene_cut_hist", nullptr, &Config::sceneCutHist, 0.f, 1.f, kLive),
     F("smoothness", nullptr, &Config::smoothness, 0.f, 1.f, kLive),
     F("zero_bias", nullptr, &Config::zeroBias, 0.f, 1.f, kLive),
     F("zero_bias_contrast", nullptr, &Config::zeroBiasContrast, 0.f, 1.f, kLive, Tune::Always, "0.1", 1),
+    F("zero_bias_cap", nullptr, &Config::zeroBiasCap, 0.f, 1.f, kLive),
     F("grad_weight", nullptr, &Config::gradWeight, 0.f, 8.f, kLive),
     F("census_weight", nullptr, &Config::censusWeight, 0.f, 8.f, kLive),
     F("census_margin", nullptr, &Config::censusMargin, 0.f, 1.f, kLive),
@@ -332,6 +342,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
                           "refine", "refine_all", "flow_iterations"})
         if (key == k) { autoTune = false; break; }
     if (key == "preset")                      return applyPreset(value);
+    if (key == "pixel_vectors") pixelVectorsSet = true;
     if (const OptionDef* d = findOption(key)) {
         switch (d->kind) {
         case Kind::Bool:  return parseBool(value, this->*(d->b));
@@ -525,6 +536,7 @@ void Config::applyLive(const Config& n) {
         if (d.f) this->*(d.f) = n.*(d.f);
     }
     fpsLimit = n.fpsLimit; targetFps = n.targetFps;
+    pixelVectorsAuto = n.pixelVectorsAuto;
     if (gpuBudget > 0.f && n.gpuBudget > 0.f) gpuBudget = n.gpuBudget;  // 0 <-> >0 creates the timestamp queries
     // (dedup sizes the output stage in extrapolation: restart.)
     if (sharpness > 0.f && n.sharpness > 0.f) sharpness = n.sharpness;  // 0 <-> >0 changes the passes

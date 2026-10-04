@@ -138,6 +138,7 @@ layout(push_constant) uniform PC {
     float zeroBiasContrast; // gradient energy at which the zero bias is fully applied (0 = absolute bias)
     float chromaWeight;     // weight of the chroma SAD in the chroma re-ranking (0 = off)
     int chromaHistory;      // previous pair's flow in prevFlow for the chroma check: 0 none, 1 forward, 2 backward pass
+    float zeroBiasCap;      // the zero bias stops growing at this cost (0 = uncapped, the historical path)
 } pc;
 
 #define CHROMA_GATE 0.01   // luma SAD (mean per pixel) within which candidates are re-ranked on chroma
@@ -241,6 +242,7 @@ void main() {
 
     ivec2 base = sBase;
     float zb = pc.zeroBias;
+    float zcap = pc.zeroBiasCap;  // scaled like zb by zero_bias_contrast
     // Chroma re-ranking only where luma carries little structure: on
     // textured luma (a periodic pattern above all) chroma ties just as badly
     // and its noise then outweighs the smoothness penalty that picks the
@@ -264,6 +266,7 @@ void main() {
         float e = 0.0;
         for (int i = 0; i < NT; ++i) e += sGrad[i];
         zb *= min(1.0, e * (1.0 / float(NT)) / pc.zeroBiasContrast);
+        zcap *= min(1.0, e * (1.0 / float(NT)) / pc.zeroBiasContrast);
     }
     // Target region staged with a border (1 px normally, ROTANC when the
     // rotation re-ranking samples rotated positions), top-left at
@@ -375,7 +378,18 @@ void main() {
         if (c < ncand) {
             ivec2 d = ivec2(c % W, c / W);
             vec2 disp = vec2(base + d - R);
-            sCost2[c] = sad + pc.smoothness * length(vec2(d - R)) + zb * length(disp);
+            if (pc.zeroBiasCap > 0.0) {  // uniform branch (push constant)
+                // zero_bias_cap: the bias stops growing past a few pixels.
+                // Proportional to the displacement, it charged a true 16 px
+                // motion eight times what it charges a 2 px jitter — the fast
+                // pans it broke (the free zero candidate won, the picture
+                // cross-faded) — while a static HUD only needs "moving" to
+                // cost something. Measured at 0.006 (3 px): pans +2.7 dB,
+                // swings +2.4, occlusions +0.7, nothing visible lost.
+                sCost2[c] = sad + pc.smoothness * length(vec2(d - R)) + min(zb * length(disp), zcap);
+            } else {
+                sCost2[c] = sad + pc.smoothness * length(vec2(d - R)) + zb * length(disp);
+            }
         } else {
             sCost2[c] = sad;
         }

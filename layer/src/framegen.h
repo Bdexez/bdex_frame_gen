@@ -81,6 +81,10 @@ public:
     // few frames old; negative when none yet. collectMeanCost(slot) takes the
     // value recordFlow(..., slot) copied, once that slot's fence has signalled.
     float lastMeanCost() const { return lastCost_; }
+    // The share of the last generated frames the global scene-cut fallback
+    // replaced by the real frame (0..1, with scene_cut_hist's gate), -1 if
+    // unknown: 1 = a duplicate of the real frame, between = faded to it.
+    float lastCutWeight() const;
     void collectMeanCost(uint32_t slot);
     // Copies output image `output` into `dst` (UNDEFINED -> PRESENT_SRC).
     void recordCopyOutput(VkCommandBuffer cmd, uint32_t output, VkImage dst);
@@ -228,7 +232,9 @@ private:
     std::vector<VkDescriptorPool> pools_;  // opened as allocSet needs them (see DescriptorPlanner)
     DescriptorPlanner planner_;
 
-    Pass downsample_, blockMatch_, smooth_, refine_, reduce_, interp_, upscale_, cas_, frameState_, downChroma_;
+    Pass downsample_, blockMatch_, smooth_, refine_, reduce_, interp_, upscale_, cas_, frameState_, downChroma_, sceneHist_;
+    VkDescriptorSet dsSceneHist_ = VK_NULL_HANDLE;  // scene_cut_hist: both pyramid slots at histLevel_
+    int histLevel_ = 0;
 
     // Optional passes (fg_pass.h, passes/), in hook order, and what they see
     // of the engine (FgContext).
@@ -293,6 +299,7 @@ private:
     const float* meanCostMapped_ = nullptr;
     bool costWritten_[kProfileSlots] = {};
     float lastCost_ = -1.f;
+    float lastHistDiff_ = 0.f;
     VkDescriptorSet dsState_ = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> dsInterpReal_;       // [prev * N + cur]: dupReal_ output (the real-frame image)
 
