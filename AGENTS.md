@@ -114,6 +114,32 @@ position future (carte `r32ui`, `atomicMin` priorité|index). Pacing par sommeil
 present mode n'est pas FIFO ; `PRESENT_MODE=auto` transforme la demande FIFO du
 jeu en mailbox.
 
+**Pacing (depuis le 2026-09-29) — l'origine est la fin GPU, pas l'appel du
+jeu.** Mesuré : caler les images sur l'heure de `vkQueuePresentKHR` du jeu
+faisait perdre *toutes* les images générées dès que la synthèse finissait
+plus d'une demi-période après cet appel (jeu limité par le GPU) — générée et
+réelle prêtes ensemble, mailbox garde la seconde. Le worker (`runJob`) :
+interpolation = toutes les copies soumises d'emblée (le thread du jeu
+n'attend que leur *soumission* : `markSubmitted` tôt), attente de la fence
+du slot de synthèse (`waitGpu`), puis seuls les `vkQueuePresentKHR` sont
+temporisés (`paceTarget` : origine + I·k/m, espacement ≥ ½ créneau avec la
+présentation précédente, grille d'affichage si connue). Extrapolation =
+réelle tout de suite, puis prédites paresseuses calées sur la fence de la
+copie réelle ; un nouveau `present()` lève `cancelPredicted_` et les
+prédites en attente sont abandonnées (avant, `present()` attendait leur
+soumission : l'annulation ne se déclenchait jamais). **Deux files** par
+défaut (`present_queue`, `DeviceData::splitQueue`) : synthèse sur
+`computeQueue` (2e file de la même famille), copies + présentations sur
+`queue` — le blit de présentation (X11/Xwayland) attendait sinon la synthèse
+suivante. Le signal d'acquisition du jeu part sur la file de synthèse
+(garde l'ordre GPU « synthèse N avant l'image N+1 du jeu »).
+`max_frame_latency` (1 par défaut, seulement en génération) : `present()`
+attend, hors `mutex_`, la fence du slot de l'image N−1. Banc sans fenêtre :
+gamescope `--backend headless` a le retour d'affichage (present_wait) mais
+tourne sans `CAP_SYS_NICE` (compositeur affamé par nos longs dispatchs) — le
+cas « lourd » de référence est 4K preset quality + pixel_vectors + bicubic à
+66 i/s (GPU ~62 %), stats `displayed N fps` / `replaced before display`.
+
 ### Passes optionnelles (`fg_pass.h`, depuis le 2026-09-25)
 
 Une fonctionnalité opt-in qui ajoute du travail GPU est une classe `FgPass`

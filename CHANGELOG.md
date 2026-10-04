@@ -6,6 +6,48 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Generated frames were lost whenever the GPU was busy.** The frames of a
+  present were timed from the game's present call, but the game's rendering
+  and the synthesis end on the GPU later — a frame later for a GPU-bound
+  game. The generated frame and the real one then became ready together and
+  the display showed only the second: x2 announced, x1 shown (measured, a
+  9 ms synthesis at 66 fps: every generated frame replaced before display).
+  The pacing now starts when the GPU has finished the synthesis, every copy
+  is submitted at once (the game is never held back by the pacing), and only
+  the presents are timed. Same measurement: all 132 frames displayed.
+- The copies and presents run on a queue of their own, the synthesis on
+  another of the same family (`present_queue`, default on where the family
+  has two queues to spare): a present's GPU work (the presentation blit of
+  X11 / Xwayland) waited behind the next frame's synthesis — the real frame
+  shown 7 ms late, half the generated frames replaced.
+- Extrapolation: a real frame arriving early now drops the predicted frames
+  still waiting (they are obsolete). The present used to wait for them first,
+  holding the new real frame back by up to (m − 1)/m of a frame.
+- The refresh rate learned from the displayed frames could be a fraction of
+  the real one: with every other frame replaced, the displayed intervals all
+  span two refreshes (seen: « 115 Hz » on a display that showed 200 fps).
+  The rate the control panel reads is now a hint the measurement must
+  contradict to be ignored; « Auto » and `fps_limit = auto` follow it.
+- `online_tune` ran part of its bookkeeping on the worker thread (the copy
+  slots called the passes' slot hook), racing with the application thread
+  and, with `async_compute`, reading its sums before the GPU wrote them.
+  The GPU profiling counters shared by both threads are locked.
+
+### Added
+
+- `max_frame_latency` (default 1 while generating): the game's present
+  returns once the GPU has finished its previous frame, like a driver's
+  low-latency mode. A GPU-bound game otherwise queues frames ahead, each a
+  frame interval of input lag (measured, GPU-bound demo at 4K: frame-to-screen
+  50 → 36 ms, and 60 → 71 fps from less GPU contention). `0` = no limit.
+- Statistics: `displayed N fps` (frames really shown, where the present
+  feedback tells) and `frame-to-screen` (from when the game began a frame —
+  its previous present returned, where most games read their input — to the
+  screen). The fps HUD shows the displayed rate instead of game fps ×
+  multiplier when it is known.
+
 ## [0.5.5] - 2026-09-26
 
 ### Fixed
