@@ -311,9 +311,7 @@ void VirtualSwapchain::setupPresentTiming() {
     if (dev_.vt.GetSwapchainTimeDomainPropertiesEXT(dev_.device, real_, &dp, &domains) < 0) return;
 #ifdef _WIN32
     const VkTimeDomainKHR want = VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_KHR;  // (MSVC's steady_clock)
-    LARGE_INTEGER f;
-    QueryPerformanceFrequency(&f);
-    ptTicksPerMs_ = double(f.QuadPart) / 1000.0;
+    ptTicksPerMs_ = platformPerformanceFrequency() / 1000.0;
 #else
     const VkTimeDomainKHR want = VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR;  // (libstdc++'s steady_clock)
     ptTicksPerMs_ = 1e6;

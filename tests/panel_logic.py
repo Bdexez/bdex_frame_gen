@@ -130,6 +130,15 @@ with tempfile.TemporaryDirectory() as tmp:
                XDG_CACHE_HOME=os.path.join(tmp, "cache"), XDG_CONFIG_HOME=os.path.join(tmp, "config"),
                XDG_DATA_HOME=os.path.join(tmp, "data"))
     game = subprocess.Popen(["sleep", "30"], env=env)
+    # (its environment, which game_paths reads, is the child's once it has exec'd)
+    import time
+    for _ in range(200):
+        try:
+            if b"BDEX_FG_STATUS_DIR" in open(f"/proc/{game.pid}/environ", "rb").read():
+                break
+        except OSError:
+            pass
+        time.sleep(0.01)
     old_cache = os.environ.get("XDG_CACHE_HOME")
     os.environ["XDG_CACHE_HOME"] = os.path.join(tmp, "cache")
     try:

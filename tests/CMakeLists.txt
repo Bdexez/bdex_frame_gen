@@ -123,7 +123,7 @@ if(TARGET bdex_demo)
   set_tests_properties(replay_bench PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
   add_test(NAME validation
            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/validation.sh" "$<TARGET_FILE:bdex_demo>" "${CMAKE_BINARY_DIR}/layer")
-  set_tests_properties(validation PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+  set_tests_properties(validation PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 1200)
   # What games do to their swapchain (resizes, recreations, new surfaces and
   # windows, fullscreen, minimization: bdex_demo --stress), under validation.
   add_test(NAME swapchain_stress

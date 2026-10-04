@@ -50,6 +50,8 @@ std::string platformAntiCheatRunning();
 // power supply information): -1. Linux /sys/class/power_supply, Windows
 // GetSystemPowerStatus; BDEX_POWER=battery|mains pretends (tests).
 int platformOnBattery();
+// Windows: QueryPerformanceFrequency (counts a second); elsewhere 1e9.
+double platformPerformanceFrequency();
 // A Steam Deck (its DMI board: Valve Jupiter / Galileo): a handheld, where
 // the battery is the normal state — battery_saver leaves it alone.
 bool platformIsSteamDeck();

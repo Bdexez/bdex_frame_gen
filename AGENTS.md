@@ -827,6 +827,11 @@ x2/x3/x4), sauf le correctif HDR (les chemins SDR restent identiques).
   seulement après le push. Faux positif connu : aucun (l'app capture et
   `bdex_offline` ne sont pas compilés en 32 bits / sous Windows, le job
   suit les mêmes règles que `CMakeLists.txt`).
+  **Angle mort** (vécu le 2026-10-04) : MinGW « posix » inclut `windows.h`
+  par ses threads, pas MSVC — un `LARGE_INTEGER` sans `windows.h` dans un
+  fichier de la couche y passe et casse MSVC. Les appels Win32 vont dans
+  `platform.cpp`. Et MSVC `/W4 /WX` refuse une variable qui masque un
+  paramètre (C4457 : `msg` dans une `WndProc`).
 
 ### Variantes allégées des shaders (2026-09-25)
 

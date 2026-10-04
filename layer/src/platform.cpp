@@ -420,6 +420,16 @@ int platformOnBattery() {
 #endif
 }
 
+double platformPerformanceFrequency() {
+#ifdef _WIN32
+    LARGE_INTEGER f;
+    QueryPerformanceFrequency(&f);
+    return double(f.QuadPart);
+#else
+    return 1e9;
+#endif
+}
+
 bool platformIsSteamDeck() {
 #ifdef _WIN32
     return false;
