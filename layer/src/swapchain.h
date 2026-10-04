@@ -238,6 +238,10 @@ private:
     void limitFrameRate();
     double frameIntervalMs_ = 16.6;
     uint32_t statsRepeats_ = 0;  // repeated-frame counter at the last statistics line (dedup)
+    uint32_t statsGen_ = 0;      // presents with generated frames in the statistics window
+    uint32_t statsCutFull_ = 0;  // ... whose flow cost was above scene_cut_high (generated = copy of the real frame)
+    uint32_t statsCutFade_ = 0;  // ... between scene_cut_low and scene_cut_high (partly faded to it)
+    double statsCostSum_ = 0.0;
     GpuBudget budget_;           // gpu_budget governor
     clock::time_point budgetAt_{};
     uint64_t outputGen_ = 0;     // Config::rebuildGen the output stage was built with (require_app)

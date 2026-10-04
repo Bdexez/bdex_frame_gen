@@ -6,6 +6,22 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-09-26
+
+### Added
+
+- The statistics line reports the **scene-cut fallback**: the share of
+  generated frames replaced by a copy of the real frame (mean matching cost
+  above `scene_cut_high`) or partly faded to it, with the mean cost. Such
+  frames are displayed but show nothing new, so x2 looks like x1 while every
+  counter says x2. `debug = flow` does not reveal it (its colours are drawn
+  after the fallback).
+- `--report` quick read: warns when that fallback exceeds 30 % (and suggests
+  `scene_cut_low` / `scene_cut_high` for the game), and when the layer sends
+  more frames than the screen's refresh rate (the compositor drops the
+  excess: the game already runs near the refresh rate). The report lists
+  the Vulkan layer order (Steam overlay above or below the layer).
+
 ## [0.5.3] - 2026-09-26
 
 ### Added

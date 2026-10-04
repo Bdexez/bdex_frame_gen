@@ -870,6 +870,13 @@ void FrameGen::recordFrameState(VkCommandBuffer cmd, const FrameTiming& timing) 
     gate_ = dedup;
 }
 
+float FrameGen::lastMeanCost() const {
+    if (!stateMapped_ || !flowValid_) return -1.f;
+    float c;
+    std::memcpy(&c, stateMapped_, 4);
+    return c;
+}
+
 bool FrameGen::readState(State& out) const {
     if (!stateMapped_) return false;
     const auto* w = static_cast<const uint32_t*>(stateMapped_);
@@ -957,6 +964,18 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity) {
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, reduce_.layout, 0, 1, &dsReduce_, 0, nullptr);
     dispatchGated(cmd, gateReduce_, 1 + tiles * tiles, 1);
     memoryBarrier(cmd);
+    if (stateMapped_) {
+        // The mean cost for the statistics (scene-cut fallback rate): word 0
+        // of the readback, which readState does not use.
+        stateBarrier(cmd);
+        VkBufferCopy bc{0, 0, 4};
+        vt.CmdCopyBuffer(cmd, stateBuf_.buffer, stateReadback_.buffer, 1, &bc);
+        VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+        vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, nullptr, 0,
+                              nullptr);
+    }
     flowValid_ = true;  // from now on the flow images hold a real previous flow
 }
 
