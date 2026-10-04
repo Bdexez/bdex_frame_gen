@@ -1106,9 +1106,10 @@ void FrameGen::recordCopySource(VkCommandBuffer cmd, uint32_t src, VkImage dst) 
 
 namespace bdex {
 
-void FrameGen::profileBegin(VkCommandBuffer cmd, uint32_t slot) {
+void FrameGen::profileBegin(VkCommandBuffer cmd, uint32_t slot, bool passHooks) {
     // The slot's previous submission has completed (online_tune reads back).
-    for (auto& p : passes_) p->slotBegin(*this, slot);
+    if (passHooks)
+        for (auto& p : passes_) p->slotBegin(*this, slot);
     if (!queryPool_ || slot >= kProfileSlots) return;
     const uint32_t base = slot * (StageCount + 1);
     dev_.vt.CmdResetQueryPool(cmd, queryPool_, base, StageCount + 1);
@@ -1135,6 +1136,7 @@ void FrameGen::profileCollect(uint32_t slot) {
         dev_.vt.GetQueryPoolResults(dev_.device, queryPool_, base + i, 1, sizeof(uint64_t), &ts[i], sizeof(uint64_t),
                                     VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
     }
+    std::lock_guard<std::mutex> lock(profileMutex_);
     uint64_t last = ts[0];
     for (uint32_t s = 0; s < StageCount; ++s) {
         if (!profileWritten_[slot][s + 1]) continue;
@@ -1149,6 +1151,7 @@ void FrameGen::profileCollect(uint32_t slot) {
 }
 
 double FrameGen::takeGpuMs() {
+    std::lock_guard<std::mutex> lock(profileMutex_);
     const double ms = budgetFrames_ ? budgetMs_ / budgetFrames_ : 0.0;
     budgetMs_ = 0.0;
     budgetFrames_ = 0;
@@ -1178,6 +1181,7 @@ Config FrameGen::effectiveConfig() const {
 std::string FrameGen::profileReport() {
     if (!queryPool_ || !(*cfgp_).profile) return "";
     static const char* names[StageCount] = {"analysis", "flow", "interp", "copy"};
+    std::lock_guard<std::mutex> lock(profileMutex_);
     char buf[256];
     std::string out = " | gpu ms:";
     for (uint32_t s = 0; s < StageCount; ++s) {

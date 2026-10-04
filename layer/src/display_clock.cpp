@@ -29,14 +29,9 @@ void DisplayClock::estimate() {
         if (t[i] - t[i - 1] > kJitterMs) d.push_back(t[i] - t[i - 1]);
     periodMs_ = 0.0;
     if (d.size() < 16) return;
-    std::vector<double> sorted = d;
-    std::sort(sorted.begin(), sorted.end());
-    const double dmin = sorted[sorted.size() / 10];  // robust smallest interval
-    // The smallest interval is one or a few refreshes: try its divisors,
-    // largest period first, and keep the first that explains the intervals.
-    for (int k = 1; k <= 4; ++k) {
-        const double p = dmin / k;
-        if (p < kMinPeriodMs || p > kMaxPeriodMs) continue;
+    // Whole multiples of `p` within the observer's jitter: the refined period
+    // over the fitting intervals, 0 if fewer than 90 % fit.
+    auto fitPeriod = [&d](double p) {
         // The tolerance also shrinks with the period: with a loose one, a
         // short period "explains" any set of intervals (a variable-refresh
         // display at 120 fps fitted 360 Hz).
@@ -51,8 +46,25 @@ void DisplayClock::estimate() {
                 sumN += n;
             }
         }
-        if (fit >= d.size() * 9 / 10) {
-            periodMs_ = sumD / sumN;  // refined over every fitting interval
+        return fit >= d.size() * 9 / 10 ? sumD / sumN : 0.0;
+    };
+    if (hintMs_ >= kMinPeriodMs && hintMs_ <= kMaxPeriodMs) {
+        const double p = fitPeriod(hintMs_);
+        if (p > 0.0) {
+            periodMs_ = p;
+            return;
+        }
+    }
+    std::vector<double> sorted = d;
+    std::sort(sorted.begin(), sorted.end());
+    const double dmin = sorted[sorted.size() / 10];  // robust smallest interval
+    // The smallest interval is one or a few refreshes: try its divisors,
+    // largest period first, and keep the first that explains the intervals.
+    for (int k = 1; k <= 4; ++k) {
+        const double p = dmin / k;
+        if (p < kMinPeriodMs || p > kMaxPeriodMs) continue;
+        if (const double fitted = fitPeriod(p); fitted > 0.0) {
+            periodMs_ = fitted;  // refined over every fitting interval
             return;
         }
     }

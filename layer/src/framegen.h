@@ -118,7 +118,10 @@ public:
     // GPU profiling (config.profile): timestamps are written around each
     // stage of a slot's command buffer and collected once its fence signalled.
     enum Stage { StageAnalysis = 0, StageFlow, StageInterp, StageCopy, StageCount };
-    void profileBegin(VkCommandBuffer cmd, uint32_t slot);
+    // `passHooks`: the optional passes' slotBegin runs too — only for the
+    // application thread's synthesis slots (the worker's copy slots call
+    // with false: a pass's slot bookkeeping belongs to one thread).
+    void profileBegin(VkCommandBuffer cmd, uint32_t slot, bool passHooks = true);
     void profileMark(VkCommandBuffer cmd, uint32_t slot, Stage stage);
     void profileCollect(uint32_t slot);
     // Average GPU milliseconds per stage since the last call; resets the accumulators.
@@ -205,6 +208,9 @@ private:
     std::vector<AllocatedBuffer> dumpBuf_;
     VkQueryPool queryPool_ = VK_NULL_HANDLE;
     static constexpr uint32_t kProfileSlots = 12;  // application slots + worker slots
+    // The worker thread collects its copy slots' timestamps while the
+    // application thread collects and reports the others.
+    std::mutex profileMutex_;
     double profileMs_[StageCount]{};
     double budgetMs_ = 0.0;
     uint32_t budgetFrames_ = 0;
