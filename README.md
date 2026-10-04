@@ -826,7 +826,8 @@ fails below 75% of the expected generated frames (rounded down).
 ```
 layer/
 ├─ src/layer.cpp        layer entry points, dispatch, Vulkan hooks
-├─ src/swapchain.cpp    virtual swapchain (acquire / present, presentation thread)
+├─ src/swapchain.cpp    virtual swapchain, game-thread side (creation, acquire, present)
+├─ src/swapchain_worker.cpp  its worker thread (paced presents, copies, display feedback)
 ├─ src/framegen.cpp     GPU resources and pass recording
 ├─ src/config.cpp       options (environment, file, per-game sections)
 └─ shaders/             downsample, block_match, flow_smooth, flow_refine, interpolate
