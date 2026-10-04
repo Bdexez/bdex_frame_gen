@@ -424,7 +424,7 @@ def _combo_index(table, value, default=0):
 # ---------------------------------------------------------------------------
 
 # Keys the UI owns in the global section; anything else found there is kept.
-GLOBAL_KEYS = ("enabled", "require_app", "preset", "multiplier", "mode", "present_mode",
+GLOBAL_KEYS = ("enabled", "require_app", "preset", "multiplier", "adaptive", "mode", "present_mode",
                "low_latency", "render_scale", "upscale_filter", "sharpness",
                "overlay", "hud", "paused") + tuple(o["key"] for o in OPTIONS)
 
@@ -513,6 +513,7 @@ class Options:
         self.preset = "auto"
         self.multiplier = 2
         self.auto_mult = True        # « Auto »: up to x4, never above the screen's refresh rate (target_fps = -1)
+        self.adaptive = False        # « Adaptatif »: the whole refresh rate, fractional ratios included (adaptive = 1)
         self.mode = "interpolate"
         self.present = "auto"
         self.low_latency = False
@@ -539,7 +540,8 @@ class Options:
         if self.multiplier < 2:
             self.multiplier = 2
         # A file without a multiplier (new user) starts on « Auto ».
-        self.auto_mult = "multiplier" not in g or g.get("target_fps", "").lower() in ("-1", "auto")
+        self.adaptive = flag("adaptive")
+        self.auto_mult = not self.adaptive and ("multiplier" not in g or g.get("target_fps", "").lower() in ("-1", "auto"))
         m = g.get("mode", "").lower()
         self.mode = "extrapolate" if m.startswith("extrap") else "hybrid" if m == "hybrid" else "interpolate"
         self.present = g.get("present_mode", "auto").lower()
@@ -574,7 +576,9 @@ class Options:
         glob["enabled"] = "1"       # every game armed ...
         glob["require_app"] = "1"   # ... generating only where this panel's « Démarrer » targets
         glob["preset"] = self.preset
-        glob["multiplier"] = str((4 if self.auto_mult else self.multiplier) if self.generate else 1)
+        glob["multiplier"] = str((4 if self.auto_mult or self.adaptive else self.multiplier) if self.generate else 1)
+        if self.adaptive and self.generate:
+            glob["adaptive"] = "1"
         if self.generate:
             glob["mode"] = self.mode
         glob["present_mode"] = self.present
@@ -595,7 +599,7 @@ class Options:
                 glob[o["key"]] = value
         # « Auto » is target_fps = -1 (the refresh rate); a fixed multiplier
         # drops it, whatever the advanced row still shows.
-        if self.auto_mult and self.generate:
+        if (self.auto_mult or self.adaptive) and self.generate:
             glob["target_fps"] = "auto"
         elif glob.get("target_fps", "").lower() in ("-1", "auto"):
             glob.pop("target_fps")
@@ -605,9 +609,11 @@ class Options:
         e = ["BDEX_FG=1"]
         if self.preset != "auto":
             e.append(f"BDEX_FG_PRESET={self.preset}")
-        e.append(f"BDEX_FG_MULTIPLIER={(4 if self.auto_mult else self.multiplier) if self.generate else 1}")
-        if self.auto_mult and self.generate:
+        e.append(f"BDEX_FG_MULTIPLIER={(4 if self.auto_mult or self.adaptive else self.multiplier) if self.generate else 1}")
+        if (self.auto_mult or self.adaptive) and self.generate:
             e.append("BDEX_FG_TARGET_FPS=auto")
+        if self.adaptive and self.generate:
+            e.append("BDEX_FG_ADAPTIVE=1")
         if self.generate:
             e.append(f"BDEX_FG_MODE={self.mode}")
         e.append(f"BDEX_FG_PRESENT_MODE={self.present}")
@@ -1056,10 +1062,13 @@ class Window(Adw.ApplicationWindow):
         g.add(self.preset_row)
         self.mult_row = Adw.ComboRow(
             title="Images affichées par image rendue",
-            subtitle="Auto : le plus d'images possible sans dépasser la fréquence de l'écran "
-                     "(×2 à 60 i/s sur 144 Hz, ×4 à 36 i/s), sans freiner le jeu",
-            model=Gtk.StringList.new(["Auto — selon l'écran (jusqu'à ×4)", "×2", "×3", "×4"]))
-        self.mult_row.set_selected(0 if self.opt.auto_mult else max(1, min(3, self.opt.multiplier - 1)))
+            subtitle="Auto : le plus grand multiple entier sous la fréquence de l'écran (×2 à 60 i/s "
+                     "sur 144 Hz). Adaptatif : toute la fréquence de l'écran, même en ratio fractionnaire "
+                     "(50 i/s → 144 i/s), une image par rafraîchissement",
+            model=Gtk.StringList.new(["Auto — selon l'écran (jusqu'à ×4)", "×2", "×3", "×4",
+                                      "Adaptatif — toute la fréquence de l'écran (jusqu'à ×4)"]))
+        self.mult_row.set_selected(4 if self.opt.adaptive else 0 if self.opt.auto_mult
+                                   else max(1, min(3, self.opt.multiplier - 1)))
         self.mult_row.connect("notify::selected", self.on_change)
         g.add(self.mult_row)
         self.mode_row = Adw.ComboRow(title="Mode",
@@ -1167,7 +1176,8 @@ class Window(Adw.ApplicationWindow):
         o.generate = self.gen_row.get_active()
         o.preset = PRESETS[self.preset_row.get_selected()][1]
         o.auto_mult = self.mult_row.get_selected() == 0
-        if not o.auto_mult:
+        o.adaptive = self.mult_row.get_selected() == 4
+        if not o.auto_mult and not o.adaptive:
             o.multiplier = self.mult_row.get_selected() + 1
         o.mode = MODES[self.mode_row.get_selected()][1]
         o.upscale = self.up_row.get_active()

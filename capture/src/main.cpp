@@ -316,6 +316,18 @@ HWND createOverlay(const RECT& r) {
     return h;
 }
 
+// The refresh rate of the monitor the window is on (0 if unknown): the
+// output rate of target_fps = auto and of the adaptive multiplier.
+double monitorHz(HWND h) {
+    MONITORINFOEXW mi{};
+    mi.cbSize = sizeof mi;
+    if (!GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &mi)) return 0.0;
+    DEVMODEW dm{};
+    dm.dmSize = sizeof dm;
+    if (!EnumDisplaySettingsW(mi.szDevice, ENUM_CURRENT_SETTINGS, &dm)) return 0.0;
+    return dm.dmDisplayFrequency > 1 ? static_cast<double>(dm.dmDisplayFrequency) : 0.0;
+}
+
 BOOL WINAPI ctrlHandler(DWORD) {
     g_running = false;
     return TRUE;
@@ -431,6 +443,7 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
     if (choice) {
         if (!choice->preset.empty()) cfg.apply("preset", choice->preset);
         cfg.multiplier = choice->multiplier;
+        cfg.adaptive = choice->adaptive;
         cfg.extrapolate = choice->extrapolate;
         cfg.hybrid = choice->hybrid;
         cfg.upscaleFilter = choice->filter;
@@ -480,7 +493,9 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
     auto resizeToOverlay = [&] {
         vk.setSize(static_cast<uint32_t>(ov.right - ov.left),
                    static_cast<uint32_t>(ov.bottom - ov.top));
+        vk.setDisplayHz(monitorHz(overlay));  // (the overlay may have moved to another monitor)
     };
+    vk.setDisplayHz(monitorHz(overlay));
 
     // Notification-area icon: the live status and a menu (toggle, quit).
     bdex::Tray tray;
@@ -704,6 +719,7 @@ int main(int argc, char** argv) {
         choice.multiplier = std::max(1, d.multiplier);
         choice.extrapolate = d.extrapolate;
         choice.hybrid = d.hybrid;
+        choice.adaptive = d.adaptive;
         choice.filter = d.upscaleFilter;
         choice.sharpness = d.sharpness;
         choice.hud = d.overlayMode;

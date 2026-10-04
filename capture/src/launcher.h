@@ -38,6 +38,7 @@ struct LaunchChoice {
     int multiplier = 2;     // frames shown per captured frame: 1 (off), 2..4
     bool extrapolate = true;
     bool hybrid = false;    // mode=hybrid (frame_order.h): x3/x4 with less latency than interpolation
+    bool adaptive = false;  // adaptive multiplier: the monitor's whole refresh rate, fractional ratios included (up to x4)
     std::string preset;     // "quality" | "balanced" | "performance"; "" = auto
     int filter = 2;         // 0 bilinear, 1 bicubic, 2 Lanczos-2
     float sharpness = 0.f;  // 0..1

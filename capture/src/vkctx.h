@@ -104,6 +104,9 @@ public:
 
     // HUD figures (captured fps, output fps).
     void setHud(int gameFps, int outFps);
+    // The refresh rate of the monitor the overlay is on (target_fps = auto,
+    // adaptive); 0 when unknown.
+    void setDisplayHz(double hz) { displayHz_ = hz; }
     // Live status for the launcher's "En cours" view and bdex-framegen
     // tools (layer/src/status.h): `target` is the captured game.
     void publishStatus(const std::string& target, double captureFps, double outFps, double latencyMs);
@@ -178,6 +181,8 @@ private:
     Job job_;
     clock::time_point lastArrival_{};
     double intervalMs_ = 16.7;
+    double adaptiveAcc_ = 0.0;              // adaptive: fractional frames carried over
+    double displayHz_ = 0.0;                // the overlay's monitor refresh rate (0 unknown), for target_fps = auto
     int hudGame_ = 0, hudOut_ = 0;
 
     VkCommandPool cpool_ = VK_NULL_HANDLE;

@@ -217,6 +217,7 @@ const std::vector<OptionDef>& registry() {
     B("frame_timing", nullptr, &Config::frameTiming, kLive),
     B("dedup", nullptr, &Config::dedup),
     B("paused", "pause", &Config::paused, kLive),
+    B("adaptive", nullptr, &Config::adaptive, kLive),
     F("gpu_budget", nullptr, &Config::gpuBudget, 0.f, 1.f),
     B("pixel_vectors", nullptr, &Config::pixelVectors, kLive, Tune::SynthInterpolation, "1", 11),
     B("subpixel", nullptr, &Config::subpixel, kLive, Tune::Extrapolation, "1", 3),

@@ -89,6 +89,7 @@ struct Config {
     bool  dedup         = false;  // detect frames the game presents twice: keep the previous motion, time the output on first appearances (opt-in)
     bool  paused        = false;  // live toggle: present only the real frames (reloaded while running; see tools/bdex-framegen --toggle)
     float targetFps     = 0.0f;   // dynamic multiplier: aim at this output rate (the refresh rate), up to `multiplier` (0 = fixed multiplier, -1 = auto: the measured refresh rate)
+    bool  adaptive      = false;  // with target_fps: every game frame gets as many frames as fit at that rate, fractional ratios included (50 fps on 144 Hz: 3, 3, 2, ...), one per refresh; `multiplier` is the ceiling
     float gpuBudget     = 0.0f;   // share of the game's frame interval the generation may take on the GPU; above it the quality steps down (0 = off)
     float fpsLimit      = 0.0f;   // cap the game's frame rate (0 = off; -1 = auto: measured refresh / multiplier); pick a divisor of the refresh rate
     bool  pixelVectors  = false;  // interpolation: per-pixel choice among neighbouring blocks' vectors (on by default on discrete GPUs, see pixelVectorsAuto)

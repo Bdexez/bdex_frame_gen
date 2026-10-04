@@ -52,7 +52,7 @@ status=0
 # "probe": online_tune's synthesis probe (flow copies, composed flows, a
 # synthesis of its own, the comparison), from the primed cache above.
 for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hybrid:state extrapolate:direct \
-           interpolate:async extrapolate:async interpolate:probe extrapolate:probe; do
+           interpolate:async extrapolate:async interpolate:probe extrapolate:probe hybrid:adaptive; do
   mode=${run%%:*}
   output="BDEX_FG_RENDER_SCALE=0.75 BDEX_FG_SHARPNESS=0.5 BDEX_FG_HUD=2"
   if [ "$run" = extrapolate:direct ]; then
@@ -60,6 +60,9 @@ for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hy
   elif [ "${run#*:}" = probe ]; then
     state="BDEX_FG_ONLINE_TUNE=1 BDEX_FG_CACHE_DIR=$TUNE_CACHE BDEX_FG_HUD_MASK=24"; demo_args="--frames 120 --duration 40"
     output="BDEX_FG_RENDER_SCALE=0.75 BDEX_FG_HUD=2"
+  elif [ "${run#*:}" = adaptive ]; then
+    # 30 fps into 75: 2, 3, 2, 3... frames a game frame, one output period apart.
+    state="BDEX_FG_ADAPTIVE=1 BDEX_FG_TARGET_FPS=75"; demo_args="--frames 60 --duration 40"
   elif [ "${run#*:}" = async ]; then
     state="BDEX_FG_ASYNC_COMPUTE=1 BDEX_FG_DEDUP=1 BDEX_FG_FLOW_TEMPORAL=1 BDEX_FG_ONLINE_TUNE=1 BDEX_FG_CACHE_DIR= BDEX_FG_HUD_MASK=24 BDEX_FG_SUBPIXEL_LK=2"; demo_args="--repeat 2 --frames 90 --duration 40"; output="BDEX_FG_HUD=0"
   elif [ "$run" != "$mode" ]; then

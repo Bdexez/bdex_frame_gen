@@ -571,7 +571,21 @@ int VkCtx::synthesize(const Capture::Frame& f, bool& consumed) {
     lastArrival_ = content;
 
     const Config& cfg = layerDev_.config;
-    const int mult = genEnabled_ ? std::max(1, cfg.multiplier) : 1;  // hotkey off -> passthrough
+    int mult = genEnabled_ ? std::max(1, cfg.multiplier) : 1;  // hotkey off -> passthrough
+    // adaptive (like the layer's VirtualSwapchain::chooseMultiplier): as many
+    // frames as fit at the target rate — target_fps, or the monitor's refresh
+    // rate for auto — the fraction carried over (50 fps on 144 Hz: 3, 3, 2...),
+    // one output period apart.
+    double periodMs = 0.0;
+    const double target = cfg.targetFps < 0.f || cfg.targetFps == 0.f ? displayHz_ : double(cfg.targetFps);
+    if (genEnabled_ && cfg.adaptive && target > 0.0 && mult > 1) {
+        periodMs = 1000.0 / target;
+        adaptiveAcc_ += intervalMs_ / periodMs;
+        const int n = std::clamp(static_cast<int>(adaptiveAcc_), 1, mult);
+        adaptiveAcc_ = std::clamp(adaptiveAcc_ - n, 0.0, 0.999);
+        mult = n;
+        if (n < 2) periodMs = 0.0;
+    }
     const bool interpolate = prev_ >= 0 && mult > 1;
     const uint32_t cur = cur_;
     const int prev = prev_;
@@ -628,6 +642,14 @@ int VkCtx::synthesize(const Capture::Frame& f, bool& consumed) {
     timing.intervalMs = intervalMs_;
     timing.multiplier = interpolate ? mult : 1;
     timing.reset = prev < 0 || !(dt > 0.5 && dt < 500.0);
+    if (interpolate && periodMs > 0.0) {
+        // Adaptive: the frames are one output period apart, so each needs its
+        // own display time for its content time (frame_state.comp).
+        const FrameOrder order = FrameOrder::of(cfg, mult);
+        timing.haveDisplay = true;
+        timing.displayMs[3] = float(1.0 + periodMs * order.real);
+        for (int o = 0; o + 1 < mult && o < 3; ++o) timing.displayMs[o] = float(1.0 + periodMs * order.position(o));
+    }
     fg_->recordFrameState(cb, timing);
     if (interpolate) {
         fg_->recordFlow(cb, parity_);
@@ -668,7 +690,7 @@ int VkCtx::synthesize(const Capture::Frame& f, bool& consumed) {
     job_.frames = interpolate ? mult : 1;
     job_.realIndex = interpolate ? FrameOrder::of(cfg, mult).real : 0;
     job_.start = now;
-    job_.intervalMs = intervalMs_;
+    job_.intervalMs = interpolate && periodMs > 0.0 ? periodMs * mult : intervalMs_;
     generated_ = interpolate;
     prev_ = static_cast<int>(cur);
     cur_ = (cur + 1) % kHistory;
