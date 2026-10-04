@@ -3,6 +3,7 @@
 #include "test.h"
 
 #include <algorithm>
+#include <clocale>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -104,6 +105,22 @@ TEST(config_apply_values) {
         live.applyLive(fresh);
         CHECK(live.frameTiming && !live.dedup);   // dedup sizes the output stage
     }
+}
+
+// A game or toolkit may set a locale with a decimal comma (French on the
+// SteamOS report): the config keeps its dot.
+TEST(config_numbers_ignore_the_locale) {
+    const char* old = std::setlocale(LC_NUMERIC, nullptr);
+    const std::string saved = old ? old : "C";
+    bool comma = false;
+    for (const char* name : {"fr_FR.UTF-8", "fr_FR.utf8", "de_DE.UTF-8", "de_DE.utf8"})
+        if (std::setlocale(LC_NUMERIC, name)) { comma = true; break; }
+    Config c;
+    CHECK(c.apply("scene_cut_low", "0.3") && c.sceneCutLow == 0.3f);
+    CHECK(c.apply("scene_cut_high", "+0.6") && c.sceneCutHigh == 0.6f);
+    CHECK(!c.apply("scene_cut_low", "0,3"));
+    std::setlocale(LC_NUMERIC, saved.c_str());
+    if (!comma) std::printf("  (no decimal-comma locale installed: checked in the C locale only)\n");
 }
 
 TEST(config_rejects_garbage) {

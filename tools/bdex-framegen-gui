@@ -1205,6 +1205,9 @@ class Window(Adw.ApplicationWindow):
         self.save()
 
     def save(self):
+        # Re-read first: lines edited by hand while the panel is open
+        # ([game] sections, unmanaged keys) must survive its next save.
+        self.cfg = ConfigFile.load()
         self.opt.write_into(self.cfg.glob)
         try:
             self.cfg.write()

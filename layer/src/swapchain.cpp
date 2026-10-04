@@ -806,6 +806,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     dev_.vt.BeginCommandBuffer(slot.cmd, &bi);
     fg_->profileBegin(slot.cmd, slotIdx);
+    fg_->collectMeanCost(slotIdx);  // the slot's fence was waited in nextSlot
     if (generating_) {
         fg_->recordAcquireSources(slot.cmd, prev, static_cast<int>(imageIndex));
         fg_->recordAnalysis(slot.cmd, parity_, imageIndex);
@@ -837,7 +838,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         fg_->recordFrameState(slot.cmd, timing);
         fg_->profileMark(slot.cmd, slotIdx, FrameGen::StageAnalysis);
         if (interpolate) {
-            fg_->recordFlow(slot.cmd, parity_);
+            fg_->recordFlow(slot.cmd, parity_, static_cast<int>(slotIdx));
             fg_->profileMark(slot.cmd, slotIdx, FrameGen::StageFlow);
             // Interpolation: frames between prev and cur (t in (0,1)).
             // Extrapolation: frames after cur (t in (1,2)), shown after it.

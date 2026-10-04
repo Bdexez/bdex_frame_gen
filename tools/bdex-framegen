@@ -143,7 +143,7 @@ quick_read() {
   # displayed but show nothing new (x2 then looks exactly like x1).
   local log="$2" cut
   if [ -n "$log" ] && [ -f "$log" ]; then
-    cut="$(grep -o 'scene cut: [0-9]*% duplicated, [0-9]*% faded (cost [0-9.]*' "$log" | tail -1)"
+    cut="$(grep -o 'scene cut: [0-9]*% duplicated, [0-9]*% faded (cost [0-9.,]*' "$log" | tail -1)"
     if [ -n "$cut" ]; then
       echo "dernière mesure : $cut)"
       local dup fade
