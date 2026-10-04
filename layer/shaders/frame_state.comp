@@ -17,14 +17,15 @@
 // them, which a frame-time spike or a run of duplicates makes differ from the
 // smoothed present interval the pacing spreads the outputs over.
 //
-// Display model (the pacing of swapchain.cpp, non-FIFO): interpolation
-// presents output i (1..m-1) at now + I(i-1)/m and the real frame at
-// now + I(m-1)/m, so everything shows the game L = I(m-1)/m late and output i
-// should show content time now - I(m-i)/m. Extrapolation presents the real
-// frame at once and output i at now + I*i/m, showing that content time. t is
-// the position of that content time between the two distinct images (0..1),
-// or past the current one (1 + s). With a steady frame rate and no
-// duplicates this is exactly the fixed i/m.
+// Display model (the pacing of swapchain.cpp, non-FIFO): the m frames of a
+// present go out at positions 0..m-1, I/m apart, the real frame at position r
+// (frame_order.h: r = m-1 interpolation, 0 extrapolation, 1 hybrid), so
+// everything shows the game L = I*r/m late and the frame at position j shows
+// content time now + I(j-r)/m. t is the position of that content time
+// between the two distinct images (0..1, before the real frame), or past the
+// current one (1 + s, after it). With a steady frame rate and no duplicates
+// this is exactly the fixed position (i/m in interpolation, 1 + i/m in
+// extrapolation).
 //
 // A repeat may also be partial: see `partial` below (HUD over a slower world).
 // Duplicates also gate the flow passes: a repeated image carries no motion,
@@ -66,6 +67,8 @@ layout(push_constant) uniform PC {
     int gateCount;
     uint dupMaxPixels;   // at most this many differing pixels = a repeat
     float displayMs[4];  // FLAG_DISPLAY: predicted display times of outputs 0..2 and the real frame [3]
+    int realPos;         // display position of the real frame among the m (frame_order.h): outputs before it are
+                         // interpolated, those after it extrapolated (m-1 = interpolation, 0 = extrapolation)
 } pc;
 
 #define FLAG_RESET 1   // no usable previous frame: restart the clock
@@ -132,9 +135,12 @@ void main() {
     float ageT = ageLast;
     if ((pc.flags & FLAG_CONTENT) == 0) { interval = I; ageT = 0.0; }
     int m = max(pc.multiplier, 1);
-    bool extrap = (pc.flags & FLAG_EXTRAP) != 0;
     for (int i = 1; i < 4; ++i) {
         float t = 0.0;
+        // Output i (1-based) shows at display position j; before the real
+        // frame it is interpolated, after it extrapolated (frame_order.h).
+        int j = i - 1 < pc.realPos ? i - 1 : i;
+        bool extrap = j > pc.realPos;
         if (i < m) {
             if ((pc.flags & FLAG_DISPLAY) != 0) {
                 // Each frame shows the content of its own display time: the
@@ -144,9 +150,10 @@ void main() {
                 if (extrap) t = 1.0 + clamp((d + ageT) / interval, 0.0, 1.0);
                 else t = clamp(1.0 + (d + ageT) / interval, 0.0, 1.0);
             } else {
-                // Written as the fixed i/m plus a correction, so that a steady
-                // game (interval == I, no repeat) gets exactly the fixed t.
-                float f = float(i) / float(m);
+                // Written as the fixed position plus a correction, so that a
+                // steady game (interval == I, no repeat) gets exactly the fixed
+                // t (i/m in the pure modes).
+                float f = extrap ? float(j - pc.realPos) / float(m) : float(m - pc.realPos + j) / float(m);
                 if (extrap) t = 1.0 + clamp(f + ((I - interval) * f + ageLast) / interval, 0.0, 1.0);
                 else t = clamp(f + ((interval - I) * (1.0 - f) + ageLast) / interval, 0.0, 1.0);
             }

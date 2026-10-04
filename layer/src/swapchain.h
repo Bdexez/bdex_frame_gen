@@ -85,7 +85,7 @@ private:
         uint32_t source = 0;         // virtual image holding the real frame
         int frames = 1;              // presents to perform (multiplier, or 1)
         bool generated = false;      // frames-1 generated images in out_[]
-        bool realFirst = false;      // extrapolation: the real frame goes out first
+        int realIndex = 0;           // display position of the real frame (frame_order.h): 0 extrapolation, frames-1 interpolation
         bool fifo = false;           // the real swapchain presents in FIFO: the display paces
         int slot = -1;               // the synthesis slot (slots_) of this present
         clock::time_point start{};   // when the application presented

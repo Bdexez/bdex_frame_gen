@@ -79,7 +79,7 @@ public:
     // The presentation job produced by the last synthesize().
     struct Job {
         int frames = 1;             // presents in this job (1 or multiplier)
-        bool realFirst = true;      // extrapolation: real frame at index 0
+        int realIndex = 0;          // display position of the real frame (frame_order.h): 0 extrapolation
         clock::time_point start;    // arrival of the real frame
         double intervalMs = 16.7;   // estimated capture interval
     };

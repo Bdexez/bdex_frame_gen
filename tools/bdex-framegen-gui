@@ -282,6 +282,7 @@ CONFIG_PATH = os.path.join(
 )
 
 MODES = [("Interpolation (défaut)", "interpolate"),
+         ("Hybride — ×3/×4 : latence divisée par 2 à 3", "hybrid"),
          ("Extrapolation — latence minimale", "extrapolate")]
 PRESETS = [("Auto — adapté au GPU", "auto"), ("Qualité", "quality"),
            ("Équilibré", "balanced"), ("Amélioré — options de qualité mesurées", "enhanced"),
@@ -539,7 +540,8 @@ class Options:
             self.multiplier = 2
         # A file without a multiplier (new user) starts on « Auto ».
         self.auto_mult = "multiplier" not in g or g.get("target_fps", "").lower() in ("-1", "auto")
-        self.mode = "extrapolate" if g.get("mode", "").lower().startswith("extrap") else "interpolate"
+        m = g.get("mode", "").lower()
+        self.mode = "extrapolate" if m.startswith("extrap") else "hybrid" if m == "hybrid" else "interpolate"
         self.present = g.get("present_mode", "auto").lower()
         self.low_latency = flag("low_latency")
         rs = g.get("render_scale")
@@ -805,7 +807,7 @@ def describe_entry(e):
     try:
         game, outp = float(e.get("game_fps", 0)), float(e.get("output_fps", 0))
         parts.append(f"{game:.0f} → {outp:.0f} i/s (×{e.get('multiplier', '?')}, "
-                     f"{'extrapolation' if e.get('mode') == 'extrapolate' else 'interpolation'})")
+                     f"{ {'extrapolate': 'extrapolation', 'hybrid': 'hybride'}.get(e.get('mode'), 'interpolation')})")
         hz = float(e.get("refresh_hz", 0))
         if hz > 0:
             parts.append(f"écran {hz:.0f} Hz")

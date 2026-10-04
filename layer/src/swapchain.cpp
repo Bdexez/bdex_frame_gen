@@ -1,4 +1,5 @@
 #include "swapchain.h"
+#include "frame_order.h"
 #include "online_tune.h"
 #include "status.h"
 #include "log.h"
@@ -77,7 +78,7 @@ void VirtualSwapchain::publishStatus(int multiplier) {
     e.state = on ? "generating" : generating_ ? "paused" : "pass-through";
     if (cfg_.requireApp && !cfg_.appTargeted) e.state = "ready";  // armed, waiting for « Démarrer »
     if (!generating_) e.reason = genFailReason_.empty() ? "frame generation off for this swapchain" : genFailReason_;
-    e.mode = cfg_.extrapolate ? "extrapolate" : "interpolate";
+    e.mode = cfg_.modeName();
     e.multiplier = on ? multiplier : 1;
     e.gameFps = frameIntervalMs_ > 0.05 ? 1000.0 / frameIntervalMs_ : 0.0;
     e.outFps = e.gameFps * e.multiplier;
@@ -733,8 +734,8 @@ void VirtualSwapchain::rebuildOutput() {
         BDEX_WARN("control panel: output stage not rebuilt (%s)", e.what());
         return;
     }
-    BDEX_INFO("control panel: output stage rebuilt (x%d %s, generation %s)", cfg_.multiplier,
-              cfg_.extrapolate ? "extrapolate" : "interpolate", generating_ && !cfg_.paused ? "on" : "paused");
+    BDEX_INFO("control panel: output stage rebuilt (x%d %s, generation %s)", cfg_.multiplier, cfg_.modeName(),
+              generating_ && !cfg_.paused ? "on" : "paused");
 }
 
 VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& info, bool consumeWaitSemaphores) {
@@ -796,6 +797,8 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     lastAppPresent_ = t0;
 
     const int mult = generating_ ? chooseMultiplier() : 1;
+    // Where the real frame goes among the frames of this present.
+    const FrameOrder order = FrameOrder::of(cfg_, mult);
     // A rebuilt output stage has no analysis of the previous frame yet.
     const bool haveHistory = prevIndex_ >= 0 && !historyLost_;
     const bool interpolate = generating_ && haveHistory && mult > 1;
@@ -849,6 +852,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         timing.sinceLastMs = dt;
         timing.intervalMs = frameIntervalMs_;
         timing.multiplier = interpolate ? mult : 1;
+        timing.realPos = order.real;
         timing.reset = !haveHistory || !(dt > 0.5 && dt < 500.0);
         // Measured refresh grid: predict where each of this present's frames
         // lands (the pacing presents frame k for the refresh after
@@ -862,24 +866,18 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             for (int k = 0; k < mult && k < 4; ++k)
                 at[k] = (k == 0 ? land(now + 1.0) : land(now + frameIntervalMs_ * k / mult)) - now;
             timing.haveDisplay = true;
-            if (cfg_.extrapolate) {  // real first, then outputs 1..m-1
-                timing.displayMs[3] = float(at[0]);
-                for (int i = 1; i < mult; ++i) timing.displayMs[i - 1] = float(at[i]);
-            } else {                        // outputs first, the real frame last
-                for (int i = 1; i < mult; ++i) timing.displayMs[i - 1] = float(at[i - 1]);
-                timing.displayMs[3] = float(at[mult - 1]);
-            }
+            timing.displayMs[3] = float(at[order.real]);
+            for (int o = 0; o + 1 < mult && o < 3; ++o) timing.displayMs[o] = float(at[order.position(o)]);
         }
         fg_->recordFrameState(slot.cmd, timing);
         fg_->profileMark(slot.cmd, slotIdx, FrameGen::StageAnalysis);
         if (interpolate) {
             fg_->recordFlow(slot.cmd, parity_, static_cast<int>(slotIdx));
             fg_->profileMark(slot.cmd, slotIdx, FrameGen::StageFlow);
-            // Interpolation: frames between prev and cur (t in (0,1)).
-            // Extrapolation: frames after cur (t in (1,2)), shown after it.
-            const float base = cfg_.extrapolate ? 1.f : 0.f;
-            for (int i = 1; i < mult; ++i)
-                fg_->recordInterpolate(slot.cmd, static_cast<uint32_t>(prev), imageIndex, base + float(i) / mult, static_cast<uint32_t>(i - 1));
+            // Frames between prev and cur (t in (0,1)) before the real frame,
+            // frames after cur (t in (1,2)) after it (frame_order.h).
+            for (int o = 0; o + 1 < mult; ++o)
+                fg_->recordInterpolate(slot.cmd, static_cast<uint32_t>(prev), imageIndex, order.t(o), static_cast<uint32_t>(o));
             fg_->profileMark(slot.cmd, slotIdx, FrameGen::StageInterp);
         }
         // Resample the real frame into the internal image the worker presents
@@ -980,16 +978,15 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     vi.held = true;
     if (dumping_) {
         // Written in presentation order.
-        if (cfg_.extrapolate) {
-            dumpFrame(slot, false, 1.f);
-            if (interpolate)
-                for (int i = 1; i < mult; ++i)
-                    dumpFrame(slot, true, 1.f + float(i) / mult, static_cast<uint32_t>(i - 1));
-        } else {
-            if (interpolate)
-                for (int i = 1; i < mult; ++i)
-                    dumpFrame(slot, true, float(i) / mult, static_cast<uint32_t>(i - 1));
-            dumpFrame(slot, false, 1.f);
+        const int frames = interpolate ? mult : 1;
+        const int realPos = interpolate ? order.real : 0;
+        for (int p = 0; p < frames; ++p) {
+            if (p == realPos) {
+                dumpFrame(slot, false, 1.f);
+            } else {
+                const int o = p < realPos ? p : p - 1;
+                dumpFrame(slot, true, order.t(o), static_cast<uint32_t>(o));
+            }
         }
     }
 
@@ -999,7 +996,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     job.source = imageIndex;
     job.frames = interpolate ? mult : 1;
     job.generated = interpolate;
-    job.realFirst = cfg_.extrapolate;
+    job.realIndex = interpolate ? order.real : 0;
     job.start = t0;
     job.frameStartMs = lastReturnMs_;
     job.intervalMs = frameIntervalMs_;
@@ -1190,7 +1187,7 @@ void VirtualSwapchain::runJob(const Job& job) {
         for (int k = 0; k < job.frames; ++k) {
             if (copied[size_t(k)]) continue;
             copied[size_t(k)] = true;
-            const bool realK = job.realFirst ? k == 0 : k == job.frames - 1;
+            const bool realK = k == job.realIndex;
             left.push_back((job.synthSlot >= 0 && realK) ? synth.realIn : synth.synthDone[k]);
         }
         if (!left.empty()) consumeSemaphores(left.data(), static_cast<uint32_t>(left.size()));
@@ -1215,23 +1212,29 @@ void VirtualSwapchain::runJob(const Job& job) {
     // spread over the game's frame interval.
     const bool paced = job.pacing && !job.fifo && job.frames > 1;
 
-    if (!job.realFirst) {
-        // Interpolation (and a lone real frame): every copy is submitted at
-        // once, in display order, right behind the synthesis on the queue.
-        // The application thread only waits for the copies to be submitted
-        // before it records the next synthesis (which rewrites what they
-        // read), so the pacing below never holds the game back.
-        std::vector<Copied> out(static_cast<size_t>(job.frames));
+    if (job.realIndex > 0 || job.frames == 1) {
+        // Interpolation, hybrid (and a lone real frame): the frames up to the
+        // real one are copied at once, in display order, right behind the
+        // synthesis on the queue. The application thread only waits for the
+        // copies to be submitted before it records the next synthesis (which
+        // rewrites what they read), so the pacing below never holds the game
+        // back. Hybrid: the predicted frames after the real one follow like
+        // extrapolation's, each copied at its time unless a newer real frame
+        // made it obsolete.
+        const int eager = job.frames == 1 ? 1 : job.realIndex + 1;
+        std::vector<Copied> out(static_cast<size_t>(eager));
         int n = 0;
         VkResult err = VK_SUCCESS;
-        for (int i = 0; i < job.frames; ++i) {
+        for (int i = 0; i < eager; ++i) {
             const VkResult r = submitCopy(job, i, out[size_t(i)]);
             if (r < 0) { err = r; break; }
             copied[size_t(i)] = true;
             ++n;
         }
-        consumeUnused();
-        markSubmitted();
+        if (err < 0 || eager == job.frames) {
+            consumeUnused();
+            markSubmitted();
+        }
         // The frames are timed from when the GPU finished the synthesis (the
         // copies follow within a fraction of a millisecond), not from the
         // game's present call: the game's rendering and the synthesis may end
@@ -1247,7 +1250,35 @@ void VirtualSwapchain::runJob(const Job& job) {
             const VkResult r = presentCopied(job, out[size_t(i)]);
             if (r < 0 && err == VK_SUCCESS) err = r;
         }
-        if (err < 0) fail(err);
+        if (err < 0) {
+            fail(err);
+            return;
+        }
+        uint64_t dropped = 0;
+        bool cancelled = false;
+        for (int i = eager; i < job.frames; ++i) {
+            if (!cancelled) cancelled = paced ? !waitUntilOrCancelled(paceTarget(job, origin, i)) : predictedCancelled();
+            if (cancelled) {
+                ++dropped;
+                continue;
+            }
+            Copied c;
+            VkResult r = submitCopy(job, i, c);
+            if (r < 0) {
+                fail(r);
+                return;
+            }
+            copied[size_t(i)] = true;
+            if (i == job.frames - 1) markSubmitted();
+            r = presentCopied(job, c);
+            if (r < 0) {
+                fail(r);
+                return;
+            }
+        }
+        if (dropped) statsSkipped_.fetch_add(dropped, std::memory_order_relaxed);
+        consumeUnused();
+        markSubmitted();
         return;
     }
 
@@ -1502,8 +1533,8 @@ VkResult VirtualSwapchain::submitDeferredSynthesis(const Job& job) {
 // the job into it. Interpolation: generated frames first, the real one last.
 // Extrapolation: the real frame first, then the predicted ones.
 VkResult VirtualSwapchain::submitCopy(const Job& job, int index, Copied& out) {
-    const bool real = job.realFirst ? index == 0 : index == job.frames - 1;
-    const uint32_t output = job.realFirst ? static_cast<uint32_t>(index - 1) : static_cast<uint32_t>(index);
+    const bool real = index == job.realIndex;
+    const uint32_t output = static_cast<uint32_t>(index < job.realIndex ? index : index - 1);
 
     FrameSlot& slot = nextSlot(workerSlots_, workerCursor_);
     uint32_t ri = 0;

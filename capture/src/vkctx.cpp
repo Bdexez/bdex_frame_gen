@@ -2,6 +2,7 @@
 #include "log.h"
 
 #include "framegen.h"
+#include "frame_order.h"
 #include "online_tune.h"
 #include "status.h"
 #include "vk_util.h"
@@ -630,11 +631,10 @@ int VkCtx::synthesize(const Capture::Frame& f, bool& consumed) {
     fg_->recordFrameState(cb, timing);
     if (interpolate) {
         fg_->recordFlow(cb, parity_);
-        const float base = cfg.extrapolate ? 1.f : 0.f;
-        for (int i = 1; i < mult; ++i)
-            fg_->recordInterpolate(cb, static_cast<uint32_t>(prev), cur,
-                                   base + static_cast<float>(i) / static_cast<float>(mult),
-                                   static_cast<uint32_t>(i - 1));
+        // Before the real frame interpolated, after it extrapolated (frame_order.h).
+        const FrameOrder order = FrameOrder::of(cfg, mult);
+        for (int o = 0; o + 1 < mult; ++o)
+            fg_->recordInterpolate(cb, static_cast<uint32_t>(prev), cur, order.t(o), static_cast<uint32_t>(o));
     }
     if (fg_->packReal()) fg_->recordUpscaleReal(cb, cur, interpolate ? prev : -1);
     fg_->recordReleaseSources(cb, prev, static_cast<int>(cur));
@@ -666,7 +666,7 @@ int VkCtx::synthesize(const Capture::Frame& f, bool& consumed) {
     consumed = true;
 
     job_.frames = interpolate ? mult : 1;
-    job_.realFirst = cfg.extrapolate;
+    job_.realIndex = interpolate ? FrameOrder::of(cfg, mult).real : 0;
     job_.start = now;
     job_.intervalMs = intervalMs_;
     generated_ = interpolate;
@@ -683,9 +683,8 @@ int VkCtx::present(int index) {
     if (!swapchain_ || !fg_) return 1;
     const Job& job = job_;
     if (index < 0 || index >= job.frames) return 0;
-    const bool real = job.realFirst ? index == 0 : index == job.frames - 1;
-    const uint32_t output = job.realFirst ? static_cast<uint32_t>(index - 1)
-                                          : static_cast<uint32_t>(index);
+    const bool real = index == job.realIndex;
+    const uint32_t output = static_cast<uint32_t>(index < job.realIndex ? index : index - 1);
     const uint32_t source = static_cast<uint32_t>(prev_);  // the frame synthesize() just took
 
     CmdSlot& s = nextCmd();
@@ -780,7 +779,7 @@ void VkCtx::publishStatus(const std::string& target, double captureFps, double o
     e.kind = "capture";
     e.target = target;
     e.state = genEnabled_ ? "generating" : "paused";
-    e.mode = layerDev_.config.extrapolate ? "extrapolate" : "interpolate";
+    e.mode = layerDev_.config.modeName();
     e.multiplier = genEnabled_ ? std::max(1, layerDev_.config.multiplier) : 1;
     e.gameFps = captureFps;
     e.outFps = outFps;

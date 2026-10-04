@@ -6,7 +6,7 @@
 // the game window. Console app: logs go to stderr.
 //
 //   bdex_capture [--title <substr> | --pid <n>] [--scale <f> | --fit]
-//                [--multiplier 1..4] [--mode extrapolate|interpolate]
+//                [--multiplier 1..4] [--mode extrapolate|interpolate|hybrid]
 //                [--preset <name>] [--filter 0|1|2] [--sharpness <f>]
 //                [--hud 0..4] [--gpu <n>] [--fifo] [--list]
 //
@@ -84,7 +84,7 @@ struct Options {
     bool list = false;
     // Frame-generation overrides (-1 / empty = keep the config file's value).
     int multiplier = -1;
-    int mode = -1;          // 0 interpolate, 1 extrapolate
+    int mode = -1;          // 0 interpolate, 1 extrapolate, 2 hybrid
     std::string preset;
     int filter = -1;
     float sharpness = -1.f;
@@ -102,6 +102,7 @@ void usage() {
         "  --fit              overlay fills the game's monitor, aspect preserved\n"
         "  --multiplier <n>   frames shown per captured frame: 1 (off), 2, 3, 4 (default 2)\n"
         "  --mode <m>         interpolate (default, fewer artefacts) | extrapolate (half a frame less latency)\n"
+        "                     | hybrid (x3/x4: one interpolated frame, then predictions; 1/m of a frame of latency)\n"
         "  --preset <p>       performance | balanced | quality (default: auto from the GPU)\n"
         "  --filter <0|1|2>   upscale filter: bilinear | bicubic | Lanczos-2 (default)\n"
         "  --sharpness <f>    sharpening after upscaling, 0..1 (default 0)\n"
@@ -170,8 +171,9 @@ bool parse(int argc, char** argv, Options& o) {
             std::string m = v;
             if (m == "extrapolate" || m == "extrapolation") o.mode = 1;
             else if (m == "interpolate" || m == "interpolation") o.mode = 0;
+            else if (m == "hybrid") o.mode = 2;
             else {
-                std::fprintf(stderr, "--mode: extrapolate or interpolate\n");
+                std::fprintf(stderr, "--mode: extrapolate, interpolate or hybrid\n");
                 return false;
             }
         } else if (a == "--preset") {
@@ -417,7 +419,10 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
         LOGE("unknown preset '%s' (performance, balanced, quality)", o.preset.c_str());
         return 2;
     }
-    if (o.mode >= 0) cfg.extrapolate = o.mode == 1;
+    if (o.mode >= 0) {
+        cfg.extrapolate = o.mode == 1;
+        cfg.hybrid = o.mode == 2;
+    }
     if (o.multiplier > 0) cfg.multiplier = o.multiplier;
     if (o.filter >= 0) cfg.upscaleFilter = o.filter;
     if (o.sharpness >= 0.f) cfg.sharpness = o.sharpness;
@@ -427,6 +432,7 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
         if (!choice->preset.empty()) cfg.apply("preset", choice->preset);
         cfg.multiplier = choice->multiplier;
         cfg.extrapolate = choice->extrapolate;
+        cfg.hybrid = choice->hybrid;
         cfg.upscaleFilter = choice->filter;
         cfg.sharpness = choice->sharpness;
         cfg.overlayMode = choice->hud;
@@ -574,12 +580,15 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
         const bdex::VkCtx::Job job = vk.job();
         const bool paced = cfg.pacing && !vk.fifo() && job.frames > 1;
         Clock::time_point origin = job.start;
-        if (paced && !job.realFirst) origin = vk.waitSynthesis();
+        if (paced && job.realIndex > 0) origin = vk.waitSynthesis();
         auto framePending = [](void* c) { return static_cast<bdex::Capture*>(c)->waitPending(0); };
         for (int i = 0; i < job.frames && g_running; ++i) {
             if (i > 0) {
+                // Frames past the real one are predictions: obsolete, and
+                // skipped, once the next real frame has arrived.
+                const bool predicted = i > job.realIndex;
                 if (paced) {
-                    if (job.realFirst && i == 1) {
+                    if (job.realIndex == 0 && i == 1) {
                         origin = vk.waitLastCopy(framePending, &cap);
                         if (cap.waitPending(0)) break;
                     }
@@ -587,12 +596,12 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
                         origin + std::chrono::duration_cast<Clock::duration>(
                                      std::chrono::duration<double, std::milli>(
                                          job.intervalMs * i / job.frames));
-                    if (job.realFirst) {
+                    if (predicted) {
                         if (frameBefore(cap, target_t)) break;
                     } else {
                         sleepUntil(target_t);
                     }
-                } else if (job.realFirst && cap.waitPending(0)) {
+                } else if (predicted && cap.waitPending(0)) {
                     break;
                 }
             }
@@ -607,7 +616,7 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
                 break;
             }
             ++presented;
-            if (job.realFirst ? i == 0 : i == job.frames - 1) {
+            if (i == job.realIndex) {
                 ++presentedReal;
                 arrivalToSubmitMs.push_back(synthLatencyMs);
                 arrivalToPresentMs.push_back(std::chrono::duration<double, std::milli>(
@@ -694,6 +703,7 @@ int main(int argc, char** argv) {
         const bdex::Config d = bdex::Config::load("");
         choice.multiplier = std::max(1, d.multiplier);
         choice.extrapolate = d.extrapolate;
+        choice.hybrid = d.hybrid;
         choice.filter = d.upscaleFilter;
         choice.sharpness = d.sharpness;
         choice.hud = d.overlayMode;

@@ -1,5 +1,6 @@
 #include "framegen.h"
 #include "framegen_internal.h"
+#include "frame_order.h"
 #include "log.h"
 #include "shaders.h"
 #include "vk_util.h"
@@ -854,7 +855,8 @@ void FrameGen::recordFrameState(VkCommandBuffer cmd, const FrameTiming& timing) 
                     static_cast<int32_t>(gateFull_.size() / 4),
                     // A few differing pixels (a blinking cursor, dithering) still count as a repeat.
                     std::max(4u, l0.size.width * l0.size.height / 16384u),
-                    {timing.displayMs[0], timing.displayMs[1], timing.displayMs[2], timing.displayMs[3]}};
+                    {timing.displayMs[0], timing.displayMs[1], timing.displayMs[2], timing.displayMs[3]},
+                    timing.realPos >= 0 ? timing.realPos : FrameOrder::of(*cfgp_, timing.multiplier).real};
     if (dedup) {
         vt.CmdFillBuffer(cmd, stateBuf_.buffer, kStateDiffCount, 4, 0);
         vt.CmdFillBuffer(cmd, stateBuf_.buffer, kStateTileDiff, 64 * 4, 0);

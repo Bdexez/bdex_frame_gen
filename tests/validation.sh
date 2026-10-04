@@ -37,8 +37,8 @@ status=0
 # where the device has one — its cross-queue semaphores under sync validation.
 # "probe": online_tune's synthesis probe (flow copies, composed flows, a
 # synthesis of its own, the comparison), from the primed cache above.
-for run in interpolate extrapolate interpolate:state extrapolate:state extrapolate:direct interpolate:async extrapolate:async \
-           interpolate:probe extrapolate:probe; do
+for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hybrid:state extrapolate:direct \
+           interpolate:async extrapolate:async interpolate:probe extrapolate:probe; do
   mode=${run%%:*}
   output="BDEX_FG_RENDER_SCALE=0.75 BDEX_FG_SHARPNESS=0.5 BDEX_FG_HUD=2"
   if [ "$run" = extrapolate:direct ]; then

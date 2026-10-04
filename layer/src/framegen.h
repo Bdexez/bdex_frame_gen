@@ -54,6 +54,7 @@ public:
         double sinceLastMs = 0.0;  // time since the previous real frame was presented
         double intervalMs = 0.0;   // smoothed frame interval the pacing spreads the outputs over
         int multiplier = 2;        // frames presented for this real frame
+        int realPos = -1;          // display position of the real frame (frame_order.h); -1 = from the mode
         bool reset = false;        // no usable previous frame (first frame, history lost)
         // Predicted display times (ms after the present call) of the
         // generated outputs [0..2] and of the real frame [3], from the

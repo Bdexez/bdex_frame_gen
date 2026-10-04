@@ -10,7 +10,7 @@ namespace {
 class ExtrapolateAccelPass : public FgPass {
 public:
     const char* name() const override { return "extrapolate_accel"; }
-    bool active(const Config& cfg) const override { return cfg.extrapolate && cfg.extrapolateAccel > 0.f; }
+    bool active(const Config& cfg) const override { return (cfg.extrapolate || cfg.hybrid) && cfg.extrapolateAccel > 0.f; }
 
     bool needsPreviousFlow(const Config& cfg) const override { return active(cfg); }
     void flowBegin(FgContext&, VkCommandBuffer, uint32_t) override { weight_ = 0.f; }

@@ -39,6 +39,7 @@ struct Config {
     bool  syncPresent   = false;  // block the game's present call until the worker has presented this frame (D3D12/VKD3D compat test)
     bool  hidePresentExt = true;  // hide present-timing extensions (swapchain_maintenance1, present_id/wait) from the game; their semantics target the real swapchain we virtualise, and VKD3D-Proton hangs otherwise
     bool  extrapolate   = false;  // predict the frame after the last one instead of interpolating (no added latency)
+    bool  hybrid        = false;  // mode=hybrid: one interpolated frame, the real one, then predicted ones (x3/x4: 1/m of a frame of latency instead of (m-1)/m); see frame_order.h
     int   flowScale     = 0;      // finest flow level at 1/flowScale resolution: 1, 2, 4; 0 = auto from the resolution
     int   searchRadius  = 4;      // block matching search radius at the coarsest level, 1..4
     int   searchFine    = 2;      // search radius at the finer levels (around the coarse prediction), 1..4
@@ -151,6 +152,8 @@ struct Config {
     static std::vector<std::string> processNames();
     static bool sectionMatches(const std::string& section, const std::vector<std::string>& names);
     std::string describe() const;
+    // "interpolate", "extrapolate" or "hybrid" (the `mode` option's value).
+    const char* modeName() const { return extrapolate ? "extrapolate" : hybrid ? "hybrid" : "interpolate"; }
     // Every key Config::apply understands (with their aliases if `aliases`),
     // from the option registry in config.cpp.
     static std::vector<std::string> optionKeys(bool aliases = true);

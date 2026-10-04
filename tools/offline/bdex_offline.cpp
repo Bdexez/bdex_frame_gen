@@ -61,6 +61,7 @@
 #include "config.h"
 #include "device.h"
 #include "framegen.h"
+#include "frame_order.h"
 #include "log.h"
 
 #include <algorithm>
@@ -376,7 +377,7 @@ int main(int argc, char** argv) {
     dev.config.autoConfigure(dev.props, dev.memProps);
     fprintf(stderr, "bdex_offline: %s, %s, render %ux%u -> %ux%u, x%d %s, %s\n", dev.props.deviceName, fmtName.c_str(),
             render.width, render.height, extent.width, extent.height,
-            mult, dev.config.extrapolate ? "extrapolate" : "interpolate", dev.config.describe().c_str());
+            mult, dev.config.modeName(), dev.config.describe().c_str());
 
     int status = 0;
     {
@@ -400,7 +401,9 @@ int main(int argc, char** argv) {
 
         fs::create_directories(outDir);
         std::ofstream manifest(outDir / "manifest.txt");
-        const bool extrap = dev.config.extrapolate;
+        // Where the real frame goes among the frames of a present, and the
+        // time of each generated one (frame_order.h, as the layer does).
+        const FrameOrder order = FrameOrder::of(dev.config, mult);
 
         // The presents of the "game": which frame it shows (content) and when
         // (time, in input-frame units). By default input k is frame k*mult,
@@ -413,9 +416,10 @@ int main(int argc, char** argv) {
         if (!schedule) {
             // Interpolation generates frames strictly between inputs k-1 and
             // k; extrapolation the frames after input k, so its last input
-            // needs mult-1 ground-truth frames after it.
-            size_t nInputs = (frames.size() - 1) / mult + 1;
-            if (extrap) nInputs = (frames.size() - mult) / mult + 1;
+            // needs mult-1 ground-truth frames after it (hybrid: the frames
+            // after the real one, m-1-real).
+            const size_t ahead = size_t(mult - 1 - order.real);
+            size_t nInputs = (frames.size() - 1 - ahead) / mult + 1;
             if (maxInputs > 0) nInputs = std::min(nInputs, size_t(maxInputs));
             for (size_t k = 0; k < nInputs; ++k) sched.push_back({k * mult, double(k * mult)});
         } else {
@@ -482,7 +486,7 @@ int main(int argc, char** argv) {
             // the refresh after present + I*k/m, frame 0 right after the GPU
             // work (1 ms). at[] is in input-frame units, relative to now.
             double at[4] = {};
-            const int realIdx = extrap ? 0 : mult - 1;
+            const int realIdx = order.real;
             if (refreshHz > 0.0 && generate) {
                 const double pu = 1000.0 / refreshHz / msPerFrame, now = sched[k].time;
                 const double Iu = intervalMs / msPerFrame;
@@ -494,7 +498,7 @@ int main(int argc, char** argv) {
                     timing.haveDisplay = true;
                     timing.displayMs[3] = float(at[realIdx] * msPerFrame);
                     for (int i = 1; i < mult; ++i)
-                        timing.displayMs[i - 1] = float(at[extrap ? i : i - 1] * msPerFrame);
+                        timing.displayMs[i - 1] = float(at[order.position(i - 1)] * msPerFrame);
                 }
             }
             const bool dumpReal = (schedule || scoreReal) && fg.packReal();
@@ -533,10 +537,9 @@ int main(int argc, char** argv) {
                     // at full clock; the last repetition is the one used.
                     for (int r = 0; r < benchReps; ++r) fg.recordFlow(cmd, parity);
                     fg.profileMark(cmd, 0, FrameGen::StageFlow);
-                    const float base = extrap ? 1.f : 0.f;
                     for (int i = 1; i < mult; ++i)
                         fg.recordInterpolate(cmd, static_cast<uint32_t>(prev), static_cast<uint32_t>(cur),
-                                             base + float(i) / mult, static_cast<uint32_t>(i - 1));
+                                             order.t(i - 1), static_cast<uint32_t>(i - 1));
                     fg.profileMark(cmd, 0, FrameGen::StageInterp);
                     for (int i = 1; i < mult; ++i)
                         fg.recordDump(cmd, static_cast<uint32_t>(i - 1), static_cast<uint32_t>(cur));
@@ -567,9 +570,10 @@ int main(int argc, char** argv) {
                     size_t gt;
                     // With a refresh grid each frame shows the content of its
                     // display time; the real frame shows `now`.
-                    const double content = refreshHz > 0.0 ? now + at[extrap ? i : i - 1] - at[realIdx]
-                                           : schedule ? (extrap ? now + I * i / mult : now - I * (mult - i) / mult)
-                                                      : double(extrap ? fi + i : fi - mult + i);
+                    const int pos = order.position(i - 1);
+                    const double content = refreshHz > 0.0 ? now + at[pos] - at[realIdx]
+                                           : schedule ? now + I * (pos - realIdx) / mult
+                                                      : double(fi) + double(pos - realIdx);
                     if (!truth(content, gt)) continue;
                     char name[64];
                     snprintf(name, sizeof name, "gen_%04zu_%d.ppm", k, i);
@@ -578,7 +582,7 @@ int main(int argc, char** argv) {
                         status = 1;
                     }
                     manifest << name << ' ' << fs::absolute(frames[gt]).string() << ' '
-                             << (extrap ? 1.f : 0.f) + float(i) / mult << ' ' << prevPath << ' ' << curPath << '\n';
+                             << order.t(i - 1) << ' ' << prevPath << ' ' << curPath << '\n';
                 }
                 size_t gt;
                 if ((schedule || scoreReal) && truth(now, gt)) {
