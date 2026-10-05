@@ -368,6 +368,7 @@ void VirtualSwapchain::createSlots(std::vector<FrameSlot>& slots, uint32_t count
         VK_CHECK(dev_.allocateCommandBuffer(&s.cmd, pool));
         VkFenceCreateInfo fi{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
         VK_CHECK(dev_.vt.CreateFence(dev_.device, &fi, nullptr, &s.fence));
+        if (!withSemaphore) VK_CHECK(dev_.vt.CreateFence(dev_.device, &fi, nullptr, &s.readyFence));
         if (withSemaphore) VK_CHECK(dev_.vt.CreateSemaphore(dev_.device, &si, nullptr, &s.acquireSem));
         if (asyncSynthesis) {
             for (auto& sem : s.synthDone) VK_CHECK(dev_.vt.CreateSemaphore(dev_.device, &si, nullptr, &sem));
@@ -396,8 +397,10 @@ VkResult VirtualSwapchain::submitOn(VkQueue queue, const VkSubmitInfo& si, VkFen
 void VirtualSwapchain::destroySlots(std::vector<FrameSlot>& slots, VkCommandPool pool) {
     for (auto& s : slots) {
         if (s.submitted) dev_.vt.WaitForFences(dev_.device, 1, &s.fence, VK_TRUE, UINT64_MAX);
+        if (s.readySubmitted) dev_.vt.WaitForFences(dev_.device, 1, &s.readyFence, VK_TRUE, UINT64_MAX);
         if (s.cmd && pool) dev_.vt.FreeCommandBuffers(dev_.device, pool, 1, &s.cmd);
         if (s.fence) dev_.vt.DestroyFence(dev_.device, s.fence, nullptr);
+        if (s.readyFence) dev_.vt.DestroyFence(dev_.device, s.readyFence, nullptr);
         for (VkSemaphore sem : {s.acquireSem, s.realIn, s.synthIn, s.copyDone})
             if (sem) dev_.vt.DestroySemaphore(dev_.device, sem, nullptr);
         for (VkSemaphore sem : s.synthDone)
@@ -581,6 +584,11 @@ VirtualSwapchain::FrameSlot& VirtualSwapchain::nextSlot(std::vector<FrameSlot>& 
         dev_.vt.ResetFences(dev_.device, 1, &s.fence);
         s.submitted = false;
         fg_->profileCollect(static_cast<uint32_t>((&slots == &slots_ ? 0 : slots_.size()) + (&s - slots.data())));
+    }
+    if (s.readySubmitted) {  // (signalled before the synthesis the fence above waited)
+        dev_.vt.WaitForFences(dev_.device, 1, &s.readyFence, VK_TRUE, UINT64_MAX);
+        dev_.vt.ResetFences(dev_.device, 1, &s.readyFence);
+        s.readySubmitted = false;
     }
     ++s.generation;
     dev_.vt.ResetCommandBuffer(s.cmd, 0);
@@ -803,16 +811,13 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     VkResult pending;
     {
         std::unique_lock<std::mutex> wlock(workerMutex_);
-        // This newer real frame makes the predicted frames extrapolation still
-        // holds back obsolete: the worker drops them at once (their copies
-        // were not submitted, so the synthesis below may rewrite their images).
-        cancelPredicted_ = true;
-        workerCv_.notify_all();
         // Low-latency: do not let the game run ahead of the presentation
         // engine (with FIFO, queued frames are pure display latency).
+        // (Predicted frames still waiting are not dropped here: this frame is
+        // only submitted, its rendering may end a frame from now. The worker
+        // drops them once it is ready to be shown — Job::ready.)
         if (cfg_.lowLatency) waitWorkerIdle(wlock);
         else waitWorkerSubmitted(wlock);
-        cancelPredicted_ = false;
         pending = pendingResult_;
         if (pending != VK_ERROR_OUT_OF_DATE_KHR) pendingResult_ = VK_SUCCESS;
     }
@@ -958,6 +963,18 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     // game's semaphores are consumed, which orders the worker's copy after
     // its rendering. Not while dumping (dumpFrame waits on the slot at once).
     const bool deferSynthesis = cfg_.extrapolate && interpolate && !fg_->packReal() && !dumping_;
+    if (!deferSynthesis) {
+        // A deferred extrapolation job still copying its predicted frames
+        // straight from the outputs (lazyOutputs_) would read what this
+        // synthesis rewrites: they are dropped (it is newer anyway).
+        std::unique_lock<std::mutex> wlock(workerMutex_);
+        if (lazyOutputs_) {
+            cancelPredicted_ = true;
+            workerCv_.notify_all();
+            idleCv_.wait(wlock, [this] { return !lazyOutputs_; });
+            cancelPredicted_ = false;
+        }
+    }
     std::vector<VkPipelineStageFlags> stages(appWaitCount, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
     VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     si.waitSemaphoreCount = appWaitCount;
@@ -981,7 +998,8 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             VkSemaphore outs[2] = {slot.realIn, slot.synthIn};
             si.signalSemaphoreCount = 2;
             si.pSignalSemaphores = outs;
-            r = submitOn(dev_.queue, si, VK_NULL_HANDLE);
+            r = submitOn(dev_.queue, si, slot.readyFence);
+            slot.readySubmitted = r >= 0;
         } else {
             std::vector<VkSemaphore> waits(appWaits, appWaits + appWaitCount);
             waits.insert(waits.end(), copyWaits.begin(), copyWaits.end());
@@ -995,7 +1013,8 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             copyWaits.clear();
         }
     } else {
-        r = dev_.submit(si, deferSynthesis ? VK_NULL_HANDLE : slot.fence);
+        r = dev_.submit(si, deferSynthesis ? slot.readyFence : slot.fence);
+        slot.readySubmitted = deferSynthesis && r >= 0;
     }
     if (r < 0) {
         BDEX_ERR("synthesis submission failed: %s", vkResultName(r));
@@ -1049,6 +1068,8 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     job.pacing = cfg_.pacing;
     if (deferSynthesis) job.synthSlot = static_cast<int>(slotIdx);
     job.slot = static_cast<int>(slotIdx);
+    job.ready = deferSynthesis ? slot.readyFence : slot.fence;
+    job.staging = static_cast<int>(fg_->stagingCount());
     if (dev_.asyncCompute) {
         job.asyncSlot = static_cast<int>(slotIdx);
         job.synthWaits = std::move(copyWaits);  // deferred: the synthesis the worker submits waits them
@@ -1288,29 +1309,35 @@ void VirtualSwapchain::runJob(const Job& job) {
             auto it = dev_.inst->waylandSurfaces.find(surface_);
             if (it != dev_.inst->waylandSurfaces.end()) it->second.reduce = false;
         }
-        std::lock_guard<std::mutex> wlock(workerMutex_);
-        pendingResult_ = r;
-        acquireCv_.notify_all();
+        {
+            std::lock_guard<std::mutex> wlock(workerMutex_);
+            pendingResult_ = r;
+            lazyOutputs_ = false;
+            acquireCv_.notify_all();
+        }
+        idleCv_.notify_all();
     };
     // With FIFO the presentation engine paces the frames; otherwise they are
     // spread over the game's frame interval.
     const bool paced = job.pacing && !job.fifo && job.frames > 1;
 
     if (job.realIndex > 0 || job.frames == 1) {
-        // Interpolation, hybrid (and a lone real frame): the frames up to the
-        // real one are copied at once, in display order, right behind the
-        // synthesis on the queue. The application thread only waits for the
+        // Interpolation, hybrid (and a lone real frame): every frame is
+        // copied at once, in display order, right behind the synthesis on the
+        // queue — into its swapchain image for as many as the surface lets us
+        // hold acquired at once (acquireAhead_), into a staging image for the
+        // rest (a surface allowing few images, high multipliers; hybrid's
+        // predicted frames). The application thread only waits for these
         // copies to be submitted before it records the next synthesis (which
         // rewrites what they read), so the pacing below never holds the game
-        // back. Hybrid: the predicted frames after the real one follow like
-        // extrapolation's, each copied at its time unless a newer real frame
-        // made it obsolete.
-        // Never more acquired images at once than the surface allows
-        // (acquireAhead_); the frames up to the real one past that are
-        // copied at their times below, the game waiting for them (they read
-        // what its next synthesis rewrites).
+        // back; a staged frame goes to its swapchain image when presented.
+        // Hybrid: the predicted frames after the real one are presented at
+        // their times unless the next present's first frame is ready first.
+        // (Past the staging images there are — a live change not yet
+        // applied — frames are copied at their times, the game waiting.)
         const int upToReal = job.frames == 1 ? 1 : job.realIndex + 1;
         const int eager = std::min(upToReal, acquireAhead_);
+        const int staged = std::min(job.frames, eager + job.staging);  // frames [eager, staged) go through staging
         std::vector<Copied> out(static_cast<size_t>(eager));
         int n = 0;
         VkResult err = VK_SUCCESS;
@@ -1320,18 +1347,16 @@ void VirtualSwapchain::runJob(const Job& job) {
             copied[size_t(i)] = true;
             ++n;
         }
-        // The frames up to the real one the swapchain cannot give an image to
-        // yet: copied into staging images now, so the game never waits for
-        // the pacing (a surface allowing few images at once, high multipliers).
-        for (int i = eager; i < upToReal && err >= 0; ++i) {
+        for (int i = eager; i < staged && err >= 0; ++i) {
             const VkResult r = submitStage(job, i, static_cast<uint32_t>(i - eager));
             if (r < 0) err = r;
             else copied[size_t(i)] = true;
         }
-        if (err < 0 || upToReal == job.frames) {
+        if (err < 0 || staged == job.frames) {
             consumeUnused();
             markSubmitted();
         }
+        auto staging = [&](int i) { return i < staged ? i - eager : -1; };
         // The frames are timed from when the GPU finished the synthesis (the
         // copies follow within a fraction of a millisecond), not from the
         // game's present call: the game's rendering and the synthesis may end
@@ -1354,10 +1379,14 @@ void VirtualSwapchain::runJob(const Job& job) {
         for (int i = eager; i < upToReal; ++i) {
             if (paced) std::this_thread::sleep_until(paceTarget(job, origin, i));
             Copied c;
-            VkResult r = submitCopy(job, i, c, i - eager);
+            VkResult r = submitCopy(job, i, c, staging(i));
             if (r < 0) {
                 fail(r);
                 return;
+            }
+            if (i >= staged) {
+                copied[size_t(i)] = true;
+                if (i == job.frames - 1) markSubmitted();
             }
             r = presentCopied(job, c);
             if (r < 0) {
@@ -1374,13 +1403,15 @@ void VirtualSwapchain::runJob(const Job& job) {
                 continue;
             }
             Copied c;
-            VkResult r = submitCopy(job, i, c);
+            VkResult r = submitCopy(job, i, c, staging(i));
             if (r < 0) {
                 fail(r);
                 return;
             }
-            copied[size_t(i)] = true;
-            if (i == job.frames - 1) markSubmitted();
+            if (i >= staged) {
+                copied[size_t(i)] = true;
+                if (i == job.frames - 1) markSubmitted();
+            }
             r = presentCopied(job, c);
             if (r < 0) {
                 fail(r);
@@ -1408,16 +1439,37 @@ void VirtualSwapchain::runJob(const Job& job) {
         const VkResult sr = submitDeferredSynthesis(job);
         if (r >= 0 && sr < 0) r = sr;
     }
+    // The predicted frames. Synthesised by the application thread (the real
+    // frame is packed: upscaling, HUD...), the next present rewrites them
+    // before their time: staged now. Deferred, the next synthesis is this
+    // thread's own, submitted after them: they are copied straight from the
+    // outputs at their times (lazyOutputs_ tells the application thread,
+    // should its next synthesis not be deferred).
+    const bool lazy = job.synthSlot >= 0;
+    const int staged = lazy ? 1 : std::min(job.frames, 1 + job.staging);  // frames [1, staged) go through staging
+    for (int i = 1; i < staged && r >= 0; ++i) {
+        r = submitStage(job, i, static_cast<uint32_t>(i - 1));
+        if (r >= 0) copied[size_t(i)] = true;
+    }
     if (r < 0) {
         fail(r);
         return;
     }
-    // The predicted frames at their times after the real frame is ready on
-    // the GPU. A newer real frame makes the ones still waiting obsolete:
-    // present() raises cancelPredicted_ and they are dropped, never copied
-    // (so the next synthesis may rewrite the images they would have read).
+    if (lazy && job.frames > 1) {
+        std::lock_guard<std::mutex> wlock(workerMutex_);
+        lazyOutputs_ = true;
+    }
+    if (lazy || staged == job.frames) markSubmitted();
+    // At their times after the real frame is ready on the GPU — deferred,
+    // not before the synthesis is (two late frames presented together would
+    // show only the second). They are obsolete once the next present's
+    // real frame is ready: from then on, the ones still waiting are dropped.
     clock::time_point origin = clock::now();
     bool cancelled = job.frames > 1 && (paced ? !waitGpu(real.fence, true, origin) : predictedCancelled());
+    if (!cancelled && lazy && job.frames > 1 && paced) {
+        clock::time_point synthesised;
+        cancelled = !waitGpu(slots_[size_t(job.synthSlot)].fence, true, synthesised);
+    }
     uint64_t dropped = 0;
     for (int i = 1; i < job.frames; ++i) {
         if (!cancelled) cancelled = paced ? !waitUntilOrCancelled(paceTarget(job, origin, i)) : predictedCancelled();
@@ -1426,13 +1478,15 @@ void VirtualSwapchain::runJob(const Job& job) {
             continue;
         }
         Copied c;
-        r = submitCopy(job, i, c);
+        r = submitCopy(job, i, c, i < staged ? i - 1 : -1);
         if (r < 0) {
             fail(r);
             return;
         }
-        copied[size_t(i)] = true;
-        if (i == job.frames - 1) markSubmitted();
+        if (i >= staged) {
+            copied[size_t(i)] = true;
+            if (i == job.frames - 1) markSubmitted();
+        }
         r = presentCopied(job, c);
         if (r < 0) {
             fail(r);
@@ -1442,16 +1496,56 @@ void VirtualSwapchain::runJob(const Job& job) {
     if (dropped) statsSkipped_.fetch_add(dropped, std::memory_order_relaxed);
     consumeUnused();
     markSubmitted();
+    if (lazy) {
+        {
+            std::lock_guard<std::mutex> wlock(workerMutex_);
+            lazyOutputs_ = false;
+        }
+        idleCv_.notify_all();
+    }
 }
 
+// The predicted frames still waiting are obsolete once the next present's
+// first frame is ready on the GPU (it goes out then), when the application
+// thread needs the images they read (cancelPredicted_), or on stop. Not as
+// soon as the next present is *called*: its rendering may end a frame later
+// (a GPU-bound game), and the predicted frames are ready before it — dropping
+// them then showed a GPU-bound game at x1 in extrapolation and hybrid.
 bool VirtualSwapchain::predictedCancelled() {
-    std::lock_guard<std::mutex> wlock(workerMutex_);
-    return cancelPredicted_ || stop_;
+    VkFence next = VK_NULL_HANDLE;
+    {
+        std::lock_guard<std::mutex> wlock(workerMutex_);
+        if (cancelPredicted_ || stop_) return true;
+        if (jobs_.empty()) return false;
+        next = jobs_.front().ready;
+    }
+    return next == VK_NULL_HANDLE || dev_.vt.GetFenceStatus(dev_.device, next) == VK_SUCCESS;
 }
 
+// Until `target`, or false as soon as predictedCancelled: sleeps until a
+// newer present is queued, then watches its ready fence. (Its slot's fence
+// is not recycled before the worker reaches that job: the application thread
+// recycles a slot only presents later, each waiting for the job before.)
 bool VirtualSwapchain::waitUntilOrCancelled(clock::time_point target) {
-    std::unique_lock<std::mutex> wlock(workerMutex_);
-    return !workerCv_.wait_until(wlock, target, [this] { return cancelPredicted_ || stop_; });
+    VkFence next = VK_NULL_HANDLE;
+    {
+        std::unique_lock<std::mutex> wlock(workerMutex_);
+        workerCv_.wait_until(wlock, target, [this] { return cancelPredicted_ || stop_ || !jobs_.empty(); });
+        if (cancelPredicted_ || stop_) return false;
+        if (jobs_.empty()) return true;  // the target, nothing newer
+        next = jobs_.front().ready;
+    }
+    if (next == VK_NULL_HANDLE) return false;
+    for (;;) {
+        const auto now = clock::now();
+        if (now >= target) return dev_.vt.GetFenceStatus(dev_.device, next) != VK_SUCCESS;
+        // Short waits, so that cancelPredicted_ is honoured promptly.
+        const int64_t left = std::chrono::duration_cast<std::chrono::nanoseconds>(target - now).count();
+        const VkResult r = dev_.vt.WaitForFences(dev_.device, 1, &next, VK_TRUE, uint64_t(std::min<int64_t>(left, 1'000'000)));
+        if (r != VK_TIMEOUT) return false;  // ready (or lost): obsolete
+        std::lock_guard<std::mutex> wlock(workerMutex_);
+        if (cancelPredicted_ || stop_) return false;
+    }
 }
 
 // Bounded: a frame the GPU has not finished within 250 ms is paced from then
@@ -1765,11 +1859,13 @@ VkResult VirtualSwapchain::submitStage(const Job& job, int index, uint32_t stage
 }
 
 // A present's frames past what the real swapchain lets the worker hold
-// acquired at once are staged (runJob): one internal image each.
+// acquired at once are staged (runJob): one internal image each. Hybrid and
+// extrapolation stage their predicted frames too (all but the real one).
 void VirtualSwapchain::prepareStaging() {
     if (!fg_) return;
     const int frames = generating_ ? std::max(1, cfg_.multiplier) : 1;
-    fg_->ensureStaging(static_cast<uint32_t>(std::max(0, frames - acquireAhead_)));
+    const bool predicted = cfg_.extrapolate || cfg_.hybrid;
+    fg_->ensureStaging(static_cast<uint32_t>(std::max(0, predicted ? frames - 1 : frames - acquireAhead_)));
 }
 
 VkResult VirtualSwapchain::presentCopied(const Job& job, const Copied& c) {
