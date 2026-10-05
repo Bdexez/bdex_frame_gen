@@ -1,12 +1,13 @@
 #include "status.h"
 #include "platform.h"
 
-#include <charconv>
 #include <chrono>
 #include <cstdlib>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <locale>
+#include <iomanip>
 #include <mutex>
 #include <sstream>
 
@@ -59,10 +60,13 @@ void writeLocked(Board& b) {
 } // namespace
 
 // One decimal, always with a dot (snprintf follows the process's locale;
-// the panel and the report parse these files).
+// the panel and the report parse these files). A stream in the classic
+// locale: std::to_chars for floating point needs GCC 11 (see config.cpp).
 static void fixed1(char* buf, size_t size, double v) {
-    auto [end, ec] = std::to_chars(buf, buf + size - 1, v, std::chars_format::fixed, 1);
-    *(ec == std::errc() ? end : buf) = '\0';
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    out << std::fixed << std::setprecision(1) << v;
+    snprintf(buf, size, "%s", out.str().c_str());
 }
 
 std::string statusFormat(const std::string& process, long pid, long long unixTime,
@@ -130,8 +134,10 @@ std::vector<std::string> statusDescribe(const StatusFile& file) {
     auto num = [](const std::map<std::string, std::string>& v, const char* k, double def) {
         auto it = v.find(k);
         if (it == v.end()) return def;
+        std::istringstream in(it->second);
+        in.imbue(std::locale::classic());
         double x = def;
-        std::from_chars(it->second.data(), it->second.data() + it->second.size(), x);
+        if (!(in >> x)) x = def;
         return x;
     };
     auto get = [](const std::map<std::string, std::string>& v, const char* k) {

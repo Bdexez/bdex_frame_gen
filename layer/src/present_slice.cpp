@@ -37,9 +37,11 @@ PresentSlice::PresentSlice(const VkPresentInfoKHR& source, const std::vector<uin
     info_.pImageIndices = indices_.data();
     info_.pResults = results_.empty() ? nullptr : results_.data();
 
-    const void** tail = &info_.pNext;
+    const void** tail = bdexNext(info_);
     for (auto* base = static_cast<const VkBaseInStructure*>(source.pNext); base; base = base->pNext) {
-        switch (base->sType) {
+        // (An integer: older Vulkan headers lack some of these enumerators,
+        // vk_compat.h defines them as constants.)
+        switch (static_cast<uint32_t>(base->sType)) {
         case VK_STRUCTURE_TYPE_DEVICE_GROUP_PRESENT_INFO_KHR: {
             auto& src = *reinterpret_cast<const VkDeviceGroupPresentInfoKHR*>(base);
             if (!take(deviceMasks_, src.pDeviceMasks, src.swapchainCount, source.swapchainCount, positions)) {
@@ -49,7 +51,7 @@ PresentSlice::PresentSlice(const VkPresentInfoKHR& source, const std::vector<uin
             deviceGroup_.swapchainCount = info_.swapchainCount;
             deviceGroup_.pDeviceMasks = deviceMasks_.data();
             deviceGroup_.pNext = nullptr;
-            *tail = &deviceGroup_; tail = &deviceGroup_.pNext;
+            *tail = &deviceGroup_; tail = bdexNext(deviceGroup_);
             break;
         }
         case VK_STRUCTURE_TYPE_PRESENT_REGIONS_KHR: {
@@ -61,7 +63,7 @@ PresentSlice::PresentSlice(const VkPresentInfoKHR& source, const std::vector<uin
             presentRegions_.swapchainCount = info_.swapchainCount;
             presentRegions_.pRegions = regions_.data();
             presentRegions_.pNext = nullptr;
-            *tail = &presentRegions_; tail = &presentRegions_.pNext;
+            *tail = &presentRegions_; tail = bdexNext(presentRegions_);
             break;
         }
         case VK_STRUCTURE_TYPE_PRESENT_ID_KHR: {
@@ -73,7 +75,7 @@ PresentSlice::PresentSlice(const VkPresentInfoKHR& source, const std::vector<uin
             presentId_.swapchainCount = info_.swapchainCount;
             presentId_.pPresentIds = ids_.data();
             presentId_.pNext = nullptr;
-            *tail = &presentId_; tail = &presentId_.pNext;
+            *tail = &presentId_; tail = bdexNext(presentId_);
             break;
         }
 #ifdef VK_KHR_present_id2
@@ -86,7 +88,7 @@ PresentSlice::PresentSlice(const VkPresentInfoKHR& source, const std::vector<uin
             presentId2_.swapchainCount = info_.swapchainCount;
             presentId2_.pPresentIds = ids2_.data();
             presentId2_.pNext = nullptr;
-            *tail = &presentId2_; tail = &presentId2_.pNext;
+            *tail = &presentId2_; tail = bdexNext(presentId2_);
             break;
         }
 #endif
@@ -99,7 +101,7 @@ PresentSlice::PresentSlice(const VkPresentInfoKHR& source, const std::vector<uin
             presentFences_.swapchainCount = info_.swapchainCount;
             presentFences_.pFences = fences_.data();
             presentFences_.pNext = nullptr;
-            *tail = &presentFences_; tail = &presentFences_.pNext;
+            *tail = &presentFences_; tail = bdexNext(presentFences_);
             break;
         }
         case VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODE_INFO_EXT: {
@@ -111,7 +113,7 @@ PresentSlice::PresentSlice(const VkPresentInfoKHR& source, const std::vector<uin
             presentModes_.swapchainCount = info_.swapchainCount;
             presentModes_.pPresentModes = modes_.data();
             presentModes_.pNext = nullptr;
-            *tail = &presentModes_; tail = &presentModes_.pNext;
+            *tail = &presentModes_; tail = bdexNext(presentModes_);
             break;
         }
 #ifdef VK_GOOGLE_display_timing
@@ -124,7 +126,7 @@ PresentSlice::PresentSlice(const VkPresentInfoKHR& source, const std::vector<uin
             presentTimes_.swapchainCount = info_.swapchainCount;
             presentTimes_.pTimes = times_.data();
             presentTimes_.pNext = nullptr;
-            *tail = &presentTimes_; tail = &presentTimes_.pNext;
+            *tail = &presentTimes_; tail = bdexNext(presentTimes_);
             break;
         }
 #endif
@@ -138,7 +140,7 @@ PresentSlice::PresentSlice(const VkPresentInfoKHR& source, const std::vector<uin
             presentTimings_.swapchainCount = info_.swapchainCount;
             presentTimings_.pTimingInfos = timings_.data();
             presentTimings_.pNext = nullptr;
-            *tail = &presentTimings_; tail = &presentTimings_.pNext;
+            *tail = &presentTimings_; tail = bdexNext(presentTimings_);
             break;
         }
 #endif

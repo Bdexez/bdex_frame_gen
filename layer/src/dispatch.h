@@ -1,6 +1,6 @@
 #pragma once
 // Dispatch tables holding the next-layer / driver entry points.
-#include <vulkan/vulkan.h>
+#include "vk_compat.h"
 #include <vulkan/vk_layer.h>
 
 namespace bdex {

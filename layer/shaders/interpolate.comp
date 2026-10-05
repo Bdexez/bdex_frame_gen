@@ -8,6 +8,7 @@
 // The result is packed manually into a 32- or 64-bit uint image whose bits are
 // copied verbatim into the swapchain image (this keeps us on mandatory storage
 // formats regardless of the swapchain format).
+#extension GL_GOOGLE_include_directive : require  // #include with glslangValidator too
 #include "common.glsl"
 
 layout(local_size_x = 16, local_size_y = 16) in;

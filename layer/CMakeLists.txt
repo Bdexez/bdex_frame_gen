@@ -71,7 +71,10 @@ add_library(bdex_core STATIC
   src/status.cpp
 )
 target_include_directories(bdex_core PUBLIC src)
-target_link_libraries(bdex_core PUBLIC Vulkan::Headers)
+# Threads and dladdr: part of libc since glibc 2.34, in libpthread / libdl
+# before (the release build links against glibc 2.31).
+find_package(Threads REQUIRED)
+target_link_libraries(bdex_core PUBLIC Vulkan::Headers Threads::Threads ${CMAKE_DL_LIBS})
 if(WIN32)
   # CommandLineToArgvW() in platform.cpp (process names for [game] sections).
   target_link_libraries(bdex_core PUBLIC shell32)
@@ -120,6 +123,12 @@ else()
     OUTPUT_NAME "bdex_framegen"
     PREFIX "libVkLayer_"
     LINK_FLAGS "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/layer.map -Wl,-Bsymbolic")
+  if(NOT CMAKE_CXX_FLAGS MATCHES "-fsanitize")
+    # Every symbol resolved at link time: a library the layer forgot to link
+    # (libdl, libpthread on glibc < 2.34) fails the build, rather than the
+    # game — resolved by luck through the loader's own dependencies, or not.
+    target_link_options(bdex_framegen PRIVATE -Wl,--no-undefined)
+  endif()
   if(BDEX_STATIC_RUNTIME)
     # The version script keeps the static runtime's symbols hidden.
     target_link_options(bdex_framegen PRIVATE -static-libstdc++ -static-libgcc)

@@ -84,6 +84,7 @@
 //
 // Output flow is the displacement (in pixels of this level) that maps a
 // position in the reference image to the matching position in the target.
+#extension GL_GOOGLE_include_directive : require  // #include with glslangValidator too
 #include "common.glsl"
 
 #define BS   8

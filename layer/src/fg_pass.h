@@ -17,7 +17,7 @@
 #include "device.h"
 #include "format.h"
 
-#include <vulkan/vulkan.h>
+#include "vk_compat.h"
 
 #include <cstdint>
 #include <memory>

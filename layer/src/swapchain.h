@@ -257,7 +257,6 @@ private:
     // async_compute: copy-done semaphores of submitted worker presents not yet
     // waited by a synthesis (workerMutex_).
     std::vector<VkSemaphore> pendingCopyDone_;
-    bool lastCopySubmitted_ = false;      // worker: presentOne submitted its copy
     VkResult submitOn(VkQueue queue, const VkSubmitInfo& si, VkFence fence);
     void waitQueuesIdle();
     std::vector<FrameSlot> slots_;        // application thread: synthesis submissions

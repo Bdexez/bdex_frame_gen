@@ -6,6 +6,7 @@
 // image (fromColor=1); deeper levels read the previous luma level. Bilinear
 // sampling at the centre of the 2x2 footprint is an exact box filter when the
 // source is exactly twice the destination size.
+#extension GL_GOOGLE_include_directive : require  // #include with glslangValidator too
 #include "common.glsl"
 
 layout(local_size_x = 16, local_size_y = 16) in;
