@@ -276,6 +276,11 @@ private:
     // the frame max_frame_latency presents back before it returns.
     struct SlotUse { uint32_t slot; uint64_t generation; };
     std::deque<SlotUse> recentSlots_;
+    // latency_limiter: how long present() still holds the game once the GPU
+    // has finished its previous frame (syncFrameStart; presenting thread).
+    double startDelayMs_ = 0.0;
+    double statsStartDelayMs_ = 0.0;  // sum over the statistics window
+    void syncFrameStart(double waitedMs);
     // fps_limit: next allowed application present (only the presenting
     // thread touches it, before mutex_ is taken, under limitMutex_).
     std::mutex limitMutex_;

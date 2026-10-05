@@ -192,6 +192,7 @@ const std::vector<OptionDef>& registry() {
     I("levels", nullptr, &Config::levels, 1, 6),
     B("low_latency", "lowlatency", &Config::lowLatency),
     I("max_frame_latency", "frame_latency", &Config::maxFrameLatency, 0, 3, kLive),
+    B("latency_limiter", nullptr, &Config::latencyLimiter, kLive),
     B("sync_present", "sync", &Config::syncPresent),
     B("hide_present_ext", nullptr, &Config::hidePresentExt),
     I("search", "search_radius", &Config::searchRadius, 1, 4),
