@@ -115,10 +115,17 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
     // fast +0.6, HUD +0.7, occlusions +2.9 dB and their edges +6.6) cost a
     // discrete GPU ~0.3-0.6 ms at 1440p, 1-2 ms at 4K per generated frame:
     // on, where the synthesis stays affordable (FrameGen::effectiveConfig).
-    if (strong && !pixelVectorsSet) {
+    if (strong && !(autoOptionsSet & kAutoPixelVectors)) {
         pixelVectors = true;
         pixelVectorsAuto = true;
     }
+    // The predicted frames (extrapolation, hybrid): the forward splat and
+    // the revealed-area fill together, measured x3 against without them —
+    // extrapolation: demo +0.9, fast +1.2, very fast +0.35, pan +1.2, HUD
+    // +0.7 dB; hybrid: +0.3, +0.6, +0.2, +0.4, +0.3; occlusions -0.02, swing
+    // +0.02. The splat runs after the real frame (not on its path).
+    if (strong && !(autoOptionsSet & kAutoSplat)) extrapolateSplat = true;
+    if (strong && !(autoOptionsSet & kAutoRevealFill)) revealFill = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -343,7 +350,9 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
                           "refine", "refine_all", "flow_iterations"})
         if (key == k) { autoTune = false; break; }
     if (key == "preset")                      return applyPreset(value);
-    if (key == "pixel_vectors") pixelVectorsSet = true;
+    if (key == "pixel_vectors") autoOptionsSet |= kAutoPixelVectors;
+    if (key == "extrapolate_splat") autoOptionsSet |= kAutoSplat;
+    if (key == "reveal_fill") autoOptionsSet |= kAutoRevealFill;
     if (const OptionDef* d = findOption(key)) {
         switch (d->kind) {
         case Kind::Bool:  return parseBool(value, this->*(d->b));
