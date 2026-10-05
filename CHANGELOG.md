@@ -108,6 +108,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   its previous present returned, where most games read their input — to the
   screen). The fps HUD shows the displayed rate instead of game fps ×
   multiplier when it is known.
+- `bdex-framegen --report` compares the frames sent with the frames really
+  displayed (last statistics line) and says what to try when a share of them
+  never reaches the screen.
+- `bdex_capture --adaptive` (the launcher's « Adaptatif » on the command
+  line); `--multiplier`, if given, is its ceiling.
 
 ## [0.5.5] - 2026-09-26
 

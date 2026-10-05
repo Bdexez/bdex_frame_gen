@@ -6,7 +6,8 @@
 // the game window. Console app: logs go to stderr.
 //
 //   bdex_capture [--title <substr> | --pid <n>] [--scale <f> | --fit]
-//                [--multiplier 1..8] [--mode extrapolate|interpolate|hybrid]
+//                [--multiplier 1..8] [--adaptive]
+//                [--mode extrapolate|interpolate|hybrid]
 //                [--preset <name>] [--filter 0|1|2] [--sharpness <f>]
 //                [--hud 0..4] [--gpu <n>] [--fifo] [--list]
 //
@@ -85,6 +86,7 @@ struct Options {
     // Frame-generation overrides (-1 / empty = keep the config file's value).
     int multiplier = -1;
     int mode = -1;          // 0 interpolate, 1 extrapolate, 2 hybrid
+    bool adaptive = false;
     std::string preset;
     int filter = -1;
     float sharpness = -1.f;
@@ -101,6 +103,8 @@ void usage() {
         "  --scale <f>        overlay size = capture size x f (default 1.0)\n"
         "  --fit              overlay fills the game's monitor, aspect preserved\n"
         "  --multiplier <n>   frames shown per captured frame: 1 (off), 2 to 8 (default 2)\n"
+        "  --adaptive         fill the monitor's refresh rate: as many frames per captured frame as fit,\n"
+        "                     the fraction carried over; ceiling --multiplier, else 4, 6 or 8 by refresh rate\n"
         "  --mode <m>         interpolate (default, fewer artefacts) | extrapolate (half a frame less latency)\n"
         "                     | hybrid (x3/x4: one interpolated frame, then predictions; 1/m of a frame of latency)\n"
         "  --preset <p>       performance | balanced | quality (default: auto from the GPU)\n"
@@ -165,6 +169,8 @@ bool parse(int argc, char** argv, Options& o) {
             const char* v = next("--multiplier");
             if (!v) return false;
             o.multiplier = std::clamp(std::atoi(v), 1, 8);
+        } else if (a == "--adaptive") {
+            o.adaptive = true;
         } else if (a == "--mode") {
             const char* v = next("--mode");
             if (!v) return false;
@@ -436,6 +442,7 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
         cfg.hybrid = o.mode == 2;
     }
     if (o.multiplier > 0) cfg.multiplier = o.multiplier;
+    if (o.adaptive) cfg.adaptive = true;
     if (o.filter >= 0) cfg.upscaleFilter = o.filter;
     if (o.sharpness >= 0.f) cfg.sharpness = o.sharpness;
     if (o.hud >= 0) cfg.overlayMode = o.hud;
@@ -454,8 +461,9 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
     // The config file's present_mode = fifo asks for vsync in CLI mode too.
     if (!fifo && cfg.presentMode == VK_PRESENT_MODE_FIFO_KHR) fifo = true;
 
-    // Adaptive: a ceiling that can fill the monitor from ~40 fps.
-    if (cfg.adaptive) {
+    // Adaptive: a ceiling that can fill the monitor from ~40 fps, unless
+    // --multiplier gave one.
+    if (cfg.adaptive && o.multiplier <= 0) {
         const double hz = monitorHz(overlay);
         cfg.multiplier = std::max(cfg.multiplier, hz > 250.0 ? 8 : hz > 165.0 ? 6 : 4);
     }
