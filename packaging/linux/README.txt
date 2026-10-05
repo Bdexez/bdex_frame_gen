@@ -1,7 +1,7 @@
-bdex-framegen for Linux (x86_64) — prebuilt
-===========================================
+bdex-framegen for Linux — prebuilt
+==================================
 
-Frame generation (optical flow, x2-x4) and upscaling for Vulkan games, as an
+Frame generation (optical flow, x2 to x8 or adaptive) and upscaling for Vulkan games, as an
 implicit Vulkan layer: native Vulkan games, and Direct3D games under Proton
 (DXVK / VKD3D-Proton). Games protected by EasyAntiCheat, BattlEye and the like
 are left alone automatically.
@@ -25,18 +25,25 @@ panel is open; for Proton games lower the game's own resolution and upscale
 with gamescope (-F fsr) or the game's FSR/DLSS.
 
 Modes: interpolation (default: the smoothest, holds each real frame half a
-game frame) or extrapolation (preset "latency": ~0 ms added hold, may show
-artefacts on abrupt motion). Settings live in ~/.config/bdex-framegen.conf.
+game frame), extrapolation (preset "latency": ~0 ms added hold, may show
+artefacts on abrupt motion) or hybrid (x3 and up: one interpolated frame, the
+real one, then predictions). Settings live in ~/.config/bdex-framegen.conf.
 
-Contents: 64-bit layer (lib/), 32-bit layer for 32-bit games (lib32/, when
-present), the bdex-framegen command-line launcher, the control panel, per-game
-profiles. The layer carries its own C++ runtime (works inside the Steam
-runtime).
+Contents: the layer (lib/; x86_64 archives also have the 32-bit one for
+32-bit games, lib32/), the bdex-framegen command-line launcher, the control
+panel, per-game profiles. The layer carries its own C++ runtime (works inside
+the Steam runtime).
 
-Requirements: x86_64 with glibc 2.36 or newer (Arch / SteamOS, Fedora 37+,
-Debian 12+, Ubuntu 22.10+ / Mint 22); the control panel needs Python 3 with
-PyGObject and GTK 4 — libadwaita 1.4+ is used when present, not required
-(SteamOS has none). Steam installed as a Flatpak or a Snap does not see a
-layer installed in ~/.local.
+Requirements: glibc 2.29 (x86_64) / 2.30 (aarch64) or newer — Ubuntu 20.04+,
+Debian 11+, Mint 20+, Fedora, Arch / SteamOS, openSUSE Leap 15.3+, RHEL 9...;
+the control panel needs Python 3 with PyGObject and GTK 4 — libadwaita 1.4+
+is used when present, not required (SteamOS has none). The archive's
+architecture (share/bdex-framegen/ARCH) must be the machine's.
+
+Steam, Heroic, Lutris or Bottles installed as a Flatpak: install.sh also
+installs the layer inside their sandbox (~/.var/app/<app>/data); the control
+panel keeps their copy of the settings up to date. Install them (and run them
+once) before install.sh, or run it again after. Snap packages are not
+supported.
 
 Project: https://github.com/Bdexez/bdex_frame_gen
