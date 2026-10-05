@@ -937,7 +937,11 @@ Tenus à jour dans `ROADMAP.md` (où en est le projet, ce qui reste) et
   rapide est suivie (34 dB à 80 px par paire) ; 60 à 80 % de l'erreur est
   au contour des objets qui bougent par eux-mêmes (2 à 4 % des pixels).
   Sous-pixel, bicubique, `learned_flow`, `levels=5`, `flow_iterations=3`
-  n'y changent rien. Une piste de qualité doit viser ces contours.
+  n'y changent rien. **05/10 (`tools/edge_bench/`) : c'est l'occultation**
+  — pixels visibles dans une seule image = 51 à 78 % de toute l'erreur ;
+  pas la résolution (`flow_scale=1` pire) ; l'ordre des couches est ambigu
+  à deux images → piste : l'image N−2 (MEMOIRE §9, branche
+  `wip/occlusion-layers`).
 - **Options en attente de vrais jeux** : `tools/pending_decisions.py
   SEQ…` (verdict par option ; liste `CANDIDATES` à tenir à jour quand une
   option est tranchée ou ajoutée).
