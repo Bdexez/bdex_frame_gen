@@ -1128,11 +1128,13 @@ void FrameGen::recordStage(VkCommandBuffer cmd, bool real, uint32_t output, uint
     auto& vt = dev_.vt;
     const VkImage dst = stage_[slot].image;
     // The staging image's previous reader (its copy to a swapchain image)
-    // precedes this submission on the queue: an execution dependency.
+    // precedes this submission on the queue: an execution dependency. Or its
+    // previous writer, when that frame was dropped unread (a predicted frame
+    // made obsolete): its write must be made available too.
     VkImageMemoryBarrier pre[2];
     uint32_t n = 0;
-    pre[n++] = imageBarrier(dst, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
-                            VK_IMAGE_LAYOUT_GENERAL);
+    pre[n++] = imageBarrier(dst, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+                            VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
     VkImage src;
     VkImageLayout srcLayout = VK_IMAGE_LAYOUT_GENERAL;
     const bool fromSource = real && !packReal_;
