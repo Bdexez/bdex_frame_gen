@@ -1198,6 +1198,26 @@ vrai absent des 4×4 texels voisins : 3 à 8 % seulement (lowcon 16).
   vitesse se vérifie (prev(a) ≈ prevprev(a − v)), pas celle du mauvais
   vecteur. L'ordre établi là vaut pour le bord découvert du même objet.
   Rendre (a) abordable (porte sur l'erreur du moteur, moins de candidats).
+- **Essai N−2, même jour** (branche `wip/occlusion-layers`, 2e commit) :
+  l'image N−2 elle-même n'est pas sûre dans la couche (les sources sont les
+  images de la swapchain, que le jeu réécrit), mais le **flux arrière de la
+  paire précédente** (`prevBwd_`) porte la même information. Mesuré : aux
+  pixels recouverts, il donne le vrai vecteur à l'extrémité dans prev dans
+  60 à 79 % des cas (flux courant : 4 à 16 %), aux pixels découverts 2 à
+  10 % — il reconnaît donc aussi le côté. Règle (candidat confirmé par la
+  paire précédente, extrémités en désaccord, extrémité courante tenue par un
+  autre mouvement → prev(a) seul ; veto si un candidat confirmé s'accorde
+  aux deux bouts) : pixels recouverts bien traités 21 → 26 dB, mais
+  déclenchements à tort sur des pixels visibles du bord des objets → net
+  −0,4 à −2 dB après quatre versions (tolérance au quantum du flux,
+  2×2 texels). **Cause commune à tous les essais** : au contour, le flux
+  par blocs est faux dans *toutes* les paires (texels de 8×8 px à cheval),
+  et le vrai vecteur manque parfois du voisinage ; une décision au pixel
+  qui lit ces champs hérite de leur erreur. Piste restante : une
+  segmentation de mouvement au pixel dans la bande (étiqueter chaque pixel
+  de prev et de cur par le vecteur qui l'explique le mieux, sur fenêtre
+  décalée, à pleine résolution), puis la décision d'occultation sur ces
+  étiquettes plutôt que sur les champs de blocs.
 
 **Windows**
 - Transmettre le plein écran exclusif (mode 1).
