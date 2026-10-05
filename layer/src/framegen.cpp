@@ -992,10 +992,12 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity, int costSlot) {
         // scene-cut evidence the flow cost cannot give.
         const Level& hl = levels_v_[histLevel_];
         vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, sceneHist_.pipeline);
-        SizePC hpc{{(int32_t)hl.size.width, (int32_t)hl.size.height}};
+        // With scene_cut_local, one more workgroup per tile of the grid.
+        const uint32_t histTiles = cfg.sceneCutLocal ? kCutTiles : 0;
+        HistPC hpc{{(int32_t)hl.size.width, (int32_t)hl.size.height}, (int32_t)histTiles};
         vt.CmdPushConstants(cmd, sceneHist_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(hpc), &hpc);
         vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, sceneHist_.layout, 0, 1, &dsSceneHist_, 0, nullptr);
-        vt.CmdDispatch(cmd, 1, 1, 1);
+        vt.CmdDispatch(cmd, 1 + histTiles * histTiles, 1, 1);
         memoryBarrier(cmd);
     }
     vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, reduce_.pipeline);
@@ -1256,9 +1258,13 @@ Config FrameGen::effectiveConfig() const {
     Config c = (*cfgp_);
     // pixel_vectors turned on by the GPU auto-tuning: not where the synthesis
     // would cost too much — display pixels x generated frames above 4K x2
-    // (e.g. 4K x3, 1440p x4: several milliseconds a game frame).
-    if (c.pixelVectorsAuto && double(displayExtent_.width) * displayExtent_.height * outputs_ > 8.3e6)
-        c.pixelVectors = false;
+    // (e.g. 4K x3, 1440p x4: several milliseconds a game frame). Nor the
+    // automatic scene_cut_local there: alone, it would keep the synthesis
+    // off its lean variant.
+    if (double(displayExtent_.width) * displayExtent_.height * outputs_ > 8.3e6) {
+        if (c.pixelVectorsAuto) c.pixelVectors = false;
+        if (c.sceneCutLocalAuto) c.sceneCutLocal = false;
+    }
     for (const auto& p : passes_) p->overrideConfig(c);
     if (qualityLevel_ >= 1) {
         c.pixelVectors = false;

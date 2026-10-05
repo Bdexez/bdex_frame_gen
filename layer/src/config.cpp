@@ -126,6 +126,14 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
     // +0.02. The splat runs after the real frame (not on its path).
     if (strong && !(autoOptionsSet & kAutoSplat)) extrapolateSplat = true;
     if (strong && !(autoOptionsSet & kAutoRevealFill)) revealFill = true;
+    // The scene-cut fallback per region, each tile needing its own histogram
+    // evidence (scene_cut_hist): a menu opening over part of the picture
+    // +1.4 dB (flicker -6.3), elsewhere within +-0.02 dB. Kept off the lean
+    // synthesis of smaller GPUs.
+    if (strong && !(autoOptionsSet & kAutoLocalCut)) {
+        sceneCutLocal = true;
+        sceneCutLocalAuto = true;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -353,6 +361,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "pixel_vectors") autoOptionsSet |= kAutoPixelVectors;
     if (key == "extrapolate_splat") autoOptionsSet |= kAutoSplat;
     if (key == "reveal_fill") autoOptionsSet |= kAutoRevealFill;
+    if (key == "scene_cut_local") autoOptionsSet |= kAutoLocalCut;
     if (const OptionDef* d = findOption(key)) {
         switch (d->kind) {
         case Kind::Bool:  return parseBool(value, this->*(d->b));
@@ -547,6 +556,7 @@ void Config::applyLive(const Config& n) {
     }
     fpsLimit = n.fpsLimit; targetFps = n.targetFps;
     pixelVectorsAuto = n.pixelVectorsAuto;
+    sceneCutLocalAuto = n.sceneCutLocalAuto;
     if (gpuBudget > 0.f && n.gpuBudget > 0.f) gpuBudget = n.gpuBudget;  // 0 <-> >0 creates the timestamp queries
     // (dedup sizes the output stage in extrapolation: restart.)
     if (sharpness > 0.f && n.sharpness > 0.f) sharpness = n.sharpness;  // 0 <-> >0 changes the passes

@@ -234,6 +234,13 @@ ramène le coût moyen vers `scene_cut_low` tant que l'histogramme de luma
 (`scene_hist.comp`, EMD 1-D sur un niveau grossier) n'a pas bougé — coupures
 ≥ 0,18, grain / mouvement < 0,02 ; placée là pour ne pas toucher la variante
 allégée de la synthèse (le contenu normal reste identique bit à bit).
+`scene_cut_local` (auto sur GPU dédié, retiré avec `pixel_vectors` au-delà
+de 4K ×2 : il impose la variante complète de la synthèse) : `scene_hist`
+calcule aussi un EMD par tuile (`tileHist`, `kStateTileHist = 1280`), et
+chaque tuile exige *le sien* à **4×** le seuil de l'image (le mouvement
+fait entrer et sortir du contenu d'une tuile : au seuil de l'image, démo
+très rapide −0,18 dB ; ×2 −0,03 ; ×4 0,00 ; menu surgissant +1,40 dans
+tous les cas).
 **Depuis 0.4.0, `zero_bias_contrast=0.02` est le défaut** (A/B hors ligne :
 jamais < −0,01 dB, gratuit en GPU) ; le « chemin historique » de l'invariant
 est donc `zero_bias_contrast=0` (posé par `check_matcher_invariant.py`).

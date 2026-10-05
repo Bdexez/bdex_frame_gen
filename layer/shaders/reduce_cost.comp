@@ -16,6 +16,8 @@ layout(std430, binding = 1) buffer Out {
     float histDiff;
     uint head2[8];   // t[8]
     float tileCost[64];
+    uint skip[240];      // the dispatch gates and the repeat grid, up to kStateTileHist (1280 bytes)
+    float tileHist[64];  // scene_hist.comp, per tile (scene_cut_local)
 } outBuf;
 
 layout(push_constant) uniform PC {
@@ -71,5 +73,15 @@ void main() {
         if (tid < s) sSum[tid] += sSum[tid + s];
         barrier();
     }
-    if (tid == 0u) outBuf.tileCost[k] = sSum[0] / float(max(n, 1));
+    if (tid == 0u) {
+        float mean = sSum[0] / float(max(n, 1));
+        // The same evidence as the frame's, from the tile's own histograms,
+        // at four times the distance: motion alone moves content in and out
+        // of a tile (on the very fast demo, the frame's threshold still lost
+        // 0.18 dB there, twice it 0.03), while a menu replaces what the
+        // tiles it covers show (+1.4 dB kept).
+        if (pc.cutHist > 0.0 && mean > pc.cutLow)
+            mean = pc.cutLow + (mean - pc.cutLow) * smoothstep(2.0 * pc.cutHist, 4.0 * pc.cutHist, outBuf.tileHist[k]);
+        outBuf.tileCost[k] = mean;
+    }
 }
