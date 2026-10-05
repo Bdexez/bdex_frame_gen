@@ -9,7 +9,7 @@ set -euo pipefail
 BUILD="${1:-$(dirname "$0")/../build}"
 FRAMES="${2:-40}"
 MULT="${BDEX_FG_MULTIPLIER:-2}"
-case "$MULT" in 2|3|4) ;; *) echo "BDEX_FG_MULTIPLIER must be 2, 3 or 4" >&2; exit 2 ;; esac
+case "$MULT" in 2|3|4|5|6|7|8) ;; *) echo "BDEX_FG_MULTIPLIER must be 2 to 8" >&2; exit 2 ;; esac
 case "$FRAMES" in ''|*[!0-9]*) echo "frames must be an integer >= 2" >&2; exit 2 ;; esac
 if [ "$FRAMES" -lt 2 ]; then echo "frames must be an integer >= 2" >&2; exit 2; fi
 BUILD="$(cd "$BUILD" && pwd)"

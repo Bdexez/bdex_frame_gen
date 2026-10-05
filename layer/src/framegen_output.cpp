@@ -28,10 +28,10 @@ void FrameGen::recordUpscaleReal(VkCommandBuffer cmd, uint32_t cur, int prev) {
     memoryBarrier(cmd);
     // dedup + extrapolation: a repeated frame shows the game's state from its
     // first appearance; replace it with a frame extrapolated to now along
-    // the kept flow (state slot 3). Zero workgroups unless it is a repeat.
+    // the kept flow (state slot 7, the real frame's). Zero workgroups unless it is a repeat.
     if (dupReal_ && timingActive_ && prev >= 0) {
         const uint32_t N = static_cast<uint32_t>(sources_.size());
-        recordSynthesis(cmd, dsInterpReal_[uint32_t(prev) * N + cur], 1.5f, 4, true);
+        recordSynthesis(cmd, dsInterpReal_[uint32_t(prev) * N + cur], 1.5f, kMaxFrames, true);
     }
     if (sharpen_) recordCas(cmd, dsCasReal_);  // sharpReal_ -> outReal_
     for (auto& p : passes_) p->afterOutput(*this, cmd, -1);  // (the fps HUD)

@@ -132,7 +132,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("gt_dump_dir")
     parser.add_argument("test_dump_dir")
-    parser.add_argument("multiplier", nargs="?", type=int, default=2, choices=(2, 3, 4))
+    parser.add_argument("multiplier", nargs="?", type=int, default=2, choices=range(2, 9))
     parser.add_argument("--expected-generated", type=int, default=None,
                         help="generated frames expected from the requested run length")
     parser.add_argument("--min-comparable", type=int, default=None,

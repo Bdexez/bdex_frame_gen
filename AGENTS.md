@@ -141,6 +141,16 @@ après (t ∈ (1,2)) ; une seule définition pour la couche, la capture et
 `frame_state.comp` reçoit `realPos` (interp/extrap décidé par sortie). Le
 worker : positions ≤ real copiées d'emblée, prédites après la réelle
 paresseuses et annulables (`Job::realIndex`).
+**Jusqu'à ×8** (`fg::kMaxFrames = 8`) : état `t[8]` (la réelle en `[7]`,
+`kStateHead = 64`, décalages suivants +16), `displayMs[8]`, `synthDone[8]`,
+16 slots worker (`kProfileSlots = 20`). La swapchain réelle vise
+`minImageCount + m − 1` images, mais une surface peut en plafonner le
+nombre (gamescope : 8 max pour min 3 → 6 acquises à la fois) : les images
+au-delà d'`acquireAhead_` passent par des **images de transit**
+(`FrameGen::ensureStaging/recordStage/recordCopyStaged`, allouées par
+`prepareStaging` à chaque reconstruction) copiées d'emblée, puis vers la
+swapchain à leur présentation — sinon le jeu attendait le pacing (×8 :
+6,8 i/s au lieu de 30).
 **Adaptatif** (`adaptive`, 2026-09-29) : `chooseMultiplier` accumule
 I/P (P = 1000/cible, cible = `target_fps` ou la fréquence de l'écran) et
 rend n = partie entière (1..multiplier), le reste reporté ; `present()`

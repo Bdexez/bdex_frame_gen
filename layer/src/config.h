@@ -32,7 +32,7 @@ struct Config {
                                       // anti-cheat running); wins over enabled, file and env.
     bool  autoTune      = true;   // pick the quality preset from the detected GPU (until the user sets a preset or a flow option)
     std::string autoTunedTo;      // preset autoConfigure() selected, for the log/stats
-    int   multiplier    = 2;      // generated frames per real frame: 2 = x2, 3 = x3, 4 = x4
+    int   multiplier    = 2;      // frames displayed per real frame: 2 = x2 ... 8 = x8
     int   levels        = 4;      // optical flow pyramid levels
     bool  lowLatency    = false;  // block the game until the previous frames are handed to the display
     int   maxFrameLatency = 1;    // while generating: frames the GPU may still be working on when the game begins its next one (0 = no limit); a GPU-bound game otherwise runs ahead by up to a few frames of input lag

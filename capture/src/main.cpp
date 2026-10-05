@@ -6,7 +6,7 @@
 // the game window. Console app: logs go to stderr.
 //
 //   bdex_capture [--title <substr> | --pid <n>] [--scale <f> | --fit]
-//                [--multiplier 1..4] [--mode extrapolate|interpolate|hybrid]
+//                [--multiplier 1..8] [--mode extrapolate|interpolate|hybrid]
 //                [--preset <name>] [--filter 0|1|2] [--sharpness <f>]
 //                [--hud 0..4] [--gpu <n>] [--fifo] [--list]
 //
@@ -100,7 +100,7 @@ void usage() {
         "  (neither)          the foreground window 5 seconds after launch\n"
         "  --scale <f>        overlay size = capture size x f (default 1.0)\n"
         "  --fit              overlay fills the game's monitor, aspect preserved\n"
-        "  --multiplier <n>   frames shown per captured frame: 1 (off), 2, 3, 4 (default 2)\n"
+        "  --multiplier <n>   frames shown per captured frame: 1 (off), 2 to 8 (default 2)\n"
         "  --mode <m>         interpolate (default, fewer artefacts) | extrapolate (half a frame less latency)\n"
         "                     | hybrid (x3/x4: one interpolated frame, then predictions; 1/m of a frame of latency)\n"
         "  --preset <p>       performance | balanced | quality (default: auto from the GPU)\n"
@@ -164,7 +164,7 @@ bool parse(int argc, char** argv, Options& o) {
         } else if (a == "--multiplier" || a == "--mult") {
             const char* v = next("--multiplier");
             if (!v) return false;
-            o.multiplier = std::clamp(std::atoi(v), 1, 4);
+            o.multiplier = std::clamp(std::atoi(v), 1, 8);
         } else if (a == "--mode") {
             const char* v = next("--mode");
             if (!v) return false;
@@ -454,6 +454,11 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
     // The config file's present_mode = fifo asks for vsync in CLI mode too.
     if (!fifo && cfg.presentMode == VK_PRESENT_MODE_FIFO_KHR) fifo = true;
 
+    // Adaptive: a ceiling that can fill the monitor from ~40 fps.
+    if (cfg.adaptive) {
+        const double hz = monitorHz(overlay);
+        cfg.multiplier = std::max(cfg.multiplier, hz > 250.0 ? 8 : hz > 165.0 ? 6 : 4);
+    }
     bdex::VkCtx vk;
     bdex::Capture cap;
     if (!vk.init(overlay, o.gpu, fifo, cfg)) return 1;

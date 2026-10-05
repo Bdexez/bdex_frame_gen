@@ -70,6 +70,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Up to x8** (`multiplier` 2 to 8; the control panel's « Auto » and
+  « Adaptatif » raise their ceiling with the screen: x4 up to 165 Hz, x6 up
+  to 250 Hz, x8 above). Measured through the layer: 30 fps into 240 fps on a
+  240 Hz output, 239.3 fps displayed. The frames of a present the real
+  swapchain cannot give an image to at once (a surface allowing few images:
+  6 of 8 frames under gamescope) are copied into staging images right away,
+  then to their swapchain image when presented — before, the game waited
+  for them (6.8 fps instead of 30).
 - **Adaptive multiplier** (`adaptive = 1`, « Adaptatif » in the control
   panel and the capture launcher): every game frame gets as many frames as
   fit at the target rate — `target_fps`, or the display's refresh rate — the

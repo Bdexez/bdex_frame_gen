@@ -15,7 +15,7 @@ namespace bdex {
 namespace {
 
 constexpr uint32_t kAppSlots = 4;
-constexpr uint32_t kWorkerSlots = 8;
+constexpr uint32_t kWorkerSlots = 16;  // (FrameGen::kProfileSlots = kAppSlots + kWorkerSlots)
 
 bool presentModeSupported(DeviceData& dev, VkSurfaceKHR surface, VkPresentModeKHR mode) {
     uint32_t n = 0;
@@ -48,6 +48,7 @@ VirtualSwapchain::VirtualSwapchain(DeviceData& dev, const VkSwapchainCreateInfoK
         createSlots(workerSlots_, kWorkerSlots, true, workerPool_, false, dev_.asyncCompute);
         generating_ = wantGeneration;
         fg_ = makeFrameGen(generating_);
+        prepareStaging();
         outputGen_ = cfg_.rebuildGen;
         worker_ = std::thread([this] { workerLoop(); });
         feedback_ = dev_.presentFeedback && !throwaway_;
@@ -194,7 +195,7 @@ void VirtualSwapchain::createReal(const VkSwapchainCreateInfoKHR& appInfo) {
         // imageCount - minImageCount >= mult - 1 (VUID-vkAcquireNextImageKHR-
         // swapchain-01802: more, and the driver may hand back an image still
         // being presented).
-        const uint32_t mult = static_cast<uint32_t>(cfg_.requireApp ? 4 : std::max(1, cfg_.multiplier));
+        const uint32_t mult = static_cast<uint32_t>(cfg_.requireApp ? std::max(4, cfg_.multiplier) : std::max(1, cfg_.multiplier));
         uint32_t want = std::max({appInfo.minImageCount, 2u + mult, caps.minImageCount + mult - 1});
         if (caps.maxImageCount) want = std::min(want, caps.maxImageCount);
         ci.minImageCount = std::max(want, caps.minImageCount);
@@ -309,6 +310,7 @@ void VirtualSwapchain::followSurface() {
     historyLost_ = true;
     try {
         createRealImages();
+        prepareStaging();
     } catch (const VkError& e) {
         BDEX_WARN("real swapchain images unavailable after resize (%s)", e.what());
         std::lock_guard<std::mutex> wlock(workerMutex_);
@@ -396,8 +398,9 @@ void VirtualSwapchain::destroySlots(std::vector<FrameSlot>& slots, VkCommandPool
         if (s.submitted) dev_.vt.WaitForFences(dev_.device, 1, &s.fence, VK_TRUE, UINT64_MAX);
         if (s.cmd && pool) dev_.vt.FreeCommandBuffers(dev_.device, pool, 1, &s.cmd);
         if (s.fence) dev_.vt.DestroyFence(dev_.device, s.fence, nullptr);
-        for (VkSemaphore sem : {s.acquireSem, s.realIn, s.synthIn, s.copyDone, s.synthDone[0], s.synthDone[1],
-                                s.synthDone[2], s.synthDone[3]})
+        for (VkSemaphore sem : {s.acquireSem, s.realIn, s.synthIn, s.copyDone})
+            if (sem) dev_.vt.DestroySemaphore(dev_.device, sem, nullptr);
+        for (VkSemaphore sem : s.synthDone)
             if (sem) dev_.vt.DestroySemaphore(dev_.device, sem, nullptr);
     }
     slots.clear();
@@ -728,6 +731,7 @@ void VirtualSwapchain::applyGpuBudget() {
             auto fg = makeFrameGen(generating);
             fg_ = std::move(fg);
             generating_ = generating;
+            prepareStaging();
             historyLost_ = true;
         } catch (const VkError& e) {
             BDEX_WARN("gpu budget: output stage not rebuilt (%s)", e.what());
@@ -756,6 +760,7 @@ void VirtualSwapchain::rebuildOutput() {
         fg_ = std::move(fg);
         fg_->setQualityLevel(budget_.level());
         generating_ = generating;
+        prepareStaging();
         historyLost_ = true;
         dynMult_ = 0;
     } catch (const VkError& e) {
@@ -898,14 +903,14 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             auto land = [&](double ms) {
                 return grid ? lastMs + std::ceil((ms - lastMs) / periodMs) * periodMs : ms;
             };
-            double at[4] = {};
-            for (int k = 0; k < mult && k < 4; ++k) at[k] = land(now + 1.0 + spacing * k) - now;
+            double at[8] = {};
+            for (int k = 0; k < mult && k < 8; ++k) at[k] = land(now + 1.0 + spacing * k) - now;
             if (!adaptive)  // (historical: frame k at the refresh after start + I*k/m, frame 0 right after the GPU)
-                for (int k = 0; k < mult && k < 4; ++k)
+                for (int k = 0; k < mult && k < 8; ++k)
                     at[k] = (k == 0 ? land(now + 1.0) : land(now + frameIntervalMs_ * k / mult)) - now;
             timing.haveDisplay = true;
-            timing.displayMs[3] = float(at[order.real]);
-            for (int o = 0; o + 1 < mult && o < 3; ++o) timing.displayMs[o] = float(at[order.position(o)]);
+            timing.displayMs[7] = float(at[order.real]);
+            for (int o = 0; o + 1 < mult && o < 7; ++o) timing.displayMs[o] = float(at[order.position(o)]);
         }
         fg_->recordFrameState(slot.cmd, timing);
         fg_->profileMark(slot.cmd, slotIdx, FrameGen::StageAnalysis);
@@ -1278,7 +1283,15 @@ void VirtualSwapchain::runJob(const Job& job) {
             copied[size_t(i)] = true;
             ++n;
         }
-        if (err < 0 || eager == job.frames) {
+        // The frames up to the real one the swapchain cannot give an image to
+        // yet: copied into staging images now, so the game never waits for
+        // the pacing (a surface allowing few images at once, high multipliers).
+        for (int i = eager; i < upToReal && err >= 0; ++i) {
+            const VkResult r = submitStage(job, i, static_cast<uint32_t>(i - eager));
+            if (r < 0) err = r;
+            else copied[size_t(i)] = true;
+        }
+        if (err < 0 || upToReal == job.frames) {
             consumeUnused();
             markSubmitted();
         }
@@ -1304,13 +1317,11 @@ void VirtualSwapchain::runJob(const Job& job) {
         for (int i = eager; i < upToReal; ++i) {
             if (paced) std::this_thread::sleep_until(paceTarget(job, origin, i));
             Copied c;
-            VkResult r = submitCopy(job, i, c);
+            VkResult r = submitCopy(job, i, c, i - eager);
             if (r < 0) {
                 fail(r);
                 return;
             }
-            copied[size_t(i)] = true;
-            if (i == job.frames - 1) markSubmitted();
             r = presentCopied(job, c);
             if (r < 0) {
                 fail(r);
@@ -1595,7 +1606,7 @@ VkResult VirtualSwapchain::submitDeferredSynthesis(const Job& job) {
 // Acquires a real swapchain image and submits the copy of frame `index` of
 // the job into it. Interpolation: generated frames first, the real one last.
 // Extrapolation: the real frame first, then the predicted ones.
-VkResult VirtualSwapchain::submitCopy(const Job& job, int index, Copied& out) {
+VkResult VirtualSwapchain::submitCopy(const Job& job, int index, Copied& out, int staged) {
     const bool real = index == job.realIndex;
     const uint32_t output = static_cast<uint32_t>(index < job.realIndex ? index : index - 1);
 
@@ -1619,7 +1630,8 @@ VkResult VirtualSwapchain::submitCopy(const Job& job, int index, Copied& out) {
     // Without the passes' slot hooks: they belong to the application
     // thread's synthesis slots (online_tune reads back its sums there).
     fg_->profileBegin(slot.cmd, profSlot, false);
-    if (real) fg_->recordCopySource(slot.cmd, job.source, realImages_[ri].image);
+    if (staged >= 0) fg_->recordCopyStaged(slot.cmd, static_cast<uint32_t>(staged), realImages_[ri].image);
+    else if (real) fg_->recordCopySource(slot.cmd, job.source, realImages_[ri].image);
     else fg_->recordCopyOutput(slot.cmd, output, realImages_[ri].image);
     fg_->profileMark(slot.cmd, profSlot, FrameGen::StageCopy);
     dev_.vt.EndCommandBuffer(slot.cmd);
@@ -1632,7 +1644,8 @@ VkResult VirtualSwapchain::submitCopy(const Job& job, int index, Copied& out) {
     VkPipelineStageFlags stages[2] = {VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT};
     VkSemaphore waits[2] = {slot.acquireSem, VK_NULL_HANDLE};
     VkSemaphore signals[2] = {realImages_[ri].readySem, slot.copyDone};
-    const bool async = job.asyncSlot >= 0;
+    // (A staged copy reads what the staging copy wrote, earlier on this queue.)
+    const bool async = job.asyncSlot >= 0 && staged < 0;
     if (async) {
         const FrameSlot& synth = slots_[static_cast<size_t>(job.asyncSlot)];
         waits[1] = (job.synthSlot >= 0 && real) ? synth.realIn : synth.synthDone[index];
@@ -1657,7 +1670,7 @@ VkResult VirtualSwapchain::submitCopy(const Job& job, int index, Copied& out) {
         // present; otherwise the game blocks forever waiting on a display
         // completion that our async worker owns. A deferred synthesis still
         // reads it: submitDeferredSynthesis signals then.
-        if (real && job.presentFence && job.synthSlot < 0) {
+        if (real && job.presentFence && job.synthSlot < 0 && staged < 0) {
             VkSubmitInfo fs{VK_STRUCTURE_TYPE_SUBMIT_INFO};
             dev_.vt.QueueSubmit(dev_.queue, 1, &fs, job.presentFence);
         }
@@ -1671,6 +1684,55 @@ VkResult VirtualSwapchain::submitCopy(const Job& job, int index, Copied& out) {
     out.real = real;
     out.fence = slot.fence;
     return VK_SUCCESS;
+}
+
+VkResult VirtualSwapchain::submitStage(const Job& job, int index, uint32_t stageSlot) {
+    const bool real = index == job.realIndex;
+    const uint32_t output = static_cast<uint32_t>(index < job.realIndex ? index : index - 1);
+    FrameSlot& slot = nextSlot(workerSlots_, workerCursor_);
+    VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    dev_.vt.BeginCommandBuffer(slot.cmd, &bi);
+    fg_->recordStage(slot.cmd, real, output, job.source, stageSlot);
+    dev_.vt.EndCommandBuffer(slot.cmd);
+    // async_compute: waits the synthesis like the copy it stands for, and
+    // signals when it is done reading for the next synthesis.
+    VkPipelineStageFlags stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    VkSemaphore wait = VK_NULL_HANDLE;
+    const bool async = job.asyncSlot >= 0;
+    if (async) wait = slots_[static_cast<size_t>(job.asyncSlot)].synthDone[index];
+    VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    si.waitSemaphoreCount = async ? 1 : 0;
+    si.pWaitSemaphores = &wait;
+    si.pWaitDstStageMask = &stage;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &slot.cmd;
+    si.signalSemaphoreCount = async ? 1 : 0;
+    si.pSignalSemaphores = &slot.copyDone;
+    VkResult r;
+    {
+        std::lock_guard<std::mutex> qlock(dev_.queueMutex(dev_.queue));
+        r = dev_.vt.QueueSubmit(dev_.queue, 1, &si, slot.fence);
+        if (r >= 0 && real && job.presentFence && job.synthSlot < 0) {  // the application's image is read
+            VkSubmitInfo fs{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+            dev_.vt.QueueSubmit(dev_.queue, 1, &fs, job.presentFence);
+        }
+    }
+    if (r < 0) return r;
+    if (async) {
+        std::lock_guard<std::mutex> wlock(workerMutex_);
+        pendingCopyDone_.push_back(slot.copyDone);
+    }
+    slot.submitted = true;
+    return VK_SUCCESS;
+}
+
+// A present's frames past what the real swapchain lets the worker hold
+// acquired at once are staged (runJob): one internal image each.
+void VirtualSwapchain::prepareStaging() {
+    if (!fg_) return;
+    const int frames = generating_ ? std::max(1, cfg_.multiplier) : 1;
+    fg_->ensureStaging(static_cast<uint32_t>(std::max(0, frames - acquireAhead_)));
 }
 
 VkResult VirtualSwapchain::presentCopied(const Job& job, const Copied& c) {

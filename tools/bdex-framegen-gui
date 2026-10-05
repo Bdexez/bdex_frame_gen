@@ -576,7 +576,7 @@ class Options:
         glob["enabled"] = "1"       # every game armed ...
         glob["require_app"] = "1"   # ... generating only where this panel's « Démarrer » targets
         glob["preset"] = self.preset
-        glob["multiplier"] = str((4 if self.auto_mult or self.adaptive else self.multiplier) if self.generate else 1)
+        glob["multiplier"] = str((auto_ceiling() if self.auto_mult or self.adaptive else self.multiplier) if self.generate else 1)
         if self.adaptive and self.generate:
             glob["adaptive"] = "1"
         if self.generate:
@@ -609,7 +609,7 @@ class Options:
         e = ["BDEX_FG=1"]
         if self.preset != "auto":
             e.append(f"BDEX_FG_PRESET={self.preset}")
-        e.append(f"BDEX_FG_MULTIPLIER={(4 if self.auto_mult or self.adaptive else self.multiplier) if self.generate else 1}")
+        e.append(f"BDEX_FG_MULTIPLIER={(auto_ceiling() if self.auto_mult or self.adaptive else self.multiplier) if self.generate else 1}")
         if (self.auto_mult or self.adaptive) and self.generate:
             e.append("BDEX_FG_TARGET_FPS=auto")
         if self.adaptive and self.generate:
@@ -692,6 +692,14 @@ def display_hz():
         return max(rates) / 1000.0 if rates else 0.0
     except Exception:  # no display, old GDK
         return 0.0
+
+
+def auto_ceiling():
+    """The multiplier ceiling of « Auto » / « Adaptatif »: enough frames to
+    fill the screen from ~40 fps (x4 up to 165 Hz, x6 up to 250 Hz, x8
+    above), without allocating the output images of x8 for a 60 Hz screen."""
+    hz = display_hz()
+    return 4 if hz <= 165 else 6 if hz <= 250 else 8
 
 
 def write_session(target=0):
@@ -1065,10 +1073,10 @@ class Window(Adw.ApplicationWindow):
             subtitle="Auto : le plus grand multiple entier sous la fréquence de l'écran (×2 à 60 i/s "
                      "sur 144 Hz). Adaptatif : toute la fréquence de l'écran, même en ratio fractionnaire "
                      "(50 i/s → 144 i/s), une image par rafraîchissement",
-            model=Gtk.StringList.new(["Auto — selon l'écran (jusqu'à ×4)", "×2", "×3", "×4",
-                                      "Adaptatif — toute la fréquence de l'écran (jusqu'à ×4)"]))
-        self.mult_row.set_selected(4 if self.opt.adaptive else 0 if self.opt.auto_mult
-                                   else max(1, min(3, self.opt.multiplier - 1)))
+            model=Gtk.StringList.new(["Auto — selon l'écran", "Adaptatif — toute la fréquence de l'écran",
+                                      "×2", "×3", "×4", "×5", "×6", "×7", "×8"]))
+        self.mult_row.set_selected(1 if self.opt.adaptive else 0 if self.opt.auto_mult
+                                   else max(2, min(8, self.opt.multiplier)))
         self.mult_row.connect("notify::selected", self.on_change)
         g.add(self.mult_row)
         self.mode_row = Adw.ComboRow(title="Mode",
@@ -1176,9 +1184,9 @@ class Window(Adw.ApplicationWindow):
         o.generate = self.gen_row.get_active()
         o.preset = PRESETS[self.preset_row.get_selected()][1]
         o.auto_mult = self.mult_row.get_selected() == 0
-        o.adaptive = self.mult_row.get_selected() == 4
+        o.adaptive = self.mult_row.get_selected() == 1
         if not o.auto_mult and not o.adaptive:
-            o.multiplier = self.mult_row.get_selected() + 1
+            o.multiplier = self.mult_row.get_selected()
         o.mode = MODES[self.mode_row.get_selected()][1]
         o.upscale = self.up_row.get_active()
         o.render_scale = int(self.scale_row.get_value())

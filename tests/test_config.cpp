@@ -24,7 +24,7 @@ TEST(config_apply_values) {
     Config c;
     CHECK(c.apply("multiplier", "3") && c.multiplier == 3);
     CHECK(c.apply("MULTIPLIER", " 4 ") && c.multiplier == 4);
-    CHECK(c.apply("multiplier", "9") && c.multiplier == 4);   // clamped
+    CHECK(c.apply("multiplier", "9") && c.multiplier == 8);   // clamped
     CHECK(c.apply("enabled", "false") && !c.enabled);
     CHECK(c.apply("enabled", "on") && c.enabled);
     CHECK(c.apply("present_mode", "mailbox") && c.presentMode == VK_PRESENT_MODE_MAILBOX_KHR);
