@@ -293,6 +293,7 @@ private:
     // latency_limiter: how long present() still holds the game once the GPU
     // has finished its previous frame (syncFrameStart; presenting thread).
     double startDelayMs_ = 0.0;
+    double startSlackMs_ = 0.0;       // what the game is left ahead of the GPU (its jitter)
     double statsStartDelayMs_ = 0.0;  // sum over the statistics window
     void syncFrameStart(double waitedMs);
     // fps_limit: next allowed application present (only the presenting

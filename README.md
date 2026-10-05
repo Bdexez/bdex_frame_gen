@@ -10,8 +10,9 @@
 [![Platform](https://img.shields.io/badge/platform-Linux-FCC624.svg?logo=linux&logoColor=black)](#)
 [![Khronos validation](https://img.shields.io/badge/Khronos%20validation-0%20errors-success.svg)](#validation)
 
-30 fps rendered → **60, 90 or 120 fps displayed**, on any Vulkan game
-(native, or Direct3D through DXVK / VKD3D-Proton).
+30 fps rendered → **60 to 240 fps displayed** (x2 to x8, or exactly the
+screen's refresh rate with the adaptive mode: 50 fps → 144 fps), on any Vulkan
+game (native, or Direct3D through DXVK / VKD3D-Proton).
 
 <img src="docs/demo.gif" alt="Demo: 30 fps on the left, 60 fps with bdex-framegen on the right (4x slow motion)" width="812">
 
@@ -67,9 +68,9 @@ Design notes:
 | **Dedicated thread** | The game is never blocked by the presentation of generated frames: `vkQueuePresentKHR` costs it ≈ 0.1 ms. |
 | **Separate queue** | The layer's work runs on a compute queue distinct from the game's whenever the GPU has one. |
 | **No frame copies** | The images the game renders into double as the frame history: nothing is copied before the analysis. |
-| **Latency first** | FIFO is replaced by mailbox + pacing (queued frames are pure display latency), and an extrapolation mode predicts the next frame instead of holding the real one back. |
+| **Latency first** | FIFO is replaced by mailbox + pacing from the GPU's completion (queued frames are pure display latency); the game's present returns just in time for its next frame to reach the GPU (a Reflex-like limiter); an extrapolation mode predicts the next frame instead of holding the real one back, and a hybrid mode (x3/x4) holds it only 1/m of a frame. |
 | **All on the GPU** | Compute shaders handle the luma pyramid, flow, synthesis, upscaling and sharpening without a CPU round trip. |
-| **Scene cuts** | When the motion cannot be explained, the layer shows the real frame rather than a blend. |
+| **Scene cuts** | When the motion cannot be explained and the brightness distribution moved too (a real cut, not grain or fast motion), the layer shows the real frame rather than a blend — per region, so a menu opening over part of the screen is not warped. |
 
 <img src="docs/comparison.png" alt="Real frame, generated frame, next real frame" width="900">
 
@@ -338,7 +339,7 @@ them).
 | `REQUIRE_APP` | `0` | The control panel (`bdex-framegen-gui`) decides, like the Windows launcher; the panel always writes `1` (with `ENABLED=1`). Every Vulkan game is armed — the layer takes its swapchain and passes the frames through — except desktop programs (browsers, Steam, GTK 4 apps). Pick a running game in « Jeux détectés », « Démarrer »: generation starts in that game; the options apply live (multiplier, mode, flow, HUD: the output stage is rebuilt); « Arrêter » or closing the panel stops it. Upscaling (`RENDER_SCALE`) applies to games started while the panel is open. `BDEX_FG=1` (Steam launch option, `bdex-framegen -- game`) bypasses it. |
 | `LOW_LATENCY` | `0` | block the game until its previous frame has been handed to the display (only matters with FIFO) |
 | `MAX_FRAME_LATENCY` / `FRAME_LATENCY` | `1` | While generating: frames the GPU may still be working on when the game begins its next one (like a driver's low-latency mode). `1` = the game's present returns only once the GPU has finished its previous frame (rendering and synthesis), so a GPU-bound game cannot queue frames ahead, each of which is a frame interval of input lag (measured, GPU-bound demo at 4K: frame-to-screen 50 → 36 ms, and 60 → 71 fps from less GPU contention). `0` = no limit. Applied live. |
-| `LATENCY_LIMITER` | `1` | While generating, with `MAX_FRAME_LATENCY`: when the GPU is the bottleneck, the game's present returns just in time for its next frame to reach the GPU as it frees up, instead of as soon as the previous frame is done — the game reads its input later for the same frame on screen, like Reflex or Anti-Lag, in every Vulkan game. Steered by how long the game waits for the GPU (it keeps a slack of 1 ms + 5 % of a frame for the game's frame-time jitter, and backs off as soon as the game finds the GPU idle); a game that is not GPU-bound never waits and is never held. Measured, GPU-bound demo at 4K x2: frame-to-screen 27 → 18 ms, game 95 → 102 fps (less GPU queueing). The statistics line shows the hold (`next frame held N ms`). `0` to disable. Applied live. |
+| `LATENCY_LIMITER` | `1` | While generating, with `MAX_FRAME_LATENCY`: when the GPU is the bottleneck, the game's present returns just in time for its next frame to reach the GPU as it frees up, instead of as soon as the previous frame is done — the game reads its input later for the same frame on screen, like Reflex or Anti-Lag, in every Vulkan game. Steered by how long the game waits for the GPU, keeping a slack that follows the game's frame-time jitter (it grows each time the game finds the GPU idle); a game that is not GPU-bound never waits and is never held. Measured, GPU-bound demo at 4K x2: frame-to-screen 26.8 → 18.3 ms, game 97 → 101 fps; with the CPU busy elsewhere it cost 6 % of the frame rate. The statistics line shows the hold (`next frame held N ms`). `0` to disable. Applied live. |
 | `SCENE_CUT_LOW` / `SCENE_CUT_HIGH` | `0.05` / `0.09` | scene cut detection thresholds |
 | `SCENE_CUT_HIST` | `0.05` | The scene-cut fallback also needs the brightness distribution to move (the earth mover's distance between the two frames' luma histograms): above `SCENE_CUT_LOW`, the flow cost counts only as far as it did. Noise, film grain, foliage and fast motion raise the flow cost like a cut does, and the fallback then faded the whole picture toward the real frame (a ghost) or repeated it (no generation). Measured: real cuts 0.18 and up, grain and fast motion under 0.02; heavy grain +0.11 dB and flicker −0.5 to −0.7, cuts still caught, normal content bit for bit unchanged. `0` = the cost alone decides. |
 | `SCENE_CUT_LOCAL` | `auto` | Applies the scene-cut test per region (8×8 grid, blended between tile centres) instead of on the whole frame's mean cost, so a menu or overlay opening over part of the screen falls back to the real frame there instead of being warped, and a large fast object no longer pushes the whole frame toward the fallback. Each tile needs its own histogram evidence (`SCENE_CUT_HIST`, at four times the frame's distance: motion alone moves content in and out of a tile, a menu replaces it). On by default with the automatic preset on a discrete GPU, where `PIXEL_VECTORS` is (up to 4K x2 of synthesis work). Offline vs off: a pause menu opening over a quarter of a panning scene +1.4 dB, flicker −6.4; demo, very fast demo, HUD, pan, occlusions, swing within ±0.01 dB. `0` / `1` force it. |
@@ -428,8 +429,25 @@ Interpolation must hold the real frame back by half a frame interval to show
 the in-between frame first; extrapolation shows the real frame immediately
 and predicts the following one from the motion of the last two, at the cost
 of prediction errors on abrupt changes of direction. Predicted frames that
-are still pending when the next real frame arrives are skipped rather than
+are still pending when the next real frame is ready are skipped rather than
 delaying it.
+
+At x3 and x4, **`MODE=hybrid`** sits in between: one interpolated frame,
+the real one, then predictions — the real frame is held 1/m of a frame
+instead of (m − 1)/m. Measured with a GPU-bound game (4K, x3): every one of
+the 283 frames a second displayed, 25.5 ms from the game's frame start to
+the screen (18.3 ms with the latency limiter below).
+
+When the GPU is the bottleneck, two defaults cut the queueing a game
+otherwise builds up in front of it: `MAX_FRAME_LATENCY=1` (the game's present
+returns once the GPU has finished its previous frame) and `LATENCY_LIMITER=1`
+(it returns just in time for the next frame to reach the GPU as it frees up,
+like Reflex or Anti-Lag). Measured, GPU-bound demo at 4K x2: 26.8 ms from
+frame start to screen with the first alone, 18.3 ms with both, and 97 → 101
+game fps. With the CPU busy elsewhere (the game's wake-ups late), the limiter
+still cost 6 % of the frame rate there: `LATENCY_LIMITER=0` if the frame rate
+matters more. The statistics line reports both figures (`frame-to-screen`,
+`next frame held`).
 
 ---
 

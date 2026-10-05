@@ -172,11 +172,15 @@ la fréquence du moniteur de l'overlay (`monitorHz`).
 `max_frame_latency` (1 par défaut, seulement en génération) : `present()`
 attend, hors `mutex_`, la fence du slot de l'image N−1. Puis
 **`latency_limiter`** (défaut 1, `syncFrameStart`) : la durée de cette
-attente W = l'avance du jeu sur le GPU ; retenue += ½·(W − marge), marge
-1 ms + 5 % de I, divisée par 2 dès que W ≈ 0 (GPU peut-être au repos),
-plafond ¾·I, sommeil puis attente active ½ ms. Mesuré 4K lourd non
-plafonné : image→écran 27 → 18 ms, jeu 95 → 102 i/s (l'appel `present`
-passait 5,4 ms bloqué ailleurs) ; léger et plafonné : identiques. Stats :
+attente W = l'avance du jeu sur le GPU ; retenue += ½·(W − marge), divisée
+par 2 dès que W ≈ 0 (GPU peut-être au repos), plafond ¾·I, sommeil puis
+attente active ½ ms ; la marge suit la gigue (×1,5 à chaque retard, ×0,99
+sinon, plancher 1 ms + 5 % de I). Mesuré 4K lourd non plafonné, machine
+calme : image→écran 26,8 → 18,3 ms, 97 → 101 i/s ; ne retenir qu'une
+fraction de W est pire (0,6 : 20,9 ms ; 0,3 : 24,8) ; CPU occupé ailleurs
+(réplique CI en parallèle) : −6 % d'i/s. Léger et plafonné : identiques.
+Le cas « jeu limité par son rendu » (`--gpu-load`) n'est pas jugeable :
+gamescope bloque le jeu dans `present` et le limiteur ne retient rien. Stats :
 `next frame held N ms`. `frame-to-screen` part du retour de `present()`,
 donc un jeu qui a son propre limiteur (sommeil après `present`) y compte
 ce sommeil. Banc sans fenêtre :
