@@ -483,6 +483,22 @@ class ConfigFile:
             self.games.append(g)
         g[1]["enabled"] = "1" if on else "0"
 
+    def always_games(self):
+        """Games that generate without the panel: require_app = 0 in their section."""
+        return [g[0] for g in self.games if g[1].get("require_app") == "0"]
+
+    def set_always(self, name, on):
+        g = self._game(name)
+        if on:
+            if g is None:
+                g = [name, {}]
+                self.games.append(g)
+            g[1]["require_app"] = "0"
+        elif g is not None:
+            g[1].pop("require_app", None)
+            if not g[1]:
+                self.remove_game(name)
+
     def remove_game(self, name):
         self.games = [g for g in self.games if g[0].lower() != name.lower()]
 
@@ -523,6 +539,7 @@ class Options:
         self.sharpness = 0           # percent, 0..100
         self.hud = 0                 # on-screen fps counter level, 0..4
         self.paused = False          # live pause (the layer reloads it while games run)
+        self.without_panel = False   # every game generates from its start, panel or not (require_app = 0)
         self.values = {o["key"]: o["default"] for o in OPTIONS}   # canonical strings
 
     def load_from(self, glob):
@@ -566,6 +583,7 @@ class Options:
             except ValueError:
                 self.hud = 0
         self.paused = flag("paused")
+        self.without_panel = g.get("require_app", "1") == "0"
         for o in OPTIONS:
             self.values[o["key"]] = _parse_option(o, g.get(o["key"]))
 
@@ -574,7 +592,10 @@ class Options:
         for k in GLOBAL_KEYS:
             glob.pop(k, None)
         glob["enabled"] = "1"       # every game armed ...
-        glob["require_app"] = "1"   # ... generating only where this panel's « Démarrer » targets
+        # ... generating only where this panel's « Démarrer » targets — or,
+        # « sans le panneau » (Steam's Game Mode, where the panel cannot stay
+        # open beside a game), every game from its start.
+        glob["require_app"] = "0" if self.without_panel else "1"
         glob["preset"] = self.preset
         glob["multiplier"] = str((auto_ceiling() if self.auto_mult or self.adaptive else self.multiplier) if self.generate else 1)
         if self.adaptive and self.generate:
@@ -903,7 +924,8 @@ def mirror_config():
 
 # Vulkan programs that are not games: the layer loads into them too (keep in
 # sync with platformIsNonGame in layer/src/platform.cpp).
-NOT_GAMES = {"steam", "steamwebhelper", "gamescope", "gamescopereaper", "chrome", "chromium",
+NOT_GAMES = {"steam", "steamwebhelper", "gamescope", "gamescopereaper", "gamescope-wl", "mangoapp",
+             "steam-runtime-check-requirements", "chrome", "chromium",
              "firefox", "librewolf", "brave", "zen", "electron", "discord", "vesktop", "code",
              "obs", "vulkaninfo", "vkcube", "bdex-framegen-gui"}
 
@@ -963,8 +985,10 @@ def describe_entry(e):
         game, outp = float(e.get("game_fps", 0)), float(e.get("output_fps", 0))
         parts.append(f"{game:.0f} → {outp:.0f} i/s (×{e.get('multiplier', '?')}, "
                      f"{ {'extrapolate': 'extrapolation', 'hybrid': 'hybride'}.get(e.get('mode'), 'interpolation')})")
-        hz = float(e.get("refresh_hz", 0))
-        if hz > 0:
+        hz, limit = float(e.get("refresh_hz", 0)), float(e.get("limit_hz", 0))
+        if limit > 0:   # Steam's framerate limit (gamescope): nothing past it is shown
+            parts.append(f"limite Steam {limit:.0f} i/s (rien au-delà ne s'affiche)")
+        elif hz > 0:
             parts.append(f"écran {hz:.0f} Hz")
         lat = float(e.get("latency_ms", -1))
         if lat >= 0:
@@ -1021,6 +1045,7 @@ class Window(Adw.ApplicationWindow):
         scroller.set_child(page)
 
         self._build_session(page)
+        self._build_without_panel(page)
         self._build_status(page)
         self._build_running(page)
         self._build_framegen(page)
@@ -1068,8 +1093,83 @@ class Window(Adw.ApplicationWindow):
         self.session_row.add_suffix(self.session_btn)
         g.add(self.session_row)
 
+    def _build_without_panel(self, page):
+        """Steam's Game Mode (Steam Deck, SteamOS) runs one application at a time:
+        the panel cannot stay open beside the game there. These games generate
+        from their start, with the settings below, the panel closed."""
+        g = Adw.PreferencesGroup(
+            title="Mode Jeu — sans le panneau",
+            description="Dans le mode Jeu de SteamOS (Steam Deck), ce panneau ne peut pas rester ouvert "
+                        "à côté du jeu : ces jeux génèrent dès leur lancement, avec les réglages ci-dessous. "
+                        "Steam, gamescope et les applications de bureau restent exclus. Autre voie, par jeu : "
+                        "les options de lancement Steam (bouton copier en haut).")
+        page.add(g)
+        self.always_all_row = Adw.SwitchRow(title="Tous les jeux", active=self.opt.without_panel,
+                                            subtitle="Chaque jeu Vulkan génère dès son lancement, panneau fermé")
+        self.always_all_row.connect("notify::active", self.on_change)
+        g.add(self.always_all_row)
+        self.always_row = Adw.SwitchRow(title="Le jeu sélectionné")
+        self.always_row.connect("notify::active", self.on_always)
+        g.add(self.always_row)
+        self.always_group = g
+        self.always_rows = []
+
+    def _refresh_always(self):
+        """The per-game rows: the selected game's switch, then the other games
+        already set to generate without the panel (each with « Retirer »)."""
+        always = self.cfg.always_games()
+        name = self.selected[1] if self.selected else None
+        self._always_loading = True
+        self.always_row.set_title(f"Ce jeu : {name}" if name else "Le jeu sélectionné")
+        self.always_row.set_subtitle("Génère dès son lancement, panneau fermé" if name else
+                                     "Sélectionne un jeu dans « Jeux détectés » (lancé une fois ici)")
+        self.always_row.set_active(name is not None and name.lower() in (a.lower() for a in always))
+        self.always_row.set_sensitive(name is not None and not self.opt.without_panel)
+        self._always_loading = False
+        for row in self.always_rows:
+            self.always_group.remove(row)
+        self.always_rows = []
+        for game in always:
+            if name is not None and game.lower() == name.lower():
+                continue
+            row = Adw.ActionRow(title=game, subtitle="Génère sans le panneau")
+            btn = Gtk.Button(label="Retirer", valign=Gtk.Align.CENTER)
+            btn.connect("clicked", lambda _b, gname=game: self._set_always(gname, False))
+            row.add_suffix(btn)
+            self.always_group.add(row)
+            self.always_rows.append(row)
+
+    def on_always(self, row, _param):
+        if getattr(self, "_always_loading", False) or not self.selected:
+            return
+        self._set_always(self.selected[1], row.get_active())
+
+    def _set_always(self, name, on):
+        self.save()                    # (re-reads the file: hand edits survive)
+        self.cfg.set_always(name, on)
+        try:
+            self.cfg.write()
+        except OSError as e:
+            self.toast(f"Échec de l'enregistrement : {e}")
+            return
+        mirror_config()
+        self.toast(f"{name} : génère sans le panneau." if on else f"{name} : seulement avec « Démarrer ».")
+        self._refresh_always()
+
     def _refresh_session(self):
         on = self.target is not None
+        if self.opt.without_panel:
+            self.session_row.set_title("Actif dans tous les jeux, sans le panneau")
+            self.session_row.set_subtitle("Chaque jeu génère dès son lancement ; les réglages s'appliquent en "
+                                          "direct, « En pause » suspend la génération.")
+            self.session_icon.set_from_icon_name("media-playback-start-symbolic")
+            self.session_btn.set_visible(False)
+            if hasattr(self, "always_row"):
+                self._refresh_always()
+            return
+        self.session_btn.set_visible(True)
+        if hasattr(self, "always_row"):
+            self._refresh_always()
         if on:
             self.session_row.set_title(f"Génération en cours : {self.target[1]}")
             self.session_row.set_subtitle("Les réglages s'appliquent en direct. « Arrêter » ou fermer "
@@ -1338,6 +1438,7 @@ class Window(Adw.ApplicationWindow):
         o.low_latency = self.ll_row.get_active()
         o.hud = HUD_MODES[self.hud_row.get_selected()][1]
         o.paused = self.pause_row.get_active()
+        o.without_panel = self.always_all_row.get_active()
         for key, (spec, row) in self.opt_rows.items():
             if spec["kind"] == "spin":
                 v = row.get_value()
@@ -1365,6 +1466,7 @@ class Window(Adw.ApplicationWindow):
         self.sync()
         self.refresh_sensitivity()
         self.save()
+        self._refresh_session()   # « Tous les jeux » (sans le panneau) changes what « Démarrer » means
 
     def save(self):
         # Re-read first: lines edited by hand while the panel is open

@@ -490,6 +490,7 @@ void Config::loadFile(const std::string& path, const std::string& processName, b
     std::string line;
     int lineNo = 0;
     bool active = !bundled;  // lines before any section are global
+    bool named = false;      // ... and this one names the process
     while (std::getline(in, line)) {
         ++lineNo;
         std::string t = trim(line);
@@ -498,15 +499,18 @@ void Config::loadFile(const std::string& path, const std::string& processName, b
             const std::string section = trim(t.substr(1, t.size() - 2));
             // Shipped profiles only tune named games; they never apply globally.
             active = !(bundled && section == "*") && sectionMatches(section, names);
+            named = active && !baseName(section).empty() && baseName(section) != "*";
             continue;
         }
         if (!active) continue;
         size_t eq = t.find('=');
         if (eq == std::string::npos) continue;
+        const std::string key = lower(trim(t.substr(0, eq)));
         if (bundled) {
             // Turning the layer on (or pausing it) stays the user's decision.
-            const std::string key = lower(trim(t.substr(0, eq)));
             if (key == "enabled" || key == "enable" || key == "paused" || key == "pause") continue;
+        } else if (named && (key == "enabled" || key == "enable" || key == "require_app")) {
+            processNamed = true;
         }
         if (!apply(t.substr(0, eq), t.substr(eq + 1)))
             BDEX_WARN("%s:%d: ignored option '%s'", path.c_str(), lineNo, t.c_str());
@@ -535,7 +539,10 @@ void Config::loadEnv() {
     if (const char* v = getenv("BDEX_FG")) {
         bool b;
         if (parseBool(v, b)) enabled = b;
-        if (enabled) requireApp = false;  // explicit per-game launch (Steam option, CLI)
+        if (enabled) {
+            requireApp = false;  // explicit per-game launch (Steam option, CLI)
+            processNamed = true;
+        }
     }
 }
 
@@ -635,6 +642,16 @@ Config Config::loadWithDefaults(Config c, const std::string& extraProcess) {
                 c.overlayMode = 0;
             }
         }
+    }
+    // On for every program without the panel — [*] enabled with require_app =
+    // 0, the panel's « sans le panneau » for all games (Steam's Game Mode,
+    // where it cannot stay open beside a game): the desktop and Steam's own
+    // processes stay untouched, as under require_app — gamescope above all,
+    // Game Mode's compositor. Their own [section] or BDEX_FG=1 still counts.
+    if (c.enabled && !c.requireApp && !c.processNamed) {
+        bool nonGame = platformIsDesktopApp() || platformIsNonGame(platformExeName());
+        for (const auto& n : processNames()) nonGame = nonGame || platformIsNonGame(n);
+        if (nonGame) c.enabled = false;
     }
     if (c.sceneCutHigh < c.sceneCutLow) c.sceneCutHigh = c.sceneCutLow;
     if (!extraProcess.empty()) c.tuneName = baseName(extraProcess);

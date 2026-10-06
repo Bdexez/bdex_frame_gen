@@ -188,6 +188,36 @@ TEST(config_product_defaults_and_mode_priority) {
     remove(path.c_str());
 }
 
+TEST(config_game_mode_without_panel) {
+    // The panel's « sans le panneau » (Steam's Game Mode): require_app = 0 in
+    // a game's own section turns it on without the panel; [*] alone does not
+    // name the process (desktop programs are then excluded, as under
+    // require_app), and a shipped profile never can.
+    const std::string path = test::tmpPath("bdex_test_game_mode.conf");
+    {
+        std::ofstream f(path);
+        f << "[*]\nenabled = 1\nrequire_app = 1\n[mygame]\nrequire_app = 0\n";
+    }
+    Config game;
+    game.loadFile(path, "/games/mygame.exe");
+    CHECK(game.enabled && !game.requireApp && game.processNamed);
+    Config other;
+    other.loadFile(path, "/games/othergame.exe");
+    CHECK(other.enabled && other.requireApp && !other.processNamed);
+    Config bundled;
+    bundled.loadFile(path, "/games/mygame.exe", true);
+    CHECK(!bundled.processNamed);
+    remove(path.c_str());
+    // BDEX_FG=1 (a Steam launch option) names the process too.
+    setenv("BDEX_FG", "1", 1);
+    Config env = Config::load();
+    CHECK(env.enabled && !env.requireApp && env.processNamed);
+    unsetenv("BDEX_FG");
+    // Game Mode's compositor and Steam's own processes are desktop programs.
+    CHECK(bdex::platformIsNonGame("gamescope") && bdex::platformIsNonGame("steamwebhelper") && bdex::platformIsNonGame("mangoapp"));
+    CHECK(!bdex::platformIsNonGame("mygame"));
+}
+
 TEST(config_master_switch) {
     setenv("BDEX_FG", "0", 1);
     Config c = Config::load();
