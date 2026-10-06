@@ -3,7 +3,9 @@
 Ce fichier est la mémoire de travail du projet : il résume l'architecture, les
 commandes, les invariants et les pièges, pour qu'une session ultérieure puisse
 reprendre le projet sans re-dérivation. Sources de vérité complémentaires :
-`README.md` (options, usage Linux), `docs/windows-port.md` (mode 1),
+**`docs/MEMOIRE.md`** (la mémoire consolidée, lisible par l'utilisateur :
+fonctionnement par système, historique, chiffres, problèmes ouverts — à tenir
+à jour à chaque session), `README.md` (options, usage Linux), `docs/windows-port.md` (mode 1),
 `docs/windows-capture.md` (mode 2, checklists de validation hardware),
 `docs/windows-README.md` (usage Windows), `ROADMAP.md` (état + mesures),
 `CHANGELOG.md` (journal par version).

@@ -604,6 +604,8 @@ layer/
 demo/                   GLFW test application (procedural scene)
 tests/                  unit tests and integration test
 tools/                  launcher, install/uninstall, quality evaluation
+docs/                   Windows guides; MEMOIRE.md: the project's memory (in French) —
+                        how it works on each system, history, measurements, open issues
 ```
 
 ---
