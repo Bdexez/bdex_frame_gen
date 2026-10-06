@@ -238,17 +238,60 @@ nothing to add to your Steam launch options.
 ### Control panel (recommended)
 
 Run **`bdex-framegen-gui`** (or `bdex-framegen --gui`, or the *bdex-framegen*
-entry in the applications menu) once, the way you would open Lossless Scaling:
+entry in the applications menu), the way you would open Lossless Scaling:
+launch your game normally (Steam...), pick it in **Jeux détectés**, set the
+options, **Démarrer**. Frame generation starts in that game and the options
+apply live; **Arrêter**, or closing the panel, stops it. Every Vulkan game is
+armed meanwhile (the layer passes its frames through), desktop programs
+excepted (browsers, Steam, gamescope, GTK 4 applications).
 
-* flip **frame generation on**, either globally (*Activer pour tous les jeux
-  Vulkan*) or for a chosen list of games you add with **+**;
-* set the quality preset, multiplier, mode, upscaling and present mode.
+**Without the panel** — *Mode Jeu — sans le panneau*: every game (*Tous les
+jeux*), or the selected one, generates from its start with the panel's
+settings, the panel closed. That is how Steam's Game Mode is used (below),
+also from a terminal: `bdex-framegen --always-on [GAME]` / `--always-off`.
 
 Everything is written to `~/.config/bdex-framegen.conf`, which the layer reads
-on its own. Then just **launch your games normally through Steam** — no launch
-options. Changes take effect the next time a game starts. The panel needs
-PyGObject with GTK 4 and libadwaita (packages `python-gobject`, `gtk4`,
-`libadwaita`).
+on its own (games in a Flatpak launcher get a copy). The panel needs Python 3
+with PyGObject and GTK 4; libadwaita 1.4+ is used when present.
+
+### Steam Deck / SteamOS
+
+Install in **Desktop Mode** (Konsole), into `~/.local` — SteamOS's read-only
+system is not touched, and its updates keep it:
+
+```sh
+tar xzf bdex-framegen-linux-x86_64-*.tar.gz && cd bdex-framegen-linux-x86_64-*/ && ./install.sh
+```
+
+The control panel runs in Desktop Mode (SteamOS ships GTK 4 and PyGObject).
+**Game Mode** runs one application at a time, so the panel cannot stay open
+beside a game there. Either:
+
+- *Mode Jeu — sans le panneau* in the panel (or `bdex-framegen --always-on
+  [GAME]`): every game, or the chosen one, generates from its start in Game
+  Mode, with the panel's settings — change them in Desktop Mode, or live from
+  the config file; or
+- per game, Steam's launch options (*Properties → Launch options*, also
+  editable in Game Mode): `BDEX_FG=1 %command%` — the panel's copy button
+  gives the whole line with its settings.
+
+**Steam's framerate limit** (Quick Access Menu → Performance) caps what
+gamescope shows, generated frames included: under it the layer only fills up
+to the limit (a 30 fps game under a 30 fps limit gets no generated frame, a
+20 fps one is brought to 30), keeping one frame queued at most. For 60 fps
+from a 30 fps game, set the limit to **Off** (or to the refresh rate: 60, or
+90 on an OLED Deck) and cap the game itself — its own limiter, or `fps_limit
+= 30` — or let *Adaptatif* fill the refresh rate. `bdex-framegen --report`
+and the panel say when the limit is on. Measured in gamescope 3.16 (the
+SteamOS 3.9 one) with that limit at 30 fps, a 30 fps game at x2: 30 fps and
+19–66 ms from present to screen, where it fell to 15 fps and 233 ms before;
+x2 again, without a queue left behind, once the limit is lifted.
+
+gamescope's own refresh rate (and the limit) comes from its WSI layer, so
+*Auto* and *Adaptatif* know the Deck's 60 / 90 Hz at once. HDR (OLED) passes
+through, metadata included. On the Deck's integrated GPU the automatic preset
+is *performance*. The same holds in any gamescope session (Bazzite,
+ChimeraOS...).
 
 ### Turning it on by hand
 
@@ -375,7 +418,7 @@ them).
 | `PRESENT_FEEDBACK` | `1` | Where the driver supports `VK_KHR_present_id` + `present_wait` (kept hidden from the game), the layer measures when each frame is really displayed: the statistics report the refresh rate and frames replaced before display; on a fixed-refresh display the pacing presents each frame in time for its refresh and generated frames show the content of their real display time (offline, a 100 Hz display with a 60 fps game at x2: +11 dB; 144 Hz: +2 to +3 dB). Variable-refresh displays and compositors without a refresh grid are detected and left as before. `0` = off. |
 | `PRESENT_MODE` | `auto` | `auto` presents with mailbox when the game asks for FIFO; `app` keeps the game's mode; or force `fifo`, `mailbox`, `immediate`, `relaxed` |
 | `PACING` | `1` | even spacing of the frames in non-FIFO modes |
-| `REQUIRE_APP` | `0` | The control panel (`bdex-framegen-gui`) decides, like the Windows launcher; the panel always writes `1` (with `ENABLED=1`). Every Vulkan game is armed — the layer takes its swapchain and passes the frames through — except desktop programs (browsers, Steam, GTK 4 apps). Pick a running game in « Jeux détectés », « Démarrer »: generation starts in that game; the options apply live (multiplier, mode, flow, HUD: the output stage is rebuilt); « Arrêter » or closing the panel stops it. Upscaling (`RENDER_SCALE`) applies to games started while the panel is open. `BDEX_FG=1` (Steam launch option, `bdex-framegen -- game`) bypasses it. |
+| `REQUIRE_APP` | `0` | The control panel (`bdex-framegen-gui`) decides, like the Windows launcher; the panel writes `1` (with `ENABLED=1`). Every Vulkan game is armed — the layer takes its swapchain and passes the frames through — except desktop programs (browsers, Steam, gamescope, GTK 4 apps). Pick a running game in « Jeux détectés », « Démarrer »: generation starts in that game; the options apply live (multiplier, mode, flow, HUD: the output stage is rebuilt); « Arrêter » or closing the panel stops it. Upscaling (`RENDER_SCALE`) applies to games started while the panel is open. `BDEX_FG=1` (Steam launch option, `bdex-framegen -- game`) bypasses it, and so does `require_app = 0` in a game's own section: that game generates without the panel (the panel's « Mode Jeu — sans le panneau », `bdex-framegen --always-on GAME`; in `[*]`, every game — desktop programs still excluded). |
 | `LOW_LATENCY` | `0` | block the game until its previous frame has been handed to the display (only matters with FIFO) |
 | `MAX_FRAME_LATENCY` / `FRAME_LATENCY` | `1` | While generating: frames the GPU may still be working on when the game begins its next one (like a driver's low-latency mode). `1` = the game's present returns only once the GPU has finished its previous frame (rendering and synthesis), so a GPU-bound game cannot queue frames ahead, each of which is a frame interval of input lag (measured, GPU-bound demo at 4K: frame-to-screen 50 → 36 ms, and 60 → 71 fps from less GPU contention). `0` = no limit. Applied live. |
 | `LATENCY_LIMITER` | `1` | While generating, with `MAX_FRAME_LATENCY`: when the GPU is the bottleneck, the game's present returns just in time for its next frame to reach the GPU as it frees up, instead of as soon as the previous frame is done — the game reads its input later for the same frame on screen, like Reflex or Anti-Lag, in every Vulkan game. Steered by how long the game waits for the GPU, keeping a slack that follows the game's frame-time jitter (it grows each time the game finds the GPU idle); a game that is not GPU-bound never waits and is never held. Measured, GPU-bound demo at 4K x2: frame-to-screen 26.8 → 18.3 ms, game 97 → 101 fps; with the CPU busy elsewhere it cost 6 % of the frame rate. The statistics line shows the hold (`next frame held N ms`). `0` to disable. Applied live. |
@@ -506,7 +549,12 @@ matters more. The statistics line reports both figures (`frame-to-screen`,
 - Not supported (passed through): multi-layer (VR) and protected swapchains.
 - Handled extensions: `VK_KHR_present_id` / `present_wait`,
   `VK_EXT_swapchain_maintenance1` (present fences, present mode switching,
-  `vkReleaseSwapchainImagesEXT`).
+  `vkReleaseSwapchainImagesEXT`). The other calls on a swapchain — HDR
+  metadata, `VK_GOOGLE_display_timing`, `VK_NV_low_latency2` — go to the real
+  swapchain the layer presents to, re-created underneath the game's handle
+  when the window changes size.
+- **Steam's framerate limit** (gamescope, Game Mode) caps generated frames
+  too: see [Steam Deck / SteamOS](#steam-deck--steamos).
 
 ---
 

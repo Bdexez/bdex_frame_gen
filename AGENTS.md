@@ -93,6 +93,8 @@ tools/package-linux.sh [outdir] [version]              # archive Linux précompi
 tools/ci/package-release.sh [outdir] [version]         # archives de release x86_64 + aarch64 (Docker, comme le job CI `package`)
 tools/ci/archive-check.sh ARCHIVE [image|suite...]     # installe une archive ailleurs : charge + génère x2 (vkcube, Xvfb)
 tools/ci/distro-check.sh [image...]                    # build + tests + démo dans d'autres distributions (job CI `distros`)
+tools/ci/panel-check.sh build/options_ui.json [image]  # panneau sur écran virtuel en conteneur (versions SteamOS : Arch)
+bdex-framegen --always-on [JEU] | --always-off [JEU]   # générer sans le panneau (mode Jeu SteamOS)
 ```
 
 Windows : **pas de machine Windows dans l'environnement** — le build MSVC, les
@@ -632,6 +634,68 @@ x2/x3/x4), sauf le correctif HDR (les chemins SDR restent identiques).
   `pthread_setattr_default_np` (8 Mo) : ×2,00. Les pilotes GPU ne compilent
   pas avec LLVM ; ne rien changer dans la couche pour ça.
 
+### SteamOS / gamescope (2026-09-30)
+
+- **SteamOS 3.9.2** (liste des paquets : `steamdeck-images.steamos.cloud/
+  steamdeck/<build>/*.manifest.pacman`) : gamescope 3.16.30, glibc 2.43,
+  loader 1.4.350, Mesa 26, python 3.14 + python-gobject 3.56 + gtk4 4.22,
+  **ni libadwaita ni zenity** → panneau en GTK 4 simple. Vérifié par
+  `tools/ci/panel-check.sh` (Arch = mêmes versions ; + Debian 12, Ubuntu
+  22.04), Xvfb dans le conteneur.
+- **Mode Jeu** : une seule application à la fois → le modèle « Démarrer »
+  (`require_app`) y est impossible. `require_app = 0` dans `[jeu]` (ou `[*]`)
+  = génère sans le panneau ; panneau « Mode Jeu — sans le panneau »,
+  `bdex-framegen --always-on/--always-off [JEU]`, ou `BDEX_FG=1 %command%`.
+  `Config::processNamed` (section du processus qui touche `enabled` /
+  `require_app`, ou `BDEX_FG=1`) ; sinon, activé globalement, les non-jeux
+  sont exclus comme sous `require_app` (gamescope — le compositeur du mode
+  Jeu charge la couche —, gamescope-wl, mangoapp, steam...).
+- **Couche WSI de gamescope** (`VkLayer_FROG_gamescope_wsi`, activée par
+  `ENABLE_GAMESCOPE_WSI=1` que gamescope pose pour ses enfants) : *sous* la
+  nôtre (`~/.local/share` avant `/usr/share`). Elle répond elle-même à
+  `vkGetRefreshCycleDurationGOOGLE` (vkroots rend son wrapper même sans
+  l'extension activée) : **ne pas activer `VK_GOOGLE_display_timing`**, elle
+  la transmet au pilote (NVIDIA ne l'a pas). `DeviceData::gamescope`,
+  `pollGamescope` (worker, après chaque job, ≤ 10/s, tout de suite si le
+  limiteur bascule).
+- **Limite de Steam** (menu rapide) : `g_nSteamCompMgrTargetFPS`, callbacks
+  retenus (1 vblank sur rafraîchissement/limite), état 1 dans
+  `GAMESCOPE_LIMITER_FILE` (uint32, toujours écrit) et le protocole
+  `gamescope_limiter` ; FIFO imposé côté gamescope aux applis ordinaires ;
+  aux « frame limiter aware » (DXVK ≥ 2.3, vkd3d ≥ 2.12,
+  `GAMESCOPE_WSI_FRAME_LIMITER_AWARE=1`) FIFO seul exposé + OUT_OF_DATE à
+  chaque bascule. `refresh_cycle` = celui de la limite. **Bug gamescope** :
+  il n'envoie le cycle d'une surface que s'il change → une swapchain
+  recréée garde le défaut de la couche WSI (16,67 ms) → cycle retenu par
+  surface (`DeviceData::gamescopeCycles`).
+- Sous la limite : multiplicateur adaptatif visant la limite (quel que soit
+  le multiplicateur), le worker présente une image une fois la précédente
+  affichée (`waitDisplayed`, `fbDoneId_`), un jeu sans image générée attend
+  l'affichage de la précédente (`gateOnDisplay`), l'adaptatif prend le temps
+  propre du jeu (`gameOwnMs_`) s'il attend > ¼ d'image. Mesures (démo 30
+  i/s ×2, écran 60 Hz, limite 30) : avant 15 i/s, 233 ms ; après 30 i/s,
+  19 ms (aware) / 66 ms (natif) ; 20 i/s sous 30 → 30 ; 40 sous 60 → 60.
+  Pièges vécus : attendre l'affichage de *tout* le job en générant fait
+  tomber un jeu de 40 à 31 i/s (cercle vicieux avec l'adaptatif) ;
+  l'horloge d'affichage mesurée prend 30 Hz pour un écran 60 Hz présenté un
+  vblank sur deux (d'où le cycle de gamescope comme indice).
+- **Rattrapage** (partout) : `catchUp` si le jeu a attendu le worker > ¼
+  d'image (hors `gateOnDisplay`) ou après 8 jobs d'affilée en retard d'un
+  rafraîchissement (1re image du job vs le 1er vblank atteignable une fois
+  prête, `origin + 0,3 P` ; ou job commencé ≥ 0,9 P après sa remise). Ne pas
+  mesurer le retard sur l'image réelle vs `origin + slot` : faux positifs
+  quand la synthèse finit juste après un vblank (1 à 3 images sautées / 2 s).
+- **Banc** : `gamescope --backend headless -r 60` + `gamescopectl
+  debug_set_fps_limit N` (0 = retirée) lancé *dans* l'enfant ;
+  `tests/gamescope_limit.sh` (ctest, saute sans gamescope). Charger la build
+  par un `XDG_DATA_HOME` privé — pas `VK_IMPLICIT_LAYER_PATH`
+  (`tools/layer_env.sh`), qui masque la couche WSI, ni l'environnement de
+  l'hôte, qui charge la couche **installée** dans `~/.local`.
+- **Handle de la swapchain** : `handle()` = `real_` à la création ;
+  `followSurface` remplace `real_` → métadonnées HDR, display timing,
+  `VK_NV_low_latency2`, compteur, local dimming relayés à `currentReal()`.
+- Statut : `limit_hz` (`--report`, panneau).
+
 ### CI Linux — pièges (2026-09-24)
 
 - Le loader d'Ubuntu 24.04 (1.3.275) **ignore `VK_IMPLICIT_LAYER_PATH`** (et
@@ -758,7 +822,10 @@ env BDEX_FG_PROFILE=1 BDEX_FG_LOG=2 bdex_demo --size 2560x1440
 11. Packaging Linux : paquets distro (deb/rpm, AUR binaire), Flatpak du
     panneau (faits : archives glibc 2.29/arm64 vérifiées en CI, couche dans
     les lanceurs Flatpak) ; polish de `windows-README.md` (section Windows
-    dans le README principal).
+    dans le README principal). Steam Deck : un plugin Decky (menu rapide :
+    activer, multiplicateur, pause en jeu) — le mode Jeu n'a aujourd'hui que
+    « sans le panneau » et les options de lancement ; validation sur un vrai
+    Deck (performance de la synthèse sur RDNA2 8 CU, HDR OLED).
 12. Piste phase 4 (optionnelle, fragile) : present-hook injection D3D11/12 en
     mode low-latency opt-in par jeu solo — jamais par défaut (anti-cheat).
 
