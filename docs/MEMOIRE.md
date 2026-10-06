@@ -509,3 +509,155 @@ d'affichage tournent dans `gamescope --backend headless` ou dans Docker
 
 ---
 
+## 7. Historique des améliorations
+
+**Versions publiées**
+
+- **0.1.0 (12/09)** : la couche implicite, le flux optique GPU (pyramide +
+  block matching), la synthèse bidirectionnelle, la présentation depuis un
+  thread dédié.
+- **0.2.0 (13/09)** :
+  - réglage automatique selon le GPU, upscaling spatial + CAS ;
+  - extrapolation et profils (dont `latency`), mailbox par défaut ;
+  - premier panneau GTK 4.
+- **0.3.0 (14/09)** : HUD ; **Proton corrigé** (pas de SUBOPTIMAL,
+  extensions de présentation cachées).
+- **15/09** (publié avec la 0.4.0) : portage Windows. Couche (mode 1)
+  compilée en CI ; application de capture (mode 2) **validée sur matériel**,
+  avec lanceur et raccourcis.
+- **0.4.0 (25/09)**, grand lot :
+  - HDR ; état GPU (`frame_timing`, `dedup`) ; coupures de scène locales ;
+  - options d'extrapolation (accélération, splat, reveal_fill) ;
+    chrominance ;
+  - `gpu_budget`, `online_tune`, `upscale_temporal`, `flow_temporal` ;
+  - retour d'affichage `present_wait` ; upscaling en Wayland natif ;
+  - architecture modulaire (`FgPass`, registre d'options, pools de
+    descripteurs à la demande) ;
+  - variantes allégées des shaders (coût GPU ÷2) ;
+  - `zero_bias_contrast` à 0,02 par défaut, preset `enhanced` ;
+  - première archive Linux ; icône de notification sous Windows.
+- **0.5.0 à 0.5.5 (26/09)** :
+  - panneau Linux calqué sur le lanceur Windows (`require_app`,
+    « Démarrer ») ;
+  - dossier de session dans `~/.cache` (runtime Steam) ;
+  - jeux compétitifs exclus ;
+  - panneau sans libadwaita ;
+  - multiplicateur « Auto » ;
+  - lecture rapide de `--report` ; statistiques de coupure de scène ;
+  - nombres lus quelle que soit la locale.
+
+**Travail non publié en version (29–30/09, poussé sur `main`)**
+
+- **Parité Lossless Scaling** :
+  - cadencement depuis la fin GPU et deux files de présentation ;
+  - mode hybride, multiplicateur adaptatif fractionnaire, jusqu'à ×8 ;
+  - `max_frame_latency` et `latency_limiter` ;
+  - prédites abandonnées au bon moment ;
+  - défauts qualité sur GPU dédié (coupures par histogramme et par tuile,
+    `zero_bias` plafonné, vecteurs par pixel, splat + reveal_fill).
+- **Compatibilité matériel et distributions** :
+  - archives glibc 2.29 (x86_64 64/32 bits) et nouvelle archive arm64 ;
+  - lanceurs Flatpak ;
+  - petits GPU (limites garanties) ;
+  - compilation GCC 10+ / en-têtes 1.3.204+ / glslangValidator ;
+  - manifeste relu sans avertissement ;
+  - CI de distributions et vérification des archives là où elles tournent.
+- **SteamOS** :
+  - mode Jeu sans panneau ;
+  - limite d'images/s de Steam gérée ; fréquence lue dans gamescope ;
+  - rattrapage de la présentation ;
+  - appels relayés à la swapchain courante (HDR…) ;
+  - panneau vérifié sur les versions de SteamOS.
+
+---
+
+## 8. Chiffres à retenir
+
+| Sujet | Mesure |
+|---|---|
+| Qualité, démo (historique, 15/09) | 31,0 dB mouvement normal, 23,7 dB rapide |
+| Qualité, CI (lavapipe) | 29,50 / 23,65 dB (seuils 28,0 / 23,0), à ~0,04 dB du GPU |
+| Latence, interpolation ×2 à 60 i/s | image réelle retenue ~8,4 ms (~16,7 ms à 30 i/s) |
+| Latence, extrapolation ×2 | ~0,1 ms |
+| Coût GPU, variantes allégées (1440p, quality) | 2,7 → 1,35 ms |
+| Jeu limité par le GPU, 4K lourd, avant/après le cadencement GPU | 66 → 132 images affichées/s |
+| `latency_limiter`, 4K lourd | image → écran 26,8 → 18,3 ms, 97 → 101 i/s |
+| Hybride ×3, jeu limité par le GPU | 116 → 283 images affichées/s, jeu 58 → 94 i/s |
+| Adaptatif | 50 i/s → 144 affichées sur 144 Hz |
+| Limite Steam 30 i/s (démo 30 i/s ×2), avant | jeu 15 i/s, 233 ms présentation → écran |
+| Limite Steam 30 i/s, après | jeu 30 i/s, 19 à 66 ms ; ×2 retrouvé après la levée |
+| glibc demandée par l'archive | 2.36 → 2.29 |
+
+Mesures refusées, à ne pas refaire :
+- `grad_weight` : −2,1 dB en mouvement normal.
+- census : −1,5 dB en mouvement normal.
+- Mélange pondéré de `flow_temporal` : −0,5 dB.
+- Sous-pixel parabolique : −0,1 dB.
+- Échelle PQ en HDR : −3 à −10 dB.
+- Attendre l'affichage de tout un job sous la limite Steam : le jeu tombe de
+  40 à 31 i/s.
+
+Le détail de toutes les mesures est dans AGENTS.md §10 et le CHANGELOG.
+
+---
+
+## 9. Problèmes connus et pistes
+
+**Jamais validé sur du vrai matériel**
+- La couche Windows (mode 1).
+- Un Steam Deck (performance sur RDNA2 8 CU, HDR OLED, 90 Hz).
+- ARM64.
+- Un petit GPU (V3D).
+- Steam en Flatpak.
+
+**Cas ouvert : KDE + NVIDIA (bureau de l'ami)**
+- Pas de retour d'affichage.
+- Valheim tournait déjà vers 130 i/s sur 144 Hz, donc ×2 n'apporte rien ou
+  étrangle le jeu. Soupçon : repli de coupure de scène.
+- Rapport 0.5.4 en attente.
+- Principe : partir de « ça ne marche pas chez lui » et chercher la cause
+  dans les données.
+
+**Qualité** : mouvement rapide (ambiguïté du coût SAD), rotations et zoom
+(modèle affine par bloc à faire), occlusions.
+
+**Windows**
+- Transmettre le plein écran exclusif (mode 1).
+- Installateur et signature.
+- Repli Desktop Duplication (mode 2).
+- Mesure complète de la latence de capture.
+
+**Steam Deck** : un **plugin Decky Loader** (menu rapide : activer,
+multiplicateur, pause en jeu). Le mode Jeu n'a aujourd'hui que « sans le
+panneau » et les options de lancement.
+
+**CI GitHub invisible** (dépôt privé) : les jobs `distros`, `package` et
+`archive-check` n'ont jamais été vus tourner là-bas.
+
+**Banc gamescope headless** : sans `CAP_SYS_NICE`, il compose mal quand le
+jeu est limité par son propre rendu. Le cadencement côté écran se valide sur
+un vrai écran.
+
+---
+
+## 10. Conventions de travail
+
+- **Commits** sur `main`, au nom de Bdexez, sans ligne d'attribution à
+  Claude. **Pousser seulement sur demande.**
+- **Tests** : jamais de fenêtre sur l'écran de l'utilisateur.
+  - Sans fenêtre : les tests `bdex_offline` et unitaires, directement.
+  - Affichage : dans `gamescope --backend headless` ou Docker.
+  - Mesures sous gamescope : charger la build par un `XDG_DATA_HOME` privé.
+    L'environnement de l'hôte charge la couche **installée** ;
+    `VK_IMPLICIT_LAYER_PATH` cache la couche WSI de gamescope.
+- **Avant de pousser du C++** : `tools/ci/run.sh build` et `mingw`. Après
+  toute modification du worker ou de la synchronisation, toujours la
+  reproduction Docker (lavapipe a révélé un danger WAW que le GPU du poste ne
+  montrait pas).
+- **Défauts** : un nouveau réglage est une option à 0, identique bit à bit ;
+  il ne devient défaut qu'après mesure (`eval_sequence.py`).
+- **Langue** : échanges et documents internes (AGENTS.md, ce fichier) en
+  français ; README en anglais.
+- **FIFO par défaut** : non, l'utilisateur la rejette pour la latence.
+- **Fiabilité des compteurs** : le compteur d'i/s de Steam est fiable
+  (vérifié sur 4 machines), ne pas le remettre en cause.
