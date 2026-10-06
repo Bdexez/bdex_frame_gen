@@ -1,0 +1,57 @@
+# Maintainer: Bdexez
+# Built from the repository's main branch: the layer (64-bit, and 32-bit for
+# 32-bit games — multilib, which Steam needs anyway), the CLI, the control
+# panel. `makepkg -si` from this directory. The prebuilt package is
+# bdex-framegen-bin.
+pkgname=bdex-framegen-git
+pkgver=0.5.6.r0.g0000000
+pkgrel=1
+pkgdesc="Frame generation for Vulkan games (optical flow, x2 to x8) as a Vulkan layer, with a GTK control panel"
+arch=('x86_64' 'aarch64')
+url="https://github.com/Bdexez/bdex_frame_gen"
+license=('MIT')
+# The C++ runtime is linked in (like the release archives): inside the Steam
+# runtime a game may bring an older libstdc++, and the 32-bit layer needs no
+# lib32-gcc-libs.
+depends=('glibc' 'vulkan-icd-loader')
+makedepends=('git' 'cmake' 'shaderc' 'vulkan-headers')
+makedepends_x86_64=('lib32-glibc' 'lib32-gcc-libs')
+optdepends=('python-gobject: control panel (bdex-framegen-gui)'
+            'gtk4: control panel (bdex-framegen-gui)'
+            'libadwaita: control panel with Adwaita widgets (plain GTK 4 without it)'
+            'lib32-vulkan-icd-loader: 32-bit games'
+            'vulkan-tools: bdex-framegen --check and --report')
+provides=('bdex-framegen')
+conflicts=('bdex-framegen' 'bdex-framegen-bin')
+source=("$pkgname::git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$pkgname"
+  # The project version from CMakeLists.txt, plus the commit count and hash
+  # (not `git describe`: the release tags are not all ancestors of main).
+  local v
+  v="$(sed -n 's/^project(bdex_framegen VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"
+  printf '%s.r%s.g%s' "$v" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+build() {
+  local common=(-DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+                -DBDEX_BUILD_TESTS=OFF -DBDEX_BUILD_DEMO=OFF -DBDEX_BUILD_OFFLINE=OFF
+                -DBDEX_STATIC_RUNTIME=ON)
+  cmake -S "$pkgname" -B build "${common[@]}"
+  cmake --build build
+  if [ "$CARCH" = x86_64 ]; then
+    # /usr/lib32, manifest VK_LAYER_BDEX_framegen_32.json (library_arch 32).
+    cmake -S "$pkgname" -B build32 "${common[@]}" -DBDEX_32BIT=ON
+    cmake --build build32
+  fi
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+  if [ "$CARCH" = x86_64 ]; then
+    DESTDIR="$pkgdir" cmake --install build32
+  fi
+  install -Dm644 "$pkgname/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

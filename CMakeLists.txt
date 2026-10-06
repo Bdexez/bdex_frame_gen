@@ -103,6 +103,13 @@ else()
   set(BDEX_MANIFEST_SUFFIX "")
   set(BDEX_LIBRARY_ARCH 64)
 endif()
+# A distribution package puts the layer in its own library dir
+# (lib/x86_64-linux-gnu, lib64...): the manifest follows, and the layer finds
+# its profiles one or two levels up (platformBundledProfilesPath).
+set(BDEX_INSTALL_LIBDIR "" CACHE STRING "Install dir of the layer library, relative to the prefix (default: lib, or lib32 for BDEX_32BIT)")
+if(BDEX_INSTALL_LIBDIR)
+  set(BDEX_LIBDIR "${BDEX_INSTALL_LIBDIR}")
+endif()
 # (library_arch in the manifest: a loader of the other width skips the
 # library instead of failing to load it with an error — loaders 1.3.239 and
 # newer, whatever the manifest's format version; older ones ignore the field.
@@ -156,4 +163,6 @@ endif()
 if(NOT WIN32)
   install(PROGRAMS tools/bdex-framegen tools/bdex-framegen-gui DESTINATION bin)
   install(FILES tools/bdex-framegen.desktop DESTINATION share/applications)
+  # bdex-framegen --sandboxes: the layer for Flatpak / Snap launchers.
+  install(PROGRAMS packaging/linux/flatpak.sh DESTINATION share/bdex-framegen)
 endif()

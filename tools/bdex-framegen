@@ -28,6 +28,11 @@
 #                          — for Steam's Game Mode (Steam Deck), where the panel
 #                          cannot stay open beside a game
 #       --always-off [GAME] undo it (the panel's « Démarrer » decides again)
+#       --sandboxes [--remove]
+#                          copy the layer into the Flatpak / Snap game launchers
+#                          (Steam, Heroic, Lutris, Bottles): their sandbox does
+#                          not see the system's layers — run it once after
+#                          installing a distribution package
 #       --report [FILE]    write a diagnostic report for bug reports (default:
 #                          ./bdex-framegen-report.txt)
 #       --record DIR [N]   record the game's real frames into DIR (N, default
@@ -41,7 +46,7 @@
 #   -h, --help
 set -euo pipefail
 
-usage() { sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # The screens as the desktop sees them: "<output> <current mode>" per enabled
 # output (KDE's kscreen-doctor, else xrandr), for the report and the quick read.
@@ -404,6 +409,20 @@ PY
   done
 }
 
+# --sandboxes [--remove]: the layer of this installation copied into the
+# sandboxed launchers (flatpak.sh, installed next to the profiles).
+sandboxes() {
+  local prefix script
+  prefix="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
+  for script in "$prefix/share/bdex-framegen/flatpak.sh" "$prefix/packaging/linux/flatpak.sh"; do
+    [ -f "$script" ] || continue
+    if [ "${1:-}" = --remove ]; then bash "$script" --remove; else bash "$script" "$prefix"; fi
+    return
+  done
+  echo "bdex-framegen: flatpak.sh not found next to this installation" >&2
+  return 1
+}
+
 # --always-on / --always-off [GAME]: require_app = 0 in [GAME], or in [*] for
 # every game (the panel's « Mode Jeu — sans le panneau »).
 always() {
@@ -519,6 +538,7 @@ while [ $# -gt 0 ]; do
     --toggle)          toggle; exit 0 ;;
     --always-on)       always 1 "${2:-}"; exit 0 ;;
     --always-off)      always 0 "${2:-}"; exit 0 ;;
+    --sandboxes)       sandboxes "${2:-}"; exit $? ;;
     --report)          report "${2:-}"; exit 0 ;;
     --tuned-profile)   shift; tuned_profile "$@"; exit $? ;;
     --record)          rec="$2"; mkdir -p "$rec"; rec="$(realpath "$rec")"
