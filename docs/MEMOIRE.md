@@ -167,3 +167,345 @@ les images répétées (`dedup`) et commande des passes en dispatch indirect,
 
 ---
 
+## 4. Fonctionnement par système
+
+### 4.1 Linux, bureau
+
+**Installation**
+- Archive précompilée : `./install.sh` installe dans `~/.local`, sans root.
+  Même sur système immuable (SteamOS, Bazzite, Silverblue).
+- Contenu installé :
+  - `lib/` (64 bits), `lib32/` (jeux 32 bits) ;
+  - manifestes dans `share/vulkan/implicit_layer.d/` ;
+  - `bin/bdex-framegen` (lanceur, diagnostic) et `bin/bdex-framegen-gui`
+    (panneau) ;
+  - profils, description des options, raccourci d'application.
+- Depuis les sources : `tools/install.sh`. Arch : `packaging/arch/PKGBUILD`
+  (`bdex-framegen-git`).
+
+**Principe** : la couche est **implicite**. Elle se charge dans chaque
+programme Vulkan et reste **transparente** tant qu'elle n'est pas activée
+(voir [§5](#5-activation-et-configuration)).
+
+**Serveurs graphiques**
+- **X11 / Xwayland** : chemin le plus éprouvé.
+- **Wayland natif** : fonctionne, upscaling compris. Une première swapchain
+  « jetable » apprend la taille de la fenêtre, puis le jeu recrée la sienne à
+  la taille réduite.
+- **Retour d'affichage** (`present_wait`) :
+  - gamescope : grille exacte ;
+  - Hyprland (poste de dev, VRR) : pas de grille fixe → rien ne change ;
+  - KDE + NVIDIA : pas de retour du tout → le panneau transmet la fréquence
+    qu'il lit.
+
+**GPU**
+- NVIDIA propriétaire : poste de dev, RTX 3060 Ti, 144 Hz.
+- AMD et Intel sous Mesa (RADV, ANV) ; Radeon Vega 8 testée pour la qualité.
+- NVK ; lavapipe (logiciel, pour les tests).
+- Portables hybrides : le jeu doit tourner sur le GPU relié à l'écran (le
+  rapport le signale).
+
+**OpenGL** : `bdex-framegen --gl -- jeu` fait passer le jeu par Zink
+(OpenGL sur Vulkan, en forçant le GL de Mesa).
+
+**Exclusions automatiques**
+- Programmes de bureau : applications GTK 4 (elles dessinent en Vulkan),
+  navigateurs, Discord/Electron, Steam et steamwebhelper, OBS, gamescope,
+  mangoapp…
+- Jeux protégés par un anti-triche (EAC, BattlEye, GameGuard, XIGNCODE3,
+  PunkBuster, miHoYo) ou compétitifs (CS2, Dota 2…) : la couche s'y retire.
+
+**Outils**
+- `bdex-framegen-gui` : le panneau.
+- `bdex-framegen` :
+  - `-- jeu` : lancer un jeu avec la couche ;
+  - `--toggle` : pause à chaud ;
+  - `--report` : diagnostic en français ;
+  - `--always-on` / `--always-off` : génération sans le panneau ;
+  - `--record` : enregistrer une séquence ;
+  - `--tuned-profile` : profil issu d'`online_tune` ;
+  - `--check` : la couche est-elle vue par le loader.
+
+### 4.2 Jeux Proton et runtime Steam
+
+**Ce qui marche**
+- La couche marche dans le conteneur du runtime Steam (pressure-vessel),
+  comme MangoHud. Kenshi (DXVK) : ×2 validé.
+- Les blocages DXVK/VKD3D (Oblivion Remastered) sont réglés. La couche ne
+  transmet pas `VK_SUBOPTIMAL_KHR`, cache les extensions de présentation et ne
+  présente jamais en FIFO.
+
+**Points propres au runtime Steam**
+- Dossier de session et de statut dans `~/.cache/bdex-framegen/run`, pas
+  dans `$XDG_RUNTIME_DIR` : le conteneur Steam ne le partage pas (PRAGMATA ne
+  démarrait pas).
+- Couche 32 bits pour les jeux 32 bits (DXVK 32 bits).
+- L'archive embarque son runtime C++ : celui de Steam peut être plus ancien.
+
+**Diagnostic** : `BDEX_FG_LOG_FILE` et `PROTON_LOG=1`. Les couches de
+validation ne se chargent pas dans pressure-vessel.
+
+**Réglage par jeu** : option de lancement Steam `BDEX_FG=1 %command%`, ou
+section `[exe]` dans la configuration.
+
+### 4.3 Lanceurs Flatpak (Steam, Heroic, Lutris, Bottles)
+
+- **Le problème** : leur bac à sable ne voit ni `~/.local` ni `~/.config`.
+- **À l'installation**, `install.sh` (via `flatpak.sh`) copie la couche et ses
+  manifestes dans `~/.var/app/<app>/data`, l'`XDG_DATA_HOME` du bac à sable,
+  au même chemin absolu dedans. Il copie aussi les profils et la
+  configuration.
+- **Le panneau** recopie la configuration à chaque enregistrement. Il trouve
+  les jeux (PID interne `NSpid`, fichiers vus par `/proc/<pid>/root`) et leur
+  écrit la session. `--report` et `--toggle` suivent.
+- **Installer les lanceurs d'abord**, ou relancer `install.sh` après.
+- **Snap** : non pris en charge.
+
+### 4.4 SteamOS, Steam Deck et sessions gamescope
+
+**SteamOS 3.9.2** (image du 25/09/2026, liste des paquets publiée par Valve) :
+- gamescope 3.16.30, glibc 2.43, loader Vulkan 1.4.350, Mesa 26 (RADV) ;
+- python 3.14 + PyGObject 3.56 + GTK 4.22 ;
+- **ni libadwaita ni zenity** → le panneau utilise son mode GTK 4 simple (vérifié).
+
+**Mode Bureau** (KDE Plasma) : installation par Konsole (`./install.sh`,
+dans `~/.local` : les mises à jour de SteamOS la conservent) ; le panneau
+fonctionne.
+
+**Mode Jeu** : gamescope en compositeur + Steam, **une seule application à la
+fois**. Le panneau ne peut donc pas rester ouvert à côté du jeu. Trois voies :
+- dans le panneau, **« Mode Jeu — sans le panneau »** : tous les jeux, ou le
+  jeu sélectionné, génèrent dès leur lancement ;
+- en terminal, `bdex-framegen --always-on [JEU]` / `--always-off` ;
+- option de lancement Steam `BDEX_FG=1 %command%`.
+
+Même activée partout, la couche épargne gamescope (le compositeur charge la
+couche lui aussi), Steam et les applications de bureau.
+
+**Couche WSI de gamescope** : elle est sous la nôtre, et la couche y lit deux
+choses :
+- la **cadence réelle** (60 Hz, 90 Hz sur OLED) via
+  `vkGetRefreshCycleDurationGOOGLE`, sans activer l'extension (NVIDIA ne l'a
+  pas) ;
+- l'**état du limiteur** de Steam (`GAMESCOPE_LIMITER_FILE`).
+
+Défaut de gamescope contourné : une swapchain recréée ne reçoit jamais la
+cadence ; la couche garde la dernière par surface.
+
+**Limite d'images/s de Steam** (menu rapide) : gamescope n'affiche rien
+au-delà, images générées comprises. Sous la limite, la couche :
+- génère seulement jusqu'à elle ;
+- n'envoie une image qu'une fois la précédente affichée ;
+- fait attendre l'affichage de l'image précédente à un jeu déjà à la limite,
+  comme DXVK.
+
+Pour **60 i/s depuis 30** : limite sur *Désactivée* (ou sur la fréquence de
+l'écran), et plafonner le jeu lui-même (son limiteur, ou `fps_limit = 30`),
+ou multiplicateur *Adaptatif*.
+
+**Divers** :
+- HDR (Deck OLED) : passe, métadonnées comprises.
+- Preset automatique `performance` (GPU intégré RDNA2, 8 CU).
+- Jeux 32 bits : couverts.
+
+**Autres cas gamescope**
+- **Sessions gamescope** ailleurs (Bazzite, ChimeraOS…) : même fonctionnement.
+- **gamescope imbriqué** sur un bureau, backend SDL : le profil fourni
+  `[gamescope] hide_present_ext = 0` permet de générer sur la sortie du
+  compositeur (tout ce qui tourne dedans, par exemple glxgears 337 → 675 i/s).
+  Le backend Wayland par défaut présente des dmabufs, pas de swapchain : la
+  couche ne peut rien y faire.
+
+**Non validé sur un vrai Deck** : tout a été mesuré dans un gamescope
+headless de la même génération.
+
+### 4.5 Distributions, musl et ARM64
+
+**Archives précompilées**
+- Construction : SPIR-V compilé par glslc (Ubuntu 24.04), couches liées sous
+  Ubuntu 20.04 (GCC 10, runtime C++ statique), avec
+  `tools/ci/package-release.sh`.
+- Besoin : **glibc ≥ 2.29** (x86_64) ou 2.30 (aarch64). Cela couvre Ubuntu
+  20.04 et plus, Debian 11+, Mint 20+, Pop!_OS, Fedora, Arch/Manjaro/
+  EndeavourOS, SteamOS/Bazzite, openSUSE Leap 15.3+ et Tumbleweed, RHEL 9…
+- Avant le 30/09, il fallait glibc 2.36, d'où « ça ne marche pas chez un
+  ami » sur les distributions plus anciennes.
+- **Manifeste** au format 1.1.2 avec `library_arch` (64/32) : aucun
+  avertissement des vieux loaders, pas d'erreur « wrong ELF class » avec les
+  récents.
+- **Vérification à chaque CI** (`tools/ci/archive-check.sh`), comme un
+  utilisateur :
+  - installation, chargement (`vulkaninfo`) et **génération ×2 avec vkcube**
+    sur Ubuntu 20.04, 22.04 et 24.04, Debian 11 et 12, Fedora ;
+  - l'arm64 dans un Debian arm64 émulé (qemu-user) ;
+  - Debian 11 : chargement seulement, son Mesa ne sait pas présenter sur Xvfb.
+
+**Depuis les sources**
+- Prérequis : GCC ≥ 10 ou Clang, en-têtes Vulkan ≥ 1.3.204, glslc ou
+  glslangValidator. Le loader n'est pas nécessaire pour la couche seule.
+  Options utiles : `-DBDEX_VULKAN_INCLUDE_DIR`, `-DBDEX_SPIRV_DIR`.
+- Vérifié à chaque CI (`tools/ci/distro-check.sh`), build `-Werror` + démo à
+  travers la couche : Ubuntu 22.04, Debian 12, Fedora, Arch, openSUSE
+  Tumbleweed, Alpine.
+
+**musl (Alpine, Void musl, Chimera)**
+- Compiler depuis les sources : les archives visent glibc.
+- lavapipe (le Vulkan logiciel de Mesa) plante sous musl : ses threads n'ont
+  que 128 Ko de pile et LLVM les dépasse. C'est Mesa, pas la couche. Les
+  pilotes GPU ne compilent pas avec LLVM.
+
+**ARM64**
+- Archive croisée, pour Asahi (Mac Apple Silicon), portables Snapdragon,
+  Raspberry Pi 5 (V3D : 4 images de stockage, d'où le respect des limites
+  garanties).
+- Jamais essayée sur du vrai matériel ARM.
+
+### 4.6 Windows, mode 1 — la couche Vulkan
+
+**Installation et configuration**
+- `VkLayer_bdex_framegen.dll` (x64 et Win32). Installation :
+  `register-layer.ps1 -Dll …` (registre des couches implicites ; `-Wow6432`
+  pour les jeux 32 bits). `unregister-layer.ps1` pour retirer.
+- Configuration : `%APPDATA%\bdex-framegen\bdex-framegen.conf`, mêmes clés
+  que sous Linux. `log_file=%TEMP%\bdex-fg.log` est conseillé (les `%VAR%`
+  sont développés), car la sortie d'erreur d'un jeu ne va nulle part.
+
+**Jeux concernés** : Vulkan natifs et émulateurs **uniquement**. Un jeu
+Direct3D natif ne passe pas par Vulkan : c'est le mode 2.
+
+**Option de lancement Steam** : `cmd /c "set BDEX_FG=1 && %command%"` (la
+syntaxe Linux n'y vaut pas).
+
+**Limites**
+- `VK_EXT_full_screen_exclusive` n'est pas transmis : préférer le mode
+  fenêtré sans bordure.
+- **Jamais lancée sur un Windows réel** : construite et testée
+  (tests unitaires) par la CI MSVC, syntaxe vérifiée localement par MinGW.
+
+### 4.7 Windows, mode 2 — `bdex_capture.exe`
+
+**Chaîne de traitement**
+1. Capture WGC de la fenêtre du jeu.
+2. Anneau de 3 textures D3D11 partagées (handle NT + keyed mutex).
+3. Import dans Vulkan (`external_memory_win32` + `win32_keyed_mutex`).
+4. `FrameGen`, sans changement.
+5. Swapchain Win32 dans une surcouche toujours au-dessus, transparente aux
+   clics, qui suit la fenêtre du jeu.
+
+**Interface**
+- Lanceur natif : choix de la fenêtre, options, colonne d'options avancées,
+  cadre « En cours ».
+- Icône de notification.
+- Raccourcis : **Ctrl+Alt+G** (génération on/off), **Ctrl+Alt+Q** (quitter).
+- Profils par jeu. Ligne de commande : `--list`, `--title`, `--pid`,
+  `--multiplier`, `--mode`, `--adaptive`, `--fit`, `--hud`…
+
+**Fonctionnement**
+- Interpolation par défaut ; hybride ; adaptatif sur la fréquence du
+  moniteur de la surcouche.
+- HDR : scRGB FP16 de bout en bout si l'écran du jeu est en HDR.
+- Minuterie à 1 ms et attentes « dormir puis tourner » : à 15,6 ms, une
+  attente de 16,7 ms finissait à 31 ms.
+
+**Validé sur matériel le 15/09** (portable Intel iGPU + RTX 3050), ×2 stable
+en extrapolation :
+- PRAGMATA (D3D12) ;
+- Dark Souls III et Skyrim SE (D3D11) ;
+- Fallout: New Vegas (D3D9).
+
+Bugs trouvés alors et corrigés : scintillement, double curseur,
+`log_file`, arrêt WGC.
+
+**Limites** : environ +1 image de latence ; fenêtré ou sans bordure
+seulement, pas le plein écran exclusif (comme Lossless Scaling).
+
+### 4.8 Ce qui n'est pas pris en charge
+
+- **Systèmes et paquets** : macOS ; paquets Snap.
+- **Plein écran exclusif** sous Windows : ni en mode 1 (non transmis) ni en
+  mode 2 (surcouche impossible).
+- **Jeux protégés** par un anti-triche ou compétitifs : la couche s'y retire.
+- **Swapchains** multicouches (VR) ou protégées : passage direct.
+- **OpenGL** natif sans Zink.
+
+---
+
+## 5. Activation et configuration
+
+**Fichier** : `~/.config/bdex-framegen.conf` (Windows : `%APPDATA%\…`), INI.
+`[*]` vaut pour tous les jeux, `[nom]` pour l'exécutable `nom` (sans `.exe`).
+
+**Priorité**
+- Couche : défauts < profils fournis (`profiles.conf`, qui n'activent jamais
+  rien) < fichier < variables `BDEX_FG_*`.
+- Capture : s'y ajoutent ensuite le preset en ligne de commande, les options
+  en ligne de commande, puis le lanceur.
+
+| Façon d'activer | Ce qu'il se passe | Où |
+|---|---|---|
+| Panneau, « Démarrer » (`enabled = 1`, `require_app = 1`) | chaque jeu est armé (images passées telles quelles) ; seul le jeu ciblé génère, réglages en direct ; panneau fermé = arrêt | bureau Linux (comme le lanceur Windows) |
+| « Mode Jeu — sans le panneau » (`require_app = 0` dans `[*]` ou `[jeu]`) | génère dès le lancement, panneau fermé ; programmes de bureau exclus | SteamOS en mode Jeu, ou au choix |
+| `BDEX_FG=1` (option de lancement Steam, `bdex-framegen -- jeu`) | active ce processus, en contournant `require_app` | partout ; Windows : `cmd /c "set BDEX_FG=1 && %command%"` |
+| `[jeu] enabled = 1` à la main | active ce jeu | fichier |
+
+**Réglages**
+- Relus à chaque image : mode, qualité du flux, pause, HUD…
+- Reconstruisent l'étage de sortie (le panneau change le multiplicateur) :
+  une image sans génération.
+- Figés à la création : `render_scale`, mode de présentation. L'upscaling ne
+  s'applique donc qu'aux jeux lancés panneau ouvert.
+
+**Principales clés**
+- `multiplier`, `adaptive`, `target_fps` ;
+- `mode` (`interpolate` / `extrapolate` / `hybrid`) ; `preset` ;
+- `fps_limit` ; `render_scale` / `upscale_filter` / `sharpness` ;
+- `overlay` (HUD 0 à 5 : fps, fps de sortie, 1 % et 0,1 % bas, latence) ;
+- `paused` ; `present_mode` ; `low_latency` ; `latency_limiter` ;
+- `max_frame_latency` ; `scene_cut_*`.
+
+La liste complète est dans le tableau du README ; le test `option_keys`
+l'impose.
+
+---
+
+## 6. Outils, tests et CI
+
+**Outils d'évaluation**
+- `bdex_offline` : le moteur sans fenêtre, sur une séquence PPM. Il
+  reproduit exactement les images de la couche.
+- `tools/eval_sequence.py` : PSNR global, mouvement, arêtes, SSIM,
+  scintillement ; A/B avec `--variant`.
+- `tools/run_eval.sh` : évaluation en ligne ; `tools/make_corpus.py`,
+  `tools/corpus_pack.py` : corpus ; `tools/tune.py` : réglage automatique.
+
+**Tests ctest (15)**
+
+| Groupe | Tests |
+|---|---|
+| Sans fenêtre | `unit`, `matcher` (vrai shader contre modèle C++ du départage), `eval_quality`, `offline`, `corpus`, `formats`, `min_limits`, `determinism` (chaque option deux fois), `option_keys`, `panel_logic` |
+| Avec affichage | `integration` (×2 à travers la couche), `validation` (couches Khronos + synchronisation, toutes les options), `acquire_timeout`, `multithread_config` |
+| Hors écran, sautés s'ils ne peuvent pas tourner | `gamescope_limit` (limite Steam rejouée dans un gamescope headless) |
+
+**Règle** : jamais de fenêtre sur l'écran de l'utilisateur. Les tests
+d'affichage tournent dans `gamescope --backend headless` ou dans Docker
+(Xvfb + lavapipe).
+
+**CI GitHub**
+- `linux.yml` :
+  - build + tests + seuil PSNR (28,0 / 23,0 dB) ;
+  - sanitizers (ASan, UBSan, TSan) ;
+  - syntaxe Windows (MinGW x64/i686) ;
+  - `distros` : 6 distributions ;
+  - `package` : archives + `archive-check` avant toute release.
+- `windows.yml` : MSVC x64 et Win32, tests, zips. En cas d'échec, les logs
+  sont poussés sur les branches `ci-log-x64` / `ci-log-Win32`.
+- **Le dépôt est privé** : l'assistant ne voit pas la CI.
+
+**Rejouer localement, avant de pousser**
+- `tools/ci/run.sh build` (et `asan`, `tsan`, `mingw`) : la CI Linux dans
+  Docker.
+- `tools/ci/distro-check.sh`, `archive-check.sh`, `panel-check.sh`,
+  `package-release.sh`.
+
+---
+
