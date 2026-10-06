@@ -682,6 +682,73 @@ def session_path():
     return os.path.join(status_dir(), "app.session")
 
 
+# Game launchers installed as Flatpaks (packaging/linux/flatpak.sh installs the
+# layer in their sandbox, which sees neither ~/.config nor ~/.cache).
+FLATPAK_APPS = ("com.valvesoftware.Steam", "com.heroicgameslauncher.hgl", "net.lutris.Lutris",
+                "com.usebottles.bottles")
+
+
+def flatpak_apps():
+    """The ~/.var/app/<app> directories of the Flatpak launchers the layer is installed in."""
+    out = []
+    for app in FLATPAK_APPS:
+        d = os.path.expanduser(f"~/.var/app/{app}")
+        if os.path.isfile(os.path.join(d, "data/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen.json")):
+            out.append(d)
+    return out
+
+
+def proc_env(pid):
+    """A process's environment (as it started)."""
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as f:
+            raw = f.read()
+    except OSError:
+        return {}
+    env = {}
+    for kv in raw.split(b"\0"):
+        k, sep, v = kv.partition(b"=")
+        if sep:
+            env[k.decode(errors="replace")] = v.decode(errors="replace")
+    return env
+
+
+def inner_pid(pid):
+    """A game's pid in its own pid namespace — a Flatpak app has one: the
+    number the layer knows itself by (platformPid) and matches the session's
+    target with."""
+    try:
+        with open(f"/proc/{pid}/status") as f:
+            for line in f:
+                if line.startswith("NSpid:"):
+                    return int(line.split()[-1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return pid
+
+
+def game_paths(pid):
+    """(status dir, config file) of a running game as this panel reaches them:
+    the paths of the game's own environment (a Flatpak app has its own HOME,
+    XDG_CONFIG_HOME...), through /proc/<pid>/root, its view of the files. The
+    same files as status_dir() / CONFIG_PATH for a game outside any sandbox."""
+    env = proc_env(pid)
+    home = env.get("HOME", "")
+    sdir = env.get("BDEX_FG_STATUS_DIR") or (
+        os.path.join(home, ".cache", "bdex-framegen", "run") if home else f"/tmp/bdex-framegen-{os.getuid()}")
+    cfg = env.get("BDEX_FG_CONFIG") or os.path.join(
+        env.get("XDG_CONFIG_HOME") or os.path.join(home, ".config"), "bdex-framegen.conf")
+    root = f"/proc/{pid}/root"
+    return root + sdir, root + cfg
+
+
+def same_file(a, b):
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return os.path.abspath(a) == os.path.abspath(b)
+
+
 def display_hz():
     """The highest refresh rate among the monitors (GDK reads it from the
     compositor / X server): the layer's target for « Auto » when it cannot
@@ -702,29 +769,56 @@ def auto_ceiling():
     return 4 if hz <= 165 else 6 if hz <= 250 else 8
 
 
+def session_dirs():
+    """Every status directory a game may read the session from: this user's,
+    and the one inside each Flatpak launcher (its sandbox home is its app
+    directory), so that a game started there sees the panel open."""
+    dirs = [status_dir()]
+    for d in flatpak_apps():
+        dirs.append(os.path.join(d, ".cache", "bdex-framegen", "run"))
+    return dirs
+
+
 def write_session(target=0):
-    """"<panel pid> <target pid> <refresh Hz>": the panel is open; `target`
-    generates frames. Rewritten every second: the layer takes an older file for
-    a closed panel."""
-    os.makedirs(status_dir(), mode=0o700, exist_ok=True)
-    tmp = session_path() + ".tmp"
-    with open(tmp, "w") as f:
-        f.write(f"{os.getpid()} {target} {display_hz():.3f}\n")
-    os.replace(tmp, session_path())
+    """"<panel pid> <target pid> <refresh Hz>": the panel is open; `target` (a
+    host pid) generates frames. Written into every directory a game reads it
+    from, the target's pid as the game knows itself (inner_pid). Rewritten
+    every second: the layer takes an older file for a closed panel."""
+    hz = display_hz()
+    tdir = game_paths(target)[0] if target else None
+    dirs = session_dirs()
+    if tdir and not any(same_file(tdir, d) for d in dirs if os.path.isdir(d)):
+        dirs.append(tdir)
+    for i, d in enumerate(dirs):
+        try:
+            os.makedirs(d, mode=0o700, exist_ok=True)
+            mine = target and tdir and same_file(tdir, d)
+            path = os.path.join(d, "app.session")
+            with open(path + ".tmp", "w") as f:
+                f.write(f"{os.getpid()} {inner_pid(target) if mine else 0} {hz:.3f}\n")
+            os.replace(path + ".tmp", path)
+        except OSError:
+            if i == 0:
+                raise  # this user's own directory must work
 
 
 def remove_session():
-    try:
-        with open(session_path()) as f:
-            if int(f.read().split()[0]) != os.getpid():
-                return  # another panel owns it
-        os.remove(session_path())
-    except (OSError, ValueError, IndexError):
-        pass
+    dirs = session_dirs()
+    for d in dirs:
+        path = os.path.join(d, "app.session")
+        try:
+            with open(path) as f:
+                if int(f.read().split()[0]) != os.getpid():
+                    continue  # another panel owns it
+            os.remove(path)
+        except (OSError, ValueError, IndexError):
+            pass
 
 
-def read_running():
-    """Live status of the running games: [(pid, process, [entry dict, ...])]; stale files skipped."""
+def read_running(keep=()):
+    """Live status of the running games: [(pid, process, [entry dict, ...])]; stale files skipped
+    (and removed — unless their pid is in `keep`: a game in a pid namespace of
+    its own, whose number means another process here)."""
     out = []
     try:
         names = sorted(os.listdir(status_dir()))
@@ -749,7 +843,8 @@ def read_running():
                 (cur if cur is not None else head)[k] = v
         try:
             pid = int(head.get("pid", "0"))
-            os.kill(pid, 0)  # still running?
+            if pid not in keep:
+                os.kill(pid, 0)  # still running?
         except (ValueError, ProcessLookupError, PermissionError):
             try:
                 os.unlink(path)  # left behind by a crashed game
@@ -758,6 +853,52 @@ def read_running():
             continue
         out.append((pid, head.get("process", "?"), entries))
     return out
+
+
+def read_status(pid):
+    """The live status entries of a detected game, from the directory and
+    under the pid it knows (a Flatpak game: its own)."""
+    path = os.path.join(game_paths(pid)[0], f"{inner_pid(pid)}.status")
+    try:
+        text = open(path, encoding="utf-8", errors="replace").read()
+    except OSError:
+        return []
+    entries, cur = [], None
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("[") and line.endswith("]"):
+            cur = {"kind": line[1:-1].split()[0]}
+            entries.append(cur)
+        elif "=" in line and cur is not None:
+            k, _, v = line.partition("=")
+            cur[k] = v
+    return entries
+
+
+def mirror_config():
+    """Copies the settings file where sandboxed games read theirs: each
+    Flatpak launcher's config directory, and any running game whose config
+    path is another file (its own XDG_CONFIG_HOME, BDEX_FG_CONFIG)."""
+    try:
+        with open(CONFIG_PATH, "rb") as f:
+            data = f.read()
+    except OSError:
+        return
+    targets = [os.path.join(d, "config", "bdex-framegen.conf") for d in flatpak_apps()]
+    for pid, _name in detect_games():
+        cfg = game_paths(pid)[1]
+        if not same_file(cfg, CONFIG_PATH):
+            targets.append(cfg)
+    for path in targets:
+        if os.path.exists(path) and same_file(path, CONFIG_PATH):
+            continue
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path + ".tmp", "wb") as f:
+                f.write(data)
+            os.replace(path + ".tmp", path)
+        except OSError:
+            pass
 
 
 # Vulkan programs that are not games: the layer loads into them too (keep in
@@ -1009,12 +1150,13 @@ class Window(Adw.ApplicationWindow):
         for row in self.running_rows:
             self.running_group.remove(row)
         self.running_rows = []
-        status = {pid: entries for pid, _process, entries in read_running()}
+        detected = detect_games()
+        read_running(keep={inner_pid(pid) for pid, _ in detected})   # drops what crashed games left
         games, seen = [], set()
-        for pid, name in sorted(detect_games(), key=lambda g: g[1]):
+        for pid, name in sorted(detected, key=lambda g: g[1]):
             if name not in seen:
                 seen.add(name)
-                games.append((pid, name, status.get(pid, [])))
+                games.append((pid, name, read_status(pid)))
         pids = {g[0] for g in games}
         if self.target and self.target[0] not in pids:   # the game has exited
             self._set_target(None)
@@ -1233,6 +1375,8 @@ class Window(Adw.ApplicationWindow):
             self.cfg.write()
         except OSError as e:
             self.toast(f"Échec de l'enregistrement : {e}")
+            return
+        mirror_config()   # sandboxed games (Flatpak Steam...) read their own copy
 
     def toast(self, text):
         self.toasts.add_toast(Adw.Toast.new(text))
