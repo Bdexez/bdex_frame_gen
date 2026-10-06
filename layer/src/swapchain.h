@@ -32,6 +32,11 @@ public:
     VirtualSwapchain& operator=(const VirtualSwapchain&) = delete;
 
     VkSwapchainKHR handle() const { return real_; }
+    // The real swapchain now: re-created underneath the application's handle
+    // when the surface changes size (followSurface), so the calls the layer
+    // passes through with that handle (HDR metadata, display timing...) go
+    // to this one.
+    VkSwapchainKHR currentReal() const { return realNow_.load(); }
 
     VkResult getImages(uint32_t* count, VkImage* images);
     VkResult acquire(uint64_t timeout, VkSemaphore semaphore, VkFence fence, uint32_t* index);
@@ -93,6 +98,7 @@ private:
         bool fifo = false;           // the real swapchain presents in FIFO: the display paces
         int slot = -1;               // the synthesis slot (slots_) of this present
         clock::time_point start{};   // when the application presented
+        clock::time_point queuedAt{};  // when present() handed it to the worker
         double frameStartMs = 0.0;   // when the application's previous present returned (it began this frame then)
         double intervalMs = 16.6;    // frame interval estimate for pacing
         int presentMode = -1;        // VkSwapchainPresentModeInfoEXT (-1 = none), applied to every present
@@ -218,8 +224,23 @@ private:
     bool fbEverDisplayed_ = false;
     int fbTimeouts_ = 0;
     DisplayClock displayClock_;         // fbMutex_
-    double clockHintHz_ = 0.0;          // present thread: the panel's refresh rate given to displayClock_
+    double clockHintHz_ = 0.0;          // present thread: the refresh rate given to displayClock_ (gamescope's, else the panel's)
+    // gamescope (gamescope.h): the refresh cycle its WSI layer reports for
+    // the real swapchain — the display's, or with Steam's framerate limit on,
+    // the limit's — polled by the worker after its presents; 0 unknown.
+    void pollGamescope();
+    std::atomic<double> gsHz_{0.0};
+    std::atomic<bool> gsLimited_{false};  // Steam's framerate limit is on: gsHz_ is the limit
+    clock::time_point gsPolledAt_{};      // worker
+    bool gsFailed_ = false;               // worker: the WSI layer did not answer for this swapchain
+    uint64_t gsFirstCycle_ = 0;           // worker: the cycle the WSI layer gave first (its default until an event)
+    bool gsCycleChanged_ = false;         // worker: it has changed since — gamescope sent this swapchain one
+    bool gsLimitLogged_ = false;          // present thread: the limit state last logged
     double fbLastMs_ = 0.0;             // fbMutex_: last completion
+    uint64_t fbDoneId_ = 0;             // fbMutex_: last present id the thread is done with (shown, or given up)
+    // Worker: returns once present `id` is done with (fbDoneId_), feedback
+    // stops, or `timeoutMs` passes (fbIdleCv_).
+    void waitDisplayed(uint64_t id, double timeoutMs);
     uint64_t fbReplaced_ = 0;           // fbMutex_: frames replaced before being displayed (mailbox)
     uint64_t statsReplaced_ = 0;
     void waitWorkerSubmitted(std::unique_lock<std::mutex>& lock);
@@ -234,6 +255,7 @@ private:
     std::mutex mutex_;   // application-side state (acquire / present)
     std::condition_variable acquireCv_;  // virtual image released by present or application
     VkSwapchainKHR real_ = VK_NULL_HANDLE;
+    std::atomic<VkSwapchainKHR> realNow_{VK_NULL_HANDLE};  // real_, for other threads (currentReal)
     VkSwapchainCreateInfoKHR realInfo_{};  // how the real swapchain was created (pNext not kept)
     std::atomic<bool> surfaceChanged_{false};  // the worker saw VK_SUBOPTIMAL_KHR on the real swapchain
     bool historyLost_ = false;   // output stage rebuilt: the previous frame's analysis is gone
@@ -303,6 +325,16 @@ private:
     double frameIntervalMs_ = 16.6;
     uint32_t statsRepeats_ = 0;  // repeated-frame counter at the last statistics line (dedup)
     uint32_t statsGen_ = 0;      // presents with generated frames in the statistics window
+    uint32_t statsBehind_ = 0;   // presents left without generation to let the presentation catch up
+    int lastPresentFrames_ = 1;  // present thread: frames of the previous present (its multiplier)
+    // Worker: consecutive jobs whose real frame went out a refresh or more
+    // after its time (runJob); present() then leaves one without generation.
+    std::atomic<int> lateJobs_{0};
+    double jobStartDelayMs_ = 0.0;  // worker: how long the running job waited for the one before
+    // Present thread: the game's own time per frame, outside present() — what
+    // it could run at were it not waiting for us (the adaptive multiplier
+    // under Steam's framerate limit, whose waits would otherwise feed it).
+    double gameOwnMs_ = 0.0;
     uint32_t statsCutFull_ = 0;  // ... whose flow cost was above scene_cut_high (generated = copy of the real frame)
     uint32_t statsCutFade_ = 0;  // ... between scene_cut_low and scene_cut_high (partly faded to it)
     double statsCostSum_ = 0.0;

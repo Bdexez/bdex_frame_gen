@@ -62,6 +62,11 @@ if(TARGET bdex_demo)
   add_test(NAME integration
            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/integration.sh" "$<TARGET_FILE:bdex_demo>" "${CMAKE_BINARY_DIR}/layer")
   set_tests_properties(integration PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+  # Steam's framerate limit in Game Mode (a headless gamescope, nothing on
+  # screen); skipped without gamescope and its WSI layer.
+  add_test(NAME gamescope_limit
+           COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/gamescope_limit.sh" "$<TARGET_FILE:bdex_demo>" "${CMAKE_BINARY_DIR}/layer")
+  set_tests_properties(gamescope_limit PROPERTIES SKIP_RETURN_CODE 77)
   add_test(NAME validation
            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/validation.sh" "$<TARGET_FILE:bdex_demo>" "${CMAKE_BINARY_DIR}/layer")
   set_tests_properties(validation PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)

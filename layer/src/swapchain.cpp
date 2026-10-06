@@ -1,5 +1,6 @@
 #include "swapchain.h"
 #include "frame_order.h"
+#include "gamescope.h"
 #include "online_tune.h"
 #include "status.h"
 #include "log.h"
@@ -84,6 +85,7 @@ void VirtualSwapchain::publishStatus(int multiplier) {
     e.gameFps = frameIntervalMs_ > 0.05 ? 1000.0 / frameIntervalMs_ : 0.0;
     e.outFps = e.gameFps * e.multiplier;
     e.refreshHz = displayHz();
+    e.limitHz = gsLimited_.load() ? gsHz_.load() : 0.0;
     e.latencyMs = displayLatencyMs();
     e.budgetLevel = budget_.level();
     e.width = displayExtent_.width;
@@ -210,6 +212,7 @@ void VirtualSwapchain::createReal(const VkSwapchainCreateInfoKHR& appInfo) {
 
     VkResult r = dev_.vt.CreateSwapchainKHR(dev_.device, &ci, nullptr, &real_);
     if (r < 0) throw VkError(r, "vkCreateSwapchainKHR (real)");
+    realNow_ = real_;
     realInfo_ = ci;
     realInfo_.pNext = nullptr;
     realInfo_.oldSwapchain = VK_NULL_HANDLE;
@@ -304,6 +307,7 @@ void VirtualSwapchain::followSurface() {
     std::vector<RealImage> oldImages = std::move(realImages_);
     VkSwapchainKHR oldReal = real_;
     real_ = fresh;
+    realNow_ = real_;
     fg_ = std::move(fg);
     fg_->setQualityLevel(budget_.level());
     generating_ = generating;
@@ -483,6 +487,7 @@ void VirtualSwapchain::destroyAll() {
     destroyRealImages(realImages_);
     if (real_) vt.DestroySwapchainKHR(d, real_, nullptr);
     real_ = VK_NULL_HANDLE;
+    realNow_ = VK_NULL_HANDLE;
 }
 
 VkResult VirtualSwapchain::getImages(uint32_t* count, VkImage* images) {
@@ -657,15 +662,21 @@ void VirtualSwapchain::updateHudLows(double dtMs) {
 int VirtualSwapchain::chooseMultiplier() {
     const int maxMult = std::max(1, cfg_.multiplier);
     if (cfg_.paused) return 1;
+    // Steam's framerate limit (gamescope): the screen shows at most one frame
+    // per cycle of the limit, and the frames past it hold the game back — so
+    // generate only up to the limit, whatever the multiplier: adaptive with
+    // the limit as target (a game already at the limit gets no generated
+    // frame, one under it gets the missing ones).
+    const bool limited = gsLimited_.load() && gsHz_.load() > 0.0;
     // auto: the refresh rate (measured, else the control panel's); unknown:
     // x2, the output a display is the least likely to overflow (auto usually
     // comes with multiplier = 4, the ceiling, not a choice).
     // (adaptive without a target: the refresh rate, like auto)
-    const bool autoTarget = cfg_.targetFps < 0.f || (cfg_.adaptive && cfg_.targetFps == 0.f);
-    const double target = autoTarget ? displayHz() : double(cfg_.targetFps);
+    const bool autoTarget = limited || cfg_.targetFps < 0.f || (cfg_.adaptive && cfg_.targetFps == 0.f);
+    const double target = limited ? gsHz_.load() : autoTarget ? displayHz() : double(cfg_.targetFps);
     adaptivePeriodMs_ = 0.0;
     if (target <= 0.0) return autoTarget ? std::min(2, maxMult) : maxMult;
-    if (cfg_.adaptive) {
+    if (cfg_.adaptive || limited) {
         // As many frames as fit at the target rate, the fraction carried over
         // (50 fps on 144 Hz: 3, 3, 2, 3, 3, 2...), spaced one output period
         // apart (the display's refresh when target_fps is auto): every
@@ -674,7 +685,14 @@ int VirtualSwapchain::chooseMultiplier() {
         // (the game too slow) or under one frame (faster than the target),
         // nothing is carried.
         adaptivePeriodMs_ = 1000.0 / target;
-        adaptiveAcc_ += frameIntervalMs_ / adaptivePeriodMs_;
+        // (Under the limit, when it waits here a quarter of its frame or
+        // more, the game's own frame time: those waits for the display would
+        // make it look slower, ask for more frames and slow it further — 30
+        // fps settled at 23, x1.3. Short waits stay counted: without them the
+        // output fell short of the limit, 56 fps for 60.)
+        const bool held = limited && gameOwnMs_ > 0.0 && frameIntervalMs_ - gameOwnMs_ > 0.25 * frameIntervalMs_;
+        const double interval = held ? gameOwnMs_ : frameIntervalMs_;
+        adaptiveAcc_ += interval / adaptivePeriodMs_;
         const int n = std::clamp(static_cast<int>(adaptiveAcc_), 1, maxMult);
         adaptiveAcc_ = std::clamp(adaptiveAcc_ - n, 0.0, 0.999);
         if (n < 2) adaptivePeriodMs_ = 0.0;
@@ -796,10 +814,21 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     vi.acquired = false;
     acquireCv_.notify_all();
 
-    if (cfg_.panelDisplayHz != clockHintHz_) {  // the refresh rate the system reports (require_app)
-        clockHintHz_ = cfg_.panelDisplayHz;
+    // The refresh rate the system reports: gamescope's cycle, else the
+    // control panel's reading (require_app).
+    if (const double hint = gsHz_.load() > 0.0 ? gsHz_.load() : cfg_.panelDisplayHz; hint != clockHintHz_) {
+        clockHintHz_ = hint;
         std::lock_guard<std::mutex> fbLock(fbMutex_);
         displayClock_.setHint(clockHintHz_);
+    }
+    if (const bool limited = gsLimited_.load(); limited != gsLimitLogged_) {
+        gsLimitLogged_ = limited;
+        if (limited)
+            BDEX_INFO("gamescope frame limit on (Steam's framerate limit, %.0f fps): the screen shows no more, "
+                      "so frames are generated only up to it; set it to Off or to the refresh rate to generate above",
+                      gsHz_.load());
+        else
+            BDEX_INFO("gamescope frame limit off: display %.1f Hz", gsHz_.load());
     }
     if (surfaceChanged_.exchange(false)) followSurface();
     if (cfg_.rebuildGen != outputGen_) rebuildOutput();
@@ -809,6 +838,9 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     // we overwrite the images it copies from; this is also where FIFO
     // back-pressure reaches the application.
     VkResult pending;
+    double workerWaitMs = 0.0;
+    const bool limitedByGamescope = gsLimited_.load() && feedback_.load();
+    const bool gateOnDisplay = limitedByGamescope && lastPresentFrames_ <= 1;
     {
         std::unique_lock<std::mutex> wlock(workerMutex_);
         // Low-latency: do not let the game run ahead of the presentation
@@ -816,8 +848,21 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         // (Predicted frames still waiting are not dropped here: this frame is
         // only submitted, its rendering may end a frame from now. The worker
         // drops them once it is ready to be shown — Job::ready.)
-        if (cfg_.lowLatency) waitWorkerIdle(wlock);
+        // Under Steam's framerate limit the worker hands gamescope a frame
+        // once the previous one is on screen (presentCopied). A game at the
+        // limit, without generated frames, also waits for its previous frame
+        // to be shown, like DXVK there: it begins the next with no frame
+        // queued — running at the limit, it would never drain a queue. (Not
+        // while generating: a game under the limit would wait for all its
+        // frames and fall to half the limit, at x2.)
+        const auto w0 = clock::now();
+        if (cfg_.lowLatency || gateOnDisplay) waitWorkerIdle(wlock);
         else waitWorkerSubmitted(wlock);
+        if (gateOnDisplay && presentCounter_ > 0) {  // (the worker is idle: its counter is still)
+            const double hz = gsHz_.load();
+            waitDisplayed(presentCounter_, hz > 0.0 ? 3000.0 / hz : 100.0);
+        }
+        workerWaitMs = std::chrono::duration<double, std::milli>(clock::now() - w0).count();
         pending = pendingResult_;
         if (pending != VK_ERROR_OUT_OF_DATE_KHR) pendingResult_ = VK_SUCCESS;
     }
@@ -833,8 +878,23 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         if (dt > 0.5 && dt < 500.0) frameIntervalMs_ = frameIntervalMs_ * 0.8 + dt * 0.2;
     }
     lastAppPresent_ = t0;
+    if (lastReturnMs_ > 0.0) {
+        const double own = msOf(t0) - lastReturnMs_;
+        if (own > 0.1 && own < 500.0) gameOwnMs_ = gameOwnMs_ > 0.0 ? gameOwnMs_ * 0.8 + own * 0.2 : own;
+    }
 
-    const int mult = generating_ ? chooseMultiplier() : 1;
+    // The presentation fell behind: the previous present's frames could not
+    // even be submitted — every real image still waits for the display. With
+    // generation producing frames at the display's rate, such a queue never
+    // drains by itself (measured in gamescope after a 1 s frame limit: 100 ms
+    // more from present to screen, for good): this present shows its real
+    // frame alone, until the queue is gone.
+    const bool lagging = lateJobs_.load(std::memory_order_relaxed) >= 8;
+    if (lagging) lateJobs_.store(0, std::memory_order_relaxed);
+    const bool catchUp = !cfg_.lowLatency && ((!gateOnDisplay && workerWaitMs > 0.25 * frameIntervalMs_) || lagging);
+    if (catchUp) ++statsBehind_;
+    const int mult = generating_ && !catchUp ? chooseMultiplier() : 1;
+    lastPresentFrames_ = mult;
     // Where the real frame goes among the frames of this present.
     const FrameOrder order = FrameOrder::of(cfg_, mult);
     // A rebuilt output stage has no analysis of the previous frame yet.
@@ -1086,6 +1146,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             }
     }
     job.fifo = presentMode_ == VK_PRESENT_MODE_FIFO_KHR || presentMode_ == VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+    job.queuedAt = clock::now();
     {
         std::lock_guard<std::mutex> wlock(workerMutex_);
         jobs_.push_back(job);
@@ -1132,6 +1193,12 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
                 len += snprintf(skip + len, sizeof(skip) - size_t(len), ", next frame held %.1f ms",
                                 statsStartDelayMs_ / statsAppFrames_);
             statsStartDelayMs_ = 0.0;
+            if (statsBehind_ && len < int(sizeof(skip)))
+                len += snprintf(skip + len, sizeof(skip) - size_t(len), ", %u frame(s) without generation to catch up",
+                                statsBehind_);
+            statsBehind_ = 0;
+            if (gsLimited_.load() && len < int(sizeof(skip)))
+                len += snprintf(skip + len, sizeof(skip) - size_t(len), ", gamescope frame limit %.0f fps", gsHz_.load());
             if (feedback_) {
                 std::lock_guard<std::mutex> fbLock(fbMutex_);
                 const double hz = displayClock_.refreshHz();
@@ -1269,7 +1336,9 @@ void VirtualSwapchain::workerLoop() {
             jobs_.pop_front();
             running_ = true;
         }
+        jobStartDelayMs_ = std::chrono::duration<double, std::milli>(clock::now() - job.queuedAt).count();
         runJob(job);
+        pollGamescope();  // before going idle: followSurface replaces real_ only then
         {
             std::lock_guard<std::mutex> wlock(workerMutex_);
             running_ = false;
@@ -1375,10 +1444,31 @@ void VirtualSwapchain::runJob(const Job& job) {
         // went out when ready, the real one half a frame after the call.
         clock::time_point origin = clock::now();
         if (paced && n > 0) waitGpu(job.slot >= 0 ? slots_[size_t(job.slot)].fence : out[0].fence, false, origin);
+        // The job's first frame went out a refresh or more after the first
+        // one it could make once ready (paceTarget aims 0.3 refresh ahead):
+        // the jobs before still held the refreshes — a lag that producing at
+        // the display's rate never undoes (measured: a refresh more from
+        // present to screen, for good, after a gamescope frame limit). Eight
+        // jobs in a row (a lag that stays), and a present shows its real
+        // frame alone (present()), which gives the refresh back.
+        auto noteLateness = [&](int i) {
+            if (!paced || i != 0) return;
+            double lastMs, periodMs;
+            if (lastLandMs_ <= 0.0 || !displayGrid(lastMs, periodMs)) return;
+            // (Or the job itself began a refresh late: the worker was still
+            // presenting the job before.)
+            const double ready = msOf(origin) + 0.3 * periodMs;
+            const double firstLand = lastMs + std::ceil((ready - lastMs) / periodMs) * periodMs;
+            if (lastLandMs_ - firstLand > 0.9 * periodMs || jobStartDelayMs_ > 0.9 * periodMs)
+                lateJobs_.fetch_add(1, std::memory_order_relaxed);
+            else
+                lateJobs_.store(0, std::memory_order_relaxed);
+        };
         for (int i = 0; i < n; ++i) {
             if (paced) std::this_thread::sleep_until(paceTarget(job, origin, i));
             const VkResult r = presentCopied(job, out[size_t(i)]);
             if (r < 0 && err == VK_SUCCESS) err = r;
+            noteLateness(i);
         }
         if (err < 0) {
             fail(err);
@@ -1401,6 +1491,7 @@ void VirtualSwapchain::runJob(const Job& job) {
                 fail(r);
                 return;
             }
+            noteLateness(i);
         }
         uint64_t dropped = 0;
         bool cancelled = false;
@@ -1620,6 +1711,7 @@ void VirtualSwapchain::feedbackLoop() {
         {
             std::lock_guard<std::mutex> lock(fbMutex_);
             fbBusy_ = false;
+            fbDoneId_ = std::max(fbDoneId_, entry.id);
             if (r >= 0 && r != VK_TIMEOUT) {
                 fbEverDisplayed_ = true;
                 // Latency the player sees: the game's present call to the
@@ -1656,6 +1748,12 @@ void VirtualSwapchain::feedbackLoop() {
     }
 }
 
+void VirtualSwapchain::waitDisplayed(uint64_t id, double timeoutMs) {
+    std::unique_lock<std::mutex> lock(fbMutex_);
+    fbIdleCv_.wait_for(lock, std::chrono::duration<double, std::milli>(timeoutMs),
+                       [&] { return fbDoneId_ >= id || fbPaused_ || fbStop_ || !feedback_; });
+}
+
 void VirtualSwapchain::pauseFeedback() {
     if (!fbThread_.joinable()) return;
     std::unique_lock<std::mutex> lock(fbMutex_);
@@ -1671,6 +1769,7 @@ void VirtualSwapchain::resumeFeedback() {
         fbPaused_ = false;
         fbLastMs_ = 0.0;
         presentCounter_ = 0;  // ids restart with the new swapchain (the worker is idle here)
+        fbDoneId_ = 0;
     }
     fbCv_.notify_all();
 }
@@ -1682,11 +1781,52 @@ double VirtualSwapchain::displayLatencyMs() {
 }
 
 double VirtualSwapchain::displayHz() {
+    // Under gamescope, the cycle it reports: exact, at once, and with Steam's
+    // framerate limit on, the limit — what the screen shows at most. (The
+    // measured grid cannot tell a 30 Hz display from a 60 Hz one we present
+    // to every other refresh: at x1 it stayed at 30 Hz once the limit was
+    // lifted.)
+    if (const double g = gsHz_.load(); g > 0.0) return g;
     std::lock_guard<std::mutex> lock(fbMutex_);
     const double measured = displayClock_.refreshHz();
     // Not measurable (no present feedback, or no refresh grid, e.g. KDE with
     // NVIDIA): the refresh rate the control panel reads from the system.
     return measured > 0.0 ? measured : cfg_.panelDisplayHz;
+}
+
+// Worker thread, after a job (real_ stays put until it goes idle): at most
+// ten times a second, the refresh cycle gamescope's WSI layer holds for our
+// swapchain (it pumps gamescope's events itself) and the limiter state.
+void VirtualSwapchain::pollGamescope() {
+    if (!dev_.gamescope || gsFailed_) return;
+    // At once when the limiter state flips: the present that got the new
+    // cycle is often the one the WSI layer failed with VK_ERROR_OUT_OF_DATE_KHR
+    // to have the swapchain re-created, and the next swapchain never gets it.
+    const bool limited = gamescopeLimiterActive();
+    const auto now = clock::now();
+    if (limited == gsLimited_.load() && now - gsPolledAt_ < std::chrono::milliseconds(100)) return;
+    gsPolledAt_ = now;
+    VkRefreshCycleDurationGOOGLE cycle{};
+    if (dev_.vt.GetRefreshCycleDurationGOOGLE(dev_.device, real_, &cycle) != VK_SUCCESS || cycle.refreshDuration == 0) {
+        gsFailed_ = true;
+        gsHz_ = 0.0;
+        gsLimited_ = false;
+        BDEX_WARN("gamescope's WSI layer gave no refresh cycle for this swapchain: measuring the display instead");
+        return;
+    }
+    uint64_t ns = cycle.refreshDuration;
+    if (gsFirstCycle_ == 0) gsFirstCycle_ = ns;
+    else if (ns != gsFirstCycle_) gsCycleChanged_ = true;
+    {
+        // A value of its own once gamescope sent one; until then, the
+        // surface's last (DeviceData::gamescopeCycles).
+        std::lock_guard<std::mutex> lock(dev_.gamescopeMutex);
+        uint64_t& known = dev_.gamescopeCycles[statusKey(realInfo_.surface)];
+        if (gsCycleChanged_ || known == 0) known = ns;
+        else ns = known;
+    }
+    gsHz_ = 1e9 / double(ns);
+    gsLimited_ = limited;
 }
 
 bool VirtualSwapchain::displayGrid(double& lastMs, double& periodMs) {
@@ -1907,6 +2047,15 @@ VkResult VirtualSwapchain::presentCopied(const Job& job, const Copied& c) {
         presentMode.pPresentModes = &presentModeValue;
         *tail = &presentMode;
         tail = bdexNext(presentMode);
+    }
+    // Steam's framerate limit (gamescope): gamescope shows one frame per
+    // cycle of the limit and queues the others, first in first out — a
+    // frame goes out once the previous one is on screen, so one frame waits
+    // there instead of the whole swapchain (measured at 30 fps: 92 ms from
+    // present to screen with three queued). Bounded, should the feedback stall.
+    if (feedbackId > 1 && gsLimited_.load()) {
+        const double hz = gsHz_.load();
+        waitDisplayed(feedbackId - 1, hz > 0.0 ? 3000.0 / hz : 100.0);
     }
     const auto now = clock::now();
     if (c.real)
