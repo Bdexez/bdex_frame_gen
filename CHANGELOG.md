@@ -6,6 +6,61 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Compatibility
+
+- **The prebuilt archives load on far more systems.** Built on Ubuntu 20.04
+  with GCC 10 and the C++ runtime inside, the layer needs glibc 2.29
+  (x86_64) instead of 2.36: Ubuntu 20.04 and 22.04 (Mint 20–21, Pop!_OS
+  22.04, Zorin), Debian 11, openSUSE Leap 15.3+ and RHEL 9 now load it. The
+  release build fails if a newer glibc symbol slips in, and the layer links
+  with `--no-undefined` (it relied on the Vulkan loader for `dladdr` and the
+  threads on glibc < 2.34). `tools/ci/package-release.sh` builds the
+  archives in Docker, as the CI does.
+- **An arm64 archive** (glibc 2.30): Asahi Linux on Apple Silicon, Snapdragon
+  laptops, Raspberry Pi 5 — cross-compiled, installed the same way;
+  `install.sh` refuses an archive of the wrong architecture.
+- **The archives are checked where they will run**: every CI run installs
+  them with `install.sh` in Ubuntu 20.04, 22.04 and 24.04, Debian 11 and 12
+  and Fedora containers, and in Debian 11 and 12 arm64 trees under qemu-user
+  (no binfmt needed), on each one's own glibc, Vulkan loader (1.2.131 to 1.4)
+  and Mesa: the layer must load, and generate x2 through vkcube on a virtual
+  display wherever that Mesa can present to one (all but Debian 11). A
+  failure keeps them out of the release (`tools/ci/archive-check.sh`).
+- **Manifests every loader reads cleanly**: `library_arch` lets loaders
+  1.3.239 and newer skip the layer of the other width (the 32-bit one in a
+  64-bit game) instead of logging a failed load; format 1.1.2, since loaders
+  before 1.3 warned that the previous 1.2.0 was an invalid manifest version.
+- **Steam, Heroic, Lutris or Bottles installed as a Flatpak.** Their sandbox
+  sees neither `~/.local` nor `~/.config`: `install.sh` (and
+  `tools/install.sh`) also install the layer inside each one found
+  (`~/.var/app/<app>/data`, where its Vulkan loader looks), the control
+  panel copies the settings there on every save and finds their games — in
+  a process namespace of their own, it writes the session with the pid the
+  game knows itself by and reads its status through the game's view of the
+  files (`/proc/<pid>/root`); `bdex-framegen --report` and `--toggle`
+  follow. `uninstall.sh` removes the copies.
+- **Small GPUs.** The engine now fits in the limits every Vulkan GPU
+  guarantees: `flow_refine` reads its lumas as textures (3 storage images per
+  shader instead of 5, over the 4 guaranteed — the Raspberry Pi's V3D has
+  4), and the block matcher's full variant (~21 KB of shared memory, 16 KB
+  guaranteed) is only built where there are 32 KB, its optional terms off
+  otherwise. A GPU below the guarantees gets its frames passed through with
+  the reason, instead of a failed pipeline. Frames unchanged bit for bit;
+  new test `min_limits` (`bdex_offline --limit-shared`,
+  `--limit-storage-images` simulate a small GPU on any GPU).
+- **Building from source on more distributions**: GCC 10 and later (the
+  floating-point `from_chars` was GCC 11's), the Vulkan headers of Ubuntu
+  22.04 and Debian 12 (1.3.204 / 1.3.239: `vk_compat.h` completes them),
+  `glslangValidator` when `glslc` is missing (same SPIR-V for glslc builds),
+  no Vulkan loader library needed for the layer; fixes for GCC 11, GCC 12
+  (a `-Wrestrict` false positive with `-Werror`) and Clang. The CI builds
+  in Ubuntu 22.04, Debian 12, Fedora, Arch, openSUSE Tumbleweed and Alpine
+  (musl) containers and runs the demo through the layer there, on each
+  one's own Vulkan loader and Mesa (`tools/ci/distro-check.sh`; on musl,
+  Mesa's software driver compiles shaders with LLVM in threads whose 128 KB
+  default stack it overflows — the check gives them glibc's 8 MB; GPU
+  drivers do not compile with LLVM).
+
 ### Changed
 
 - **Scene cuts need evidence beyond the flow cost** (`scene_cut_hist`,

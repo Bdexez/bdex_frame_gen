@@ -110,31 +110,70 @@ Steam's overlay and MangoHud sit in the same layer chain and keep working.
 
 ### Prebuilt (nothing to compile)
 
-Download `bdex-framegen-linux-x86_64-<version>.tar.gz` from the
-[GitHub releases](https://github.com/Bdexez/bdex_frame_gen/releases) (or the
-`bdex-framegen-linux-x86_64` artifact of any `linux` CI run), then:
+Download from the [GitHub releases](https://github.com/Bdexez/bdex_frame_gen/releases)
+(or the `bdex-framegen-linux` artifact of any `linux` CI run):
+
+- `bdex-framegen-linux-x86_64-<version>.tar.gz` — Intel / AMD PCs, Steam Deck
+  (64-bit layer, and the 32-bit one for 32-bit games);
+- `bdex-framegen-linux-aarch64-<version>.tar.gz` — ARM64: Asahi Linux (Apple
+  Silicon), Snapdragon laptops, Raspberry Pi 5…
 
 ```sh
-tar xzf bdex-framegen-linux-x86_64-*.tar.gz
-cd bdex-framegen-linux-x86_64-*/
-./install.sh          # into ~/.local (64-bit and 32-bit layer, CLI, control panel)
+tar xzf bdex-framegen-linux-*.tar.gz
+cd bdex-framegen-linux-*/
+./install.sh          # into ~/.local: no root, also on immutable systems (SteamOS, Bazzite, Silverblue…)
 ```
 
-Built on Debian 12: any distribution with glibc 2.36 or newer (the layer
-carries its own C++ runtime, so it also works inside the Steam runtime).
-The control panel needs `python3-gobject`, GTK 4 and libadwaita.
-`./uninstall.sh` removes it. `tools/package-linux.sh` builds the same
-archive from a checkout.
+The layers are built on Ubuntu 20.04 and carry their own C++ runtime: they
+only need glibc 2.29 (x86_64) or 2.30 (arm64) — Ubuntu 20.04 and later,
+Debian 11+, Linux Mint 20+, Pop!_OS, Zorin, Fedora, Arch, Manjaro,
+EndeavourOS, SteamOS, Bazzite, openSUSE Leap 15.3+ and Tumbleweed, RHEL 9
+and its clones — and work inside Steam's runtime (Proton games). Musl
+distributions (Alpine, Void musl) build from source (below). Every CI run
+installs each archive as above in other distributions' containers and runs
+it on Mesa's software Vulkan with their own loader (1.2.131 to 1.4): it loads
+on Ubuntu 20.04 to 24.04, Debian 11 and 12, Fedora, and generates x2 (vkcube)
+everywhere Mesa can present to a virtual display — arm64 on Debian arm64
+under emulation (`tools/ci/archive-check.sh`).
+
+**Steam, Heroic, Lutris or Bottles installed as a Flatpak**: their sandbox
+sees neither `~/.local` nor `~/.config`. `install.sh` also installs the layer
+inside each one found (`~/.var/app/<app>/data`, where its Vulkan loader
+looks), and the control panel keeps their copy of the settings up to date and
+finds their games (each sandbox has its own process numbers). Install the
+Flatpak launcher first (and run it once), or run `install.sh` again after.
+Snap packages are not supported.
+
+The control panel needs `python3-gobject` and GTK 4 (libadwaita is used when
+present). `./uninstall.sh` removes everything, Flatpak copies included.
+`tools/ci/package-release.sh` builds the same archives (Docker).
 
 ### Requirements (building from source)
 
-- Linux, Vulkan 1.0+ (loader ≥ 1.3.234), a GPU with compute support (RADV, ANV, NVIDIA…)
-- To build: CMake ≥ 3.20, a C++20 compiler, `glslc` (shaderc), the Vulkan headers; GLFW (optional) for the demo
+- Linux with a Vulkan driver whose GPU does compute (Mesa RADV / ANV / NVK /
+  Turnip / Honeykrisp / V3DV / lavapipe, NVIDIA…). The engine fits in the
+  limits every Vulkan GPU guarantees (4 storage images per shader, 16 KB of
+  shared memory — checked by the `min_limits` test); where a GPU allows less
+  than 32 KB of shared memory the block matcher's optional terms stay off, and
+  a GPU below the guarantees gets its frames passed through, the reason in
+  `bdex-framegen --report`.
+- To build: CMake ≥ 3.20, GCC ≥ 10 or Clang, the Vulkan headers ≥ 1.3.204,
+  `glslc` (shaderc) or `glslangValidator` (glslang); GLFW (optional) for the
+  demo. Checked in CI by building in each distribution's container, then
+  running the demo through the layer there (`tools/ci/distro-check.sh`:
+  Ubuntu 22.04, Debian 12, Fedora, Arch, openSUSE Tumbleweed, Alpine):
 
 ```sh
-# Arch Linux
-sudo pacman -S cmake gcc vulkan-headers shaderc glfw vulkan-tools
+sudo apt install cmake g++ libvulkan-dev glslang-tools libglfw3-dev             # Ubuntu 22.04+, Debian 12+, Mint, Pop!_OS
+sudo dnf install cmake gcc-c++ vulkan-headers vulkan-loader-devel glslang glfw-devel  # Fedora
+sudo pacman -S cmake gcc vulkan-headers shaderc glfw vulkan-tools                # Arch, Manjaro, SteamOS
+sudo zypper in cmake gcc-c++ vulkan-devel shaderc libglfw-devel                  # openSUSE
+sudo apk add cmake g++ vulkan-headers vulkan-loader-dev glslang glfw-dev         # Alpine (musl)
 ```
+
+Older Vulkan headers (Debian 11, Ubuntu 20.04): pass newer ones with
+`-DBDEX_VULKAN_INCLUDE_DIR=` (CMake says how). Without a GLSL compiler,
+`-DBDEX_SPIRV_DIR=<a build's layer/spv>` uses SPIR-V compiled elsewhere.
 
 ### One command
 
