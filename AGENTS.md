@@ -829,6 +829,13 @@ x2/x3/x4), sauf le correctif HDR (les chemins SDR restent identiques).
   `/usr/bin/apt-get` existe (ligne après `export DEBIAN_FRONTEND`) ; il
   réessaie sur erreur réseau seulement. Tout nouveau `docker run` qui
   utilise apt : le montage + cette ligne.
+- **Miroir Azure du runner bloqué** (vécu le 2026-10-08) : `sudo apt-get
+  update` sur le runner même est resté 4 h sur `azure.archive.ubuntu.com`
+  (aucun job n'avait de `timeout-minutes` : limite GitHub de 6 h). Sur le
+  runner, apt passe par `tools/ci/runner-apt.sh PAQUETS…` (tentatives
+  bornées, miroir Azure retiré de la liste après un échec) ; chaque job a
+  son `timeout-minutes` ; le wrapper des conteneurs borne aussi chaque
+  tentative (900 s).
 - **Avant de pousser un changement de CI** : `tools/ci/run.sh` (build) et
   `tools/ci/run.sh asan|tsan` rejouent les jobs dans Docker, même loader,
   lavapipe.

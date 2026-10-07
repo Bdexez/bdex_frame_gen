@@ -18,6 +18,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       # The last build before the census term: the default matcher path must
@@ -29,8 +30,7 @@ jobs:
 
       - name: Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          tools/ci/runner-apt.sh \
             cmake g++ pkg-config glslc libvulkan-dev vulkan-tools \
             mesa-vulkan-drivers libglfw3-dev libxcomposite-dev libxdamage-dev libxfixes-dev libxext-dev openbox picom xvfb python3-numpy python3-pil vulkan-validationlayers
 
@@ -152,6 +152,7 @@ jobs:
   # installed globally here.
   sanitizers:
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -167,8 +168,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          tools/ci/runner-apt.sh \
             cmake g++ pkg-config glslc libvulkan-dev vulkan-tools \
             mesa-vulkan-drivers libglfw3-dev libxcomposite-dev libxdamage-dev libxfixes-dev libxext-dev openbox picom xvfb python3-numpy python3-pil
       - name: Build
@@ -200,12 +200,12 @@ jobs:
   # tests/fuzz/corpus/<target>/ with the fix (every build replays them).
   fuzz:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends cmake clang libclang-rt-18-dev glslc libvulkan-dev
+          tools/ci/runner-apt.sh cmake clang libclang-rt-18-dev glslc libvulkan-dev
       - name: Fuzz
         run: tools/ci/fuzz.sh 60
       - name: Failing inputs
@@ -217,12 +217,12 @@ jobs:
 
   windows-syntax:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          tools/ci/runner-apt.sh \
             cmake g++ pkg-config glslc libvulkan-dev \
             g++-mingw-w64-x86-64-posix g++-mingw-w64-i686-posix
       - name: MinGW syntax check (x64, x86)
@@ -233,6 +233,7 @@ jobs:
   # glslangValidator) — and runs the tests that need no GPU.
   distros:
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -248,6 +249,7 @@ jobs:
   # where the distribution packages it, then installed and checked.
   source-packages:
     runs-on: ubuntu-24.04
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -262,12 +264,12 @@ jobs:
   # 20.04).
   panel:
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Options description (options_ui.json)
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends cmake g++ glslc libvulkan-dev
+          tools/ci/runner-apt.sh cmake g++ glslc libvulkan-dev
           cmake -S . -B build -DBDEX_BUILD_TESTS=OFF -DBDEX_BUILD_DEMO=OFF -DBDEX_BUILD_OFFLINE=OFF
           cmake --build build --target bdex_options_ui -j"$(nproc)"
       - name: Panel (Ubuntu 20.04, Debian 12, Arch)
@@ -277,6 +279,7 @@ jobs:
   # layer loads with the store's Vulkan loader.
   nix:
     runs-on: ubuntu-24.04
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
       - uses: cachix/install-nix-action@v31
@@ -300,6 +303,7 @@ jobs:
   package:
     needs: build
     runs-on: ubuntu-24.04
+    timeout-minutes: 150
     permissions:
       contents: write
     steps:
