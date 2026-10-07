@@ -197,8 +197,11 @@ essai sur de vrais jeux :
     retiré les attributions) : les recréer sur les commits équivalents ?
   - Sortir la 0.4.0 (version CMake + section du CHANGELOG + tag `v0.4.0`,
     qui publie une Release GitHub via la CI Windows).
-  - Publication AUR, Flatpak de la GUI (non fait : le bac à sable Flatpak
-    complique l'écriture de la config et le lancement des jeux).
+  - Publication AUR (PKGBUILD `packaging/arch/bdex-framegen-bin` et `-git`
+    prêts, avec `.SRCINFO` ; il faut un dépôt public et un compte AUR).
+    `.deb` / `.rpm` joints aux releases et flake NixOS : faits le 30/09.
+    Flatpak de la GUI : écarté (le bac à sable ne voit pas les processus de
+    l'hôte) — le mode texte du panneau couvre les systèmes sans GTK 4.
 - [~] **Valider upscaling, HDR et 10 bits** — chemins du moteur validés : test
   ctest `formats` (`bdex_offline --format rgba8|bgra8|srgb|rgb10|rgba16f`,
   `--render-scale`) : BGRA8 identique au RGBA8, 10 bits et FP16 à 65–66 dB

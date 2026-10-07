@@ -48,10 +48,17 @@ the control panel needs Python 3 with PyGObject and GTK 4 — libadwaita 1.4+
 is used when present, not required (SteamOS has none). The archive's
 architecture (share/bdex-framegen/ARCH) must be the machine's.
 
-Steam, Heroic, Lutris or Bottles installed as a Flatpak: install.sh also
-installs the layer inside their sandbox (~/.var/app/<app>/data); the control
-panel keeps their copy of the settings up to date. Install them (and run them
-once) before install.sh, or run it again after. Snap packages are not
-supported.
+Steam, Heroic, Lutris or Bottles installed as a Flatpak (or Steam as a
+Snap): install.sh also installs the layer inside their sandbox
+(~/.var/app/<app>/data, ~/snap/steam); the control panel keeps their copy of
+the settings up to date. Install them (and run them once) before install.sh,
+or run `bdex-framegen --sandboxes` after.
+
+Without GTK 4 (Ubuntu 20.04, Debian 11) the control panel runs in text mode,
+in a terminal. MangoHud under the layer, counting every frame shown:
+bdex-framegen --mangohud -- <game>.
+
+Distribution packages (.deb, .rpm, Arch PKGBUILDs, NixOS flake): see the
+project's README.
 
 Project: https://github.com/Bdexez/bdex_frame_gen

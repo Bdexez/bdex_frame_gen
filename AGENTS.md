@@ -92,6 +92,12 @@ bdex-framegen --record DIR [N] -- <jeu>                 # enregistre N images r�
 tools/corpus_pack.py DIR out.tar.gz --name X            # séquence -> archive (release GitHub "corpus", notée en CI)
 tools/eval_sequence.py <dir_ppm> --variant KEY=VAL     # éval hors ligne (bdex_offline, sans fenêtre) sur séquence enregistrée
 tools/package-linux.sh [outdir] [version]              # archive Linux précompilée (sur la machine même)
+tools/package-native.sh ARCHIVE [outdir] [version]     # .deb + .rpm depuis une archive (dpkg-deb/rpmbuild, sinon Docker)
+tools/ci/archive-check.sh PAQUET.deb|.rpm [image...]   # installe le paquet (apt/dnf/zypper) : charge, profils lus, x2
+bdex-framegen --sandboxes [--remove]                   # couche copiée dans les lanceurs Flatpak / Snap
+bdex-framegen --mangohud -- <jeu>                      # MangoHud sous la couche (sinon au-dessus : i/s du jeu)
+bdex-framegen-gui --text                               # panneau en mode texte (automatique sans GTK 4)
+nix build .#default .#layer32                          # paquets Nix (flake.nix, packaging/nix/)
 tools/ci/package-release.sh [outdir] [version]         # archives de release x86_64 + aarch64 (Docker, comme le job CI `package`)
 tools/ci/archive-check.sh ARCHIVE [image|suite...]     # installe une archive ailleurs : charge + génère x2 (vkcube, Xvfb)
 tools/ci/distro-check.sh [image...]                    # build + tests + démo dans d'autres distributions (job CI `distros`)
@@ -636,6 +642,36 @@ x2/x3/x4), sauf le correctif HDR (les chemins SDR restent identiques).
   `pthread_setattr_default_np` (8 Mo) : ×2,00. Les pilotes GPU ne compilent
   pas avec LLVM ; ne rien changer dans la couche pour ça.
 
+### Paquets de distribution, Nix, panneau texte (2026-09-30, suite)
+
+- **`.deb` / `.rpm`** (`tools/package-native.sh`, job CI `package`, joints
+  aux releases) : refaits depuis les archives (même glibc 2.29, runtime C++
+  statique) ; couche dans le dossier de bibliothèque de la distribution
+  (`lib/x86_64-linux-gnu`, `lib/i386-linux-gnu` ; `lib64`, `lib`). La couche
+  cherche ses profils en `../share` puis `../../share`
+  (`platformBundledProfilesPath`) ; `BDEX_INSTALL_LIBDIR` pour un build.
+  rpm : `AutoReqProv: no` (la couche 32 bits tirerait glibc.i686),
+  dépendances riches pour openSUSE. Vérifiés par `archive-check.sh`
+  (apt : Ubuntu 20.04–24.04, Debian 12 ; dnf/zypper : Fedora, Tumbleweed).
+  Piège : l'archive de `dist/` construite en local (glibc 2.36) ne charge
+  pas sous Ubuntu 22.04 — toujours partir de `package-release.sh`.
+- **AUR** : `packaging/arch/bdex-framegen-{bin,git}` + `.SRCINFO`
+  (`makepkg --printsrcinfo`), non publiés (dépôt privé → sources 404).
+- **Nix** : `flake.nix` + `packaging/nix/{package,module}.nix` ; `layer32`
+  (pkgsi686Linux) ne garde que lib32, son manifeste et les profils (fichiers
+  identiques : pas de collision dans le profil). Test : conteneur
+  `nixos/nix` avec un volume `/nix`, sources copiées dans un dépôt git
+  (un flake ne voit que les fichiers suivis).
+- **Panneau texte** (`text_main` dans `bdex-framegen-gui`) : sans GTK 4,
+  `_Stub` remplace Gtk/Gio/GLib… pour que les classes restent définies ;
+  `display_hz` lit xrandr. `panel-check.sh` le pilote par `script` (pty).
+- **Snap** : `flatpak.sh` et `sandbox_dirs()` (panneau) / `flatpak_dirs`
+  (CLI) couvrent `~/snap/steam/current` ; non vérifié sur un vrai snap.
+- **Ordre des couches** : le loader place MangoHud au-dessus de nous
+  (mesuré, Arch) ; `VK_INSTANCE_LAYERS=ours:MangoHud` le met dessous ;
+  `VK_LOADER_LAYERS_ENABLE` ne change pas l'ordre. vkcube est exclu (liste
+  des non-jeux) : le copier sous un autre nom pour un test d'armement.
+
 ### SteamOS / gamescope (2026-09-30)
 
 - **SteamOS 3.9.2** (liste des paquets : `steamdeck-images.steamos.cloud/
@@ -821,9 +857,10 @@ env BDEX_FG_PROFILE=1 BDEX_FG_LOG=2 bdex_demo --size 2560x1440
     GUI GTK est Linux-only) ; installateur.
 
 **Plateforme / infra**
-11. Packaging Linux : paquets distro (deb/rpm, AUR binaire), Flatpak du
-    panneau (faits : archives glibc 2.29/arm64 vérifiées en CI, couche dans
-    les lanceurs Flatpak) ; polish de `windows-README.md` (section Windows
+11. Packaging Linux : publication AUR, COPR/OBS (faits : archives glibc
+    2.29/arm64, .deb/.rpm, PKGBUILD -bin/-git, flake NixOS, panneau texte,
+    couche dans les lanceurs Flatpak/Snap ; Flatpak du panneau impossible :
+    espace de PID du bac à sable) ; polish de `windows-README.md` (section Windows
     dans le README principal). Steam Deck : un plugin Decky (menu rapide :
     activer, multiplicateur, pause en jeu) — le mode Jeu n'a aujourd'hui que
     « sans le panneau » et les options de lancement ; validation sur un vrai

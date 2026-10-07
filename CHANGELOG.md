@@ -6,6 +6,41 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Linux distributions
+
+- **Distribution packages**: every release also ships `.deb` (amd64, arm64)
+  and `.rpm` (x86_64, aarch64) packages of the prebuilt layer
+  (`tools/package-native.sh`, from the release archives): installed to
+  `/usr`, the layer in the distribution's library directory
+  (`lib/x86_64-linux-gnu`, `lib64`; the 32-bit one in `lib/i386-linux-gnu`
+  / `lib`). The layer finds its shipped profiles one level deeper for such a
+  directory; `BDEX_INSTALL_LIBDIR` sets it for a build. Checked in CI:
+  installed with apt on Ubuntu 20.04 to 24.04 and Debian 12, with dnf and
+  zypper on Fedora and openSUSE Tumbleweed — loaded, profiles read, x2
+  through vkcube.
+- **Arch (AUR-ready)**: `packaging/arch/bdex-framegen-bin` (the release
+  archive) and `bdex-framegen-git` (from source, now with the 32-bit layer,
+  and the C++ runtime linked in like the archives), each with its
+  `.SRCINFO`. Both built with makepkg and loaded in an Arch container.
+- **NixOS**: `flake.nix` — the package, the 32-bit layer (`layer32`), and a
+  module (`programs.bdex-framegen.enable`) that links `share/vulkan` into the
+  system profile; CI job `nix` builds them and loads the layer.
+- **Panel without GTK 4** (Ubuntu 20.04, Debian 11): text mode in a
+  terminal — detected games, « Démarrer » / « Arrêter » (the same session
+  and heartbeat), multiplier, mode, preset, fps counter, Game Mode, the
+  Steam string; from the application menu it opens a terminal;
+  `bdex-framegen-gui --text` forces it. Checked in CI (job `panel`: Ubuntu
+  20.04 text only; Debian 12 and Arch, GTK 4 with and without libadwaita,
+  and text).
+- **Steam as a Snap**: the layer, its settings and the panel's session in
+  `~/snap/steam` (written from snapd's layout; not tried on a real snap).
+- `bdex-framegen --sandboxes [--remove]`: the layer copied into the Flatpak
+  / Snap launchers — after a distribution package, which cannot write into
+  the home.
+- `bdex-framegen --mangohud`: MangoHud *under* the layer. On its own it
+  loads above it (measured: it counted 330 fps for 660 shown, and drew on
+  the real frames only).
+
 ### SteamOS / Steam Deck (gamescope)
 
 - **Game Mode without the control panel.** Game Mode runs one application
