@@ -18,6 +18,9 @@
 #       --profile          print GPU timings with the statistics
 #       --no-stats         do not print frame rate statistics
 #       --gl               OpenGL game: run it on Vulkan through Mesa's Zink driver
+#       --mangohud         MangoHud under the layer: it counts and draws on every
+#                          frame shown (generated ones included); on its own it
+#                          usually loads above and sees the game's frames only
 #       --off              run the program with the layer disabled
 #       --gui              open the graphical launcher instead
 #       --check            report whether the layer is found by the Vulkan loader
@@ -46,7 +49,7 @@
 #   -h, --help
 set -euo pipefail
 
-usage() { sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # The screens as the desktop sees them: "<output> <current mode>" per enabled
 # output (KDE's kscreen-doctor, else xrandr), for the report and the quick read.
@@ -89,9 +92,10 @@ connected_outputs() {
 # « Lecture rapide »: what the report says about the usual causes of « no
 # generated frames » — Auto on a misdetected screen (x1), panel closed or
 # targeting another process, the game on another GPU than the screen.
-# The directories of the Flatpak game launchers the layer is installed in
-# (packaging/linux/flatpak.sh): `flatpak_dirs run` their status directories,
-# `flatpak_dirs config` their settings files, `flatpak_dirs` the app dirs.
+# The directories of the Flatpak (and Snap) game launchers the layer is
+# installed in (packaging/linux/flatpak.sh): `flatpak_dirs run` their status
+# directories, `flatpak_dirs config` their settings files, `flatpak_dirs` the
+# Flatpak app dirs.
 flatpak_dirs() {
   local app d
   for app in com.valvesoftware.Steam com.heroicgameslauncher.hgl net.lutris.Lutris com.usebottles.bottles; do
@@ -103,6 +107,14 @@ flatpak_dirs() {
       *) echo "$d" ;;
     esac
   done
+  # Snaps (Steam's): HOME is ~/snap/<name>/current.
+  d="$HOME/snap/steam/current"
+  if [ -f "$d/.local/share/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen.json" ]; then
+    case "${1:-}" in
+      run) echo "$d/.cache/bdex-framegen/run" ;;
+      config) echo "$d/.config/bdex-framegen.conf" ;;
+    esac
+  fi
 }
 
 quick_read() {
@@ -252,9 +264,13 @@ report() {
     done
     for app in com.valvesoftware.Steam com.heroicgameslauncher.hgl net.lutris.Lutris com.usebottles.bottles; do
       if [ -d "$HOME/.var/app/$app" ] && [ ! -f "$HOME/.var/app/$app/data/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen.json" ]; then
-        echo "Flatpak $app: layer NOT installed there (run install.sh again)"
+        echo "Flatpak $app: layer NOT installed there (bdex-framegen --sandboxes)"
       fi
     done
+    if [ -d "$HOME/snap/steam" ]; then
+      echo "Snap steam:"; ls -l "$HOME"/snap/steam/current/.local/share/vulkan/implicit_layer.d/*BDEX* 2>/dev/null ||
+        echo "  layer NOT installed there (bdex-framegen --sandboxes)"
+    fi
     echo; echo "== environment"
     env | grep -E '^(BDEX_FG|VK_|PROTON_|DXVK_|VKD3D_|MESA_|RADV_|__GL)' | sort || true
     echo; echo "== screens"
@@ -558,6 +574,11 @@ while [ $# -gt 0 ]; do
     --profile)         env_vars+=("BDEX_FG_PROFILE=1"); shift ;;
     --no-stats)        env_vars+=("BDEX_FG_STATS=0"); shift ;;
     --gl)              gl_env; shift ;;
+    --mangohud)        # Both implicit layers named in order, app side first:
+                       # ours, then MangoHud's (64- and 32-bit names; the loader
+                       # skips the one of the other width).
+                       env_vars+=("MANGOHUD=1" "VK_INSTANCE_LAYERS=VK_LAYER_BDEX_framegen:VK_LAYER_MANGOHUD_overlay_x86_64:VK_LAYER_MANGOHUD_overlay_x86${VK_INSTANCE_LAYERS:+:$VK_INSTANCE_LAYERS}")
+                       shift ;;
     --off)             env_vars+=("BDEX_FG=0"); shift ;;
     --gui)             exec "$(dirname "$0")/bdex-framegen-gui" ;;
     --check)           check ;;
