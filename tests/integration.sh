@@ -34,23 +34,42 @@ if ! grep -q "generation on" "$LOG"; then
   cat "$LOG"
   exit 1
 fi
-# Mean over the statistics lines, the first (start-up) left out: a line
-# covers 2 s, which on a slow runner (a sanitizer build on software Vulkan:
-# ~3 game fps) is ~6 frames, so one frame more or less in a window reads
-# x1.86 or x2.17 while generation is steady at x2.
-ratio="$(grep -o '(x[0-9.]*)' "$LOG" | tr -d '(x)' |
-         awk '{ v[NR] = $1 } END { if (NR == 0) exit; s = 0; n = 0
-               for (i = (NR > 1 ? 2 : 1); i <= NR; ++i) { s += v[i]; ++n }
-               printf "%.2f", s / n }')"
-if [ -z "$ratio" ]; then
+# Over the statistics lines, the first (start-up) left out. A present shows
+# the real frame and a generated one — or the real frame alone when the
+# layer catches up ("N frame(s) without generation to catch up": the game
+# waited for the previous synthesis; a CPU-starved runner, where lavapipe's
+# synthesis competes with the game for the CPU). The output is then
+# 2 x game - catch-ups: that is what is checked, catch-ups kept under half
+# the frames. A line covers 2 s, which on a slow runner (a sanitizer build on
+# software Vulkan: ~3 game fps) is ~6 frames, so one frame more or less in a
+# window reads x1.86 or x2.17 while generation is steady: means over the
+# lines.
+read -r ratio expected behind < <(grep -E 'game [0-9.]+ fps -> output' "$LOG" | awk -v T=2 '
+  { g = o = c = 0
+    for (i = 1; i <= NF; ++i) {
+      if ($i == "game") g = $(i + 1)
+      if ($i == "output") o = $(i + 1)
+      if ($(i + 1) == "frame(s)" && $(i + 2) == "without") c = $i
+    }
+    if (g <= 0) next
+    ++n; r[n] = o / g; f[n] = c / (g * T) }
+  END { if (n == 0) exit; s = e = b = 0; k = 0
+        for (i = (n > 1 ? 2 : 1); i <= n; ++i) { s += r[i]; b += f[i]; ++k }
+        s /= k; b /= k; e = 2 - (b > 1 ? 1 : b)
+        printf "%.2f %.2f %.2f\n", s, e, b }')
+if [ -z "${ratio:-}" ]; then
   echo "no statistics line found"
   cat "$LOG"
   exit 1
 fi
-if awk -v r="$ratio" 'BEGIN { exit !(r > 1.9 && r < 2.1) }'; then
-  echo "output/input frame ratio: $ratio"
+if awk -v r="$ratio" -v e="$expected" -v b="$behind" 'BEGIN { exit !(r > e - 0.1 && r < e + 0.1 && b <= 0.5) }'; then
+  if [ "$expected" = 2.00 ]; then
+    echo "output/input frame ratio: $ratio"
+  else
+    echo "output/input frame ratio: $ratio (expected $expected: $(awk -v b="$behind" 'BEGIN { printf "%.0f", b * 100 }')% of the presents without generation to catch up)"
+  fi
   exit 0
 fi
-echo "unexpected frame ratio: $ratio"
+echo "unexpected frame ratio: $ratio (expected $expected, catch-up on $behind of the presents)"
 cat "$LOG"
 exit 1

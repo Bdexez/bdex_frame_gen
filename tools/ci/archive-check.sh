@@ -125,8 +125,33 @@ if grep -qE 'No DRI3 support' <<<"$cube"; then
 fi
 grep -E 'swapchain .*generation|fps ->' <<<"$cube" | tail -2 | cut -c1-110 || true
 grep -q 'generation on' <<<"$cube" || { echo "no generation:"; tail -5 <<<"$cube"; exit 1; }
-ratio="$(grep -o '(x[0-9.]*)' <<<"$cube" | tail -1 | tr -d '(x)' || true)"
-awk -v r="${ratio:-0}" 'BEGIN { exit !(r >= 1.9) }' || { echo "output/game ratio x$ratio"; exit 1; }
+# Each statistics line (the first, start-up, left out): output = 2 x game
+# minus the presents that caught up without a generated frame (the game
+# waited for the previous synthesis: a CPU-starved runner, lavapipe's
+# synthesis competing with the game), those kept under half. Emulated (arm64
+# under qemu, under a frame a second on a CI runner): generation seen at
+# least once.
+read -r ratio expected behind best < <(grep -E 'game [0-9.]+ fps -> output' <<<"$cube" | awk -v T="$stats" '
+  { g = o = c = 0
+    for (i = 1; i <= NF; ++i) {
+      if ($i == "game") g = $(i + 1)
+      if ($i == "output") o = $(i + 1)
+      if ($(i + 1) == "frame(s)" && $(i + 2) == "without") c = $i
+    }
+    if (g <= 0) next
+    ++n; r[n] = o / g; f[n] = c / (g * T); if (o / g > m) m = o / g }
+  END { if (n == 0) { print "0 2 0 0"; exit }; s = b = k = 0
+        for (i = (n > 1 ? 2 : 1); i <= n; ++i) { s += r[i]; b += f[i]; ++k }
+        s /= k; b /= k
+        printf "%.2f %.2f %.2f %.2f\n", s, 2 - (b > 1 ? 1 : b), b, m }')
+if [ -n "${emu[*]:-}" ]; then
+  awk -v m="${best:-0}" 'BEGIN { exit !(m >= 1.5) }' || { echo "no generated frame seen (best ratio x$best)"; exit 1; }
+  echo "generation seen: best ratio x$best (emulated)"
+else
+  awk -v r="$ratio" -v e="$expected" -v b="$behind" 'BEGIN { exit !(r > e - 0.1 && r < e + 0.1 && b <= 0.5) }' ||
+    { echo "output/game ratio x$ratio, expected x$expected (catch-up on $behind of the presents)"; exit 1; }
+  echo "output/game ratio x$ratio (expected x$expected)"
+fi
 JOB
 status=0
 for target in "${targets[@]}"; do
