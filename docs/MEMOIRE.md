@@ -685,8 +685,12 @@ Le détail de toutes les mesures est dans AGENTS.md §10 et le CHANGELOG.
 multiplicateur, pause en jeu). Le mode Jeu n'a aujourd'hui que « sans le
 panneau » et les options de lancement.
 
-**CI GitHub invisible** (dépôt privé) : les jobs `distros`, `package`,
-`archive-check`, `panel` et `nix` n'ont jamais été vus tourner là-bas.
+**CI GitHub** (dépôt privé, résultats rapportés par l'utilisateur) : verte
+le 01/10 après `96b2f91`, jobs `distros`, `package` (archives, `.deb`,
+`.rpm`, `archive-check`), `panel` et `nix` compris. Piège vécu : les runners
+sont lents, lavapipe y dispute le CPU au jeu et le rattrapage retire des
+images générées (×1,7) — les tests comptent donc sortie = 2 × jeu −
+rattrapages.
 
 **Paquets, suite** : publier `bdex-framegen-bin` / `-git` sur l'AUR (dépôt
 public requis, compte AUR) ; COPR (Fedora) et OBS (openSUSE) pour des mises
