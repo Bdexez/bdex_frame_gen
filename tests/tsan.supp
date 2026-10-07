@@ -1,0 +1,6 @@
+# ThreadSanitizer suppressions for the sanitizer jobs (linux.yml, tools/ci/run.sh tsan).
+# Mesa's lavapipe (the software Vulkan driver of the CI) synchronises its own
+# rasterizer threads with pthread barriers that TSan reports as a race: both
+# stacks inside libvulkan_lvp.so, between two of its "disk$N" threads, none in
+# the layer (seen 2026-10-01, Mesa of Ubuntu 24.04). Only that library.
+race:libvulkan_lvp.so

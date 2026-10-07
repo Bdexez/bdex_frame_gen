@@ -161,7 +161,7 @@ jobs:
             env: "ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1"
           - name: tsan
             flags: "-fsanitize=thread -fno-omit-frame-pointer"
-            env: "TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1"
+            env: "TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1:suppressions=$GITHUB_WORKSPACE/tests/tsan.supp"
     name: sanitizers (${{ matrix.name }})
     steps:
       - uses: actions/checkout@v4
