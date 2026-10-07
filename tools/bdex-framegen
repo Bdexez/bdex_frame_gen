@@ -53,14 +53,29 @@ usage() { sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # The screens as the desktop sees them: "<output> <current mode>" per enabled
 # output (KDE's kscreen-doctor, else xrandr), for the report and the quick read.
+# kscreen-doctor only answers in a Plasma session: elsewhere it waits for the
+# KScreen backend forever (seen under Hyprland). Run it there, under a timeout.
+in_kde() { case "${XDG_CURRENT_DESKTOP:-}:${KDE_FULL_SESSION:-}" in *KDE*|*:true) return 0 ;; esac; return 1; }
+kscreen() { in_kde && command -v kscreen-doctor >/dev/null && timeout 5 kscreen-doctor "$@"; }
 screens() {
-  if command -v kscreen-doctor >/dev/null; then
-    kscreen-doctor -o 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | awk '
+  if in_kde && command -v kscreen-doctor >/dev/null; then
+    kscreen -o 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | awk '
       /^Output:/ { name = $3; on = 0 }
       /^[ \t]*enabled/ { on = 1 }
       /^[ \t]*Vrr:/ { vrr[name] = $2 }
       /Modes:/ && on { if (match($0, /[0-9]+x[0-9]+@[0-9.]+\*/)) cur[name] = substr($0, RSTART, RLENGTH - 1) }
       END { for (n in cur) printf "%s %s vrr=%s (kscreen)\n", n, cur[n], vrr[n] }' || true
+  fi
+  # wlroots compositors (sway, river, labwc...) and Hyprland: their own view
+  # (under Wayland, xrandr only sees Xwayland's outputs).
+  if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && command -v hyprctl >/dev/null; then
+    hyprctl monitors 2>/dev/null | awk '
+      /^Monitor / { name = $2 }
+      /^[ \t]+[0-9]+x[0-9]+@[0-9.]+ at / && name { printf "%s %s (hyprctl)\n", name, $1; name = "" }' || true
+  elif [ -n "${WAYLAND_DISPLAY:-}" ] && command -v wlr-randr >/dev/null; then
+    wlr-randr 2>/dev/null | awk '
+      /^[^ ]/ { name = $1 }
+      /current\)/ && name { sub(/ px,/, "", $1); printf "%s %s@%s (wlr-randr)\n", name, $1, $2; name = "" }' || true
   fi
   if command -v xrandr >/dev/null && [ -n "${DISPLAY:-}" ]; then
     xrandr --query 2>/dev/null | awk '
@@ -271,11 +286,18 @@ report() {
       echo "Snap steam:"; ls -l "$HOME"/snap/steam/current/.local/share/vulkan/implicit_layer.d/*BDEX* 2>/dev/null ||
         echo "  layer NOT installed there (bdex-framegen --sandboxes)"
     fi
+    stale="$(stale_sandboxes)"
+    [ -z "$stale" ] || echo "$stale" | sed 's/^/OUTDATED copy (layer updated since; bdex-framegen --sandboxes): /'
+    echo; echo "== security modules"
+    if command -v getenforce >/dev/null; then echo "SELinux: $(getenforce 2>/dev/null)"; fi
+    if [ -r /sys/module/apparmor/parameters/enabled ]; then
+      echo "AppArmor: $(cat /sys/module/apparmor/parameters/enabled)"
+    fi
     echo; echo "== environment"
     env | grep -E '^(BDEX_FG|VK_|PROTON_|DXVK_|VKD3D_|MESA_|RADV_|__GL)' | sort || true
     echo; echo "== screens"
-    if command -v kscreen-doctor >/dev/null; then
-      kscreen-doctor -o 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^Output:|^\s*(enabled|disabled|connected|Vrr:|Geometry:)|Modes:' |
+    if in_kde && command -v kscreen-doctor >/dev/null; then
+      kscreen -o 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E '^Output:|^\s*(enabled|disabled|connected|Vrr:|Geometry:)|Modes:' |
         sed -E 's/Modes:.*[ ]([0-9]+:[0-9]+x[0-9]+@[0-9.]+!?\*).*/Modes: \1 (current)/' || true
     fi
     if command -v xrandr >/dev/null && [ -n "${DISPLAY:-}" ]; then
@@ -427,16 +449,30 @@ PY
 
 # --sandboxes [--remove]: the layer of this installation copied into the
 # sandboxed launchers (flatpak.sh, installed next to the profiles).
-sandboxes() {
+flatpak_script() {
   local prefix script
   prefix="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
   for script in "$prefix/share/bdex-framegen/flatpak.sh" "$prefix/packaging/linux/flatpak.sh"; do
-    [ -f "$script" ] || continue
-    if [ "${1:-}" = --remove ]; then bash "$script" --remove; else bash "$script" "$prefix"; fi
-    return
+    [ -f "$script" ] && { echo "$prefix $script"; return 0; }
   done
-  echo "bdex-framegen: flatpak.sh not found next to this installation" >&2
   return 1
+}
+sandboxes() {
+  local prefix script
+  read -r prefix script <<<"$(flatpak_script)"
+  if [ -z "$script" ]; then
+    echo "bdex-framegen: flatpak.sh not found next to this installation" >&2
+    return 1
+  fi
+  if [ "${1:-}" = --remove ]; then bash "$script" --remove; else bash "$script" "$prefix"; fi
+}
+# The sandboxed copies an update of the layer left behind ("<app> <copy>" per
+# line; nothing when they are all current, or no flatpak.sh).
+stale_sandboxes() {
+  local prefix script
+  read -r prefix script <<<"$(flatpak_script)"
+  [ -n "$script" ] || return 0
+  bash "$script" --check "$prefix" || true
 }
 
 # --always-on / --always-off [GAME]: require_app = 0 in [GAME], or in [*] for
@@ -528,6 +564,12 @@ check() {
   if grep -q "VK_LAYER_BDEX_framegen.*loaded" <<<"$out"; then  # no pipe: pipefail + SIGPIPE
     echo "layer loaded: $(echo "$out" | grep -o "VK_LAYER_BDEX_framegen v[0-9.]*" | head -1)"
     echo "$out" | grep -o "device '.*" | head -1
+    stale="$(stale_sandboxes)"
+    if [ -n "$stale" ]; then
+      echo "$stale" | sed 's/^/OUTDATED sandbox copy: /'
+      echo "  → bdex-framegen --sandboxes (games in that launcher still run the old layer)"
+      exit 2
+    fi
     exit 0
   fi
   echo "layer NOT loaded. Manifests known to the loader:"

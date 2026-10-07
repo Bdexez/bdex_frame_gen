@@ -61,6 +61,12 @@ if(Python3_Interpreter_FOUND)
   endif()
 endif()
 
+# The Linux install scripts (Flatpak / Snap copies, stale copies after an
+# update, no in-place copy over a mapped library), in a scratch home.
+if(UNIX AND NOT APPLE)
+  add_test(NAME linux_scripts COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/linux_scripts.sh" "${CMAKE_SOURCE_DIR}")
+endif()
+
 # End-to-end: runs the demo through the layer and checks the output frame
 # rate is doubled. Needs a display; the script skips itself otherwise.
 if(TARGET bdex_demo)

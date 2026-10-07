@@ -9,15 +9,52 @@
 #   flatpak.sh <prefix>     install from an installed prefix (its manifests
 #                           <prefix>/share/vulkan/implicit_layer.d/*.json name the libraries)
 #   flatpak.sh --remove     remove it again
+#   flatpak.sh --check <prefix>
+#                           list the sandboxes whose copy of the layer differs
+#                           from the prefix's (left behind by an update of the
+#                           layer): "<app> <copy>" per line, exit 1 if any
 set -euo pipefail
 APPS=(com.valvesoftware.Steam com.heroicgameslauncher.hgl net.lutris.Lutris com.usebottles.bottles)
-arg="${1:?usage: flatpak.sh <prefix> | --remove}"
+arg="${1:?usage: flatpak.sh <prefix> | --remove | --check <prefix>}"
+check=0
+if [ "$arg" = --check ]; then check=1; arg="${2:?usage: flatpak.sh --check <prefix>}"; fi
+stale=0
+# Replaces a file by a new inode (copy then rename): a running game keeps the
+# library it mapped — cp over it would truncate that mapping (SIGBUS).
+put() { cp "$1" "$2.tmp.$$" && mv -f "$2.tmp.$$" "$2"; }
+# The library a manifest of the prefix names.
+host_so() { sed -n 's/.*"library_path": *"\([^"]*\)".*/\1/p' "$arg/share/vulkan/implicit_layer.d/$1"; }
+# Same contents? (cmp is in diffutils, missing from minimal systems; cksum is
+# in coreutils and busybox.)
+same() {
+  if command -v cmp >/dev/null; then cmp -s "$1" "$2"; else [ "$(cksum < "$1")" = "$(cksum < "$2")" ]; fi
+}
+# --check: one sandbox (name, its lib dir root), compared with the prefix.
+check_one() {
+  local name="$1" dest="$2" suffix json so lib
+  for suffix in "" _32; do
+    json="VK_LAYER_BDEX_framegen$suffix.json"
+    [ -f "$arg/share/vulkan/implicit_layer.d/$json" ] || continue
+    so="$(host_so "$json")"
+    [ -f "$so" ] || continue
+    lib=lib; [ -n "$suffix" ] && lib=lib32
+    [ -f "$dest/$lib/libVkLayer_bdex_framegen.so" ] || continue
+    if ! same "$so" "$dest/$lib/libVkLayer_bdex_framegen.so"; then
+      echo "$name $dest/$lib/libVkLayer_bdex_framegen.so"
+      stale=1
+    fi
+  done
+}
 cfg="${XDG_CONFIG_HOME:-$HOME/.config}/bdex-framegen.conf"
 for app in "${APPS[@]}"; do
   d="$HOME/.var/app/$app"
   [ -d "$d" ] || continue
   dest="$d/data/bdex-framegen"
   manifests="$d/data/vulkan/implicit_layer.d"
+  if [ "$check" = 1 ]; then
+    [ -f "$manifests/VK_LAYER_BDEX_framegen.json" ] && check_one "$app" "$dest"
+    continue
+  fi
   if [ "$arg" = --remove ]; then
     rm -rf "$dest"
     rm -f "$manifests"/VK_LAYER_BDEX_framegen.json "$manifests"/VK_LAYER_BDEX_framegen_32.json
@@ -30,12 +67,12 @@ for app in "${APPS[@]}"; do
     [ -f "$arg/share/vulkan/implicit_layer.d/$json" ] || continue
     # The library the manifest names: <prefix>/lib[32] for install.sh, the
     # distribution's library dir for a package (lib/x86_64-linux-gnu, lib64).
-    so="$(sed -n 's/.*"library_path": *"\([^"]*\)".*/\1/p' "$arg/share/vulkan/implicit_layer.d/$json")"
+    so="$(host_so "$json")"
     [ -f "$so" ] || continue
     lib=lib
     if [ -n "$suffix" ]; then lib=lib32; fi
     mkdir -p "$dest/$lib"
-    cp "$so" "$dest/$lib/libVkLayer_bdex_framegen.so"
+    put "$so" "$dest/$lib/libVkLayer_bdex_framegen.so"
     # The same absolute path inside the sandbox: Flatpak mounts the app's
     # directory where it is.
     sed "s#\"library_path\": \"[^\"]*\"#\"library_path\": \"$dest/$lib/libVkLayer_bdex_framegen.so\"#" \
@@ -58,6 +95,10 @@ for app in steam; do
   [ -d "$base/current" ] || continue
   dest="$base/common/bdex-framegen"
   manifests="$base/current/.local/share/vulkan/implicit_layer.d"
+  if [ "$check" = 1 ]; then
+    [ -f "$manifests/VK_LAYER_BDEX_framegen.json" ] && check_one "snap:$app" "$dest"
+    continue
+  fi
   if [ "$arg" = --remove ]; then
     rm -rf "$dest"
     rm -f "$manifests"/VK_LAYER_BDEX_framegen.json "$manifests"/VK_LAYER_BDEX_framegen_32.json
@@ -68,12 +109,12 @@ for app in steam; do
   for suffix in "" _32; do
     json="VK_LAYER_BDEX_framegen$suffix.json"
     [ -f "$arg/share/vulkan/implicit_layer.d/$json" ] || continue
-    so="$(sed -n 's/.*"library_path": *"\([^"]*\)".*/\1/p' "$arg/share/vulkan/implicit_layer.d/$json")"
+    so="$(host_so "$json")"
     [ -f "$so" ] || continue
     lib=lib
     if [ -n "$suffix" ]; then lib=lib32; fi
     mkdir -p "$dest/$lib"
-    cp "$so" "$dest/$lib/libVkLayer_bdex_framegen.so"
+    put "$so" "$dest/$lib/libVkLayer_bdex_framegen.so"
     sed "s#\"library_path\": \"[^\"]*\"#\"library_path\": \"$dest/$lib/libVkLayer_bdex_framegen.so\"#" \
       "$arg/share/vulkan/implicit_layer.d/$json" > "$manifests/$json"
   done
@@ -86,3 +127,4 @@ for app in steam; do
   fi
   echo "  also installed for $app (Snap): $dest"
 done
+[ "$check" = 0 ] || exit "$stale"
