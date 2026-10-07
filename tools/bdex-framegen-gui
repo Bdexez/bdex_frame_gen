@@ -28,14 +28,37 @@ import subprocess
 import sys
 import threading
 
-import gi
-gi.require_version("Gtk", "4.0")
-from gi.repository import Gio, GObject, Gtk, Gdk, GLib  # noqa: E402
+# GTK 4 through PyGObject; without it (Ubuntu 20.04, Debian 11: no GTK 4) the
+# same panel in text mode (text_main), in a terminal.
+try:
+    if os.environ.get("BDEX_FG_GUI_TEXT"):     # test the text mode
+        raise ImportError
+    import gi
+    gi.require_version("Gtk", "4.0")
+    from gi.repository import Gio, GObject, Gtk, Gdk, GLib  # noqa: E402
+    HAVE_GTK = True
+except (ImportError, ValueError):
+    HAVE_GTK = False
+
+    class _StubMeta(type):
+        """Stands for the GTK modules, so that the window classes below are
+        still defined (and never instantiated) without GTK."""
+        def __getattr__(cls, name):
+            return _Stub
+
+        def __or__(cls, other):
+            return _Stub
+
+    class _Stub(metaclass=_StubMeta):
+        def __init__(self, *args, **kwargs):
+            pass
+
+    Gio = GObject = Gtk = Gdk = GLib = _Stub
 
 # libadwaita 1.4+ when installed; otherwise (SteamOS, Debian 12, Ubuntu 22.04:
 # none, or too old for SwitchRow / SpinRow) the same widgets in plain GTK 4.
 try:
-    if os.environ.get("BDEX_FG_GUI_NO_ADW"):   # test the plain GTK 4 path
+    if os.environ.get("BDEX_FG_GUI_NO_ADW") or not HAVE_GTK:   # test the plain GTK 4 path
         raise ImportError
     gi.require_version("Adw", "1")
     from gi.repository import Adw  # noqa: E402
@@ -774,12 +797,27 @@ def display_hz():
     """The highest refresh rate among the monitors (GDK reads it from the
     compositor / X server): the layer's target for « Auto » when it cannot
     measure the display itself (no present feedback, KDE + NVIDIA...)."""
+    if HAVE_GTK:
+        try:
+            monitors = Gdk.Display.get_default().get_monitors()
+            rates = [monitors.get_item(i).get_refresh_rate() for i in range(monitors.get_n_items())]
+            return max(rates) / 1000.0 if rates else 0.0
+        except Exception:  # no display, old GDK
+            return 0.0
+    # Text mode: the current mode of each output, as xrandr reports it.
     try:
-        monitors = Gdk.Display.get_default().get_monitors()
-        rates = [monitors.get_item(i).get_refresh_rate() for i in range(monitors.get_n_items())]
-        return max(rates) / 1000.0 if rates else 0.0
-    except Exception:  # no display, old GDK
+        out = subprocess.run(["xrandr", "--current"], capture_output=True, text=True, timeout=4).stdout
+    except (OSError, subprocess.SubprocessError):
         return 0.0
+    rates = []
+    for line in out.splitlines():
+        for tok in line.split()[1:]:
+            if "*" in tok:
+                try:
+                    rates.append(float(tok.replace("*", "").replace("+", "")))
+                except ValueError:
+                    pass
+    return max(rates) if rates else 0.0
 
 
 def auto_ceiling():
@@ -1531,5 +1569,148 @@ class App(Adw.Application):
         (self.get_active_window() or Window(self)).present()
 
 
+# ---------------------------------------------------------------------------
+# Text mode: the same session and settings in a terminal (no GTK 4, or --text).
+# ---------------------------------------------------------------------------
+
+def _text_options(opt):
+    mult = ("adaptatif" if opt.adaptive else "Auto" if opt.auto_mult else f"×{opt.multiplier}") \
+        if opt.generate else "désactivé"
+    mode = {m: lab.split(" —")[0].split(" (")[0] for lab, m in MODES}.get(opt.mode, opt.mode)
+    hud = dict((v, lab) for lab, v in HUD_MODES).get(opt.hud, str(opt.hud))
+    return (f"multiplicateur {mult} · mode {mode} · préréglage {opt.preset} · compteur {hud}"
+            + (" · mode Jeu : tous les jeux sans le panneau" if opt.without_panel else ""))
+
+
+def _text_pick(title, table, current):
+    print(title)
+    for i, (label, value) in enumerate(table, 1):
+        print(f"  {i}) {label}{'   ← actuel' if value == current else ''}")
+    try:
+        answer = input("Choix (Entrée : inchangé) : ").strip()
+    except EOFError:
+        return current
+    if answer.isdigit() and 1 <= int(answer) <= len(table):
+        return table[int(answer) - 1][1]
+    return current
+
+
+def text_main():
+    if not sys.stdin.isatty() and "--in-terminal" not in sys.argv[1:] and \
+            (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        # Started from the application menu: the text mode in a terminal.
+        me = os.path.realpath(__file__)
+        for term in (["x-terminal-emulator", "-e"], ["gnome-terminal", "--"], ["konsole", "-e"],
+                     ["xfce4-terminal", "-x"], ["mate-terminal", "-x"], ["xterm", "-e"]):
+            try:
+                os.execvp(term[0], term + [sys.executable, me, "--text", "--in-terminal"])
+            except OSError:
+                continue
+    if not sys.stdin.isatty():
+        sys.stderr.write("bdex-framegen-gui: GTK 4 (PyGObject) is not installed; run it in a terminal for "
+                         "the text mode, or use bdex-framegen (--help)\n")
+        return 1
+    cfg = ConfigFile.load()
+    opt = Options()
+    opt.load_from(cfg.glob)
+    state = {"target": None}
+    stop = threading.Event()
+
+    def save():
+        opt.write_into(cfg.glob)
+        cfg.write()
+        mirror_config()
+
+    def beat():
+        while not stop.wait(1.0):
+            try:
+                write_session(state["target"][0] if state["target"] else 0)
+            except OSError:
+                pass
+
+    if cfg.glob.get("require_app") != "1" or cfg.glob.get("enabled") != "1":
+        save()
+    try:
+        write_session(0)
+    except OSError as e:
+        print(f"Session impossible : {e}")
+        return 1
+    threading.Thread(target=beat, daemon=True).start()
+    installed, _ = find_layer()
+    print("bdex-framegen — panneau en mode texte" + ("" if HAVE_GTK else " (GTK 4 absent)"))
+    if not installed:
+        print("  La couche n'est pas installée pour ce compte (install.sh, ou le paquet de la distribution).")
+    print("  Lance le jeu normalement, puis choisis-le ici. Tant que ce panneau est ouvert,")
+    print("  le jeu choisi génère des images ; le fermer (q, Ctrl+C) arrête.")
+    try:
+        while True:
+            games = detect_games()
+            if state["target"] and state["target"][0] not in [pid for pid, _ in games]:
+                state["target"] = None
+            print()
+            print("Jeux détectés :" if games else "Jeux détectés : aucun (lance un jeu Vulkan, puis r)")
+            for i, (pid, name) in enumerate(games, 1):
+                mark = "  ▶ génère" if state["target"] and state["target"][0] == pid else ""
+                lines = [d for d in (describe_entry(e) for e in read_status(pid)) if d]
+                print(f"  {i}) {name} (pid {pid}){mark}")
+                for d in lines:
+                    for ln in d.splitlines():
+                        print(f"       {ln}")
+            print("Options : " + _text_options(opt))
+            print("[numéro] démarrer dans ce jeu · a arrêter · r actualiser · m multiplicateur · "
+                  "o mode · p préréglage · h compteur · j mode Jeu · s options Steam · q quitter")
+            try:
+                cmd = input("> ").strip().lower()
+            except EOFError:
+                break
+            if cmd == "q":
+                break
+            if cmd.isdigit() and 1 <= int(cmd) <= len(games):
+                state["target"] = games[int(cmd) - 1]
+                write_session(state["target"][0])
+                print(f"Génération démarrée dans {state['target'][1]}.")
+            elif cmd == "a":
+                state["target"] = None
+                write_session(0)
+            elif cmd == "m":
+                table = [("Désactivé (×1)", "1"), ("Auto — jusqu'à la fréquence de l'écran", "auto"),
+                         ("Adaptatif — toute la fréquence, rapports fractionnaires", "adaptive")] + \
+                        [(f"×{n}", str(n)) for n in range(2, 9)]
+                cur = "1" if not opt.generate else "adaptive" if opt.adaptive else \
+                      "auto" if opt.auto_mult else str(opt.multiplier)
+                v = _text_pick("Multiplicateur :", table, cur)
+                opt.generate = v != "1"
+                opt.adaptive = v == "adaptive"
+                opt.auto_mult = v == "auto"
+                if v.isdigit() and v != "1":
+                    opt.multiplier = int(v)
+                save()
+            elif cmd == "o":
+                opt.mode = _text_pick("Mode :", MODES, opt.mode)
+                save()
+            elif cmd == "p":
+                opt.preset = _text_pick("Préréglage :", PRESETS, opt.preset)
+                save()
+            elif cmd == "h":
+                opt.hud = _text_pick("Compteur à l'écran :", HUD_MODES, opt.hud)
+                save()
+            elif cmd == "j":
+                opt.without_panel = _text_pick(
+                    "Mode Jeu (Steam Deck) — tous les jeux génèrent dès leur lancement, sans le panneau :",
+                    [("Non — le panneau décide (« Démarrer »)", False), ("Oui", True)], opt.without_panel)
+                save()
+            elif cmd == "s":
+                print("Options de lancement Steam équivalentes (par jeu) :")
+                print("  " + opt.steam_string())
+    except KeyboardInterrupt:
+        print()
+    finally:
+        stop.set()
+        remove_session()
+    return 0
+
+
 if __name__ == "__main__":
+    if not HAVE_GTK or "--text" in sys.argv[1:]:
+        sys.exit(text_main())
     sys.exit(App().run(sys.argv))
