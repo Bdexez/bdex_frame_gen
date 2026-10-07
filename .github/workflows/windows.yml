@@ -12,10 +12,16 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A newer push on the same branch cancels the run in progress (tags excepted:
+# a release run always completes).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   build:
     runs-on: windows-2022
-    timeout-minutes: 120
+    timeout-minutes: 30
     permissions:
       contents: write   # the ci-log-<arch> branches (see the last step)
     strategy:
@@ -25,11 +31,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The SDK (download + installer: minutes) is cached by version; the
+      # checksum is checked when it is downloaded.
+      - name: Vulkan SDK cache
+        id: vksdk
+        uses: actions/cache@v4
+        with:
+          path: C:\VulkanSDK\1.4.357.0
+          key: vulkan-sdk-1.4.357.0-${{ runner.os }}
+
       - name: Install Vulkan SDK
         shell: pwsh
+        env:
+          CACHED: ${{ steps.vksdk.outputs.cache-hit }}
         run: |
           $ErrorActionPreference = 'Stop'
           $version = '1.4.357.0'
+          $sdk = "C:\VulkanSDK\$version"
+          if ($env:CACHED -eq 'true' -and (Test-Path "$sdk\Bin\glslc.exe")) {
+            "VULKAN_SDK=$sdk" >> $env:GITHUB_ENV
+            "$sdk\Bin" >> $env:GITHUB_PATH
+            Write-Host "Vulkan SDK at $sdk (cache)"
+            exit 0
+          }
           $expectedSha256 = '81f474711e9042f4cd22b31b2f7a8870db2e428b21586fb43dd80150be97310d'
           $url = "https://sdk.lunarg.com/sdk/download/$version/windows/vulkan_sdk.exe"
           Invoke-WebRequest -Uri $url -OutFile vulkan_sdk.exe

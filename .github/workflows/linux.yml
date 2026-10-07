@@ -6,6 +6,9 @@
 # 28.91 / 23.52 on hardware, balanced preset), so the thresholds below sit
 # just under it (28.0 normal / 23.0 at --speed 2) — a tight gate that still
 # leaves headroom for renderer noise while catching any matcher regression.
+# Every push, under 15 minutes in all; what takes longer (other
+# distributions, source packages, Proton, Nix, the release archives) is in
+# compat.yml, nightly, on tags and by hand.
 name: linux
 
 on:
@@ -15,15 +18,47 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A newer push on the same branch cancels the run in progress (tags excepted:
+# a release run always completes).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
+  # The tests in parallel jobs, each with its own build (half a minute):
+  # under 15 minutes in all (measured on 4 CPUs, 2026-10-08: ctest alone
+  # took 11 minutes, validation 5.5 of them, swapchain_stress 2). "core" also
+  # runs the f2cec5f invariant and the PSNR gates; validation is sharded
+  # (BDEX_VALIDATION_SHARD, tests/validation.sh). A new long test goes into
+  # the part with the most room, or a part of its own.
   build:
+    name: build (${{ matrix.part }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - part: core
+            ctest: "-E '^validation$|integration|latency_probe|gamescope_limit|capture_linux|live_config|record_live|replay_bench|swapchain_stress|acquire_timeout|multithread_config'"
+            extras: true
+          - part: display
+            ctest: "-R 'integration|latency_probe|gamescope_limit|capture_linux|live_config|record_live|replay_bench|swapchain_stress|acquire_timeout|multithread_config'"
+          - part: validation-1
+            ctest: "-R '^validation$'"
+            shard: 1/3
+          - part: validation-2
+            ctest: "-R '^validation$'"
+            shard: 2/3
+          - part: validation-3
+            ctest: "-R '^validation$'"
+            shard: 3/3
     steps:
       - uses: actions/checkout@v4
       # The last build before the census term: the default matcher path must
       # stay byte-identical to it (AGENTS.md, invariant n°1).
       - uses: actions/checkout@v4
+        if: matrix.extras
         with:
           ref: f2cec5f29d90775a3d1a847620058ffaccca19af
           path: baseline
@@ -63,8 +98,10 @@ jobs:
       - name: Build
         run: |
           cmake --build build -j"$(nproc)"
-          cmake -S baseline -B baseline/build -DCMAKE_BUILD_TYPE=Release
-          cmake --build baseline/build -j
+          if [ "${{ matrix.extras }}" = true ]; then
+            cmake -S baseline -B baseline/build -DCMAKE_BUILD_TYPE=Release
+            cmake --build baseline/build -j
+          fi
 
       # How the tests find the layer: the runner's loader (Ubuntu 24.04:
       # 1.3.275) ignores VK_IMPLICIT_LAYER_PATH and VK_ADD_IMPLICIT_LAYER_PATH,
@@ -95,12 +132,17 @@ jobs:
       # layer, checks the doubled frame rate) needs a display, hence Xvfb.
       # --repeat until-pass:2 absorbs a one-off software-renderer hiccup.
       - name: Tests
-        run: BDEX_REQUIRE_DISPLAY=1 BDEX_TEST_COMPOSITOR=1 xvfb-run -a ctest --test-dir build --output-on-failure --repeat until-pass:2
+        env:
+          BDEX_VALIDATION_SHARD: ${{ matrix.shard || '1/1' }}
+        run: |
+          BDEX_REQUIRE_DISPLAY=1 BDEX_TEST_COMPOSITOR=1 xvfb-run -a \
+            ctest --test-dir build --output-on-failure --repeat until-pass:2 ${{ matrix.ctest }}
 
       # Default generated frames must match the pre-census build byte for byte.
       # Each run loads only its own build's layer (private XDG_DATA_HOME, and
       # nothing installed system-wide — checked in "Layer discovery").
       - name: Matcher invariant (bit-for-bit vs f2cec5f)
+        if: matrix.extras
         run: |
           BDEX_INVARIANT_SEQUENTIAL=1 xvfb-run -a -s '-screen 0 1280x800x24' \
             python3 tests/check_matcher_invariant.py build baseline/build
@@ -108,6 +150,7 @@ jobs:
       # Quality regression gate: PSNR of the generated frames against the
       # 60 fps ground truth, normal and fast-motion scenes.
       - name: Quality eval
+        if: matrix.extras
         run: |
           normal="$(xvfb-run -a tools/run_eval.sh build 40 | awk '/^  mean/{print $2; exit}')"
           fast="$(xvfb-run -a env BDEX_EVAL_ARGS='--speed 2' tools/run_eval.sh build 40 | awk '/^  mean/{print $2; exit}')"
@@ -135,6 +178,7 @@ jobs:
       # reported, not failed: add them with `test_corpus.py build --update`).
       # Skipped when there is no such release.
       - name: Recorded game corpus
+        if: matrix.extras
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -152,7 +196,7 @@ jobs:
   # installed globally here.
   sanitizers:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -189,18 +233,13 @@ jobs:
             xvfb-run -a -s '-screen 0 1280x800x24' \
             ctest --test-dir build -R "unit|offline|integration|acquire" --output-on-failure
 
-  # The Windows C++ (layer, unit tests, capture app except its C++/WinRT
-  # file) compiled with MinGW for x64 and 32-bit x86, syntax only: reports
-  # in a minute what the MSVC jobs (windows.yml) would fail on — the Win32
-  # handle casts, the capture target's include order — so both kinds of
-  # breakage surface on every push, next to the Linux results.
   # The parsers (configuration and profiles, status files, options_ui.conf,
   # online_tune cache) under libFuzzer + ASan + UBSan, from the seed corpus,
   # a minute each. A failing input is uploaded; commit it to
   # tests/fuzz/corpus/<target>/ with the fix (every build replays them).
   fuzz:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - name: Dependencies
@@ -215,9 +254,14 @@ jobs:
           name: fuzz-failures
           path: tests/fuzz/corpus/*/crash-*
 
+  # The Windows C++ (layer, unit tests, capture app except its C++/WinRT
+  # file) compiled with MinGW for x64 and 32-bit x86, syntax only: reports
+  # in a minute what the MSVC jobs (windows.yml) would fail on — the Win32
+  # handle casts, the capture target's include order — so both kinds of
+  # breakage surface on every push, next to the Linux results.
   windows-syntax:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - name: Dependencies
@@ -227,124 +271,3 @@ jobs:
             g++-mingw-w64-x86-64-posix g++-mingw-w64-i686-posix
       - name: MinGW syntax check (x64, x86)
         run: tools/ci/mingw/check.sh
-
-  # Builds from source in other distributions' containers — their own
-  # compiler, CMake, Vulkan headers and shader compiler (glslc or
-  # glslangValidator) — and runs the tests that need no GPU.
-  distros:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        image: [ubuntu:22.04, debian:12, fedora:latest, archlinux:latest, opensuse/tumbleweed, alpine:latest]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build and test (${{ matrix.image }})
-        run: tools/ci/distro-check.sh "${{ matrix.image }}"
-
-  # The distributions' own source packages, built from this checkout as their
-  # build services would (COPR / OBS spec, Debian source package for a PPA,
-  # Gentoo ebuild, Void template, Flathub extension), 32-bit layer included
-  # where the distribution packages it, then installed and checked.
-  source-packages:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 150
-    strategy:
-      fail-fast: false
-      matrix:
-        check: [srpm-check, debsrc-check, gentoo-check, void-check, flatpak-check, lib32-check, proton-check, proton-wayland-check, wine-layer-check, wayland-capture-check]
-    steps:
-      - uses: actions/checkout@v4
-      - name: ${{ matrix.check }}
-        run: tools/ci/${{ matrix.check }}.sh
-
-  # The control panel in containers, on a virtual display: GTK 4 with and
-  # without libadwaita, and its text mode where GTK 4 is missing (Ubuntu
-  # 20.04).
-  panel:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-      - name: Options description (options_ui.json)
-        run: |
-          tools/ci/runner-apt.sh cmake g++ glslc libvulkan-dev
-          cmake -S . -B build -DBDEX_BUILD_TESTS=OFF -DBDEX_BUILD_DEMO=OFF -DBDEX_BUILD_OFFLINE=OFF
-          cmake --build build --target bdex_options_ui -j"$(nproc)"
-      - name: Panel (Ubuntu 20.04, Debian 12, Arch)
-        run: tools/ci/panel-check.sh build/options_ui.json ubuntu:20.04 debian:12 archlinux:latest
-
-  # NixOS: the flake's packages (64-bit, and the 32-bit layer) build and the
-  # layer loads with the store's Vulkan loader.
-  nix:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 150
-    steps:
-      - uses: actions/checkout@v4
-      - uses: cachix/install-nix-action@v31
-      - name: Build
-        run: |
-          nix build .#default .#layer32 -L
-          mesa="$(nix build --no-link --print-out-paths nixpkgs#mesa | head -1)"
-          out="$(XDG_DATA_DIRS="$PWD/result/share" BDEX_FG=1 BDEX_FG_LOG=2 \
-            VK_ICD_FILENAMES="$(ls "$mesa"/share/vulkan/icd.d/lvp_icd*.json | head -1)" \
-            nix shell nixpkgs#vulkan-tools -c vulkaninfo --summary 2>&1 || true)"
-          grep -E 'bdex-fg.*loaded' <<<"$out"
-
-  # The prebuilt archives: the SPIR-V compiled by glslc (as tested above),
-  # the layers linked on Ubuntu 20.04 (glibc 2.31, GCC 10, static C++
-  # runtime) for x86_64 (64 and 32-bit) and arm64 — they load on every
-  # distribution from 2020 on. tools/ci/package-release.sh, in Docker. Each
-  # archive is then installed as a user would on older and newer
-  # distributions, where it must load and generate (tools/ci/archive-check.sh).
-  # Every push keeps them as an artifact; a v* tag attaches them to the GitHub
-  # release (windows.yml attaches the Windows zips to the same release).
-  package:
-    needs: build
-    runs-on: ubuntu-24.04
-    timeout-minutes: 150
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - name: Package
-        run: |
-          version=""
-          if [ "$GITHUB_REF_TYPE" = tag ]; then version="${GITHUB_REF_NAME#v}"; fi
-          tools/ci/package-release.sh dist "$version"
-          # The same files as .deb and .rpm (x86_64 and aarch64).
-          for a in dist/bdex-framegen-linux-*.tar.gz; do tools/package-native.sh "$a" dist "$version"; done
-          # The Steam Deck's quick access menu (Decky Loader plugin).
-          tools/ci/decky-check.sh dist
-      - uses: actions/upload-artifact@v4
-        with:
-          name: bdex-framegen-linux
-          path: |
-            dist/*.tar.gz
-            dist/*.deb
-            dist/*.rpm
-            dist/*.zip
-          if-no-files-found: error
-      # Mesa's software Vulkan and Xvfb in each container (arm64: Debian arm64
-      # under qemu-user): the layer loads with that glibc and loader, and
-      # generates x2 through vkcube. A failure keeps the archives out of the
-      # release.
-      - name: Check the archives on other distributions
-        run: |
-          tools/ci/archive-check.sh dist/bdex-framegen-linux-x86_64*.tar.gz \
-            ubuntu:20.04 debian:11 ubuntu:22.04 debian:12 ubuntu:24.04 fedora:latest
-          tools/ci/archive-check.sh dist/bdex-framegen-linux-aarch64*.tar.gz bullseye bookworm
-          tools/ci/archive-check.sh dist/bdex-framegen_*_amd64.deb ubuntu:20.04 ubuntu:22.04 debian:12 ubuntu:24.04
-          tools/ci/archive-check.sh dist/bdex-framegen-*.x86_64.rpm fedora:latest opensuse/tumbleweed
-      - name: Attach to the release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/*.tar.gz
-            dist/*.deb
-            dist/*.rpm
-            dist/*.zip
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          generate_release_notes: true
