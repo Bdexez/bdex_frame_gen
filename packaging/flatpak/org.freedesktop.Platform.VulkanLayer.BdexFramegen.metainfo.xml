@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="addon">
+  <id>org.freedesktop.Platform.VulkanLayer.BdexFramegen</id>
+  <extends>org.freedesktop.Platform</extends>
+  <name>bdex-framegen</name>
+  <summary>Frame generation and upscaling Vulkan layer for games</summary>
+  <description>
+    <p>Generates extra frames between a game's own (optical flow on the GPU,
+    x2 to x8 or adaptive) and upscales, inside native Vulkan games and
+    Direct3D games under Proton. Inert until turned on.</p>
+  </description>
+  <url type="homepage">https://github.com/Bdexez/bdex_frame_gen</url>
+  <url type="bugtracker">https://github.com/Bdexez/bdex_frame_gen/issues</url>
+  <developer id="io.github.bdexez">
+    <name>Bdexez</name>
+  </developer>
+  <project_license>MIT</project_license>
+  <metadata_license>CC0-1.0</metadata_license>
+  <releases>
+    <release version="0.5.5" date="2026-09-26"/>
+  </releases>
+</component>

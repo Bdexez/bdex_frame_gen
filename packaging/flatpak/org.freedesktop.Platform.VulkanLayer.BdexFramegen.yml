@@ -1,0 +1,76 @@
+# The layer as a Flatpak Vulkan layer extension, like MangoHud and vkBasalt
+# on Flathub: every Flatpak app on the Freedesktop runtime 25.08 (Steam,
+# Heroic, Lutris, Bottles...) loads it, 64 and 32-bit, and `flatpak update`
+# keeps it current — no copy in each app's directory (packaging/linux/
+# flatpak.sh skips the apps that have it).
+#   flatpak-builder --user --install build-dir org.freedesktop.Platform.VulkanLayer.BdexFramegen.yml
+# The layer is inert until turned on (panel, BDEX_FG=1, or the app's config:
+# ~/.var/app/<app>/config/bdex-framegen.conf, mirrored by the panel).
+id: org.freedesktop.Platform.VulkanLayer.BdexFramegen
+branch: '25.08'
+sdk: org.freedesktop.Sdk
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+build-extension: true
+sdk-extensions:
+  - org.freedesktop.Sdk.Compat.i386
+  - org.freedesktop.Sdk.Extension.toolchain-i386
+build-options:
+  prefix: /usr/lib/extensions/vulkan/BdexFramegen
+  strip: true
+# The libraries in lib/<triplet> (the layer finds its profiles two levels up).
+x-arch-build-options:
+  x86_64: &x86_64-build-options
+    config-opts: [-DBDEX_INSTALL_LIBDIR=lib/x86_64-linux-gnu]
+  aarch64: &aarch64-build-options
+    config-opts: [-DBDEX_INSTALL_LIBDIR=lib/aarch64-linux-gnu]
+  i386: &i386-build-options
+    config-opts: [-DBDEX_32BIT=ON, -DBDEX_INSTALL_LIBDIR=lib/i386-linux-gnu]
+    append-path: /usr/lib/sdk/toolchain-i386/bin
+    env:
+      CC: i686-unknown-linux-gnu-gcc
+      CXX: i686-unknown-linux-gnu-g++
+cleanup:
+  - /bin
+  - /share/applications
+  - /share/bdex-framegen/flatpak.sh
+  - /share/bdex-framegen/options_ui.json
+modules:
+  - name: bdex-framegen
+    buildsystem: cmake-ninja
+    build-options:
+      arch:
+        x86_64: *x86_64-build-options
+        aarch64: *aarch64-build-options
+    config-opts: &config-opts
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBDEX_BUILD_DEMO=OFF
+      - -DBDEX_BUILD_TESTS=OFF
+      - -DBDEX_BUILD_OFFLINE=OFF
+      - -DBDEX_STATIC_RUNTIME=ON
+    sources: &sources
+      # (the first release after 0.5.5: BDEX_INSTALL_LIBDIR is newer than it)
+      - type: git
+        url: https://github.com/Bdexez/bdex_frame_gen.git
+        branch: main
+      # A local checkout instead (tools/ci/flatpak-check.sh):
+      # - type: dir
+      #   path: ../..
+
+  - name: bdex-framegen-32bit
+    only-arches:
+      - x86_64
+    buildsystem: cmake-ninja
+    build-options: *i386-build-options
+    config-opts: *config-opts
+    sources: *sources
+
+  - name: metadata
+    buildsystem: simple
+    build-commands:
+      - install -Dm644 -t ${FLATPAK_DEST}/share/metainfo ${FLATPAK_ID}.metainfo.xml
+      - appstreamcli compose --components=${FLATPAK_ID} --prefix=/ --origin=${FLATPAK_ID}
+        --result-root=${FLATPAK_DEST} --data-dir=${FLATPAK_DEST}/share/app-info/xmls ${FLATPAK_DEST}
+    sources:
+      - type: file
+        path: org.freedesktop.Platform.VulkanLayer.BdexFramegen.metainfo.xml
