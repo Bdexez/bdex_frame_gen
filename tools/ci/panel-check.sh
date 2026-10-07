@@ -80,7 +80,7 @@ exit $status
 JOB
 status=0
 for img in "${images[@]}"; do
-  if docker run --rm -v "$job:/work/job.sh:ro" -v "$ROOT/tools/bdex-framegen-gui:/work/bdex-framegen-gui:ro" \
+  if docker run --rm -v "$ROOT/tools/ci/apt-get:/usr/local/sbin/apt-get:ro" -v "$job:/work/job.sh:ro" -v "$ROOT/tools/bdex-framegen-gui:/work/bdex-framegen-gui:ro" \
        -v "$ROOT/tests/panel_logic.py:/work/panel_logic.py:ro" -v "$json:/work/options_ui.json:ro" \
        "$img" bash /work/job.sh 2>&1 | sed "s|^|[$img] |"; then
     echo "[$img] OK"

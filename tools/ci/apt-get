@@ -1,0 +1,27 @@
+#!/bin/sh
+# apt-get for the CI containers, mounted as /usr/local/sbin/apt-get (ahead of
+# /usr/bin in PATH): retries when a mirror cannot be reached. apt-get update
+# only warns then and exits 0, and the install that follows finds no
+# candidate — the job failed with nothing pointing at the network. Only
+# network errors are retried: a missing package or a 404 (a release past its
+# end of life) fails at once, as before, for the scripts' own fallbacks.
+net='Connection failed|Could not connect|Connection timed out|Temporary failure|Could not resolve|Unable to connect|Hash Sum mismatch|Network is unreachable'
+log="$(mktemp)"
+i=0
+while :; do
+  /usr/bin/apt-get "$@" >"$log" 2>&1
+  rc=$?
+  if ! grep -Eq "$net" "$log"; then
+    cat "$log"; rm -f "$log"; exit "$rc"
+  fi
+  i=$((i + 1))
+  if [ "$i" -ge 5 ]; then
+    cat "$log" >&2; echo "apt-get $1: mirror unreachable after $i tries" >&2
+    rm -f "$log"; exit 100
+  fi
+  echo "apt-get $1: network error, retry $i in $((i * 15)) s" >&2
+  grep -E "$net" "$log" | head -3 >&2
+  sleep $((i * 15))
+  # An install after a failed fetch needs fresh indexes.
+  [ "$1" = update ] || /usr/bin/apt-get update -qq >/dev/null 2>&1 || true
+done

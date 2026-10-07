@@ -22,12 +22,10 @@ mkdir -p "$work/src"
 (cd "$ROOT" && git ls-files -co --exclude-standard | grep -v -e '^build' -e '^dist/' | tar -cf - -T - | tar -xf - -C "$work/src")
 
 echo "== SPIR-V (glslc, Ubuntu 24.04)"
-docker run --rm -v "$work:/work" ubuntu:24.04 bash -euc '
+docker run --rm -v "$ROOT/tools/ci/apt-get:/usr/local/sbin/apt-get:ro" -v "$work:/work" ubuntu:24.04 bash -euc '
   export DEBIAN_FRONTEND=noninteractive
-  quiet() { "$@" >/tmp/log 2>&1 || { cat /tmp/log; echo "failed: $*" >&2; return 1; }; }
-  retry() { for i in 1 2 3 4; do "$@" && return; echo "retry $i: $*" >&2; sleep $((i * 15)); done; return 1; }
-  pkgs() { quiet apt-get update && quiet apt-get install -y --no-install-recommends "$@"; }
-  retry pkgs cmake make g++ glslc libvulkan-dev
+  apt-get update -qq && apt-get install -y -qq --no-install-recommends cmake make g++ glslc libvulkan-dev \
+    >/tmp/apt.log 2>&1 || { tail -20 /tmp/apt.log; exit 1; }
   cmake -S /work/src -B /work/spvbuild -DBDEX_BUILD_TESTS=OFF -DBDEX_BUILD_DEMO=OFF -DBDEX_BUILD_OFFLINE=OFF >/dev/null
   cmake --build /work/spvbuild --target bdex_layer_shaders -j"$(nproc)" >/dev/null
   cp -r /work/spvbuild/layer/spv /work/spv
@@ -39,12 +37,11 @@ docker run --rm -v "$work:/work" ubuntu:24.04 bash -euc '
 setup='
   export DEBIAN_FRONTEND=noninteractive
   set -o pipefail
-  quiet() { "$@" >/tmp/log 2>&1 || { cat /tmp/log; echo "failed: $*" >&2; return 1; }; }
   retry() { for i in 1 2 3 4; do "$@" && return; echo "retry $i: $*" >&2; sleep $((i * 15)); done; return 1; }
-  # apt-get update only warns when a mirror is unreachable: the install then
-  # finds no candidate. Both are retried together, output shown on failure.
-  pkgs() { quiet apt-get update && quiet apt-get install -y --no-install-recommends "$@"; }
-  retry pkgs make git ca-certificates curl python3 binutils $PACKAGES
+  # apt-get retries by itself (tools/ci/apt-get, mounted).
+  apt-get update -qq
+  apt-get install -y -qq --no-install-recommends make git ca-certificates curl python3 binutils $PACKAGES \
+    >/tmp/apt.log 2>&1 || { tail -20 /tmp/apt.log; exit 1; }
   for t in gcc g++ $CROSS; do ln -sf "/usr/bin/$t-10" "/usr/local/bin/$t"; done
   retry curl -fsSL -o /tmp/cmake.tar.gz '"$CMAKE_URL"'
   tar -xzf /tmp/cmake.tar.gz -C /opt && ln -sf /opt/cmake-*/bin/cmake /usr/local/bin/cmake
@@ -53,12 +50,12 @@ setup='
   cd /work/src
   echo "$(g++ --version | head -1), cmake $(cmake --version | head -1 | cut -d" " -f3), $(ldd --version | head -1)"'
 echo "== x86_64 (Ubuntu 20.04)"
-docker run --rm -v "$work:/work" -v "$OUT:/out" -e PACKAGES="gcc-10 g++-10 g++-10-multilib gcc-multilib g++-multilib pkg-config libvulkan-dev libx11-dev libxcomposite-dev libxdamage-dev libxext-dev libxfixes-dev" -e CROSS="" \
+docker run --rm -v "$ROOT/tools/ci/apt-get:/usr/local/sbin/apt-get:ro" -v "$work:/work" -v "$OUT:/out" -e PACKAGES="gcc-10 g++-10 g++-10-multilib gcc-multilib g++-multilib pkg-config libvulkan-dev libx11-dev libxcomposite-dev libxdamage-dev libxext-dev libxfixes-dev" -e CROSS="" \
   ubuntu:20.04 bash -euc "$setup"'
   BDEX_ARCH=x86_64 tools/package-linux.sh /out "$1"
   chown '"$owner"' /out/*.tar.gz' _ "$VERSION"
 echo "== aarch64 (Ubuntu 20.04, cross)"
-docker run --rm -v "$work:/work" -v "$OUT:/out" -e PACKAGES="gcc-10 g++-10 gcc-10-aarch64-linux-gnu g++-10-aarch64-linux-gnu" \
+docker run --rm -v "$ROOT/tools/ci/apt-get:/usr/local/sbin/apt-get:ro" -v "$work:/work" -v "$OUT:/out" -e PACKAGES="gcc-10 g++-10 gcc-10-aarch64-linux-gnu g++-10-aarch64-linux-gnu" \
   -e CROSS="aarch64-linux-gnu-gcc aarch64-linux-gnu-g++" ubuntu:20.04 bash -euc "$setup"'
   BDEX_ARCH=aarch64 BDEX_TOOLCHAIN=/work/src/tools/ci/aarch64-linux-gnu.cmake tools/package-linux.sh /out "$1"
   chown '"$owner"' /out/*.tar.gz' _ "$VERSION"

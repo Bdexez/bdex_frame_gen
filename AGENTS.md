@@ -820,6 +820,12 @@ x2/x3/x4), sauf le correctif HDR (les chemins SDR restent identiques).
   CMake pour `acquire_timeout`) ; rien n'est installé au niveau système en CI.
 - Les étapes `run` sont en `bash -eo pipefail` : `cmd | grep -q` échoue quand
   grep trouve (SIGPIPE). Capturer la sortie puis `grep -q <<<"$out"`.
+- **Miroirs Ubuntu intermittents** (vécu le 2026-10-07, focal) : `apt-get
+  update` n'avertit que (code 0), l'installation échoue ensuite sans rien
+  dire du réseau. Les conteneurs des scripts `tools/ci/` montent
+  `tools/ci/apt-get` en `/usr/local/sbin/apt-get` (devant `/usr/bin`), qui
+  réessaie sur erreur réseau seulement ; tout nouveau `docker run` qui
+  utilise apt doit le monter aussi.
 - **Avant de pousser un changement de CI** : `tools/ci/run.sh` (build) et
   `tools/ci/run.sh asan|tsan` rejouent les jobs dans Docker, même loader,
   lavapipe.

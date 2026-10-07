@@ -9,7 +9,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 images=("$@"); [ ${#images[@]} -gt 0 ] || images=(ubuntu:24.04 ubuntu:22.04 debian:12)
 for img in "${images[@]}"; do
   echo "== $img"
-  docker run --rm -v "$ROOT":/src:ro "$img" bash -euo pipefail -c '
+  docker run --rm -v "$ROOT/tools/ci/apt-get:/usr/local/sbin/apt-get:ro" -v "$ROOT":/src:ro "$img" bash -euo pipefail -c '
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq >/dev/null
     apt-get install -y -qq --no-install-recommends dpkg-dev devscripts equivs file >/dev/null
