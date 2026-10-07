@@ -163,7 +163,10 @@ struct DeviceData {
     VkPipelineCache pipelineCache_ = VK_NULL_HANDLE;
     bool pipelineCacheTried_ = false;
     size_t pipelineCacheSaved_ = 0;
-    AllocatedBuffer createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible = false);
+    // hostCached (with hostVisible): memory the CPU reads fast (readbacks),
+    // when the device has a coherent cached type.
+    AllocatedBuffer createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible = false,
+                                 bool hostCached = false);
     void destroyBuffer(AllocatedBuffer& buf);
     bool formatSupports(VkFormat format, VkFormatFeatureFlags features) const;
     // Before the first virtual swapchain, fall back to an application queue

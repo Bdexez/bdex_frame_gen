@@ -823,12 +823,22 @@ void FrameGen::recordDump(VkCommandBuffer cmd, uint32_t which, uint32_t cur) {
         VkBufferCopy bc{0, 0, 32};
         vt.CmdCopyBuffer(cmd, stateBuf_.buffer, costReadback_.buffer, 1, &bc);
     }
-    VkBufferImageCopy region{};
-    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    region.imageExtent = {displayExtent_.width, displayExtent_.height, 1};
     // Output, upscaled-real and history images all live in GENERAL layout.
     VkImage dumpSrc = which < outputs_ ? out_[which].image : (packReal_ ? outReal_.image : sources_[cur].image);
-    vt.CmdCopyImageToBuffer(cmd, dumpSrc, VK_IMAGE_LAYOUT_GENERAL, dumpBuf_[which].buffer, 1, &region);
+    copyToHost(cmd, dumpSrc, displayExtent_, dumpBuf_[which].buffer);
+}
+
+void FrameGen::recordReadbackSource(VkCommandBuffer cmd, uint32_t cur, VkBuffer dst) {
+    memoryBarrier(cmd);
+    copyToHost(cmd, sources_[cur].image, extent_, dst);
+}
+
+void FrameGen::copyToHost(VkCommandBuffer cmd, VkImage src, VkExtent2D extent, VkBuffer dst) {
+    auto& vt = dev_.vt;
+    VkBufferImageCopy region{};
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.imageExtent = {extent.width, extent.height, 1};
+    vt.CmdCopyImageToBuffer(cmd, src, VK_IMAGE_LAYOUT_GENERAL, dst, 1, &region);
     VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
@@ -861,28 +871,33 @@ static float pqDecodeNits(float e) {  // SMPTE ST 2084 EOTF: code value -> nits
 
 bool FrameGen::writeDump(const std::string& path, uint32_t which, uint32_t downscale) {
     if (!dumpMapped_[which]) return false;
-    downscale = std::max(1u, downscale);
     if (which < outputs_ && costMapped_)
         BDEX_DBG("%s: mean matching cost %.4f, histogram distance %.4f", path.c_str(), static_cast<const float*>(costMapped_)[0],
                  static_cast<const float*>(costMapped_)[7]);
-    const uint32_t enc = enc_.encoding & 0xffu;
+    return writePpm(path, dumpMapped_[which], displayExtent_, enc_, downscale);
+}
+
+bool FrameGen::writePpm(const std::string& path, const void* pixels, VkExtent2D extent, const OutputEncoding& encoding,
+                        uint32_t downscale) {
+    downscale = std::max(1u, downscale);
+    const uint32_t enc = encoding.encoding & 0xffu;
     FILE* f = fopen(path.c_str(), "wb");
     if (!f) return false;
     // downscale: a box filter of `downscale` x `downscale` pixels (recordings
     // for the corpus, which is scored far below display size).
-    const uint32_t ow = displayExtent_.width / downscale, oh = displayExtent_.height / downscale;
+    const uint32_t ow = extent.width / downscale, oh = extent.height / downscale;
     fprintf(f, "P6\n%u %u\n255\n", ow, oh);
-    std::vector<uint8_t> row(displayExtent_.width * 3);
+    std::vector<uint8_t> row(extent.width * 3);
     std::vector<uint32_t> acc(downscale > 1 ? size_t(ow) * 3 : 0);
     std::vector<uint8_t> outRow(downscale > 1 ? size_t(ow) * 3 : 0);
-    const uint32_t* px = static_cast<const uint32_t*>(dumpMapped_[which]);
-    for (uint32_t y = 0; y < (downscale > 1 ? oh * downscale : displayExtent_.height); ++y) {
-        for (uint32_t x = 0; x < displayExtent_.width; ++x) {
+    const uint32_t* px = static_cast<const uint32_t*>(pixels);
+    for (uint32_t y = 0; y < (downscale > 1 ? oh * downscale : extent.height); ++y) {
+        for (uint32_t x = 0; x < extent.width; ++x) {
             uint8_t r, g, b;
-            if (enc_.is64) {
+            if (encoding.is64) {
                 // RGBA16F: values as stored (linear, scRGB above 1 clipped).
-                const uint16_t* h = reinterpret_cast<const uint16_t*>(px) + (size_t(y) * displayExtent_.width + x) * 4;
-                const int32_t tr = enc_.transfer;
+                const uint16_t* h = reinterpret_cast<const uint16_t*>(px) + (size_t(y) * extent.width + x) * 4;
+                const int32_t tr = encoding.transfer;
                 auto q = [tr](uint16_t c) {
                     float f = halfToFloat(c);
                     if (tr == TRANSFER_SCRGB) f = srgbEncode(f * (80.f / 203.f));
@@ -893,10 +908,10 @@ bool FrameGen::writeDump(const std::string& path, uint32_t which, uint32_t downs
                 row[x * 3] = r; row[x * 3 + 1] = g; row[x * 3 + 2] = b;
                 continue;
             }
-            uint32_t v = px[y * displayExtent_.width + x];
+            uint32_t v = px[y * extent.width + x];
             if (enc == ENC_BGRA8) { b = v & 0xff; g = (v >> 8) & 0xff; r = (v >> 16) & 0xff; }
             else if (enc == ENC_RGBA8) { r = v & 0xff; g = (v >> 8) & 0xff; b = (v >> 16) & 0xff; }
-            else if (enc_.transfer == TRANSFER_PQ) {
+            else if (encoding.transfer == TRANSFER_PQ) {
                 auto q = [](uint32_t c) {
                     return uint8_t(std::lround(srgbEncode(pqDecodeNits(float(c & 1023u) / 1023.f) / 203.f) * 255.f));
                 };

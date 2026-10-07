@@ -151,7 +151,16 @@ public:
     // `which`: 0..outputs_-1 = generated outputs, outputs_ = real frame.
     void recordDump(VkCommandBuffer cmd, uint32_t which, uint32_t cur);
     bool writeDump(const std::string& path, uint32_t which, uint32_t downscale = 1);
+    // Recordings (FrameRecorder): the game's own frame `cur` (render size,
+    // before any upscale or HUD) copied into a host-visible buffer, between
+    // recordAcquireSources and recordReleaseSources.
+    void recordReadbackSource(VkCommandBuffer cmd, uint32_t cur, VkBuffer dst);
+    // Pixels read back from an image of `extent` and encoding `enc` to a PPM
+    // (any thread: touches no FrameGen state).
+    static bool writePpm(const std::string& path, const void* pixels, VkExtent2D extent, const OutputEncoding& enc,
+                         uint32_t downscale = 1);
     uint32_t outputCount() const { return outputs_; }
+    const OutputEncoding& encoding() const { return enc_; }
 
     int levels() const { return levels_; }
 
@@ -223,6 +232,8 @@ private:
     void writeImage(VkDescriptorSet set, uint32_t binding, VkDescriptorType type, VkImageView view) override;
     void writeBuffer(VkDescriptorSet set, uint32_t binding, VkBuffer buffer) override;
     void memoryBarrier(VkCommandBuffer cmd);
+    // An image (GENERAL layout) copied into a host-visible buffer, readable once the submission is done.
+    void copyToHost(VkCommandBuffer cmd, VkImage src, VkExtent2D extent, VkBuffer dst);
     void copyToPresent(VkCommandBuffer cmd, VkImage src, VkImageLayout srcLayout, VkAccessFlags srcAccess,
                        VkPipelineStageFlags srcStage, VkImage dst);
 

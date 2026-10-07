@@ -125,6 +125,7 @@ add_library(bdex_framegen SHARED
   ${BDEX_ENGINE_SOURCES}
   src/swapchain.cpp
   src/swapchain_worker.cpp
+  src/recorder.cpp
 )
 add_dependencies(bdex_framegen bdex_layer_shaders)
 target_include_directories(bdex_framegen PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated" src)

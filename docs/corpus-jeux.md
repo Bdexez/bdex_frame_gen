@@ -27,11 +27,16 @@ Varier les jeux compte plus que le nombre de scènes par jeu.
 
 ## 2. Comment enregistrer
 
-- **Panneau** : choisir le jeu détecté, bouton « Enregistrer ». Il garde les
-  150 images réelles suivantes dans `~/.cache/bdex-framegen/recordings/`.
+- **Panneau** (à préférer) : une fois dans la scène, bouton « ● Enregistrer »
+  sur la ligne du jeu (« Actualiser la liste » si le jeu a démarré après le
+  panneau ; le bouton n'existe que pour un jeu armé). Il garde les 150 images
+  réelles suivantes dans `~/.cache/bdex-framegen/recordings/`. Le jeu garde
+  sa cadence : les images sont relues et écrites hors de son thread.
 - **Ligne de commande** : `bdex-framegen --record ~/rec/<jeu>-<scène> 150 --
-  %command%` (options de lancement Steam). L'enregistrement se fait sans
-  génération : ×1, images réelles seulement.
+  %command%` (options de lancement Steam). Attention : il enregistre dès la
+  première image, donc les logos et le menu ; seulement pour un programme
+  qui démarre directement dans la scène. Sans génération : ×1, images
+  réelles seulement.
 
 Les fichiers s'appellent `sc0_<taille>_<n>_real_….ppm`. Si un dossier
 contient aussi des `sc1_…` (la swapchain a été recréée, par exemple après un

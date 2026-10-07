@@ -203,7 +203,7 @@ void DeviceData::destroyPipelineCache() {
     pipelineCache_ = VK_NULL_HANDLE;
 }
 
-AllocatedBuffer DeviceData::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible) {
+AllocatedBuffer DeviceData::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible, bool hostCached) {
     AllocatedBuffer buf;
     buf.size = size;
     VkBufferCreateInfo ci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
@@ -222,9 +222,17 @@ AllocatedBuffer DeviceData::createBuffer(VkDeviceSize size, VkBufferUsageFlags u
         vt.GetBufferMemoryRequirements(device, buf.buffer, &req);
         VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         ai.allocationSize = req.size;
-        ai.memoryTypeIndex = findMemoryType(req.memoryTypeBits, hostVisible
-                                                ? VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
-                                                : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        const VkMemoryPropertyFlags host = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        ai.memoryTypeIndex = findMemoryType(req.memoryTypeBits, hostVisible ? host : VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT));
+        if (hostVisible && hostCached) {
+            // Uncached (write-combined) memory read by the CPU: ~10x slower.
+            const VkMemoryPropertyFlags cached = host | VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+            for (uint32_t i = 0; i < memProps.memoryTypeCount; ++i)
+                if ((req.memoryTypeBits & (1u << i)) && (memProps.memoryTypes[i].propertyFlags & cached) == cached) {
+                    ai.memoryTypeIndex = i;
+                    break;
+                }
+        }
         VK_CHECK(vt.AllocateMemory(device, &ai, nullptr, &buf.memory));
         buf.allocated = req.size;
         memoryInUse += int64_t(req.size);
