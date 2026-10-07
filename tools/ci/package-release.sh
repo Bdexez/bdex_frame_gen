@@ -24,7 +24,10 @@ mkdir -p "$work/src"
 echo "== SPIR-V (glslc, Ubuntu 24.04)"
 docker run --rm -v "$work:/work" ubuntu:24.04 bash -euc '
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq && apt-get install -y -qq --no-install-recommends cmake make g++ glslc libvulkan-dev >/dev/null
+  quiet() { "$@" >/tmp/log 2>&1 || { cat /tmp/log; echo "failed: $*" >&2; return 1; }; }
+  retry() { for i in 1 2 3 4; do "$@" && return; echo "retry $i: $*" >&2; sleep $((i * 15)); done; return 1; }
+  pkgs() { quiet apt-get update && quiet apt-get install -y --no-install-recommends "$@"; }
+  retry pkgs cmake make g++ glslc libvulkan-dev
   cmake -S /work/src -B /work/spvbuild -DBDEX_BUILD_TESTS=OFF -DBDEX_BUILD_DEMO=OFF -DBDEX_BUILD_OFFLINE=OFF >/dev/null
   cmake --build /work/spvbuild --target bdex_layer_shaders -j"$(nproc)" >/dev/null
   cp -r /work/spvbuild/layer/spv /work/spv
@@ -35,11 +38,17 @@ docker run --rm -v "$work:/work" ubuntu:24.04 bash -euc '
 # from Kitware (static binary), newer Vulkan headers.
 setup='
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq
-  apt-get install -y -qq --no-install-recommends make git ca-certificates curl python3 binutils $PACKAGES >/dev/null
+  set -o pipefail
+  quiet() { "$@" >/tmp/log 2>&1 || { cat /tmp/log; echo "failed: $*" >&2; return 1; }; }
+  retry() { for i in 1 2 3 4; do "$@" && return; echo "retry $i: $*" >&2; sleep $((i * 15)); done; return 1; }
+  # apt-get update only warns when a mirror is unreachable: the install then
+  # finds no candidate. Both are retried together, output shown on failure.
+  pkgs() { quiet apt-get update && quiet apt-get install -y --no-install-recommends "$@"; }
+  retry pkgs make git ca-certificates curl python3 binutils $PACKAGES
   for t in gcc g++ $CROSS; do ln -sf "/usr/bin/$t-10" "/usr/local/bin/$t"; done
-  curl -sSL '"$CMAKE_URL"' | tar -xz -C /opt && ln -sf /opt/cmake-*/bin/cmake /usr/local/bin/cmake
-  git clone -q --depth 1 --branch '"$VULKAN_HEADERS"' https://github.com/KhronosGroup/Vulkan-Headers /vh 2>/dev/null
+  retry curl -fsSL -o /tmp/cmake.tar.gz '"$CMAKE_URL"'
+  tar -xzf /tmp/cmake.tar.gz -C /opt && ln -sf /opt/cmake-*/bin/cmake /usr/local/bin/cmake
+  retry git clone -q --depth 1 --branch '"$VULKAN_HEADERS"' https://github.com/KhronosGroup/Vulkan-Headers /vh
   export BDEX_SPIRV_DIR=/work/spv BDEX_VULKAN_INCLUDE_DIR=/vh/include BDEX_MAX_GLIBC=2.31
   cd /work/src
   echo "$(g++ --version | head -1), cmake $(cmake --version | head -1 | cut -d" " -f3), $(ldd --version | head -1)"'
