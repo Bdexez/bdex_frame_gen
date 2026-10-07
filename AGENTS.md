@@ -823,9 +823,12 @@ x2/x3/x4), sauf le correctif HDR (les chemins SDR restent identiques).
 - **Miroirs Ubuntu intermittents** (vécu le 2026-10-07, focal) : `apt-get
   update` n'avertit que (code 0), l'installation échoue ensuite sans rien
   dire du réseau. Les conteneurs des scripts `tools/ci/` montent
-  `tools/ci/apt-get` en `/usr/local/sbin/apt-get` (devant `/usr/bin`), qui
-  réessaie sur erreur réseau seulement ; tout nouveau `docker run` qui
-  utilise apt doit le monter aussi.
+  `tools/ci/apt-get` en `/opt/bdex-ci/apt-get`, hors du `PATH` (les scripts
+  détectent apt par `command -v apt-get` : monté dans `/usr/local/sbin`,
+  Fedora/Arch/Alpine prenaient la branche apt), mis devant seulement si
+  `/usr/bin/apt-get` existe (ligne après `export DEBIAN_FRONTEND`) ; il
+  réessaie sur erreur réseau seulement. Tout nouveau `docker run` qui
+  utilise apt : le montage + cette ligne.
 - **Avant de pousser un changement de CI** : `tools/ci/run.sh` (build) et
   `tools/ci/run.sh asan|tsan` rejouent les jobs dans Docker, même loader,
   lavapipe.

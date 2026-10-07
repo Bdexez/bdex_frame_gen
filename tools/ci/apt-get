@@ -1,10 +1,12 @@
 #!/bin/sh
-# apt-get for the CI containers, mounted as /usr/local/sbin/apt-get (ahead of
-# /usr/bin in PATH): retries when a mirror cannot be reached. apt-get update
-# only warns then and exits 0, and the install that follows finds no
-# candidate — the job failed with nothing pointing at the network. Only
-# network errors are retried: a missing package or a 404 (a release past its
-# end of life) fails at once, as before, for the scripts' own fallbacks.
+# apt-get for the CI containers: retries when a mirror cannot be reached.
+# apt-get update only warns then and exits 0, and the install that follows
+# finds no candidate — the job failed with nothing pointing at the network.
+# Only network errors are retried: a missing package or a 404 (a release past
+# its end of life) fails at once, as before, for the scripts' own fallbacks.
+# Mounted as /opt/bdex-ci/apt-get, outside PATH (the scripts detect apt with
+# `command -v apt-get`); each job puts it first only where /usr/bin/apt-get
+# exists.
 net='Connection failed|Could not connect|Connection timed out|Temporary failure|Could not resolve|Unable to connect|Hash Sum mismatch|Network is unreachable'
 log="$(mktemp)"
 i=0

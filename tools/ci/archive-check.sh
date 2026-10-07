@@ -28,6 +28,7 @@ trap 'rm -f "$job"' EXIT
 cat > "$job" <<'JOB'
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
+[ ! -x /usr/bin/apt-get ] || export PATH="/opt/bdex-ci:$PATH"  # tools/ci/apt-get
 suite="${1:-}"
 if [ -n "$suite" ]; then
   # arm64: a Debian tree unpacked (nothing run in it), its programs run by
@@ -163,7 +164,7 @@ for target in "${targets[@]}"; do
   fi
   ext=tar.gz
   case "$archive" in *.deb) ext=deb ;; *.rpm) ext=rpm ;; esac
-  if docker run --rm -v "$ROOT/tools/ci/apt-get:/usr/local/sbin/apt-get:ro" -v "$archive:/work/pkg.$ext:ro" -v "$job:/work/job.sh:ro" "${cmd[@]}" 2>&1 |
+  if docker run --rm -v "$ROOT/tools/ci/apt-get:/opt/bdex-ci/apt-get:ro" -v "$archive:/work/pkg.$ext:ro" -v "$job:/work/job.sh:ro" "${cmd[@]}" 2>&1 |
      sed "s|^|[$target] |"; then
     echo "[$target] OK"
   else
