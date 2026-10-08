@@ -1,0 +1,21 @@
+# Template file for 'bdex-framegen' (void-packages: srcpkgs/bdex-framegen).
+# glibc and musl; 64-bit layer only (Void's 32-bit packages come from its
+# i686 builds, as for every multilib library). tools/ci/void-check.sh
+pkgname=bdex-framegen
+version=0.5.5
+revision=1
+build_style=cmake
+configure_args="-DBDEX_BUILD_DEMO=OFF -DBDEX_BUILD_TESTS=OFF -DBDEX_BUILD_OFFLINE=OFF"
+hostmakedepends="glslang"
+makedepends="Vulkan-Headers"
+depends="vulkan-loader python3"
+short_desc="Frame generation and upscaling Vulkan layer for games"
+maintainer="Bdexez <elian.marzari@epitech.eu>"
+license="MIT"
+homepage="https://github.com/Bdexez/bdex_frame_gen"
+distfiles="https://github.com/Bdexez/bdex_frame_gen/archive/v${version}.tar.gz"
+checksum=@CHECKSUM@
+
+post_install() {
+	vlicense LICENSE
+}

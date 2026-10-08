@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE pkgmetadata SYSTEM "https://www.gentoo.org/dtd/metadata.dtd">
+<pkgmetadata>
+	<maintainer type="person">
+		<email>elian.marzari@epitech.eu</email>
+		<name>Bdexez</name>
+	</maintainer>
+	<use>
+		<flag name="gui">Install the control panel (bdex-framegen-gui, Python + GTK 4)</flag>
+	</use>
+	<upstream>
+		<remote-id type="github">Bdexez/bdex_frame_gen</remote-id>
+	</upstream>
+</pkgmetadata>
