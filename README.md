@@ -137,6 +137,37 @@ openSUSE Tumbleweed, and generates x2 there (`tools/ci/archive-check.sh`);
 your home: for **Steam, Heroic, Lutris or Bottles installed as a Flatpak**
 (or Steam as a Snap), run `bdex-framegen --sandboxes` once, as your user.
 
+**Flatpak launchers** (Steam, Heroic, Lutris from Flathub): the layer also
+exists as a Flatpak Vulkan layer extension, like MangoHud and vkBasalt —
+`packaging/flatpak/org.freedesktop.Platform.VulkanLayer.BdexFramegen.yml`
+(Freedesktop runtime 25.08, 64 and 32-bit). Once installed (`flatpak-builder
+--user --install build-dir <that file>`, or from Flathub when it is
+published there), every app on that runtime loads it and `flatpak update`
+keeps it current; `bdex-framegen --sandboxes` then copies only the settings
+into those apps. Built and loaded by the runtime's loader in CI
+(`tools/ci/flatpak-check.sh`).
+
+**Source packages for the distributions' build services** — rebuilt by the
+distribution, updated with the system:
+
+| | Recipe | Checked by |
+|---|---|---|
+| Fedora COPR, openSUSE Build Service | `packaging/rpm/bdex-framegen.spec` (32-bit layer on x86_64: enable multilib in COPR) | `tools/ci/srpm-check.sh` (Fedora, Tumbleweed) |
+| Launchpad PPA, OBS for Debian/Ubuntu | `packaging/debian/` (copy to `debian/`) | `tools/ci/debsrc-check.sh` (Ubuntu 24.04, 22.04, Debian 12) |
+| Gentoo | overlay `packaging/gentoo` (`games-util/bdex-framegen`, `ABI_X86="64 32"`, `USE=gui`) | `tools/ci/gentoo-check.sh` |
+| Void Linux (glibc, musl) | `packaging/void/bdex-framegen/template` (void-packages) | `tools/ci/void-check.sh` |
+
+Each check builds the recipe from the checkout in the distribution's
+container, installs the result and checks the libraries and manifests (CI
+job `source-packages`). Publishing them needs the repository to be public.
+
+**Laptops with two GPUs**: the game should run on the GPU the screen is
+plugged into, or every frame — generated ones included — is copied from one
+GPU to the other (`bdex-framegen --report` says so). `bdex-framegen --gpu
+screen -- <game>` (or `discrete`, `integrated`, `nvidia`, `amd`, `intel`;
+`--gpu list`) sets Mesa's device selection, NVIDIA's PRIME offload and
+DXVK / VKD3D-Proton's device filter.
+
 **NixOS** — in the system's flake:
 
 ```nix
@@ -161,6 +192,9 @@ Download from the [GitHub releases](https://github.com/Bdexez/bdex_frame_gen/rel
   (64-bit layer, and the 32-bit one for 32-bit games);
 - `bdex-framegen-linux-aarch64-<version>.tar.gz` — ARM64: Asahi Linux (Apple
   Silicon), Snapdragon laptops, Raspberry Pi 5…
+  (native ARM64 Vulkan programs; on Asahi, Steam's x86 games run in a
+  muvm + FEX virtual machine whose x86_64 Vulkan loader cannot load an ARM64
+  layer — not covered yet)
 
 ```sh
 tar xzf bdex-framegen-linux-*.tar.gz

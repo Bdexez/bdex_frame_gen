@@ -8,6 +8,32 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Linux distributions
 
+- **Flatpak Vulkan layer extension**
+  (`packaging/flatpak/org.freedesktop.Platform.VulkanLayer.BdexFramegen.yml`,
+  Freedesktop runtime 25.08, 64 and 32-bit, Flathub-ready): every Flatpak
+  app on that runtime loads the layer, `flatpak update` updates it.
+  `flatpak.sh` copies no layer into an app the extension covers (only the
+  settings, and a mark the panel and `--report` read). Checked by
+  `tools/ci/flatpak-check.sh`: built in a container, loaded by the runtime's
+  64-bit loader, listed by its i386 one.
+- **Source packages for build services**, each built from the checkout in
+  the distribution's container, installed and checked (CI job
+  `source-packages`): `packaging/rpm/bdex-framegen.spec` (COPR, OBS; Fedora 44
+  and Tumbleweed, 32-bit layer included, no 32-bit glibc dependency),
+  `packaging/debian/` (PPA, OBS; Ubuntu 24.04, 22.04, Debian 12, i386 layer
+  in `lib/i386-linux-gnu`), a Gentoo overlay (`packaging/gentoo`, multilib
+  `ABI_X86="64 32"`, `USE=gui`) and a Void template (glibc and musl).
+- **`bdex-framegen --gpu screen | discrete | integrated | nvidia | amd |
+  intel | list`**: the game on one GPU of a hybrid laptop (Mesa device
+  selection, NVIDIA PRIME offload, DXVK / VKD3D-Proton device filter) — the
+  GPU the screen is plugged into avoids a PRIME copy of every frame; the
+  report's PRIME hint names it.
+- `tools/uninstall.sh --purge`: also the settings and caches (and their
+  copies in Flatpak / Snap launchers).
+- `bdex-framegen --help` printed a fixed range of lines and had lost its
+  last options.
+- `docs/linux-validation.md`: what to try on real machines (Flatpak Steam,
+  Deck, Snap, SELinux, NVIDIA + KDE, hybrid laptops...) and what to send.
 - **Outdated sandbox copies**: after an update of the layer (package,
   archive, AUR...), the copies in the Flatpak / Snap launchers kept the old
   one. `flatpak.sh --check <prefix>` lists them; the control panel re-copies
