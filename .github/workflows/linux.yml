@@ -221,6 +221,21 @@ jobs:
       - name: Build and test (${{ matrix.image }})
         run: tools/ci/distro-check.sh "${{ matrix.image }}"
 
+  # The distributions' own source packages, built from this checkout as their
+  # build services would (COPR / OBS spec, Debian source package for a PPA,
+  # Gentoo ebuild, Void template, Flathub extension), 32-bit layer included
+  # where the distribution packages it, then installed and checked.
+  source-packages:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [srpm-check, debsrc-check, gentoo-check, void-check, flatpak-check]
+    steps:
+      - uses: actions/checkout@v4
+      - name: ${{ matrix.check }}
+        run: tools/ci/${{ matrix.check }}.sh
+
   # The control panel in containers, on a virtual display: GTK 4 with and
   # without libadwaita, and its text mode where GTK 4 is missing (Ubuntu
   # 20.04).
