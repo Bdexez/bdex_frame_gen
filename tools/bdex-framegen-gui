@@ -739,13 +739,38 @@ FLATPAK_APPS = ("com.valvesoftware.Steam", "com.heroicgameslauncher.hgl", "net.l
 SNAP_APPS = ("steam",)
 
 
+FLATPAK_EXTENSION = "org.freedesktop.Platform.VulkanLayer.BdexFramegen"
+
+
+def flatpak_extension_branch(app, roots=None):
+    """The Freedesktop runtime branch of a Flatpak app when the layer's
+    extension is installed for it (it then loads the layer without a copy in
+    the app's directory; packaging/linux/flatpak.sh), else None."""
+    roots = roots or (os.path.expanduser("~/.local/share/flatpak"), "/var/lib/flatpak")
+    for root in roots:
+        try:
+            with open(os.path.join(root, "app", app, "current", "active", "metadata")) as f:
+                runtime = next((ln.split("=", 1)[1].strip() for ln in f if ln.startswith("runtime=")), "")
+        except OSError:
+            continue
+        if not runtime.startswith("org.freedesktop.Platform/"):
+            return None
+        branch = runtime.rsplit("/", 1)[-1]
+        arch = os.uname().machine
+        if any(os.path.isdir(os.path.join(r, "runtime", FLATPAK_EXTENSION, arch, branch)) for r in roots):
+            return branch
+        return None
+    return None
+
+
 def sandbox_dirs():
     """(status dir, config file) inside each Flatpak or Snap launcher the layer
     is installed in: the paths a game started there reads."""
     out = []
     for app in FLATPAK_APPS:
         d = os.path.expanduser(f"~/.var/app/{app}")
-        if os.path.isfile(os.path.join(d, "data/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen.json")):
+        if os.path.isfile(os.path.join(d, "data/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen.json")) or \
+                (os.path.isdir(d) and flatpak_extension_branch(app)):
             out.append((os.path.join(d, ".cache", "bdex-framegen", "run"), os.path.join(d, "config", "bdex-framegen.conf")))
     for app in SNAP_APPS:
         d = os.path.expanduser(f"~/snap/{app}/current")
