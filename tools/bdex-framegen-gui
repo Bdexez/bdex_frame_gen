@@ -1190,6 +1190,9 @@ def describe_entry(e):
         lvl = int(e.get("gpu_budget_level", 0))
         if lvl > 0:
             parts.append(f"budget GPU : niveau {lvl}")
+        unc = float(e.get("flow_uncertain_pct", -1))
+        if unc >= 0:   # flow_confidence
+            parts.append(f"flux incertain sur {unc:.0f} % de l'image")
         if e.get("reason") == "fast":   # skip_fast
             parts.append("génération inutile : le jeu tient déjà la fréquence de l'écran")
     except ValueError:

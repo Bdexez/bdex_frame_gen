@@ -8,6 +8,16 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Diagnostics
 
+- **Flow confidence** (`flow_confidence`, opt-in pass at the flow's
+  resolution): per flow texel, the backward vector and the forward one at its
+  endpoint must cancel out on textured content (flat areas, which any vector
+  warps the same, do not count — without that, the demo's flat squares read
+  as untrusted) and pair the same luma. The share of uncertain flow goes to
+  the statistics line, the status file, the panel and `--report` (demo: 0.7 %
+  at a quarter speed, 1.9 % normal, 6.9 % at 3x); `debug=confidence` paints it
+  red. `confidence_fallback` fades to the plain cross-fade there (binding 9 of
+  the synthesis, full variant only): at 0.5 demo +0.20 dB, fast demo +0.02,
+  synthetic corpus −0.2 to −1.1 dB, more flicker everywhere — left at 0.
 - **Pacing graph** (`overlay = 6` / `pacing`, panel « + graphe de
   cadencement »): under the fps text, one column per present for the last
   64 — the game's frame time (green near the interval the pacing aims at,

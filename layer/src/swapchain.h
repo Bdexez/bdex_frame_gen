@@ -198,6 +198,7 @@ private:
     uint8_t hudGraphRing_[FgHud::kHudGraph] = {};  // HUD level 6 samples (FgHud::graph)
     int hudGraphHead_ = 0;
     uint64_t hudReplacedSeen_ = 0;
+    double uncertainPct_ = -1.0;        // flow_confidence: share of uncertain flow, last statistics period
     bool fastSkip_ = false;             // skip_fast: generation idle, the game near the refresh rate
     double fastSinceMs_ = 0.0;          // when the game crossed the threshold the other way
     std::atomic<bool> feedback_{false};

@@ -39,6 +39,7 @@ SETTINGS = [
     ("census_margin=0.1,census_weight=1", "ie"), ("refine_bias=1", "ie"), ("levels=5", "ie"),
     ("search=3,search_fine=3", "ie"), ("flow_iterations=2", "ie"), ("refine=0", "ie"), ("refine_all=0", "ie"),
     ("scene_cut_low=0.02,scene_cut_high=0.04", "ie"), ("online_tune=1", "ie"),
+    ("flow_confidence=1,confidence_fallback=0.5", "ie"),
     ("upscale_temporal=0.3", "ie", ["--render-scale", "0.5"]), ("render_scale=0.5", "ie", ["--render-scale", "0.5"]),
     ("upscale_filter=bicubic,sharpness=0.5", "ie", ["--render-scale", "0.5"]),
     # Everything at once, per mode.

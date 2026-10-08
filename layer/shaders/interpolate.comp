@@ -48,6 +48,7 @@ layout(std430, binding = 5) readonly buffer Cost {
 layout(binding = 6, r32ui) uniform readonly uimage2D splatMap;  // forward-splat sources (extrapolation, see splat.comp)
 layout(binding = 7) uniform sampler2D prevBwdTex;  // previous pair's backward flow (extrapolate_accel)
 layout(binding = 8) uniform sampler2D staticMask;  // hud_mask: frames each render pixel stayed unchanged (1x1 zero when off)
+layout(binding = 9) uniform sampler2D confMap;     // flow_confidence: trust in the finest flow, 0..1 (1x1 one when off)
 
 #define ENC_RGBA8      0u
 #define ENC_BGRA8      1u
@@ -60,6 +61,7 @@ layout(binding = 8) uniform sampler2D staticMask;  // hud_mask: frames each rend
 #define DBG_NONE  0
 #define DBG_FLOW  1
 #define DBG_SPLIT 2
+#define DBG_CONF  3   // debug=confidence: red where flow_confidence does not trust the flow
 
 layout(push_constant) uniform PC {
     ivec2 size;
@@ -83,7 +85,11 @@ layout(push_constant) uniform PC {
     int bicubic;             // synth_bicubic: Catmull-Rom sampling along the trajectories (0 = bilinear, historical)
     float staticFrames;      // hud_mask: pixels unchanged for at least this many frames stay as in cur (0 = off)
     int revealFill;          // extrapolation: a revealed pixel takes the slower-moving (background) of the last two sources
+    float confFallback;      // interpolation: fade to the plain cross-fade where confMap is low (0 = off, historical)
 } pc;
+
+// flow_confidence's trust at display pixel p (the map covers the flow's area).
+float confidenceAt(vec2 p) { return texture(confMap, p * pc.flowInvSize).r; }
 
 // Catmull-Rom sampling in 9 bilinear taps (the separable weights of the
 // 4x4 kernel, the middle two taps of each axis merged into one bilinear
@@ -435,6 +441,11 @@ void main() {
     // newly revealed pixels it avoids blending in the hidden endpoint.
     float bad = smoothstep(0.12, 0.25, min(ef, eb)) * (1.0 - pc.occlusionStrength);
     c = mix(c, mix(texture(prevTex, uv), cur, t), bad);
+    // confidence_fallback: where the flow itself is not trusted (its vectors
+    // do not round-trip, or pair different luma), the plain cross-fade —
+    // a soft blur instead of a confidently wrong warp.
+    if (kOptIns && pc.confFallback > 0.0)
+        c = mix(c, mix(texture(prevTex, uv), cur, t), pc.confFallback * (1.0 - confidenceAt(q)));
     }
 
     // Interpolation only: an unchanged pixel says nothing about the frame
@@ -464,6 +475,8 @@ void main() {
     } else if (pc.debugMode == DBG_SPLIT) {
         if (p.x > pc.size.x / 2) c = cur;
         if (abs(p.x - pc.size.x / 2) < 2) c = vec4(1.0, 0.0, 1.0, 1.0);
+    } else if (kOptIns && pc.debugMode == DBG_CONF) {
+        c.rgb = mix(c.rgb, vec3(1.0, 0.12, 0.08), 0.75 * (1.0 - confidenceAt(vec2(p) + 0.5)));
     }
     // (The fps HUD is drawn over the finished output by passes/fps_hud.cpp.)
     store(p, c);

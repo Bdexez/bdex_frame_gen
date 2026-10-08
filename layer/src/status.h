@@ -23,6 +23,7 @@ struct StatusEntry {
     double limitHz = 0.0;    // Steam's framerate limit in gamescope (the screen shows no more), 0 none
     double latencyMs = -1.0; // present-to-screen, -1 unknown
     int budgetLevel = 0;     // gpu_budget quality level
+    double uncertainPct = -1.0;  // flow_confidence: share of the flow not trusted, -1 not measured
     uint32_t width = 0, height = 0;
     std::string device;      // GPU name
     std::string passes;      // optional passes running (fg_pass.h), comma-separated

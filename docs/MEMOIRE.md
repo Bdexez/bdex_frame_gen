@@ -775,6 +775,17 @@ faisait planter le jeu. Chaque essai repart du lien qui suit la couche
 - Principe : partir de « ça ne marche pas chez lui » et chercher la cause
   dans les données.
 
+**Confiance du flux** (02/10, `flow_confidence`, passe `flow_confidence.comp`
+à la résolution du flux) : aller-retour des vecteurs sur contenu texturé
+(zones unies exclues : sinon tout le damier de la démo était « incertain »)
+et accord de luma ; part incertaine dans les stats, le statut, le panneau,
+`--report` (démo 0,7 % à ¼ vitesse, 1,9 % normale, 6,9 % à ×3) ;
+`debug=confidence` en rouge. Repli `confidence_fallback` (binding 9 de la
+synthèse, variante complète seulement) **mesuré négatif** : 0,5 → démo +0,20,
+rapide +0,02, corpus −0,2 à −1,1 dB, scintillement en hausse partout ;
+laissé à 0. Ne pas y revenir sans nouvelle idée de repli (le fondu est plus
+flou qu'un warp approximatif).
+
 **Qualité** : mouvement rapide (ambiguïté du coût SAD), rotations et zoom
 (modèle affine par bloc à faire), occlusions.
 

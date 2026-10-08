@@ -22,6 +22,7 @@ bdex_add_shaders(bdex_layer_shaders
     shaders/upscale_temporal.comp
     shaders/flow_lk.comp
     shaders/hud_mask.comp
+    shaders/flow_confidence.comp
     shaders/flow_compose.comp
     shaders/probe_compare.comp
     shaders/interpolate.comp:u32
@@ -97,6 +98,7 @@ set(BDEX_ENGINE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/temporal_upscale.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/subpixel_lk.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/hud_mask.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/flow_confidence.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/extrapolate_accel.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/extrapolate_splat.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/fps_hud.cpp

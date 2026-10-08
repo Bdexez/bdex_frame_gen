@@ -1,0 +1,61 @@
+#version 450
+// flow_confidence: how far the finest flow can be trusted, per flow texel —
+// 1 where the backward vector and the forward one at its endpoint cancel out
+// and the luma it pairs matches, falling to 0 past 4 luma pixels of
+// round-trip error on textured content or a clear brightness mismatch
+// (occlusions, ambiguous textures, the flow given up); flat areas, which any
+// vector warps the same, do not count their round trip. Written for the
+// synthesis's soft fallback and debug view (binding 9), and counted (below
+// 0.5: uncertain) for the statistics.
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0) uniform sampler2D flowFwd;   // at previous-frame positions (luma pixels)
+layout(binding = 1) uniform sampler2D flowBwd;   // at current-frame positions
+layout(binding = 2) uniform sampler2D lumaCur;
+layout(binding = 3) uniform sampler2D lumaPrev;
+layout(binding = 4, r32f) uniform writeonly image2D conf;
+layout(std430, binding = 5) buffer Counts { uint c[]; } cnt;  // per profiling slot: uncertain, total
+
+layout(push_constant) uniform PC {
+    ivec2 fine;    // flow texels
+    ivec2 luma;    // level-0 luma pixels
+    int block;     // luma pixels per flow texel
+    int slot;      // where this frame's counts go
+} pc;
+
+shared uint sUncertain;
+shared uint sTotal;
+
+void main() {
+    if (gl_LocalInvocationIndex == 0u) { sUncertain = 0u; sTotal = 0u; }
+    barrier();
+    ivec2 x = ivec2(gl_GlobalInvocationID.xy);
+    if (all(lessThan(x, pc.fine))) {
+        vec2 pos = (vec2(x) + 0.5) * float(pc.block);       // luma pixels, current frame
+        vec2 B = texelFetch(flowBwd, x, 0).xy;
+        vec2 pp = pos + B;                                   // where it came from in the previous frame
+        vec2 cover = vec2(pc.fine * pc.block);
+        vec2 F = texture(flowFwd, pp / cover).xy;
+        float roundTrip = length(B + F);
+        float err = abs(texture(lumaCur, pos / vec2(pc.luma)).r - texture(lumaPrev, pp / vec2(pc.luma)).r);
+        bool inside = all(greaterThanEqual(pp, vec2(0.0))) && all(lessThan(pp, vec2(pc.luma)));
+        // Where the picture is flat any vector warps it the same: an
+        // inconsistent round trip only counts where there is texture to
+        // misplace (the luma gradient across the flow texel).
+        vec2 lp = pos / vec2(pc.luma), d = vec2(float(pc.block) * 0.5) / vec2(pc.luma);
+        float gx = texture(lumaCur, lp + vec2(d.x, 0.0)).r - texture(lumaCur, lp - vec2(d.x, 0.0)).r;
+        float gy = texture(lumaCur, lp + vec2(0.0, d.y)).r - texture(lumaCur, lp - vec2(0.0, d.y)).r;
+        float textured = smoothstep(0.02, 0.08, length(vec2(gx, gy)));
+        float trip = 1.0 - smoothstep(1.0, 4.0, roundTrip) * textured;
+        float c = trip * (1.0 - smoothstep(0.05, 0.2, err));
+        if (!inside) c = min(c, 0.25);                       // came from outside the picture: revealed
+        imageStore(conf, x, vec4(c));
+        atomicAdd(sTotal, 1u);
+        if (c < 0.5) atomicAdd(sUncertain, 1u);
+    }
+    barrier();
+    if (gl_LocalInvocationIndex == 0u) {
+        atomicAdd(cnt.c[2 * pc.slot], sUncertain);
+        atomicAdd(cnt.c[2 * pc.slot + 1], sTotal);
+    }
+}

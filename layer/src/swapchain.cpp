@@ -89,6 +89,7 @@ void VirtualSwapchain::publishStatus(int multiplier) {
     e.limitHz = gsLimited_.load() ? gsHz_.load() : 0.0;
     e.latencyMs = displayLatencyMs();
     e.budgetLevel = budget_.level();
+    e.uncertainPct = uncertainPct_;
     e.width = displayExtent_.width;
     e.height = displayExtent_.height;
     e.device = dev_.props.deviceName;
@@ -1266,6 +1267,12 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
                 len += snprintf(skip + len, sizeof(skip) - size_t(len), ", next frame held %.1f ms",
                                 statsStartDelayMs_ / statsAppFrames_);
             statsStartDelayMs_ = 0.0;
+            if (fg_) {
+                const double u = fg_->takeUncertainShare();
+                if (u >= 0.0) uncertainPct_ = 100.0 * u;
+                if (u >= 0.0 && len < int(sizeof(skip)))
+                    len += snprintf(skip + len, sizeof(skip) - size_t(len), ", flow uncertain on %.1f%% of the picture", 100.0 * u);
+            }
             if (fastSkip_ && len < int(sizeof(skip)))
                 len += snprintf(skip + len, sizeof(skip) - size_t(len), ", generation idle: the game is at the screen's rate (skip_fast)");
             if (cfg_.latencyLimiter && dev_.appPacesLatency(msOf(clock::now())) && len < int(sizeof(skip)))
