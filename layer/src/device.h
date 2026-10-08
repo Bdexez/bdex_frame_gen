@@ -52,6 +52,11 @@ struct AllocatedBuffer {
     VkDeviceSize size = 0;
 };
 
+// Steady-clock milliseconds (the swapchains' msOf(clock::now())).
+inline double steadyMs() {
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 struct DeviceData {
     DeviceDispatch vt;
     InstanceData* inst = nullptr;
@@ -78,6 +83,18 @@ struct DeviceData {
     // second queue of `queue`'s own family (present_queue, the default).
     bool asyncCompute = false;
     bool splitQueue = false;
+    bool synthPriorityHigh = false;  // the synthesis queue was created at a high global priority (synth_priority)
+    // The game paces itself for latency — Reflex (VK_NV_low_latency2: low
+    // latency mode on, vkLatencySleepNV each frame) or Anti-Lag
+    // (vkAntiLagUpdateAMD on): when it last did (steady-clock ms), so the
+    // layer's latency_limiter steps aside instead of stacking a second hold
+    // on the driver's.
+    std::atomic<bool> appLowLatencyMode{false};
+    std::atomic<double> appPacedAtMs{0.0};
+    bool appPacesLatency(double nowMs) const {
+        const double at = appPacedAtMs.load(std::memory_order_relaxed);
+        return at > 0.0 && nowMs - at < 1000.0;
+    }
     VkQueue computeQueue = VK_NULL_HANDLE;
     uint32_t computeFamily = 0;
     uint32_t computeIndex = 0;

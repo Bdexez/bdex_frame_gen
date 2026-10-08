@@ -513,6 +513,8 @@ them).
 | `REQUIRE_APP` | `0` | The control panel (`bdex-framegen-gui`) decides, like the Windows launcher; the panel writes `1` (with `ENABLED=1`). Every Vulkan game is armed — the layer takes its swapchain and passes the frames through — except desktop programs (browsers, Steam, gamescope, GTK 4 apps). Pick a running game in « Jeux détectés », « Démarrer »: generation starts in that game; the options apply live (multiplier, mode, flow, HUD: the output stage is rebuilt); « Arrêter » or closing the panel stops it. Upscaling (`RENDER_SCALE`) applies to games started while the panel is open. `BDEX_FG=1` (Steam launch option, `bdex-framegen -- game`) bypasses it, and so does `require_app = 0` in a game's own section: that game generates without the panel (the panel's « Mode Jeu — sans le panneau », `bdex-framegen --always-on GAME`; in `[*]`, every game — desktop programs still excluded). |
 | `LOW_LATENCY` | `0` | block the game until its previous frame has been handed to the display (only matters with FIFO) |
 | `MAX_FRAME_LATENCY` / `FRAME_LATENCY` | `1` | While generating: frames the GPU may still be working on when the game begins its next one (like a driver's low-latency mode). `1` = the game's present returns only once the GPU has finished its previous frame (rendering and synthesis), so a GPU-bound game cannot queue frames ahead, each of which is a frame interval of input lag (measured, GPU-bound demo at 4K: frame-to-screen 50 → 36 ms, and 60 → 71 fps from less GPU contention). `0` = no limit. Applied live. |
+| `INTERP_HOLD` | `1` | Interpolation: the real frame's hold as a fraction of the usual one ((m − 1)/m of a frame at xm). Below 1 the generated frames go out closer together before the real one, each showing the content of its own display time — motion stays right, the spacing becomes uneven (x2 at `0.5`: a quarter of a frame, then three quarters). Never closer than one refresh of the screen (two frames in one refresh would replace each other), so a low value means "as low as the screen allows". Measured, demo at 40 fps x2 on 144 Hz: frame-to-screen 43.4 → 37.6 ms at `0.5`, 79.3 of the 80 frames a second still displayed; at 60 fps x2 the 144 Hz screen leaves almost nothing to gain (a refresh is 0.83 of the half frame). `1` = evenly spaced. Applied live. |
+| `SYNTH_PRIORITY` | `1` | With `ASYNC_COMPUTE`: the synthesis queue at a high global priority (`VK_KHR_global_priority`), so the GPU runs the generated and real frames' work before a GPU-bound game's next frame. Drivers grant it to privileged processes only — NVIDIA and amdgpu (without `CAP_SYS_NICE`) refuse it, and the queue then keeps normal priority. Read at start-up. |
 | `LATENCY_LIMITER` | `1` | While generating, with `MAX_FRAME_LATENCY`: when the GPU is the bottleneck, the game's present returns just in time for its next frame to reach the GPU as it frees up, instead of as soon as the previous frame is done — the game reads its input later for the same frame on screen, like Reflex or Anti-Lag, in every Vulkan game. Steered by how long the game waits for the GPU, keeping a slack that follows the game's frame-time jitter (it grows each time the game finds the GPU idle); a game that is not GPU-bound never waits and is never held. Measured, GPU-bound demo at 4K x2: frame-to-screen 26.8 → 18.3 ms, game 97 → 101 fps; with the CPU busy elsewhere it cost 6 % of the frame rate. The statistics line shows the hold (`next frame held N ms`). `0` to disable. Applied live. |
 | `SCENE_CUT_LOW` / `SCENE_CUT_HIGH` | `0.05` / `0.09` | scene cut detection thresholds |
 | `SCENE_CUT_HIST` | `0.05` | The scene-cut fallback also needs the brightness distribution to move (the earth mover's distance between the two frames' luma histograms): above `SCENE_CUT_LOW`, the flow cost counts only as far as it did. Noise, film grain, foliage and fast motion raise the flow cost like a cut does, and the fallback then faded the whole picture toward the real frame (a ghost) or repeated it (no generation). Measured: real cuts 0.18 and up, grain and fast motion under 0.02; heavy grain +0.11 dB and flicker −0.5 to −0.7, cuts still caught, normal content bit for bit unchanged. `0` = the cost alone decides. |
@@ -624,12 +626,27 @@ still cost 6 % of the frame rate there: `LATENCY_LIMITER=0` if the frame rate
 matters more. The statistics line reports both figures (`frame-to-screen`,
 `next frame held`).
 
+**`INTERP_HOLD`** trades interpolation's even spacing for latency: below 1
+the generated frames are shown closer together before the real one, which
+then goes out sooner (each frame still shows the content of its own display
+time). The screen bounds it — never two frames in one refresh — so the gain
+grows with the refresh rate and with lower game frame rates: 40 fps x2 on
+144 Hz, frame-to-screen 43.4 → 37.6 ms at `INTERP_HOLD=0.5`; 60 fps x2 on
+144 Hz, under a millisecond. On a 240 Hz screen 60 fps x2 can go down to
+half the hold.
+
+A game that has its own **Reflex** (`VK_NV_low_latency2`, e.g. through
+DXVK-NVAPI) or **Anti-Lag** (`VK_AMD_anti_lag`) turned on paces itself
+through the driver: the layer's `LATENCY_LIMITER` then steps aside rather
+than adding a second hold (the statistics line says `latency limiter off`).
+
 ---
 
 ## Limitations
 
 - **Latency**: interpolation displays the real frame half a frame later (at
-  x2); `MODE=extrapolate` removes that delay but predicts. Input is not touched.
+  x2); `INTERP_HOLD` shortens that within what the screen's refresh allows,
+  `MODE=extrapolate` removes it but predicts. Input is not touched.
 - **Vsync**: by default the layer presents with mailbox (no tearing, no
   queueing). With `PRESENT_MODE=app` and a FIFO game on a 60 Hz display, x2
   caps the game at 30 fps, x3 at 20 fps, and queued frames add latency.

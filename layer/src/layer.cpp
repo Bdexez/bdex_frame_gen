@@ -257,11 +257,22 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
     PFN_vkGetInstanceProcAddr gipa = chain->u.pLayerInfo->pfnNextGetInstanceProcAddr;
     PFN_vkGetDeviceProcAddr gdpa = chain->u.pLayerInfo->pfnNextGetDeviceProcAddr;
     chain->u.pLayerInfo = chain->u.pLayerInfo->pNext;
+    VkLayerDeviceLink* const below = chain->u.pLayerInfo;
 
     InstanceData* inst = getInstance(dispatchKey(physDev));
     if (!inst) return VK_ERROR_INITIALIZATION_FAILED;
-    auto createDevice = reinterpret_cast<PFN_vkCreateDevice>(gipa(inst->instance, "vkCreateDevice"));
-    if (!createDevice) return VK_ERROR_INITIALIZATION_FAILED;
+    auto nextCreateDevice = reinterpret_cast<PFN_vkCreateDevice>(gipa(inst->instance, "vkCreateDevice"));
+    if (!nextCreateDevice) return VK_ERROR_INITIALIZATION_FAILED;
+    // Every layer below advances the same link chain as it calls down: a
+    // retry (without present feedback, without a high-priority queue) must
+    // start again from the link after ours — from where the previous attempt
+    // left it, gamescope's WSI layer called past itself into the driver's
+    // entry point with the wrong chain, and the game crashed.
+    auto createDevice = [&](VkPhysicalDevice pd, const VkDeviceCreateInfo* info, const VkAllocationCallbacks* alloc,
+                            VkDevice* out) {
+        chain->u.pLayerInfo = below;
+        return nextCreateDevice(pd, info, alloc, out);
+    };
 
     auto data = std::make_unique<DeviceData>();
     data->inst = inst;
@@ -309,6 +320,9 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
     // One more queue of family f for the layer, after the application's
     // (and the layer's) others: its index.
     std::vector<uint32_t> added(nf, 0);
+    // The queue create info that holds only the layer's queue of a family
+    // (none for a family the application uses: its info is shared).
+    std::vector<int> ownInfo(nf, -1);
     auto addQueue = [&](uint32_t f) {
         const uint32_t index = requested[f] + added[f]++;
         bool found = false;
@@ -326,6 +340,7 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
             q.queueFamilyIndex = f;
             q.queueCount = 1;
             q.pQueuePriorities = prioStorage.back().data();
+            ownInfo[f] = static_cast<int>(qcis.size());
             qcis.push_back(q);
         }
         return index;
@@ -382,6 +397,42 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
     VkDeviceCreateInfo ci = *pCreateInfo;
     ci.queueCreateInfoCount = static_cast<uint32_t>(qcis.size());
     ci.pQueueCreateInfos = qcis.data();
+    std::vector<const char*> exts(pCreateInfo->ppEnabledExtensionNames,
+                                  pCreateInfo->ppEnabledExtensionNames + pCreateInfo->enabledExtensionCount);
+
+    // synth_priority: the synthesis queue, when it has a family (and so a
+    // queue create info) of its own — async_compute's compute-only family —
+    // at a high global priority, so the GPU runs the generated and real
+    // frames' work before a GPU-bound game's next frame. (A family shared
+    // with the game can only have one priority for all its queues: not
+    // touched.) Some drivers refuse high priority to unprivileged processes:
+    // the device is then created without it.
+    VkDeviceQueueGlobalPriorityCreateInfoEXT prio{VK_STRUCTURE_TYPE_DEVICE_QUEUE_GLOBAL_PRIORITY_CREATE_INFO_EXT};  // (EXT names: in headers 1.3.204 too)
+    prio.globalPriority = VK_QUEUE_GLOBAL_PRIORITY_HIGH_EXT;
+    int prioInfo = -1;
+    const char* prioExt = nullptr;
+    bool prioExtAdded = false;
+    if (data->config.enabled && data->config.synthPriority && data->asyncCompute && !data->splitQueue &&
+        ownInfo[data->computeFamily] >= 0) {
+        uint32_t n = 0;
+        inst->vt.EnumerateDeviceExtensionProperties(physDev, nullptr, &n, nullptr);
+        std::vector<VkExtensionProperties> avail(n);
+        inst->vt.EnumerateDeviceExtensionProperties(physDev, nullptr, &n, avail.data());
+        for (const char* name : {"VK_KHR_global_priority", "VK_EXT_global_priority"})
+            for (const auto& e : avail)
+                if (!prioExt && strcmp(e.extensionName, name) == 0) prioExt = name;
+        if (prioExt) {
+            prioInfo = ownInfo[data->computeFamily];
+            prio.pNext = qcis[prioInfo].pNext;
+            qcis[prioInfo].pNext = &prio;
+            bool have = false;
+            for (const char* e : exts) have |= strcmp(e, prioExt) == 0;
+            if (!have) exts.push_back(prioExt);
+            prioExtAdded = !have;
+            ci.enabledExtensionCount = static_cast<uint32_t>(exts.size());
+            ci.ppEnabledExtensionNames = exts.data();
+        }
+    }
 
     // Present feedback for the layer's own swapchains: VK_KHR_present_id +
     // VK_KHR_present_wait tell when each frame is really displayed. They stay
@@ -389,8 +440,6 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
     // isHiddenPresentExtension); enabled only where the device supports both
     // and the game did not ask for them, and dropped again if device creation
     // fails with them.
-    std::vector<const char*> exts(pCreateInfo->ppEnabledExtensionNames,
-                                  pCreateInfo->ppEnabledExtensionNames + pCreateInfo->enabledExtensionCount);
     VkPhysicalDevicePresentIdFeaturesKHR presentIdFeat{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR};
     VkPhysicalDevicePresentWaitFeaturesKHR presentWaitFeat{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR};
     bool feedback = false;
@@ -418,25 +467,49 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
             }
         }
     }
-    VkResult r = VK_ERROR_INITIALIZATION_FAILED;
-    if (feedback) {
-        VkDeviceCreateInfo fci = ci;
-        std::vector<const char*> fexts = exts;
-        fexts.push_back(VK_KHR_PRESENT_ID_EXTENSION_NAME);
-        fexts.push_back(VK_KHR_PRESENT_WAIT_EXTENSION_NAME);
-        fci.enabledExtensionCount = static_cast<uint32_t>(fexts.size());
-        fci.ppEnabledExtensionNames = fexts.data();
-        presentIdFeat.presentId = VK_TRUE;
-        presentWaitFeat.presentWait = VK_TRUE;
-        presentIdFeat.pNext = &presentWaitFeat;
-        presentWaitFeat.pNext = const_cast<void*>(fci.pNext);
-        fci.pNext = &presentIdFeat;
-        r = createDevice(physDev, &fci, pAllocator, pDevice);
-        if (r != VK_SUCCESS) BDEX_WARN("device creation with present feedback failed (%s); retrying without", vkResultName(r));
-        else data->presentFeedback = true;
+    // With present feedback when possible, without it otherwise.
+    auto create = [&]() {
+        VkResult res = VK_ERROR_INITIALIZATION_FAILED;
+        data->presentFeedback = false;
+        if (feedback) {
+            VkDeviceCreateInfo fci = ci;
+            std::vector<const char*> fexts(ci.ppEnabledExtensionNames, ci.ppEnabledExtensionNames + ci.enabledExtensionCount);
+            fexts.push_back(VK_KHR_PRESENT_ID_EXTENSION_NAME);
+            fexts.push_back(VK_KHR_PRESENT_WAIT_EXTENSION_NAME);
+            fci.enabledExtensionCount = static_cast<uint32_t>(fexts.size());
+            fci.ppEnabledExtensionNames = fexts.data();
+            presentIdFeat.presentId = VK_TRUE;
+            presentWaitFeat.presentWait = VK_TRUE;
+            presentIdFeat.pNext = &presentWaitFeat;
+            presentWaitFeat.pNext = const_cast<void*>(ci.pNext);
+            fci.pNext = &presentIdFeat;
+            res = createDevice(physDev, &fci, pAllocator, pDevice);
+            // (a refused queue priority is not the feedback's doing: the
+            // caller drops the priority and keeps the feedback)
+            if (res == VK_ERROR_NOT_PERMITTED_EXT && prioInfo >= 0) return res;
+            if (res != VK_SUCCESS) BDEX_WARN("device creation with present feedback failed (%s); retrying without", vkResultName(res));
+            else data->presentFeedback = true;
+        }
+        if (!data->presentFeedback) res = createDevice(physDev, &ci, pAllocator, pDevice);
+        return res;
+    };
+    VkResult r = create();
+    if (r != VK_SUCCESS && prioInfo >= 0) {
+        // VK_ERROR_NOT_PERMITTED: the usual answer without privileges
+        // (NVIDIA; amdgpu wants CAP_SYS_NICE above normal priority).
+        if (r == VK_ERROR_NOT_PERMITTED_EXT)
+            BDEX_INFO("high-priority synthesis queue not permitted to this process; normal priority");
+        else
+            BDEX_WARN("device creation with a high-priority synthesis queue failed (%s); retrying without", vkResultName(r));
+        qcis[prioInfo].pNext = prio.pNext;
+        prioInfo = -1;
+        if (prioExtAdded) exts.pop_back();
+        ci.enabledExtensionCount = static_cast<uint32_t>(exts.size());
+        ci.ppEnabledExtensionNames = exts.data();
+        r = create();
     }
-    if (!data->presentFeedback) r = createDevice(physDev, &ci, pAllocator, pDevice);
     if (r != VK_SUCCESS) return r;
+    data->synthPriorityHigh = prioInfo >= 0;
 
     data->device = *pDevice;
     data->vt.load(*pDevice, gdpa);
@@ -473,8 +546,8 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
         BDEX_INFO("synthesis on queue %u, copies and presents on queue %u (family %u)", data->computeIndex,
                   data->queueIndex, data->queueFamily);
     else if (data->asyncCompute)
-        BDEX_INFO("async compute: synthesis on queue family %u, presentation on family %u", data->computeFamily,
-                  data->queueFamily);
+        BDEX_INFO("async compute: synthesis on queue family %u%s, presentation on family %u", data->computeFamily,
+                  data->synthPriorityHigh ? " (high priority)" : "", data->queueFamily);
     if (data->config.enabled || data->config.antiCheatDisabled) {
         StatusEntry e;
         e.kind = "device";
@@ -767,11 +840,14 @@ VKAPI_ATTR void VKAPI_CALL SetLocalDimmingAMD(VkDevice device, VkSwapchainKHR sw
 VKAPI_ATTR VkResult VKAPI_CALL SetLatencySleepModeNV(VkDevice device, VkSwapchainKHR swapchain,
                                                      const VkLatencySleepModeInfoNV* pInfo) {
     DeviceData* dev = getDevice(dispatchKey(device));
+    dev->appLowLatencyMode.store(pInfo && pInfo->lowLatencyMode, std::memory_order_relaxed);
+    if (!pInfo || !pInfo->lowLatencyMode) dev->appPacedAtMs.store(0.0, std::memory_order_relaxed);
     return dev->vt.SetLatencySleepModeNV(device, currentReal(dev, swapchain), pInfo);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL LatencySleepNV(VkDevice device, VkSwapchainKHR swapchain, const VkLatencySleepInfoNV* pInfo) {
     DeviceData* dev = getDevice(dispatchKey(device));
+    if (dev->appLowLatencyMode.load(std::memory_order_relaxed)) dev->appPacedAtMs.store(steadyMs(), std::memory_order_relaxed);
     return dev->vt.LatencySleepNV(device, currentReal(dev, swapchain), pInfo);
 }
 
@@ -785,6 +861,14 @@ VKAPI_ATTR void VKAPI_CALL GetLatencyTimingsNV(VkDevice device, VkSwapchainKHR s
                                                VkGetLatencyMarkerInfoNV* pInfo) {
     DeviceData* dev = getDevice(dispatchKey(device));
     dev->vt.GetLatencyTimingsNV(device, currentReal(dev, swapchain), pInfo);
+}
+#endif
+
+#ifdef VK_AMD_anti_lag
+VKAPI_ATTR void VKAPI_CALL AntiLagUpdateAMD(VkDevice device, const VkAntiLagDataAMD* pData) {
+    DeviceData* dev = getDevice(dispatchKey(device));
+    if (pData && pData->mode == VK_ANTI_LAG_MODE_ON_AMD) dev->appPacedAtMs.store(steadyMs(), std::memory_order_relaxed);
+    dev->vt.AntiLagUpdateAMD(device, pData);
 }
 #endif
 
@@ -926,6 +1010,9 @@ const Hook g_deviceHooks[] = {
 #endif
 #ifdef VK_KHR_present_wait2
     HOOK(WaitForPresent2KHR),
+#endif
+#ifdef VK_AMD_anti_lag
+    HOOK(AntiLagUpdateAMD),
 #endif
 };
 

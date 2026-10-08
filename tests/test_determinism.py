@@ -54,7 +54,7 @@ NOT_FRAMES = {"enabled", "multiplier", "low_latency", "max_frame_latency", "late
               "present_feedback", "async_compute", "present_queue", "log", "paused", "gpu_budget", "stats", "profile",
               "shared_queue", "stats_interval", "dump_frames", "preset", "fullres", "flow_scale", "mode", "adaptive",
               "upscale", "overlay", "capture_hdr", "log_file", "target_fps", "fps_limit", "dump",
-              "present_mode", "debug"}
+              "present_mode", "debug", "interp_hold", "synth_priority"}
 
 
 def frames_hash(out):

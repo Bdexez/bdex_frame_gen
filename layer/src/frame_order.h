@@ -20,14 +20,26 @@ namespace bdex {
 //                  prediction reaches as far ahead as in pure extrapolation.
 //                  At x2 hybrid is interpolation.
 // Shared by the layer (swapchain.cpp), the capture app and bdex_offline.
+//
+// interp_hold (h < 1, the layer's present path only: `withHold`) shortens
+// the real frame's hold: the positions up to the real frame are h/m of an
+// interval apart instead of 1/m (the real frame shows h*real/m of an
+// interval after the first one), the predictions after it 1/m apart as
+// before. Each frame still shows the content of its own display time — the
+// content is a constant h*real/m (not real/m) of an interval behind the
+// display — so motion stays right; the frames are just unevenly spaced (x2,
+// h = 0.5: a quarter interval, then three quarters). h = 1 is the historical
+// order, bit for bit.
 struct FrameOrder {
     int m = 2;
     int real = 1;
+    float hold = 1.f;
 
-    static FrameOrder of(const Config& cfg, int multiplier) {
+    static FrameOrder of(const Config& cfg, int multiplier, bool withHold = false) {
         FrameOrder o;
         o.m = std::max(1, multiplier);
         o.real = cfg.extrapolate ? 0 : cfg.hybrid ? std::min(1, o.m - 1) : o.m - 1;
+        if (withHold && o.real > 0 && cfg.interpHold < 1.f) o.hold = std::clamp(cfg.interpHold, 0.1f, 1.f);
         return o;
     }
     int position(int output) const { return output < real ? output : output + 1; }
@@ -36,7 +48,13 @@ struct FrameOrder {
     // their historical values bit for bit (i/m, and 1 + i/m).
     float t(int output) const {
         const int p = position(output);
+        if (p < real && hold < 1.f) return 1.f - float(real - p) * hold / float(m);
         return p < real ? float(m - real + p) / float(m) : 1.f + float(p - real) / float(m);
+    }
+    // When position p goes on screen, in frame intervals after position 0.
+    double offset(int p) const {
+        if (hold >= 1.f || p <= 0) return double(p) / double(m);
+        return p <= real ? double(p) * hold / double(m) : (double(real) * hold + double(p - real)) / double(m);
     }
 };
 

@@ -212,6 +212,21 @@ génération) : ce cas ne se juge pas côté affichage sur ce banc. Seul le cas
 où **notre** synthèse domine (démo non plafonnée `--fps 1000`, réglages
 lourds, 4K) laisse gamescope composer à ~200 Hz.
 
+**Latence, 2026-10-02.** `interp_hold` (défaut 1, bit à bit) : en
+interpolation, les positions jusqu'à la réelle espacées de h/m
+(`FrameOrder::offset`, champ `Job::order`, `paceTarget`), `t` = 1 −
+(real − p)·h/m (le contenu reste à distance constante de l'affichage),
+bornée à un rafraîchissement d'écart (`displayHz`) ; seule la couche
+l'applique (`FrameOrder::of(cfg, m, withHold)`), pas la capture ni
+`bdex_offline`, ni l'adaptatif. `latency_limiter` s'efface si le jeu a
+Reflex/Anti-Lag actif (`DeviceData::appPacesLatency`, hooks
+`vkSetLatencySleepModeNV`/`vkLatencySleepNV`/`vkAntiLagUpdateAMD`).
+`synth_priority` : priorité globale haute de la file de synthèse quand sa
+famille est à elle (`async_compute`), repli sur `VK_ERROR_NOT_PERMITTED`.
+**`vkCreateDevice` réessayé : remettre `chain->u.pLayerInfo` au lien
+suivant avant chaque essai** (les couches du dessous l'avancent ; sinon
+plantage sous la couche WSI de gamescope).
+
 ### Passes optionnelles (`fg_pass.h`, depuis le 2026-09-25)
 
 Une fonctionnalité opt-in qui ajoute du travail GPU est une classe `FgPass`

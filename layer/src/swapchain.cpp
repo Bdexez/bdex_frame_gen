@@ -895,8 +895,18 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     if (catchUp) ++statsBehind_;
     const int mult = generating_ && !catchUp ? chooseMultiplier() : 1;
     lastPresentFrames_ = mult;
-    // Where the real frame goes among the frames of this present.
-    const FrameOrder order = FrameOrder::of(cfg_, mult);
+    // Where the real frame goes among the frames of this present (and, with
+    // interp_hold, how far apart; adaptive keeps one output period between
+    // all of them).
+    FrameOrder order = FrameOrder::of(cfg_, mult, !(adaptivePeriodMs_ > 0.0));
+    // Never closer than a refresh apart (also the fastest a VRR screen
+    // shows): two frames inside one refresh would replace each other. At
+    // 60 fps x2 on 144 Hz that is a hold of 0.83 at least; the measured
+    // 0.5 showed 116 of the 120 frames, 0.25 only 95.
+    if (order.hold < 1.f && frameIntervalMs_ > 0.0) {
+        const double hz = displayHz();
+        if (hz > 0.0) order.hold = float(std::min(1.0, std::max<double>(order.hold, 1000.0 / hz * mult / frameIntervalMs_)));
+    }
     // A rebuilt output stage has no analysis of the previous frame yet.
     const bool haveHistory = prevIndex_ >= 0 && !historyLost_;
     const bool interpolate = generating_ && haveHistory && mult > 1;
@@ -963,7 +973,10 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         const bool adaptive = interpolate && adaptivePeriodMs_ > 0.0;
         const double spacing = adaptive ? adaptivePeriodMs_ : frameIntervalMs_ / mult;
         const bool grid = interpolate && feedback_ && displayGrid(lastMs, periodMs);
-        if (grid || adaptive) {
+        // interp_hold: the outputs read their t from these display times too,
+        // so frame_timing follows the uneven spacing.
+        const bool held = interpolate && order.hold < 1.f;
+        if (grid || adaptive || held) {
             const double now = msOf(t0);
             auto land = [&](double ms) {
                 return grid ? lastMs + std::ceil((ms - lastMs) / periodMs) * periodMs : ms;
@@ -972,7 +985,8 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             for (int k = 0; k < mult && k < 8; ++k) at[k] = land(now + 1.0 + spacing * k) - now;
             if (!adaptive)  // (historical: frame k at the refresh after start + I*k/m, frame 0 right after the GPU)
                 for (int k = 0; k < mult && k < 8; ++k)
-                    at[k] = (k == 0 ? land(now + 1.0) : land(now + frameIntervalMs_ * k / mult)) - now;
+                    at[k] = (k == 0 ? land(now + 1.0)
+                             : land(now + (held ? frameIntervalMs_ * order.offset(k) : frameIntervalMs_ * k / mult))) - now;
             timing.haveDisplay = true;
             timing.displayMs[7] = float(at[order.real]);
             for (int o = 0; o + 1 < mult && o < 7; ++o) timing.displayMs[o] = float(at[order.position(o)]);
@@ -1119,6 +1133,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     job.frames = interpolate ? mult : 1;
     job.generated = interpolate;
     job.realIndex = interpolate ? order.real : 0;
+    job.order = interpolate ? order : FrameOrder{};
     job.start = t0;
     job.frameStartMs = lastReturnMs_;
     job.intervalMs = frameIntervalMs_;
@@ -1193,6 +1208,8 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
                 len += snprintf(skip + len, sizeof(skip) - size_t(len), ", next frame held %.1f ms",
                                 statsStartDelayMs_ / statsAppFrames_);
             statsStartDelayMs_ = 0.0;
+            if (cfg_.latencyLimiter && dev_.appPacesLatency(msOf(clock::now())) && len < int(sizeof(skip)))
+                len += snprintf(skip + len, sizeof(skip) - size_t(len), ", latency limiter off (the game's Reflex / Anti-Lag)");
             if (statsBehind_ && len < int(sizeof(skip)))
                 len += snprintf(skip + len, sizeof(skip) - size_t(len), ", %u frame(s) without generation to catch up",
                                 statsBehind_);
@@ -1278,7 +1295,10 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     if (latencyFence) {
         const auto w0 = clock::now();
         dev_.vt.WaitForFences(dev_.device, 1, &latencyFence, VK_TRUE, 100'000'000ull);
-        if (cfg_.latencyLimiter) syncFrameStart(std::chrono::duration<double, std::milli>(clock::now() - w0).count());
+        // (a game with Reflex or Anti-Lag on paces itself through the driver)
+        const bool appPaced = dev_.appPacesLatency(msOf(clock::now()));
+        if (cfg_.latencyLimiter && !appPaced) syncFrameStart(std::chrono::duration<double, std::milli>(clock::now() - w0).count());
+        else startDelayMs_ = 0.0;
     } else {
         startDelayMs_ = 0.0;
     }
@@ -1671,8 +1691,10 @@ bool VirtualSwapchain::waitGpu(VkFence fence, bool cancellable, clock::time_poin
 // slip a whole period) and on a refresh of its own.
 VirtualSwapchain::clock::time_point VirtualSwapchain::paceTarget(const Job& job, clock::time_point origin, int k) {
     const double slot = job.intervalMs / std::max(1, job.frames);
-    double t = msOf(origin) + slot * k;
-    if (lastPresentMs_ > 0.0) t = std::max(t, lastPresentMs_ + 0.5 * slot);
+    // interp_hold: the frames up to the real one closer together (frame_order.h).
+    const bool held = job.order.hold < 1.f;
+    double t = msOf(origin) + (held ? job.intervalMs * job.order.offset(k) : slot * k);
+    if (lastPresentMs_ > 0.0) t = std::max(t, lastPresentMs_ + 0.5 * slot * (held ? job.order.hold : 1.0));
     double lastMs, periodMs;
     if (feedback_ && displayGrid(lastMs, periodMs)) {
         double land = lastMs + std::ceil((t - lastMs) / periodMs) * periodMs;
