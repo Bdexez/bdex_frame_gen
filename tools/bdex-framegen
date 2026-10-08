@@ -300,6 +300,14 @@ report() {
       echo "Flatpak extension: $(flatpak list --runtime --columns=application,branch 2>/dev/null |
         awk '$1 == "org.freedesktop.Platform.VulkanLayer.BdexFramegen" { printf "%s ", $2 }')"
     fi
+    echo; echo "== crash journals (crash_log: crashes inside the layer)"
+    local cj found_cj=0
+    for cj in $(ls -t "${XDG_CACHE_HOME:-$HOME/.cache}"/bdex-framegen/crash-*.txt $(flatpak_dirs run | sed 's#/run$##' | sed 's#$#/crash-*.txt#') 2>/dev/null | head -3); do
+      [ -f "$cj" ] || continue
+      found_cj=1
+      echo "-- $cj ($(date -r "$cj" '+%F %T' 2>/dev/null))"; cat "$cj"
+    done
+    [ "$found_cj" = 1 ] || echo "none"
     echo; echo "== security modules"
     if command -v getenforce >/dev/null; then echo "SELinux: $(getenforce 2>/dev/null)"; fi
     if [ -r /sys/module/apparmor/parameters/enabled ]; then

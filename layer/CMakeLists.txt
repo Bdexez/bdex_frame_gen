@@ -70,6 +70,7 @@ add_library(bdex_core STATIC
   src/display_clock.cpp
   src/gamescope.cpp
   src/status.cpp
+  src/crash.cpp
 )
 target_include_directories(bdex_core PUBLIC src)
 # Threads and dladdr: part of libc since glibc 2.34, in libpthread / libdl

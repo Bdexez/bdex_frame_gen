@@ -1,11 +1,13 @@
 // Vulkan layer entry points: instance/device lifecycle, dispatch and the
 // swapchain hooks that route through VirtualSwapchain.
 #include "config.h"
+#include "crash.h"
 #include "status.h"
 #include "device.h"
 #include "dispatch.h"
 #include "gamescope.h"
 #include "log.h"
+#include "platform.h"
 #include "present_slice.h"
 #include "swapchain.h"
 #include "vk_util.h"
@@ -548,6 +550,13 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
     else if (data->asyncCompute)
         BDEX_INFO("async compute: synthesis on queue family %u%s, presentation on family %u", data->computeFamily,
                   data->synthPriorityHigh ? " (high priority)" : "", data->queueFamily);
+    // Crash journal (crash.h), only where the layer is at work: never in a
+    // game it stays out of (anti-cheat), never where it is pass-through.
+    if (data->config.enabled && !data->config.antiCheatDisabled && data->config.crashLog &&
+        crashLogInstall(platformCacheDir(), platformExeName(),
+                        std::string(BDEX_LAYER_NAME " v" BDEX_LAYER_VERSION_STR " on '") + data->props.deviceName +
+                            "', " + data->config.describe()))
+        BDEX_INFO("crash journal: %s (should the layer crash)", crashLogPath().c_str());
     if (data->config.enabled || data->config.antiCheatDisabled) {
         StatusEntry e;
         e.kind = "device";
