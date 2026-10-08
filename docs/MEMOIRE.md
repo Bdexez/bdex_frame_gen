@@ -321,6 +321,10 @@ programme Vulkan et reste **transparente** tant qu'elle n'est pas activée
   - `--record` : enregistrer une séquence ;
   - `--tuned-profile` : profil issu d'`online_tune` ;
   - `--check` : la couche est-elle vue par le loader.
+  - `--issue-url [FICHIER]` : lien vers le formulaire d'issue pré-rempli
+    (`.github/ISSUE_TEMPLATE/bug_report.yml`) depuis un rapport — aussi
+    affiché à la fin de `--report`, bouton « Rapport… » du panneau ; seulement
+    le résumé (jamais config ni journal), `$HOME` remplacé par `~`.
 
 ### 4.2 Jeux Proton et runtime Steam
 

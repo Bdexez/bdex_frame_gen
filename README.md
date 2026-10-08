@@ -725,8 +725,13 @@ docs/                   Windows guides; MEMOIRE.md: the project's memory (in Fre
 ## Contributing
 
 Reports from real games (DXVK, VKD3D-Proton, NVIDIA, Intel…) are what the
-project needs most: open an issue with the layer log (`BDEX_FG_LOG=2`), your
-GPU and how the game is launched.
+project needs most. While the game runs, `bdex-framegen --report` (or
+« Rapport… » in the panel) writes `bdex-framegen-report.txt` and prints a
+link to the issue form already filled with its summary (version,
+distribution, GPU, session, installation, quick read — not your settings or
+log): describe what you see and attach the file. `bdex-framegen --issue-url
+FILE` makes the link again. What to try on which machine:
+[docs/linux-validation.md](docs/linux-validation.md).
 
 To contribute code, read [CONTRIBUTING.md](CONTRIBUTING.md): setup, what to
 check before a pull request (tests, Khronos validation, quality and
