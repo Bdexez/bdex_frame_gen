@@ -8,6 +8,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Input latency
 
+- **`interp_hold = auto`** (or -1): the smallest hold the screen shows
+  without losing a frame — 1.25 refresh between frames (exactly one lost 1.2
+  of 80 frames a second to the frame-time jitter) — and only where it saves
+  at least 2 ms; unknown refresh rate: even spacing. Headless gamescope
+  144 Hz, x2: 30 fps 56.7 → 48.3 ms, 40 fps 43.8 → 40.7 ms, every frame
+  displayed; 60 fps unchanged.
 - **`interp_hold`** (interpolation, default 1 = unchanged bit for bit): the
   real frame's hold as a fraction of the usual one. Below 1 the generated
   frames go out closer together before the real one (`FrameOrder::offset`,

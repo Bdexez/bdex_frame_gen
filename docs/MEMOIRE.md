@@ -167,7 +167,10 @@ les images répétées (`dedup`) et commande des passes en dispatch indirect,
     images dans le même rafraîchissement). Seulement dans la couche
     (`FrameOrder::of(…, withHold)`) : la capture et `bdex_offline` restent à
     l'espacement régulier ; hors adaptatif. Les temps d'affichage passent au
-    tampon d'état pour que `frame_timing` suive ;
+    tampon d'état pour que `frame_timing` suive. **`auto` (−1)** : 1,25
+    rafraîchissement d'écart (exactement un : 1,2 image/s perdue sur 80), et
+    seulement si le gain dépasse 2 ms ; mesuré ×2 à 144 Hz : 30 i/s 56,7 →
+    48,3 ms, 40 i/s 43,8 → 40,7, aucune image perdue, 60 i/s inchangé ;
   - `synth_priority` (02/10, avec `async_compute`) : priorité globale haute
     pour la file de synthèse (sa famille a son propre `VkDeviceQueueCreateInfo`
     ; une famille partagée avec le jeu n'a qu'une priorité). Refusée sans

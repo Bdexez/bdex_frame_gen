@@ -905,7 +905,14 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     // 0.5 showed 116 of the 120 frames, 0.25 only 95.
     if (order.hold < 1.f && frameIntervalMs_ > 0.0) {
         const double hz = displayHz();
-        if (hz > 0.0) order.hold = float(std::min(1.0, std::max<double>(order.hold, 1000.0 / hz * mult / frameIntervalMs_)));
+        // (auto keeps a quarter refresh of margin for the frame-time jitter:
+        // exactly one refresh apart lost 1.2 of 80 frames a second)
+        const double minGap = (cfg_.interpHold < 0.f ? 1.25 : 1.0) * 1000.0 / std::max(hz, 1.0);
+        if (hz > 0.0) order.hold = float(std::min(1.0, std::max<double>(order.hold, minGap * mult / frameIntervalMs_)));
+        // Auto: only with a known refresh rate (the bound above), and only
+        // where it saves at least 2 ms of hold — otherwise even spacing.
+        const double savedMs = (1.0 - order.hold) * order.real * frameIntervalMs_ / std::max(1, mult);
+        if (cfg_.interpHold < 0.f && (hz <= 0.0 || savedMs < 2.0)) order.hold = 1.f;
     }
     // A rebuilt output stage has no analysis of the previous frame yet.
     const bool haveHistory = prevIndex_ >= 0 && !historyLost_;

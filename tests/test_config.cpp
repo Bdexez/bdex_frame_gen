@@ -471,4 +471,8 @@ TEST(frame_order_interp_hold) {
     c.extrapolate = true;  // nothing before the real frame: no hold to shorten
     CHECK(FrameOrder::of(c, 3, true).hold == 1.f);
     CHECK(c.apply("interp_hold", "0.5") && c.interpHold == 0.5f);
+    CHECK(c.apply("interp_hold", "auto") && c.interpHold == -1.f);
+    CHECK(c.apply("interp_hold", "-1") && c.interpHold == -1.f);
+    c.extrapolate = false;
+    CHECK(FrameOrder::of(c, 2, true).hold == 0.1f);  // auto: the smallest, raised by the caller to one refresh
 }

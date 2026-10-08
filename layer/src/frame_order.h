@@ -39,7 +39,8 @@ struct FrameOrder {
         FrameOrder o;
         o.m = std::max(1, multiplier);
         o.real = cfg.extrapolate ? 0 : cfg.hybrid ? std::min(1, o.m - 1) : o.m - 1;
-        if (withHold && o.real > 0 && cfg.interpHold < 1.f) o.hold = std::clamp(cfg.interpHold, 0.1f, 1.f);
+        // (auto, negative: the smallest, which the caller raises to one refresh)
+        if (withHold && o.real > 0 && cfg.interpHold < 1.f) o.hold = cfg.interpHold < 0.f ? 0.1f : std::clamp(cfg.interpHold, 0.1f, 1.f);
         return o;
     }
     int position(int output) const { return output < real ? output : output + 1; }
