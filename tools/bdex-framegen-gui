@@ -1166,6 +1166,8 @@ def describe_entry(e):
         lvl = int(e.get("gpu_budget_level", 0))
         if lvl > 0:
             parts.append(f"budget GPU : niveau {lvl}")
+        if e.get("reason") == "fast":   # skip_fast
+            parts.append("génération inutile : le jeu tient déjà la fréquence de l'écran")
     except ValueError:
         pass
     prefix = "En pause — " if state == "paused" else ""

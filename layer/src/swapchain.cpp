@@ -80,6 +80,7 @@ void VirtualSwapchain::publishStatus(int multiplier) {
     e.state = on ? "generating" : generating_ ? "paused" : "pass-through";
     if (cfg_.requireApp && !cfg_.appTargeted) e.state = "ready";  // armed, waiting for « Démarrer »
     if (!generating_) e.reason = genFailReason_.empty() ? "frame generation off for this swapchain" : genFailReason_;
+    if (on && fastSkip_) e.reason = "fast";  // skip_fast: the game near the refresh rate
     e.mode = cfg_.modeName();
     e.multiplier = on ? multiplier : 1;
     e.gameFps = frameIntervalMs_ > 0.05 ? 1000.0 / frameIntervalMs_ : 0.0;
@@ -675,7 +676,10 @@ int VirtualSwapchain::chooseMultiplier() {
     const bool autoTarget = limited || cfg_.targetFps < 0.f || (cfg_.adaptive && cfg_.targetFps == 0.f);
     const double target = limited ? gsHz_.load() : autoTarget ? displayHz() : double(cfg_.targetFps);
     adaptivePeriodMs_ = 0.0;
-    if (target <= 0.0) return autoTarget ? std::min(2, maxMult) : maxMult;
+    if (target <= 0.0) {
+        if (autoTarget) return std::min(2, maxMult);
+        return fastGame(displayHz()) ? 1 : maxMult;
+    }
     if (cfg_.adaptive || limited) {
         // As many frames as fit at the target rate, the fraction carried over
         // (50 fps on 144 Hz: 3, 3, 2, 3, 3, 2...), spaced one output period
@@ -700,6 +704,32 @@ int VirtualSwapchain::chooseMultiplier() {
     }
     dynMult_ = dynamicMultiplier(dynMult_, target * frameIntervalMs_ / 1000.0, maxMult);
     return dynMult_;
+}
+
+// skip_fast, for a fixed multiplier: a game already at 85 % of the screen's
+// refresh rate or more gains almost nothing on screen from generated frames
+// (130 fps x2 on 144 Hz: 144 shown instead of 130), and pays for them in GPU
+// time and the interpolation's hold — measured, a game near the refresh rate
+// even lost frames to it. Half a second past the threshold either way (85 %
+// in, 75 % out) so a dip does not toggle it. Unknown refresh rate (VRR
+// without feedback, no panel): left alone.
+bool VirtualSwapchain::fastGame(double hz) {
+    if (!cfg_.skipFast || hz <= 0.0 || frameIntervalMs_ <= 0.05) {
+        fastSkip_ = false;
+        return false;
+    }
+    const double ratio = 1000.0 / frameIntervalMs_ / hz;
+    const double now = msOf(clock::now());
+    const bool crossing = fastSkip_ ? ratio < 0.75 : ratio >= 0.85;
+    if (!crossing) fastSinceMs_ = 0.0;
+    else if (fastSinceMs_ == 0.0) fastSinceMs_ = now;
+    else if (now - fastSinceMs_ >= 500.0) {
+        fastSkip_ = !fastSkip_;
+        fastSinceMs_ = 0.0;
+        BDEX_INFO("game at %.0f fps on a %.0f Hz screen: generation %s (skip_fast)", 1000.0 / frameIntervalMs_, hz,
+                  fastSkip_ ? "idle" : "back");
+    }
+    return fastSkip_;
 }
 
 // Frame-rate limiter (fps_limit), like DXVK_FRAME_RATE: the application's
@@ -1215,6 +1245,8 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
                 len += snprintf(skip + len, sizeof(skip) - size_t(len), ", next frame held %.1f ms",
                                 statsStartDelayMs_ / statsAppFrames_);
             statsStartDelayMs_ = 0.0;
+            if (fastSkip_ && len < int(sizeof(skip)))
+                len += snprintf(skip + len, sizeof(skip) - size_t(len), ", generation idle: the game is at the screen's rate (skip_fast)");
             if (cfg_.latencyLimiter && dev_.appPacesLatency(msOf(clock::now())) && len < int(sizeof(skip)))
                 len += snprintf(skip + len, sizeof(skip) - size_t(len), ", latency limiter off (the game's Reflex / Anti-Lag)");
             if (statsBehind_ && len < int(sizeof(skip)))

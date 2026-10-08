@@ -179,6 +179,7 @@ std::vector<std::string> statusDescribe(const StatusFile& file) {
             snprintf(buf, sizeof buf, " · budget GPU : niveau %.0f", num(v, "gpu_budget_level", 0));
             line += buf;
         }
+        if (get(v, "reason") == "fast") line += " · génération inutile : le jeu tient déjà la fréquence de l'écran";
         out.push_back(line);
         if (!get(v, "passes").empty()) {
             std::string p = get(v, "passes");

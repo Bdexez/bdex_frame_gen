@@ -8,6 +8,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Input latency
 
+- **`skip_fast`** (default on, fixed multiplier): no generation while the
+  game already runs at 85 % of the screen's refresh rate or more (back under
+  75 %, half a second either way): it would add almost no frame to the
+  screen, only GPU work and the hold. Headless gamescope 144 Hz, game at
+  130 fps x2: frame-to-screen 16.0 → 11.8 ms, the GPU spared the synthesis;
+  100 fps still generates. The statistics line and the panel say so;
+  unknown refresh rate: no effect (the Valheim case: 130 fps on 144 Hz).
 - **`interp_hold = auto`** (or -1): the smallest hold the screen shows
   without losing a frame — 1.25 refresh between frames (exactly one lost 1.2
   of 80 frames a second to the frame-time jitter) — and only where it saves

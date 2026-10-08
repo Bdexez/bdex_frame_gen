@@ -177,6 +177,11 @@ les images répétées (`dedup`) et commande des passes en dispatch indirect,
     privilèges (NVIDIA, amdgpu sans CAP_SYS_NICE : `VK_ERROR_NOT_PERMITTED`,
     mesuré par une sonde : MEDIUM accepté, HIGH/REALTIME refusés) → device
     recréé sans ;
+  - **`skip_fast`** (02/10, activé par défaut, multiplicateur fixe) : pas de
+    génération quand le jeu est déjà à ≥ 85 % de la fréquence de l'écran
+    (reprise sous 75 %, ½ s d'hystérésis) — cas Valheim 130 i/s sur 144 Hz.
+    Mesuré 130 i/s ×2 sur 144 Hz : image→écran 16,0 → 11,8 ms. Statut
+    `reason=fast` (panneau, `status.cpp`) ; fréquence inconnue : sans effet ;
   - `low_latency` et `fps_limit` complètent.
 - **Rattrapage** (30/09) : quand la présentation prend du retard, une image
   est montrée sans générée. Sinon une file qui s'est formée ne se vide jamais
