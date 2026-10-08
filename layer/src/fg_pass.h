@@ -34,6 +34,14 @@ struct SynthesisInputs {
 // The fps HUD's figures (FrameGen::setHud).
 struct FgHud {
     int mode = 0, game = 0, out = 0, low1 = 0, low01 = 0, latency = -1;
+    // HUD level 6, the pacing graph: the last kHudGraph presents, oldest
+    // first, a byte each — bits 0-5 the game's frame time in 0.5 ms steps
+    // (63 = 31.5 ms or more), bit 6 generated frames went with it, bit 7 a
+    // frame was replaced before being displayed — and the frame interval the
+    // pacing aims at (0.5 ms steps).
+    static constexpr int kHudGraph = 64;
+    uint32_t graph[kHudGraph / 4] = {};
+    int graphRef = 0;
 };
 
 // A compute pipeline with its one descriptor set layout.

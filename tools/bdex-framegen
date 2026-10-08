@@ -12,7 +12,8 @@
 #       --upscale-filter F bilinear | bicubic | lanczos (default)
 #   -s, --sharpness N      contrast-adaptive sharpening after upscaling, 0..1 (0 = off)
 #   -p, --present-mode M   auto (default: fifo -> mailbox) | app | fifo | mailbox | immediate | relaxed
-#   -o, --hud LEVEL        on-screen fps counter: off | fps | framegen | low | full (0..4)
+#   -o, --hud LEVEL        on-screen fps counter: off | fps | framegen | low | full |
+#                          latency | pacing (0..6; pacing: the frame-time graph)
 #   -d, --debug M          none | flow | split | passthrough
 #   -l, --log N            log level 0..3
 #       --profile          print GPU timings with the statistics

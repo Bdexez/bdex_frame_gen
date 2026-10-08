@@ -30,6 +30,8 @@ layout(push_constant) uniform PC {
     int hudLow1;
     int hudLow01;
     int hudLatency;
+    uint graph[16];   // level 6: 64 samples, a byte each (FgHud::graph), oldest first
+    int graphRef;     // the frame interval aimed at, 0.5 ms steps
 } pc;
 
 void store(ivec2 p, vec4 c) {
@@ -55,9 +57,43 @@ void store(ivec2 p, vec4 c) {
 #endif
 }
 
+// Level 6: the pacing graph under the text, one 3-pixel column per present
+// (newest on the right), its height the game's frame time (1 px per 0.5 ms,
+// 31.5 ms full scale): green near the interval the pacing aims at (the grey
+// line), amber past 1.25x, red past 2x (a stutter); grey when no frame was
+// generated with it (catch-up, skip_fast, pause); a red mark on top when a
+// frame was replaced before being displayed.
+const int kGraphW = 64 * 3, kGraphH = 64;
+bool graphPixel(ivec2 p, out vec3 col) {
+    const int S = 4, LINEH = 6 * S;
+    ivec2 o = ivec2(14, 14 + hudLineCount(5) * LINEH + S + 8);  // under the text box
+    ivec2 r = p - o + ivec2(S, S);
+    if (r.x < 0 || r.y < 0 || r.x >= kGraphW + 2 * S || r.y >= kGraphH + 6 + 2 * S) return false;
+    col = vec3(0.03);
+    ivec2 t = r - ivec2(S, S);
+    if (t.x < 0 || t.y < 0 || t.x >= kGraphW || t.y >= kGraphH + 6) return true;
+    int i = t.x / 3;
+    uint s = (pc.graph[i / 4] >> (8u * uint(i % 4))) & 0xffu;
+    int ms2 = int(s & 63u);                   // frame time, 0.5 ms steps
+    if (t.y < 4) {                            // the replaced-frame marks
+        if ((s & 0x80u) != 0u && t.x % 3 != 2) col = vec3(1.0, 0.2, 0.2);
+        return true;
+    }
+    int y = kGraphH - 1 - (t.y - 6);          // 0 at the bottom
+    if (y < 0) return true;
+    if (pc.graphRef > 0 && y == min(pc.graphRef, 63)) col = vec3(0.45);
+    if (y < ms2 && t.x % 3 != 2) {
+        float ratio = pc.graphRef > 0 ? float(ms2) / float(pc.graphRef) : 1.0;
+        col = (s & 0x40u) == 0u ? vec3(0.55)
+            : ratio > 2.0 ? vec3(1.0, 0.25, 0.2) : ratio > 1.25 ? vec3(1.0, 0.75, 0.1) : vec3(0.15, 1.0, 0.35);
+    }
+    return true;
+}
+
 void main() {
     ivec2 p = ivec2(gl_GlobalInvocationID.xy);
     if (any(greaterThanEqual(p, pc.size))) return;
     vec3 hc;
-    if (hudPixel(p, pc.hudMode, pc.hudGame, pc.hudOut, pc.hudLow1, pc.hudLow01, pc.hudLatency, hc)) store(p, vec4(hc, 1.0));
+    if (hudPixel(p, min(pc.hudMode, 5), pc.hudGame, pc.hudOut, pc.hudLow1, pc.hudLow01, pc.hudLatency, hc)) store(p, vec4(hc, 1.0));
+    else if (pc.hudMode >= 6 && graphPixel(p, hc)) store(p, vec4(hc, 1.0));
 }

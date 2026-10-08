@@ -598,7 +598,10 @@ seulement, pas le plein écran exclusif (comme Lossless Scaling).
 - `multiplier`, `adaptive`, `target_fps` ;
 - `mode` (`interpolate` / `extrapolate` / `hybrid`) ; `preset` ;
 - `fps_limit` ; `render_scale` / `upscale_filter` / `sharpness` ;
-- `overlay` (HUD 0 à 5 : fps, fps de sortie, 1 % et 0,1 % bas, latence) ;
+- `overlay` (HUD 0 à 6 : fps, fps de sortie, 1 % et 0,1 % bas, latence, et
+  depuis le 02/10 le **graphe de cadencement** : 64 présentations, temps de
+  trame du jeu coloré par rapport à l'intervalle visé, gris sans génération,
+  marque rouge si une image a été écrasée — en push constants, 104 octets) ;
 - `paused` ; `present_mode` ; `low_latency` ; `latency_limiter` ;
 - `max_frame_latency` ; `scene_cut_*`.
 

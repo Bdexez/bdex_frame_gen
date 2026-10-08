@@ -979,6 +979,27 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             if (hudDisplayedFps_ >= 0) outFps = hudDisplayedFps_;
         }
         fg_->setHud(gfps, outFps, hudLow1_, hudLow01_, latency < 0.0 ? -1 : static_cast<int>(latency + 0.5));
+        if (cfg_.overlayMode >= 6) {
+            // The pacing graph: this present's frame time, whether it carried
+            // generated frames, whether a frame was replaced before display
+            // since the previous sample (present feedback).
+            uint8_t sample = static_cast<uint8_t>(std::clamp(static_cast<int>(dt * 2.0 + 0.5), 0, 63));
+            if (interpolate) sample |= 0x40;
+            if (feedback_) {
+                uint64_t replaced;
+                {
+                    std::lock_guard<std::mutex> fbLock(fbMutex_);
+                    replaced = fbReplaced_;
+                }
+                if (replaced != hudReplacedSeen_) sample |= 0x80;
+                hudReplacedSeen_ = replaced;
+            }
+            hudGraphRing_[hudGraphHead_] = sample;
+            hudGraphHead_ = (hudGraphHead_ + 1) % FgHud::kHudGraph;
+            uint8_t ordered[FgHud::kHudGraph];
+            for (int i = 0; i < FgHud::kHudGraph; ++i) ordered[i] = hudGraphRing_[(hudGraphHead_ + i) % FgHud::kHudGraph];
+            fg_->setHudGraph(ordered, FgHud::kHudGraph, std::clamp(static_cast<int>(frameIntervalMs_ * 2.0 + 0.5), 0, 63));
+        }
     }
 
     // Synthesis: analyse the application's frame (in place, no copy) and
