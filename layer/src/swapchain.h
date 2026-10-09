@@ -3,6 +3,7 @@
 #include "budget.h"
 #include "display_clock.h"
 #include "frame_order.h"
+#include "pacing.h"
 #include "framegen.h"
 
 #include <atomic>
@@ -190,6 +191,7 @@ private:
     void pauseFeedback();
     void resumeFeedback();
     bool fastGame(double hz);           // skip_fast: the game already at (nearly) the refresh rate
+    double fastGameHz();                // the refresh rate skip_fast uses
     double displayHz();                 // measured refresh rate, 0 if unknown (VRR, no feedback)
     bool displayGrid(double& lastMs, double& periodMs);  // the refresh grid, if known
     static double msOf(clock::time_point t) {
@@ -199,8 +201,7 @@ private:
     int hudGraphHead_ = 0;
     uint64_t hudReplacedSeen_ = 0;
     double uncertainPct_ = -1.0;        // flow_confidence: share of uncertain flow, last statistics period
-    bool fastSkip_ = false;             // skip_fast: generation idle, the game near the refresh rate
-    double fastSinceMs_ = 0.0;          // when the game crossed the threshold the other way
+    pacing::FastGate fastGate_;         // skip_fast (pacing.h)
     std::atomic<bool> feedback_{false};
     uint64_t presentCounter_ = 0;       // worker thread (reset while it is idle)
     std::thread fbThread_;
@@ -322,8 +323,7 @@ private:
     std::deque<SlotUse> recentSlots_;
     // latency_limiter: how long present() still holds the game once the GPU
     // has finished its previous frame (syncFrameStart; presenting thread).
-    double startDelayMs_ = 0.0;
-    double startSlackMs_ = 0.0;       // what the game is left ahead of the GPU (its jitter)
+    pacing::StartLimiter limiter_;    // latency_limiter: the hold and the slack left (pacing.h)
     double statsStartDelayMs_ = 0.0;  // sum over the statistics window
     void syncFrameStart(double waitedMs);
     // fps_limit: next allowed application present (only the presenting
@@ -352,7 +352,7 @@ private:
     uint64_t outputGen_ = 0;     // Config::rebuildGen the output stage was built with (require_app)
     int flowScaleFactor_ = 1;    // flow resolution divisor multiplier of the current output stage (gpu_budget)
     int dynMult_ = 0;               // target_fps: current dynamic multiplier (0 = not chosen yet)
-    double adaptiveAcc_ = 0.0;      // adaptive: fractional frames carried over to the next game frame
+    pacing::AdaptivePacer adaptive_;  // adaptive: fractional frames carried over to the next game frame
     double adaptivePeriodMs_ = 0.0; // adaptive: output period of this present (0 = not adaptive)
     int chooseMultiplier();
 

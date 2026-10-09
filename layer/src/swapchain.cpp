@@ -1,5 +1,6 @@
 #include "swapchain.h"
 #include "frame_order.h"
+#include "pacing.h"
 #include "gamescope.h"
 #include "online_tune.h"
 #include "status.h"
@@ -80,7 +81,7 @@ void VirtualSwapchain::publishStatus(int multiplier) {
     e.state = on ? "generating" : generating_ ? "paused" : "pass-through";
     if (cfg_.requireApp && !cfg_.appTargeted) e.state = "ready";  // armed, waiting for « Démarrer »
     if (!generating_) e.reason = genFailReason_.empty() ? "frame generation off for this swapchain" : genFailReason_;
-    if (on && fastSkip_) e.reason = "fast";  // skip_fast: the game near the refresh rate
+    if (on && fastGate_.idle) e.reason = "fast";  // skip_fast: the game near the refresh rate
     e.mode = cfg_.modeName();
     e.multiplier = on ? multiplier : 1;
     e.gameFps = frameIntervalMs_ > 0.05 ? 1000.0 / frameIntervalMs_ : 0.0;
@@ -679,7 +680,7 @@ int VirtualSwapchain::chooseMultiplier() {
     adaptivePeriodMs_ = 0.0;
     if (target <= 0.0) {
         if (autoTarget) return std::min(2, maxMult);
-        return fastGame(displayHz()) ? 1 : maxMult;
+        return fastGame(fastGameHz()) ? 1 : maxMult;
     }
     if (cfg_.adaptive || limited) {
         // As many frames as fit at the target rate, the fraction carried over
@@ -697,11 +698,7 @@ int VirtualSwapchain::chooseMultiplier() {
         // output fell short of the limit, 56 fps for 60.)
         const bool held = limited && gameOwnMs_ > 0.0 && frameIntervalMs_ - gameOwnMs_ > 0.25 * frameIntervalMs_;
         const double interval = held ? gameOwnMs_ : frameIntervalMs_;
-        adaptiveAcc_ += interval / adaptivePeriodMs_;
-        const int n = std::clamp(static_cast<int>(adaptiveAcc_), 1, maxMult);
-        adaptiveAcc_ = std::clamp(adaptiveAcc_ - n, 0.0, 0.999);
-        if (n < 2) adaptivePeriodMs_ = 0.0;
-        return n;
+        return adaptive_.next(interval, adaptivePeriodMs_, maxMult);
     }
     dynMult_ = dynamicMultiplier(dynMult_, target * frameIntervalMs_ / 1000.0, maxMult);
     return dynMult_;
@@ -714,23 +711,26 @@ int VirtualSwapchain::chooseMultiplier() {
 // even lost frames to it. Half a second past the threshold either way (85 %
 // in, 75 % out) so a dip does not toggle it. Unknown refresh rate (VRR
 // without feedback, no panel): left alone.
+// The refresh rate skip_fast compares the game with: gamescope's cycle only
+// while Steam's frame limit has never been on (once lifted, the cycle stays
+// the limit's until gamescope sends a new one, which a re-created swapchain
+// may never get: a 30 fps game then looked "at the screen's rate" and lost
+// its generated frames for good — tests/gamescope_limit.sh); elsewhere the
+// larger of the measured and the panel's rates — too low a rate idles
+// generation wrongly, too high one only keeps it.
+double VirtualSwapchain::fastGameHz() {
+    if (dev_.gamescope) return dev_.gamescopeLimitSeen.load(std::memory_order_relaxed) || gsLimited_.load() ? 0.0 : gsHz_.load();
+    std::lock_guard<std::mutex> lock(fbMutex_);
+    return std::max(displayClock_.refreshHz(), double(cfg_.panelDisplayHz));
+}
+
 bool VirtualSwapchain::fastGame(double hz) {
-    if (!cfg_.skipFast || hz <= 0.0 || frameIntervalMs_ <= 0.05) {
-        fastSkip_ = false;
-        return false;
-    }
-    const double ratio = 1000.0 / frameIntervalMs_ / hz;
-    const double now = msOf(clock::now());
-    const bool crossing = fastSkip_ ? ratio < 0.75 : ratio >= 0.85;
-    if (!crossing) fastSinceMs_ = 0.0;
-    else if (fastSinceMs_ == 0.0) fastSinceMs_ = now;
-    else if (now - fastSinceMs_ >= 500.0) {
-        fastSkip_ = !fastSkip_;
-        fastSinceMs_ = 0.0;
+    bool toggled = false;
+    const bool idle = fastGate_.update(cfg_.skipFast, frameIntervalMs_, hz, msOf(clock::now()), toggled);
+    if (toggled)
         BDEX_INFO("game at %.0f fps on a %.0f Hz screen: generation %s (skip_fast)", 1000.0 / frameIntervalMs_, hz,
-                  fastSkip_ ? "idle" : "back");
-    }
-    return fastSkip_;
+                  idle ? "idle" : "back");
+    return idle;
 }
 
 // Frame-rate limiter (fps_limit), like DXVK_FRAME_RATE: the application's
@@ -934,17 +934,8 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     // shows): two frames inside one refresh would replace each other. At
     // 60 fps x2 on 144 Hz that is a hold of 0.83 at least; the measured
     // 0.5 showed 116 of the 120 frames, 0.25 only 95.
-    if (order.hold < 1.f && frameIntervalMs_ > 0.0) {
-        const double hz = displayHz();
-        // (auto keeps a quarter refresh of margin for the frame-time jitter:
-        // exactly one refresh apart lost 1.2 of 80 frames a second)
-        const double minGap = (cfg_.interpHold < 0.f ? 1.25 : 1.0) * 1000.0 / std::max(hz, 1.0);
-        if (hz > 0.0) order.hold = float(std::min(1.0, std::max<double>(order.hold, minGap * mult / frameIntervalMs_)));
-        // Auto: only with a known refresh rate (the bound above), and only
-        // where it saves at least 2 ms of hold — otherwise even spacing.
-        const double savedMs = (1.0 - order.hold) * order.real * frameIntervalMs_ / std::max(1, mult);
-        if (cfg_.interpHold < 0.f && (hz <= 0.0 || savedMs < 2.0)) order.hold = 1.f;
-    }
+    if (order.hold < 1.f && frameIntervalMs_ > 0.0)
+        order.hold = pacing::effectiveHold(order.hold, cfg_.interpHold, displayHz(), mult, frameIntervalMs_, order.real);
     // A rebuilt output stage has no analysis of the previous frame yet.
     const bool haveHistory = prevIndex_ >= 0 && !historyLost_;
     const bool interpolate = generating_ && haveHistory && mult > 1;
@@ -1273,7 +1264,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
                 if (u >= 0.0 && len < int(sizeof(skip)))
                     len += snprintf(skip + len, sizeof(skip) - size_t(len), ", flow uncertain on %.1f%% of the picture", 100.0 * u);
             }
-            if (fastSkip_ && len < int(sizeof(skip)))
+            if (fastGate_.idle && len < int(sizeof(skip)))
                 len += snprintf(skip + len, sizeof(skip) - size_t(len), ", generation idle: the game is at the screen's rate (skip_fast)");
             if (cfg_.latencyLimiter && dev_.appPacesLatency(msOf(clock::now())) && len < int(sizeof(skip)))
                 len += snprintf(skip + len, sizeof(skip) - size_t(len), ", latency limiter off (the game's Reflex / Anti-Lag)");
@@ -1365,9 +1356,9 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         // (a game with Reflex or Anti-Lag on paces itself through the driver)
         const bool appPaced = dev_.appPacesLatency(msOf(clock::now()));
         if (cfg_.latencyLimiter && !appPaced) syncFrameStart(std::chrono::duration<double, std::milli>(clock::now() - w0).count());
-        else startDelayMs_ = 0.0;
+        else limiter_.delayMs = 0.0;
     } else {
-        startDelayMs_ = 0.0;
+        limiter_.delayMs = 0.0;
     }
     lastReturnMs_ = msOf(clock::now());
     return pending;  // VK_SUCCESS or VK_SUBOPTIMAL_KHR from an earlier real present
@@ -1392,17 +1383,12 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
 // elsewhere (wake-ups late) it still cost 6 % of the frame rate. Holding
 // only part of the wait was worse on both counts (0.6: 20.9 ms, 0.3: 24.8).
 void VirtualSwapchain::syncFrameStart(double waitedMs) {
-    const double interval = frameIntervalMs_;
-    const bool late = waitedMs < 0.05;
-    startSlackMs_ = std::clamp(startSlackMs_ * (late ? 1.5 : 0.99), 1.0 + 0.05 * interval, 0.3 * interval);
-    if (late) startDelayMs_ *= 0.5;
-    else startDelayMs_ += 0.5 * (waitedMs - startSlackMs_);
-    startDelayMs_ = std::clamp(startDelayMs_, 0.0, 0.75 * interval);
-    if (startDelayMs_ < 0.25) return;
-    statsStartDelayMs_ += startDelayMs_;
+    const double delay = limiter_.step(waitedMs, frameIntervalMs_);  // (pacing.h)
+    if (delay <= 0.0) return;
+    statsStartDelayMs_ += delay;
     // Sleep, then spin the last half millisecond (timer slack).
     const auto until = clock::now() + std::chrono::duration_cast<clock::duration>(
-                                          std::chrono::duration<double, std::milli>(startDelayMs_));
+                                          std::chrono::duration<double, std::milli>(delay));
     const auto coarse = until - std::chrono::microseconds(500);
     if (coarse > clock::now()) std::this_thread::sleep_until(coarse);
     while (clock::now() < until) std::this_thread::yield();
@@ -1540,13 +1526,12 @@ void VirtualSwapchain::runJob(const Job& job) {
         // frame alone (present()), which gives the refresh back.
         auto noteLateness = [&](int i) {
             if (!paced || i != 0) return;
-            double lastMs, periodMs;
-            if (lastLandMs_ <= 0.0 || !displayGrid(lastMs, periodMs)) return;
+            pacing::Grid g;
+            if (lastLandMs_ <= 0.0 || !displayGrid(g.lastMs, g.periodMs)) return;
+            g.valid = true;
             // (Or the job itself began a refresh late: the worker was still
             // presenting the job before.)
-            const double ready = msOf(origin) + 0.3 * periodMs;
-            const double firstLand = lastMs + std::ceil((ready - lastMs) / periodMs) * periodMs;
-            if (lastLandMs_ - firstLand > 0.9 * periodMs || jobStartDelayMs_ > 0.9 * periodMs)
+            if (pacing::jobLate(msOf(origin), lastLandMs_, jobStartDelayMs_, g))
                 lateJobs_.fetch_add(1, std::memory_order_relaxed);
             else
                 lateJobs_.store(0, std::memory_order_relaxed);
@@ -1757,17 +1742,10 @@ bool VirtualSwapchain::waitGpu(VkFence fence, bool cancellable, clock::time_poin
 // refresh it should show on (a present landing just after a refresh would
 // slip a whole period) and on a refresh of its own.
 VirtualSwapchain::clock::time_point VirtualSwapchain::paceTarget(const Job& job, clock::time_point origin, int k) {
-    const double slot = job.intervalMs / std::max(1, job.frames);
-    // interp_hold: the frames up to the real one closer together (frame_order.h).
-    const bool held = job.order.hold < 1.f;
-    double t = msOf(origin) + (held ? job.intervalMs * job.order.offset(k) : slot * k);
-    if (lastPresentMs_ > 0.0) t = std::max(t, lastPresentMs_ + 0.5 * slot * (held ? job.order.hold : 1.0));
-    double lastMs, periodMs;
-    if (feedback_ && displayGrid(lastMs, periodMs)) {
-        double land = lastMs + std::ceil((t - lastMs) / periodMs) * periodMs;
-        if (lastLandMs_ > 0.0 && land < lastLandMs_ + 0.5 * periodMs) land = lastLandMs_ + periodMs;
-        t = land - 0.3 * periodMs;
-    }
+    pacing::Grid g;
+    g.valid = feedback_ && displayGrid(g.lastMs, g.periodMs);
+    const double t = pacing::presentTargetMs(msOf(origin), job.intervalMs, job.frames, job.order, k, lastPresentMs_,
+                                             lastLandMs_, g);
     return clock::time_point(std::chrono::duration_cast<clock::duration>(std::chrono::duration<double, std::milli>(t)));
 }
 
@@ -1936,6 +1914,7 @@ void VirtualSwapchain::pollGamescope() {
     }
     gsHz_ = 1e9 / double(ns);
     gsLimited_ = limited;
+    if (limited) dev_.gamescopeLimitSeen.store(true, std::memory_order_relaxed);
 }
 
 bool VirtualSwapchain::displayGrid(double& lastMs, double& periodMs) {
