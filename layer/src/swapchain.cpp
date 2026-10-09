@@ -7,6 +7,10 @@
 #include "log.h"
 #include "vk_util.h"
 
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -1280,6 +1284,9 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
                 if (u >= 0.0 && len < int(sizeof(skip)))
                     len += snprintf(skip + len, sizeof(skip) - size_t(len), ", flow uncertain on %.1f%% of the picture", 100.0 * u);
             }
+            if (const uint64_t wakes = statsWakes_.exchange(0); wakes && len < int(sizeof(skip)))
+                len += snprintf(skip + len, sizeof(skip) - size_t(len), ", wake-up late %.0f us",
+                                double(statsWakeLateUs_.exchange(0)) / double(wakes));
             if (fastGate_.idle && len < int(sizeof(skip)))
                 len += snprintf(skip + len, sizeof(skip) - size_t(len), ", generation idle: the game is at the screen's rate (skip_fast)");
             if (cfg_.latencyLimiter && dev_.appPacesLatency(msOf(clock::now())) && len < int(sizeof(skip)))
@@ -1415,6 +1422,10 @@ void VirtualSwapchain::syncFrameStart(double waitedMs) {
 // ---------------------------------------------------------------------------
 
 void VirtualSwapchain::workerLoop() {
+#ifdef __linux__
+    // (precise_wake: no 50 us of timer slack on this thread's sleeps)
+    if (cfg_.preciseWake) prctl(PR_SET_TIMERSLACK, 1UL, 0UL, 0UL, 0UL);
+#endif
     for (;;) {
         Job job;
         {
@@ -1553,7 +1564,7 @@ void VirtualSwapchain::runJob(const Job& job) {
                 lateJobs_.store(0, std::memory_order_relaxed);
         };
         for (int i = 0; i < n; ++i) {
-            if (paced) std::this_thread::sleep_until(paceTarget(job, origin, i));
+            if (paced) sleepUntilPrecise(paceTarget(job, origin, i));
             const VkResult r = presentCopied(job, out[size_t(i)]);
             if (r < 0 && err == VK_SUCCESS) err = r;
             noteLateness(i);
@@ -1563,7 +1574,7 @@ void VirtualSwapchain::runJob(const Job& job) {
             return;
         }
         for (int i = eager; i < upToReal; ++i) {
-            if (paced) std::this_thread::sleep_until(paceTarget(job, origin, i));
+            if (paced) sleepUntilPrecise(paceTarget(job, origin, i));
             Copied c;
             VkResult r = submitCopy(job, i, c, staging(i));
             if (r < 0) {
@@ -1713,6 +1724,21 @@ bool VirtualSwapchain::predictedCancelled() {
 // newer present is queued, then watches its ready fence. (Its slot's fence
 // is not recycled before the worker reaches that job: the application thread
 // recycles a slot only presents later, each waiting for the job before.)
+// The worker's sleep until a present's moment, and how late it woke (for
+// the statistics; only sleeps whose moment was still ahead). precise_wake
+// drops the kernel's timer slack for this thread (workerLoop: 50 us by
+// default). Measured: spinning the last half millisecond (sleep, then
+// yield) won nothing on an idle machine (141 -> 120 us late) and lost
+// frames on a busy one (1 ms late, 114.7 of 119 shown): the yield hands the
+// CPU to the load. Not done.
+void VirtualSwapchain::sleepUntilPrecise(clock::time_point target) {
+    if (target <= clock::now()) return;
+    std::this_thread::sleep_until(target);
+    const int64_t late = std::chrono::duration_cast<std::chrono::microseconds>(clock::now() - target).count();
+    statsWakeLateUs_.fetch_add(uint64_t(std::max<int64_t>(late, 0)), std::memory_order_relaxed);
+    statsWakes_.fetch_add(1, std::memory_order_relaxed);
+}
+
 bool VirtualSwapchain::waitUntilOrCancelled(clock::time_point target) {
     VkFence next = VK_NULL_HANDLE;
     {

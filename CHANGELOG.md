@@ -60,6 +60,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Input latency
 
+- **`precise_wake`** (default on): the presentation thread drops the
+  kernel's timer slack; wake-up lateness, now in the statistics line, 56 → 7
+  µs idle, 130 → 38 µs with 12 busy processes (117.3 → 118.0 of 120 frames
+  shown). Spinning the last half millisecond (sleep, then yield) was
+  measured and rejected: 1 ms late and 114.7 frames shown under load.
 - **`vrr_hold`** (default on): on a variable-refresh screen — the present
   feedback works but finds no fixed refresh grid (FreeSync / G-Sync, VRR
   compositors) — `interp_hold = 1` counts as auto: each frame shows when it
