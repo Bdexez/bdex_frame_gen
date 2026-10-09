@@ -181,7 +181,11 @@ les images répétées (`dedup`) et commande des passes en dispatch indirect,
     génération quand le jeu est déjà à ≥ 85 % de la fréquence de l'écran
     (reprise sous 75 %, ½ s d'hystérésis) — cas Valheim 130 i/s sur 144 Hz.
     Mesuré 130 i/s ×2 sur 144 Hz : image→écran 16,0 → 11,8 ms. Statut
-    `reason=fast` (panneau, `status.cpp`) ; fréquence inconnue : sans effet ;
+    `reason=fast` (panneau, `status.cpp`) ; fréquence inconnue : sans effet.
+    Fréquence utilisée (`fastGameHz`) : le cycle de gamescope seulement si la
+    limite Steam n'a jamais été active sur ce device (sinon il peut rester
+    celui de la limite levée : un jeu à 30 i/s restait sans génération,
+    attrapé par `gamescope_limit`), ailleurs le max mesurée / panneau ;
   - **Mesure réelle** (02/10) : `bdex_demo --latency-test [auto]` (flash blanc
     par entrée, journal `--latency-log`) + `latency_log` côté couche (chaque
     image affichée, retour d'affichage) → `tools/latency_report.py` (entrée
@@ -780,6 +784,16 @@ faisait planter le jeu. Chaque essai repart du lien qui suit la couche
 - Rapport 0.5.4 en attente.
 - Principe : partir de « ça ne marche pas chez lui » et chercher la cause
   dans les données.
+
+**Simulateur de cadencement** (02/10) : les décisions du cadencement
+(`presentTargetMs`, borne d'`interp_hold`, retard d'un job, `StartLimiter`,
+`AdaptivePacer`, `FastGate`) sont dans `layer/src/pacing.h`, sans Vulkan,
+appelées telles quelles par la swapchain ; `tests/test_pacing.cpp` les rejoue
+contre un jeu, un GPU et un écran mailbox simulés (chaque propriété vérifiée
+par une mutation qui la casse). Modèle à retenir : le limiteur est en boucle
+fermée (retenir le jeu réduit son attente) ; les images écrasées d'un
+espacement trop serré n'arrivent que quand la couche ne connaît pas la
+grille (seulement la fréquence), la règle d'atterrissage les évite sinon.
 
 **Confiance du flux** (02/10, `flow_confidence`, passe `flow_confidence.comp`
 à la résolution du flux) : aller-retour des vecteurs sur contenu texturé

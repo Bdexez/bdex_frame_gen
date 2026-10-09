@@ -44,6 +44,21 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Input latency
 
+- **Pacing simulator**: the pacing's decisions — present targets, the
+  interp_hold bound, late jobs, the latency limiter, the adaptive multiplier,
+  skip_fast's gate — moved, unchanged, into `layer/src/pacing.h` (no Vulkan),
+  which the swapchain calls; `tests/test_pacing.cpp` drives them with a
+  simulated game, GPU and mailbox screen (every frame displayed at x2 60 fps
+  on 144 Hz; interp_hold 0.25 replacing frames without its bound, none with
+  it; auto 2 ms sooner at 30 fps; adaptive 50 fps -> 144 frames a second;
+  the limiter in closed loop; skip_fast's half second; jittered games).
+  Each property checked to fail when its rule is broken.
+- **Fixed (skip_fast, gamescope)**: after Steam's frame limit was lifted,
+  gamescope's refresh cycle could stay the limit's, and a 30 fps game looked
+  "at the screen's rate": its generated frames stayed off
+  (`tests/gamescope_limit.sh`). skip_fast now ignores that cycle once a limit
+  has been on, and otherwise takes the larger of the measured and the panel's
+  rates.
 - **Measuring input-to-screen latency**: `bdex_demo --latency-test [auto]`
   answers each key press (or an automatic input every half second) with a
   white frame and logs input and present times (`--latency-log`); the layer's
