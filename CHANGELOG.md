@@ -6,6 +6,22 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Quality (experimental)
+
+- **Learned correction** (`learned_correction`, opt-in): a network of 63
+  inputs (the 3x3 neighbourhood of the generated colour, of the inputs'
+  cross-fade and of their luma difference), 8 ReLU units and one output — a
+  bounded weight that moves the pixel toward the cross-fade, never past it
+  (a free colour residual made correct pixels worse: subpixel −11 dB).
+  Trained offline with numpy by `tools/train_correction.py` from bdex_offline
+  runs (weights in `layer/shaders/learned_correction_weights.glsl`, record in
+  `layer/learned_correction.json`), run over each finished generated frame
+  before the HUD (`learned_correction.comp`, 8-bit, no upscaling). On
+  sequences never trained on: demo +0.49 dB, other demo runs +0.10 / +0.15,
+  swing −0.03, popup −0.59, subpixel −1.73; the engine's results match the
+  numpy model's. +0.12 ms at 960x540. Off by default: it needs recordings of
+  real games to generalise.
+
 ### Diagnostics
 
 - **Flow confidence** (`flow_confidence`, opt-in pass at the flow's
