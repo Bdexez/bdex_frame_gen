@@ -7,17 +7,41 @@
 #include <cstdio>
 #include <fstream>
 #include <sstream>
+#include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 namespace {
 // A fault in the object the journal belongs to (crash.cpp is linked into
 // this test binary as into the layer).
-// (the address through a volatile: a plain null store is undefined and the
-// optimiser may drop it)
-volatile uintptr_t g_bad = 0;
+// A write to a page mapped without access: a real fault, and no undefined
+// behaviour for UBSan to stop at first (a store through a null pointer is).
 __attribute__((noinline)) void faultHere() {
-    *reinterpret_cast<volatile int*>(g_bad) = 42;
+    void* page = mmap(nullptr, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (page == MAP_FAILED) _exit(6);
+    *static_cast<volatile int*>(page) = 42;
+}
+
+// ASan and TSan handle SIGSEGV themselves (their report, then exit): the
+// journal is not reached there.
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+constexpr bool kSanitizer = true;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+constexpr bool kSanitizer = true;
+#else
+constexpr bool kSanitizer = false;
+#endif
+#else
+constexpr bool kSanitizer = false;
+#endif
+
+// A child of its own (output flushed first: it would print the parent's
+// buffered lines a second time).
+pid_t forkChild() {
+    fflush(stdout);
+    fflush(stderr);
+    return fork();
 }
 
 std::string readAll(const std::string& path) {
@@ -32,8 +56,12 @@ std::string readAll(const std::string& path) {
 // the layer, then hands the fault on: the process still dies of SIGSEGV (no
 // handler of its own: the default action), as it would without the layer.
 TEST(crash_journal_written_then_chained) {
+    if (kSanitizer) {
+        printf("  (under a sanitizer: skipped)\n");
+        return;
+    }
     const std::string dir = test::tmpPath("bdex-crash-test");
-    const pid_t child = fork();
+    const pid_t child = forkChild();
     if (child == 0) {
         if (!bdex::crashLogInstall(dir, "unit test", "context line")) _exit(3);
         if (bdex::crashLogInstall(dir, "again", "")) _exit(4);  // once per process
@@ -65,8 +93,9 @@ void previousHandler(int) {
 } // namespace
 
 TEST(crash_journal_keeps_the_previous_handler) {
+    if (kSanitizer) return;
     const std::string dir = test::tmpPath("bdex-crash-test2");
-    const pid_t child = fork();
+    const pid_t child = forkChild();
     if (child == 0) {
         signal(SIGSEGV, previousHandler);
         if (!bdex::crashLogInstall(dir, "chain", "")) _exit(3);
