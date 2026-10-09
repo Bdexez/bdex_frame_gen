@@ -42,6 +42,7 @@ struct Config {
     int   maxFrameLatency = 1;    // while generating: frames the GPU may still be working on when the game begins its next one (0 = no limit); a GPU-bound game otherwise runs ahead by up to a few frames of input lag
     bool  latencyLimiter = true;  // with maxFrameLatency: a GPU-bound game's present returns just in time for its next frame to reach the GPU as it frees up (fresher input, same frame rate)
     bool  flowConfidence = false; // per flow texel confidence (round trip of the vectors, luma match): the share of uncertain pixels in the statistics, the panel and --report; on with debug=confidence or confidence_fallback
+    float learnedCorrection = 0.0f; // interpolation: the trained correction network (tools/train_correction.py) over each generated frame, 0 = off .. 1 = as trained; 8-bit formats without upscaling
     float confidenceFallback = 0.0f; // interpolation: fade toward the plain cross-fade where the flow is not trusted (flow_confidence's map), 0 = off (historical), 1 = fully
     bool  crashLog      = true;   // Linux: a crash in the layer writes ~/.cache/bdex-framegen/crash-<game>-<pid>.txt (signal, offsets in the layer, settings); other faults go untouched to the game's handlers
     bool  skipFast      = true;   // fixed multiplier: no generation while the game already runs at 85 % of the screen's refresh rate or more (back under 75 %): it would add almost no frame to the screen, only GPU work and the interpolation's hold (refresh rate known only)

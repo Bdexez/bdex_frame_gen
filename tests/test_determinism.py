@@ -40,6 +40,7 @@ SETTINGS = [
     ("search=3,search_fine=3", "ie"), ("flow_iterations=2", "ie"), ("refine=0", "ie"), ("refine_all=0", "ie"),
     ("scene_cut_low=0.02,scene_cut_high=0.04", "ie"), ("online_tune=1", "ie"),
     ("flow_confidence=1,confidence_fallback=0.5", "ie"),
+    ("learned_correction=1", "i"),
     ("upscale_temporal=0.3", "ie", ["--render-scale", "0.5"]), ("render_scale=0.5", "ie", ["--render-scale", "0.5"]),
     ("upscale_filter=bicubic,sharpness=0.5", "ie", ["--render-scale", "0.5"]),
     # Everything at once, per mode.

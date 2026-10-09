@@ -14,13 +14,18 @@ std::unique_ptr<FgPass> makeExtrapolateAccelPass();
 std::unique_ptr<FgPass> makeExtrapolateSplatPass();
 std::unique_ptr<FgPass> makeFpsHudPass();
 std::unique_ptr<FgPass> makeFlowConfidencePass();
+std::unique_ptr<FgPass> makeLearnedCorrectionPass();
 
 std::vector<std::unique_ptr<FgPass>> createOptionalPasses(const Config& cfg, DeviceData& dev, uint32_t outputs,
                                                           bool upscaling, VkExtent2D display) {
     std::vector<std::unique_ptr<FgPass>> passes;
-    // The fps HUD draws on the real frame too, generation or not.
-    if (cfg.overlayMode > 0) passes.push_back(makeFpsHudPass());
-    if (outputs == 0) return passes;  // no generation: no flow to work on
+    // The fps HUD draws on the real frame too, generation or not — last, over
+    // what the other passes did to the finished image (learned_correction).
+    auto withHud = [&]() -> std::vector<std::unique_ptr<FgPass>> {
+        if (cfg.overlayMode > 0) passes.push_back(makeFpsHudPass());
+        return std::move(passes);
+    };
+    if (outputs == 0) return withHud();  // no generation: no flow to work on
     // Self-evaluation first: it rates the previous flow before anything rewrites it.
     if (cfg.onlineTune) passes.push_back(makeOnlineTunePass());
     passes.push_back(makeFlowTemporalPass());  // flow_temporal can be switched on live
@@ -45,7 +50,9 @@ std::vector<std::unique_ptr<FgPass>> createOptionalPasses(const Config& cfg, Dev
                                                               VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
                                                               VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
         passes.push_back(makeTemporalUpscalePass());
-    return passes;
+    // Over the finished generated frames (8-bit, at render size; it checks).
+    if (cfg.learnedCorrection > 0.f) passes.push_back(makeLearnedCorrectionPass());
+    return withHud();
 }
 
 } // namespace bdex
