@@ -1,0 +1,60 @@
+{
+ "hidden": 8,
+ "head": "mix",
+ "train": [
+  "seq-d05",
+  "seq-d3",
+  "seq-dcut",
+  "pan",
+  "occlude",
+  "hud",
+  "chroma"
+ ],
+ "test": {
+  "demo1": {
+   "psnr": 23.292067084376995,
+   "psnr_corrected": 23.826910045341616,
+   "motion": 18.061025575560517,
+   "motion_corrected": 18.77544980641552
+  },
+  "demo2": {
+   "psnr": 20.426443714841184,
+   "psnr_corrected": 20.53733748870461,
+   "motion": 16.87842583793686,
+   "motion_corrected": 17.086920426003427
+  },
+  "seq-d15": {
+   "psnr": 21.621546684818345,
+   "psnr_corrected": 21.780977725761005,
+   "motion": 17.12713705664538,
+   "motion_corrected": 17.371417590438657
+  },
+  "swing": {
+   "psnr": 36.57877655901786,
+   "psnr_corrected": 36.55225362899109,
+   "motion": 36.056433702336726,
+   "motion_corrected": 35.9985346120954
+  },
+  "popup": {
+   "psnr": 23.45604029898156,
+   "psnr_corrected": 22.85473417514207,
+   "motion": 22.978421279587135,
+   "motion_corrected": 22.397263536635553
+  },
+  "subpixel": {
+   "psnr": 51.65636927895569,
+   "psnr_corrected": 49.94247612990853,
+   "motion": 50.50192125113249,
+   "motion_corrected": 49.18542679782207
+  },
+  "fade": {
+   "psnr": 64.74962064262449,
+   "psnr_corrected": 64.74673731666493,
+   "motion": 38.55939891500708,
+   "motion_corrected": 38.55053328737907
+  }
+ },
+ "samples_per_frame": 20000,
+ "epochs": 12,
+ "seed": 1
+}
