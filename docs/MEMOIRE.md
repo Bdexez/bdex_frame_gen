@@ -182,6 +182,11 @@ les images répétées (`dedup`) et commande des passes en dispatch indirect,
     (reprise sous 75 %, ½ s d'hystérésis) — cas Valheim 130 i/s sur 144 Hz.
     Mesuré 130 i/s ×2 sur 144 Hz : image→écran 16,0 → 11,8 ms. Statut
     `reason=fast` (panneau, `status.cpp`) ; fréquence inconnue : sans effet ;
+  - **Mesure réelle** (02/10) : `bdex_demo --latency-test [auto]` (flash blanc
+    par entrée, journal `--latency-log`) + `latency_log` côté couche (chaque
+    image affichée, retour d'affichage) → `tools/latency_report.py` (entrée
+    → premier photon / image réelle) ; `tools/latency_bench.sh` compare des
+    réglages dans gamescope sans fenêtre ; ctest `latency_probe` ;
   - `low_latency` et `fps_limit` complètent.
 - **Rattrapage** (30/09) : quand la présentation prend du retard, une image
   est montrée sans générée. Sinon une file qui s'est formée ne se vide jamais
@@ -726,6 +731,7 @@ d'affichage tournent dans `gamescope --backend headless` ou dans Docker
 | Qualité, CI (lavapipe) | 29,50 / 23,65 dB (seuils 28,0 / 23,0), à ~0,04 dB du GPU |
 | Latence, interpolation ×2 à 60 i/s | image réelle retenue ~8,4 ms (~16,7 ms à 30 i/s) |
 | Latence, extrapolation ×2 | ~0,1 ms |
+| Entrée → écran, démo 40 i/s, 144 Hz (02/10, `tools/latency_bench.sh`, médianes premier photon / image réelle) | ×1 6,8 / 6,8 ms ; interpolation ×2 10,0 / 19,9 ; `interp_hold=auto` 9,2 / 16,2 ; extrapolation ×2 6,7 / 6,7 |
 | `interp_hold = 0,5`, gamescope 144 Hz (02/10) | 40 i/s ×2 : image→écran 43,4 → 37,6 ms (79,3/80 affichées) ; 40 i/s ×3 : 47,7 → 45,0 ; 60 i/s ×2 : 30,3 → 29,8 |
 | Coût GPU, variantes allégées (1440p, quality) | 2,7 → 1,35 ms |
 | Jeu limité par le GPU, 4K lourd, avant/après le cadencement GPU | 66 → 132 images affichées/s |

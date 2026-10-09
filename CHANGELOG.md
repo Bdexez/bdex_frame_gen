@@ -44,6 +44,16 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Input latency
 
+- **Measuring input-to-screen latency**: `bdex_demo --latency-test [auto]`
+  answers each key press (or an automatic input every half second) with a
+  white frame and logs input and present times (`--latency-log`); the layer's
+  `latency_log` logs every displayed frame (present feedback);
+  `tools/latency_report.py` joins them — input to first photon and to the
+  real frame, median / p95 / mean — and `tools/latency_bench.sh` runs
+  settings side by side in a headless gamescope. First measurement (40 fps,
+  144 Hz, first photon / real frame): x1 6.8 / 6.8 ms, interpolation x2
+  10.0 / 19.9, with `interp_hold = auto` 9.2 / 16.2, extrapolation x2
+  6.7 / 6.7. ctest `latency_probe` (skipped without gamescope).
 - **`skip_fast`** (default on, fixed multiplier): no generation while the
   game already runs at 85 % of the screen's refresh rate or more (back under
   75 %, half a second either way): it would add almost no frame to the

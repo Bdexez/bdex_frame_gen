@@ -38,6 +38,8 @@ bool digitPixel(uint d, ivec2 p) {
 }
 
 void main() {
+    // --latency-test: the frame answering an input, flat white.
+    if (pc.variant == 2u) { outColor = vec4(1.0); return; }
     vec2 res = pc.resolution;
     vec2 px = vUV * res;
     float aspect = res.x / res.y;

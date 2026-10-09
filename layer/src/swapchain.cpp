@@ -1775,6 +1775,25 @@ VirtualSwapchain::clock::time_point VirtualSwapchain::paceTarget(const Job& job,
 // Present feedback
 // ---------------------------------------------------------------------------
 
+namespace {
+// latency_log: one line per displayed frame, from every swapchain of the
+// process into one file (opened once, appended under a lock).
+void latencyLogLine(const std::string& path, double presentMs, double displayMs, bool real) {
+    static std::mutex mutex;
+    static FILE* file = nullptr;
+    static bool failed = false;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!file && !failed) {
+        file = fopen(path.c_str(), "w");
+        failed = !file;
+        if (failed) BDEX_WARN("latency_log: cannot write %s", path.c_str());
+    }
+    if (!file) return;
+    fprintf(file, "%.3f %.3f %d\n", presentMs, displayMs, real ? 1 : 0);
+    fflush(file);
+}
+} // namespace
+
 // Waits for each presented id in turn. vkWaitForPresentKHR returns once that
 // frame *or a later one* is displayed, so an id that completes right after
 // its predecessor (well within a refresh) means the predecessor was replaced
@@ -1806,6 +1825,7 @@ void VirtualSwapchain::feedbackLoop() {
                 // Latency the player sees: the game's present call to the
                 // moment its real frame is on screen (all queueing, the
                 // layer's hold and the compositor included).
+                if (!cfg_.latencyLog.empty()) latencyLogLine(cfg_.latencyLog, entry.presentMs, now, entry.real);
                 const double latency = now - entry.presentMs;
                 if (entry.real && latency >= 0.0 && latency < 1000.0) {
                     fbLatencyMs_ = fbLatencyMs_ < 0.0 ? latency : fbLatencyMs_ * 0.9 + latency * 0.1;

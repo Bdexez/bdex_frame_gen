@@ -272,7 +272,7 @@ const std::pair<const char*, const char*> kCustomKeys[] = {
     {"preset", nullptr},      {"fullres", nullptr},    {"flow_scale", nullptr},     {"mode", nullptr},
     {"upscale", nullptr},     {"overlay", "hud"},      {"upscale_filter", nullptr}, {"capture_hdr", nullptr},
     {"log_file", nullptr},    {"target_fps", nullptr}, {"fps_limit", "fps_cap"},    {"dump", "dump_dir"},
-    {"present_mode", nullptr}, {"debug", nullptr}};
+    {"present_mode", nullptr}, {"debug", nullptr},     {"latency_log", nullptr}};
 
 const OptionDef* findOption(const std::string& key) {
     for (const auto& d : registry())
@@ -433,6 +433,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
         return true;
     }
     if (key == "log_file")                    { logFile = platformExpandPath(value); return true; }
+    if (key == "latency_log")                 { latencyLog = platformExpandPath(value); return true; }
     // "auto" (-1): from the refresh rate the present feedback measures.
     // "auto", or any negative number (the UIs' spin buttons write -1 for it).
     if (key == "target_fps") {

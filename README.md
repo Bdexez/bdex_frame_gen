@@ -446,6 +446,11 @@ BDEX_FG=1 build/demo/bdex_demo --fps 30     # with it: 60 fps displayed
 build/demo/bdex_demo --help                 # --size, --mode, --speed, --cut, --srgb…
 ```
 
+`--latency-test` answers every key press (`--latency-test auto`: one
+"input" every half second) with a flat white frame, and `--latency-log FILE`
+records when each input came and when its frame was presented — the game
+side of an input-to-screen measurement (see Latency).
+
 ---
 
 ## Configuration
@@ -527,6 +532,7 @@ them).
 | `STATS` / `STATS_INTERVAL` | `1` / `5` | terminal statistics, period in seconds |
 | `PROFILE` | `0` | GPU time per stage in the statistics |
 | `LOG` / `LOG_FILE` | `1` / – | verbosity 0–3, output file |
+| `LATENCY_LOG` | – | a file: every frame the screen shows as `<game's present ms> <display ms> <real 0/1>` (steady clock, present feedback) — joined with `bdex_demo --latency-log` by `tools/latency_report.py` (see Latency) |
 | `DUMP` / `DUMP_FRAMES` | – / `24` | write the presented frames (PPM) into a directory |
 | `SHARED_QUEUE` | `0` | force sharing the game's queue (testing) |
 | `SYNC_PRESENT` | `0` | block the game's present call until the worker presented the frame (compatibility test) |
@@ -629,6 +635,25 @@ game fps. With the CPU busy elsewhere (the game's wake-ups late), the limiter
 still cost 6 % of the frame rate there: `LATENCY_LIMITER=0` if the frame rate
 matters more. The statistics line reports both figures (`frame-to-screen`,
 `next frame held`).
+
+**Measuring it.** `tools/latency_bench.sh` runs the demo through the layer in
+a headless gamescope with automatic inputs, each answered by a white frame,
+and joins the demo's log with the layer's (`LATENCY_LOG`): the input to the
+first frame on screen carrying it, and to the real frame. Demo at 40 fps,
+144 Hz, medians:
+
+| | first photon | real frame |
+|---|---|---|
+| x1 (no generation) | 6.8 ms | 6.8 ms |
+| interpolation x2 | 10.0 ms | 19.9 ms |
+| interpolation x2, `INTERP_HOLD=auto` | 9.2 ms | 16.2 ms |
+| extrapolation x2 | 6.7 ms | 6.7 ms |
+
+With interpolation the first photon is a generated frame, half of it the new
+image; extrapolation costs nothing measurable. Run it for a setting with
+`tools/latency_bench.sh LABEL=BDEX_FG_X=Y,...`; on a real screen,
+`bdex_demo --latency-test` (key presses) with `BDEX_FG_LATENCY_LOG`, then
+`tools/latency_report.py`, or a photodiode on the flashes.
 
 **`INTERP_HOLD`** trades interpolation's even spacing for latency: below 1
 the generated frames are shown closer together before the real one, which

@@ -75,6 +75,10 @@ if(TARGET bdex_demo)
   set_tests_properties(integration PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
   # Steam's framerate limit in Game Mode (a headless gamescope, nothing on
   # screen); skipped without gamescope and its WSI layer.
+  # Input-to-screen latency (bdex_demo --latency-test, latency_log): in a
+  # headless gamescope, skipped without it.
+  add_test(NAME latency_probe COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/latency_probe.sh" "${CMAKE_BINARY_DIR}")
+  set_tests_properties(latency_probe PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
   add_test(NAME gamescope_limit
            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/gamescope_limit.sh" "$<TARGET_FILE:bdex_demo>" "${CMAKE_BINARY_DIR}/layer")
   set_tests_properties(gamescope_limit PROPERTIES SKIP_RETURN_CODE 77)

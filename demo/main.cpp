@@ -4,7 +4,7 @@
 //
 //   bdex_demo [--fps N] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]
 //             [--deterministic] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]
-//             [--gpu-load N]
+//             [--gpu-load N] [--latency-test [auto]] [--latency-log FILE]
 //
 // Run it with BDEX_FG=1 (and VK_LAYER_PATH pointing at the build tree if the
 // layer is not installed) to see the generated frames.
@@ -44,6 +44,12 @@ struct Options {
     long repeat = 1;             // present every image N times (e.g. 2: 30 fps content in a 60 fps loop)
     double duration = 0.0;       // also stop after this many seconds (0 = no limit): bounds tests on slow drivers
     long gpuLoad = 1;            // draw the scene this many times a frame (same image): a GPU-bound game
+    // --latency-test: an "input" (a key press, or with `auto` one every half
+    // second, taken at the start of a frame) makes the next frame flat white;
+    // --latency-log gets "flash <input ms> <present ms>" per flash (steady
+    // clock, the layer's latency_log clock), for tools/latency_report.py.
+    int latencyTest = 0;         // 0 off, 1 key presses, 2 automatic
+    std::string latencyLog;
 };
 
 struct PushConstants {
@@ -96,7 +102,14 @@ private:
     double animTime_ = 0.0;  // animation time of the image being drawn
     uint32_t frameCount_ = 0;
     bool resized_ = false;
+    double inputMs_ = -1.0;    // --latency-test: a pending input (steady ms), -1 none
+    double nextAutoMs_ = 0.0;
+    FILE* latencyLog_ = nullptr;
 };
+
+double steadyMs() {
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 void Demo::initWindow() {
     if (!glfwInit()) throw std::runtime_error("glfwInit failed");
@@ -109,6 +122,15 @@ void Demo::initWindow() {
     window_ = glfwCreateWindow(opt_.width, opt_.height, "bdex frame generation demo", nullptr, nullptr);
     if (!window_) throw std::runtime_error("glfwCreateWindow failed");
     glfwSetWindowUserPointer(window_, this);
+    if (opt_.latencyTest == 1)
+        glfwSetKeyCallback(window_, [](GLFWwindow* w, int key, int, int action, int) {
+            auto* d = static_cast<Demo*>(glfwGetWindowUserPointer(w));
+            if (action == GLFW_PRESS && key != GLFW_KEY_ESCAPE && d->inputMs_ < 0.0) d->inputMs_ = steadyMs();
+        });
+    if (!opt_.latencyLog.empty()) {
+        latencyLog_ = fopen(opt_.latencyLog.c_str(), "w");
+        if (!latencyLog_) throw std::runtime_error("cannot write " + opt_.latencyLog);
+    }
     glfwSetFramebufferSizeCallback(window_, [](GLFWwindow* w, int, int) {
         static_cast<Demo*>(glfwGetWindowUserPointer(w))->resized_ = true;
     });
@@ -416,6 +438,17 @@ void Demo::drawFrame() {
         animTime_ = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     PushConstants pc{{float(extent_.width), float(extent_.height)}, float(animTime_ * opt_.speed), shown,
                      opt_.cutEvery > 0 ? uint32_t((shown / opt_.cutEvery) & 1) : 0u};
+    // --latency-test: this frame is the answer to the pending input — white.
+    double flashInput = -1.0;
+    if (opt_.latencyTest == 2 && steadyMs() >= nextAutoMs_) {
+        if (nextAutoMs_ > 0.0) inputMs_ = steadyMs();  // (none in the first half second)
+        nextAutoMs_ = steadyMs() + 500.0;
+    }
+    if (opt_.latencyTest && inputMs_ >= 0.0) {
+        flashInput = inputMs_;
+        inputMs_ = -1.0;
+        pc.variant = 2u;
+    }
     vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
     for (long i = 0; i < opt_.gpuLoad; ++i) vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRenderPass(cmd);
@@ -438,6 +471,10 @@ void Demo::drawFrame() {
     pi.swapchainCount = 1;
     pi.pSwapchains = &swapchain_;
     pi.pImageIndices = &imageIndex;
+    if (flashInput >= 0.0 && latencyLog_) {
+        fprintf(latencyLog_, "flash %.3f %.3f\n", flashInput, steadyMs());
+        fflush(latencyLog_);
+    }
     r = vkQueuePresentKHR(queue_, &pi);
     if (r == VK_ERROR_OUT_OF_DATE_KHR || (!opt_.ignoreResize && (r == VK_SUBOPTIMAL_KHR || resized_))) {
         resized_ = false;
@@ -505,6 +542,7 @@ void Demo::cleanup() {
     }
     if (surface_) vkDestroySurfaceKHR(instance_, surface_, nullptr);
     if (instance_) vkDestroyInstance(instance_, nullptr);
+    if (latencyLog_) fclose(latencyLog_);
     if (window_) glfwDestroyWindow(window_);
     glfwTerminate();
 }
@@ -527,6 +565,10 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--repeat") o.repeat = std::max(1L, atol(value().c_str()));
         else if (a == "--gpu-load") o.gpuLoad = std::clamp(atol(value().c_str()), 1L, 1000L);
         else if (a == "--duration") o.duration = std::max(0.0, atof(value().c_str()));
+        else if (a == "--latency-test") {
+            o.latencyTest = 1;
+            if (i + 1 < argc && std::string(argv[i + 1]) == "auto") { o.latencyTest = 2; ++i; }
+        } else if (a == "--latency-log") o.latencyLog = value();
         else if (a == "--size") {
             std::string v = value();
             if (sscanf(v.c_str(), "%dx%d", &o.width, &o.height) != 2) throw std::runtime_error("bad --size");
@@ -539,7 +581,7 @@ Options parseArgs(int argc, char** argv) {
         } else if (a == "-h" || a == "--help") {
             printf("usage: bdex_demo [--fps N] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]\n"
                    "                 [--deterministic] [--ignore-resize] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]\n"
-                   "                 [--gpu-load N]\n");
+                   "                 [--gpu-load N] [--latency-test [auto]] [--latency-log FILE]\n");
             exit(0);
         } else {
             throw std::runtime_error("unknown option " + a);
