@@ -171,6 +171,10 @@ les images répétées (`dedup`) et commande des passes en dispatch indirect,
     rafraîchissement d'écart (exactement un : 1,2 image/s perdue sur 80), et
     seulement si le gain dépasse 2 ms ; mesuré ×2 à 144 Hz : 30 i/s 56,7 →
     48,3 ms, 40 i/s 43,8 → 40,7, aucune image perdue, 60 i/s inchangé ;
+  - **`vrr_hold`** (03/10, défaut 1) : écran sans grille fixe mais avec
+    retour d'affichage (≥ 120 images vues, `variableRefresh`) → `interp_hold`
+    1 traité comme auto ; simulé (`pacing_vrr_auto_hold`) : réelle 3,8 ms plus
+    tôt à 40 i/s ×2, 144 Hz max. Non mesuré sur un vrai écran VRR ;
   - `synth_priority` (02/10, avec `async_compute`) : priorité globale haute
     pour la file de synthèse (sa famille a son propre `VkDeviceQueueCreateInfo`
     ; une famille partagée avec le jeu n'a qu'une priorité). Refusée sans
