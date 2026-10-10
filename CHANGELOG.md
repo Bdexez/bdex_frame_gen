@@ -19,6 +19,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Quality (experimental)
 
+- **`alt_vectors`** (opt-in): the matcher's second hypothesis per block
+  (lowest cost 2 px or more from the winner, `altOut`, full variant only)
+  tried per pixel by the synthesis (storage buffers: the matcher keeps to
+  the four storage images Vulkan guarantees — caught by `min_limits`) where
+  the kept trajectory is poor and only when clearly better. Without that
+  test demo +0.2 to +0.3 dB, hud +0.6, but scroll −2.2, subpixel −2.7; with
+  it alone hud +0.57, pan −0.62, scroll −1.74, and on top of pixel_vectors
+  nothing to gain (pan −0.57): off.
 - **`flow_upsample`** (opt-in): joint bilateral upsampling of the finest flow
   to the luma resolution at motion boundaries (`flow_upsample.comp`, its own
   synthesis sets: `FgContext::synthesisSetWithFlow`). Without pixel_vectors:

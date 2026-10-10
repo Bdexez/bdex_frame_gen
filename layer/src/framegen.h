@@ -323,6 +323,7 @@ private:
                              const Config& cfg) override;
     AllocatedImage maskDummy_;               // 1x1 zero: the static mask without hud_mask
     VkImageView staticMask_ = VK_NULL_HANDLE;
+    AllocatedBuffer altFlow_[2];             // alt_vectors: the matcher's second hypothesis per block (vec2), [direction]
     AllocatedImage confDummy_;               // 1x1 one: the confidence map without flow_confidence
     VkImageView confMap_ = VK_NULL_HANDLE;
     bool hasConfMap_ = false;

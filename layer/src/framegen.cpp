@@ -189,12 +189,12 @@ void FrameGen::createPipelines() {
     if (outputs_ > 0) {
         if (lumaFormat_ == VK_FORMAT_R16_SFLOAT) {
             downsample_ = makePass(downsample_comp_f16, downsample_comp_f16_size, {CIS, SI});
-            blockMatch_ = makePass(block_match_comp_f16, block_match_comp_f16_size, {SI, SI, CIS, SI, SI, CIS, CIS, CIS}, true,
+            blockMatch_ = makePass(block_match_comp_f16, block_match_comp_f16_size, {SI, SI, CIS, SI, SI, CIS, CIS, CIS, SB}, true,
                                    !matcherFull_);
             refine_ = makePass(flow_refine_comp_f16, flow_refine_comp_f16_size, {CIS, CIS, SI, SI, SI});
         } else {
             downsample_ = makePass(downsample_comp_f32, downsample_comp_f32_size, {CIS, SI});
-            blockMatch_ = makePass(block_match_comp_f32, block_match_comp_f32_size, {SI, SI, CIS, SI, SI, CIS, CIS, CIS}, true,
+            blockMatch_ = makePass(block_match_comp_f32, block_match_comp_f32_size, {SI, SI, CIS, SI, SI, CIS, CIS, CIS, SB}, true,
                                    !matcherFull_);
             refine_ = makePass(flow_refine_comp_f32, flow_refine_comp_f32_size, {CIS, CIS, SI, SI, SI});
         }
@@ -202,9 +202,9 @@ void FrameGen::createPipelines() {
         reduce_ = makePass(reduce_cost_comp, reduce_cost_comp_size, {SI, SB});
         // With sharpening, the interpolation writes a linear rgba16f image that
         // the CAS pass then sharpens and packs; otherwise it packs directly.
-        if (sharpen_)       interp_ = makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS, CIS}, true);
-        else if (enc_.is64) interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS, CIS}, true);
-        else                interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS, CIS}, true);
+        if (sharpen_)       interp_ = makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS, CIS, SB, SB}, true);
+        else if (enc_.is64) interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS, CIS, SB, SB}, true);
+        else                interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS, CIS, SB, SB}, true);
         frameState_ = makePass(frame_state_comp, frame_state_comp_size, {CIS, CIS, SB});
         sceneHist_ = makePass(scene_hist_comp, scene_hist_comp_size, {CIS, CIS, SB});
         if (chroma_) downChroma_ = makePass(downsample_chroma_comp, downsample_chroma_comp_size, {CIS, SI});
@@ -303,6 +303,10 @@ void FrameGen::createResources() {
         splatMap_ = splatDummy_.view;
         // Small (finest flow resolution); created in either mode so that
         // extrapolate_accel can be toggled live.
+        // alt_vectors: the finest level's second hypotheses (block resolution).
+        for (auto& a : altFlow_)
+            a = dev_.createBuffer(8 * VkDeviceSize(levels_v_[0].blocks.width) * levels_v_[0].blocks.height,
+                                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         prevBwd_ = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, levels_v_[0].fine,
                                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, true);
         if (!chroma_) chromaDummy_ = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, {1, 1}, VK_IMAGE_USAGE_SAMPLED_BIT, true);
@@ -495,6 +499,7 @@ void FrameGen::createDescriptors() {
                 writeImage(s, 5, CIS, lv.flowFine[1].view);
                 writeImage(s, 6, CIS, chroma_ ? lv.chroma[dir == 0 ? prev : cur].view : chromaDummy_.view);
                 writeImage(s, 7, CIS, chroma_ ? lv.chroma[dir == 0 ? cur : prev].view : chromaDummy_.view);
+                writeBuffer(s, 8, altFlow_[dir].buffer);  // (written on the finest level only)
                 dsMatch_[parity][dir].push_back(s);
 
                 VkDescriptorSet rs = allocSet(refine_.setLayout);
@@ -542,7 +547,9 @@ void FrameGen::createDescriptors() {
                 writeImage(s, 6, SI, splatMap_);
                 writeImage(s, 7, CIS, prevBwd_.view);
                 writeImage(s, 8, CIS, staticMask_);
-    writeImage(s, 9, CIS, confMap_);
+                writeImage(s, 9, CIS, confMap_);
+                writeBuffer(s, 10, altFlow_[0].buffer);
+                writeBuffer(s, 11, altFlow_[1].buffer);
                 synthSets_.push_back(s);
                 dsInterp_.push_back(s);
             }
@@ -557,7 +564,9 @@ void FrameGen::createDescriptors() {
                 writeImage(s, 6, SI, splatMap_);
                 writeImage(s, 7, CIS, prevBwd_.view);
                 writeImage(s, 8, CIS, staticMask_);
-    writeImage(s, 9, CIS, confMap_);
+                writeImage(s, 9, CIS, confMap_);
+                writeBuffer(s, 10, altFlow_[0].buffer);
+                writeBuffer(s, 11, altFlow_[1].buffer);
                 synthSets_.push_back(s);
                 dsInterpReal_.push_back(s);
             }
@@ -610,7 +619,7 @@ VkDescriptorSet FrameGen::synthesisSet(VkImageView prev, VkImageView cur, uint32
 FgPipeline FrameGen::makeLinearSynthesisPipeline() {
     const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
                            SB = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    return makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS, CIS});
+    return makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS, CIS, SB, SB});
 }
 
 VkDescriptorSet FrameGen::synthesisSetFor(VkDescriptorSetLayout layout, VkImageView prev, VkImageView cur,
@@ -627,6 +636,8 @@ VkDescriptorSet FrameGen::synthesisSetFor(VkDescriptorSetLayout layout, VkImageV
     writeImage(s, 7, CIS, prevBwd_.view);
     writeImage(s, 8, CIS, staticMask_);
     writeImage(s, 9, CIS, confMap_);
+    writeBuffer(s, 10, altFlow_[0].buffer);
+    writeBuffer(s, 11, altFlow_[1].buffer);
     synthSets_.push_back(s);
     return s;
 }
@@ -698,6 +709,8 @@ void FrameGen::destroyAll() {
     if (chromaDummy_.image) dev_.destroyImage(chromaDummy_);
     if (maskDummy_.image) dev_.destroyImage(maskDummy_);
     if (confDummy_.image) dev_.destroyImage(confDummy_);
+    for (auto& a : altFlow_)
+        if (a.buffer) dev_.destroyBuffer(a);
     confMap_ = VK_NULL_HANDLE;
     staticMask_ = VK_NULL_HANDLE;
     hasStaticMask_ = false;
@@ -1018,7 +1031,7 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity, int costSlot) {
     // The lean matcher when none of its opt-in terms is on (same results).
     const float chromaWeight = chroma_ ? cfg.chromaWeight : 0.f;
     const VkPipeline matcher = cfg.gradWeight == 0.f && cfg.censusWeight == 0.f && cfg.rotWeight == 0.f &&
-                                       chromaWeight == 0.f && blockMatch_.lean
+                                       chromaWeight == 0.f && !cfg.altVectors && blockMatch_.lean
                                    ? blockMatch_.lean
                                    : blockMatch_.pipeline;
     for (int l = levels_ - 1; l >= 0; --l) {
@@ -1028,7 +1041,7 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity, int costSlot) {
                    {(int32_t)lv.blocks.width, (int32_t)lv.blocks.height},
                    l + 1 < levels_ ? cfg.searchFine : cfg.searchRadius, l + 1 < levels_ ? 1 : 0, cfg.smoothness, cfg.zeroBias,
                    cfg.gradWeight, cfg.censusWeight, cfg.censusMargin, cfg.rotWeight, 0, cfg.zeroBiasContrast,
-                   chromaWeight, 0, cfg.zeroBiasCap};
+                   chromaWeight, 0, cfg.zeroBiasCap, l == 0 && cfg.altVectors ? 1 : 0};
         const bool temporal = cfg.temporalPrediction && flowValid_;
         for (uint32_t dir = 0; dir < 2; ++dir) {
             pc.temporal = temporal ? static_cast<int32_t>(dir + 1) : 0;
@@ -1176,12 +1189,13 @@ void FrameGen::recordSynthesisImpl(VkCommandBuffer cmd, const Pass& pipe, VkDesc
                 cfg.flowIterations, cfg.occlusionStrength, cfg.staticGuard, cfg.extrapolateHold, in.splat ? 1 : 0, cfg.pixelVectors ? 1 : 0, enc_.transfer,
                 timing, cfg.sceneCutLocal ? (int32_t)kCutTiles : 0, t > 1.f ? in.accel : 0.f,
                 cfg.synthBicubic ? 1 : 0, hasStaticMask_ ? float(cfg.hudMask) : 0.f, cfg.revealFill ? 1 : 0,
-                hasConfMap_ && t <= 1.f ? cfg.confidenceFallback : 0.f};
+                hasConfMap_ && t <= 1.f ? cfg.confidenceFallback : 0.f, cfg.altVectors && t <= 1.f ? 1 : 0,
+                {(int32_t)fine.blocks.width, (int32_t)fine.blocks.height}};
     // The lean shader variant when none of its opt-ins is on (same results).
     const bool lean = pipe.lean && pc.occlusionStrength == 0.f && pc.staticGuard == 0.f && pc.splat == 0 &&
                       pc.pixelVectors == 0 && pc.timing == 0 && pc.localCut == 0 && pc.accel == 0.f &&
                       pc.bicubic == 0 && pc.staticFrames == 0.f && pc.revealFill == 0 && pc.confFallback == 0.f &&
-                      pc.debugMode != 3;
+                      pc.debugMode != 3 && pc.altVectors == 0;
     vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, lean ? pipe.lean : pipe.pipeline);
     vt.CmdPushConstants(cmd, pipe.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe.layout, 0, 1, &set, 0, nullptr);
@@ -1349,7 +1363,10 @@ Config FrameGen::effectiveConfig() const {
     }
     for (const auto& p : passes_) p->overrideConfig(c);
     // Only the lean matcher on this GPU (createPipelines): its opt-in terms off.
-    if (!matcherFull_) c.gradWeight = c.censusWeight = c.rotWeight = c.chromaWeight = 0.f;
+    if (!matcherFull_) {
+        c.gradWeight = c.censusWeight = c.rotWeight = c.chromaWeight = 0.f;
+        c.altVectors = false;
+    }
     if (qualityLevel_ >= 1) {
         c.pixelVectors = false;
         c.subpixel = false;

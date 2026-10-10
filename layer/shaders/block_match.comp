@@ -123,6 +123,9 @@ layout(binding = 4, r32f) uniform writeonly image2D costOut;
 layout(binding = 5) uniform sampler2D prevFlow;   // previous pair's final backward flow at this level (temporal prediction)
 layout(binding = 6) uniform sampler2D refChroma;  // Cb/Cr of the reference and target frames at this level (chroma re-ranking)
 layout(binding = 7) uniform sampler2D tgtChroma;
+// alt_vectors: the best candidate 2 px or more from the winner, per block
+// (a buffer, not a fifth storage image: Vulkan guarantees four per stage)
+layout(std430, binding = 8) writeonly buffer AltOut { vec2 v[]; } altOut;
 
 layout(push_constant) uniform PC {
     ivec2 size;        // level resolution
@@ -140,6 +143,7 @@ layout(push_constant) uniform PC {
     float chromaWeight;     // weight of the chroma SAD in the chroma re-ranking (0 = off)
     int chromaHistory;      // previous pair's flow in prevFlow for the chroma check: 0 none, 1 forward, 2 backward pass
     float zeroBiasCap;      // the zero bias stops growing at this cost (0 = uncapped, the historical path)
+    int altVector;          // alt_vectors (finest level): also write the runner-up hypothesis to altOut
 } pc;
 
 #define CHROMA_GATE 0.01   // luma SAD (mean per pixel) within which candidates are re-ranked on chroma
@@ -236,6 +240,7 @@ void main() {
             if (tid == 0) {
                 imageStore(flowOut, blk, vec4(0.0));
                 imageStore(costOut, blk, vec4(0.0));
+                if (kOptIns && pc.altVector != 0) altOut.v[blk.y * pc.blocks.x + blk.x] = vec2(0.0);
             }
             return;
         }
@@ -589,5 +594,21 @@ void main() {
         for (int i = 0; i < NT; ++i) lumaSad += sGrad[i];
         imageStore(flowOut, blk, vec4(vec2(outDisp), 0.0, 0.0));
         imageStore(costOut, blk, vec4(lumaSad * (1.0 / float(NT)), 0.0, 0.0, 0.0));
+        // alt_vectors: a second hypothesis for the synthesis to test per
+        // pixel — the lowest cost among candidates at least 2 px from the
+        // winner (the neighbours of the winner are the same match, and the
+        // pixel-level choice already tries the next blocks' vectors). Where
+        // the fast motion is ambiguous (a texture that repeats, a flat area
+        // crossed by an edge) the true motion is often this one.
+        if (kOptIns && pc.altVector != 0) {
+            ivec2 alt = outDisp;
+            float ac = 1e30;
+            for (int c = 0; c < total; ++c) {
+                ivec2 dc = c >= ncand ? ivec2(0) : base + ivec2(c % W, c / W) - R;
+                ivec2 gap = abs(dc - outDisp);
+                if (max(gap.x, gap.y) >= 2 && sCost2[c] < ac) { ac = sCost2[c]; alt = dc; }
+            }
+            altOut.v[blk.y * pc.blocks.x + blk.x] = vec2(alt);
+        }
     }
 }
