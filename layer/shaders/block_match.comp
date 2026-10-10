@@ -105,11 +105,18 @@ const float kRotAngle[ROT_A] = float[ROT_A](-30.0, -10.0, 0.0, 10.0, 30.0);
 layout(local_size_x = BS, local_size_y = BS) in;
 
 layout(constant_id = 0) const bool kOptIns = true;
+// The rotation re-ranking alone (rot_weight): the lean variant plus the
+// rotation's shared memory (~13.5 KB instead of the full variant's ~21 KB,
+// which halves the occupancy: rotation in the full variant cost the flow
+// 2.4x, the rotation itself almost nothing). The full variant has both.
+layout(constant_id = 1) const bool kRot = true;
+const bool kRotOn = kOptIns || kRot;
 // Shared-array sizes of the opt-in terms: one element in the lean variant.
-const int kRegS  = kOptIns ? REG : BS + 2 * MAXR + 2;  // staged side, border 1
+const int kRegS  = kRotOn ? REG : BS + 2 * MAXR + 2;  // staged side, border 1
 const int kCenT  = kOptIns ? (REG - 2) * (REG - 2) : 1;
 const int kNtO   = kOptIns ? NT : 1;
-const int kRotO  = kOptIns ? NROT : 1;
+const int kRotO  = kRotOn ? NROT : 1;
+const int kRotNt = kRotOn ? NT : 1;
 const int kRbO   = kOptIns ? RB * RB : 1;
 const int kRegO  = kOptIns ? REG * REG : 1;
 const int kCandO = kOptIns ? MAXCAND : 1;
@@ -156,7 +163,7 @@ shared int   sIdx[NT];
 shared uint  refCen[kNtO];             // census of the 8x8 block interior
 shared uint  tgtCen[kCenT];            // census of the staged target interior
 shared float sCost2[MAXCAND + 1];      // full per-candidate cost
-shared float rpix[2][kRotO][kNtO];     // per-pixel costs of the rotated re-evaluation
+shared float rpix[2][kRotO][kRotNt];   // per-pixel costs of the rotated re-evaluation
 shared float rsum[2][NROT];            // block sums of rpix
 shared ivec2 sBase;
 shared int   sStatic;                  // static-block early-out (see main)
@@ -193,7 +200,7 @@ void main() {
     ivec2 origin = blk * BS;
     int R = clamp(pc.radius, 1, MAXR);
     int W = 2 * R + 1;
-    bool rotOn = kOptIns && pc.rotWeight > 0.0;
+    bool rotOn = kRotOn && pc.rotWeight > 0.0;
     bool censusOn = kOptIns && pc.censusWeight > 0.0;
     bool chromaOn = kOptIns && pc.chromaWeight > 0.0;
     int anc = rotOn ? ROTANC : 1;   // staged-tile border: wider when the rotation re-ranking samples beyond the block

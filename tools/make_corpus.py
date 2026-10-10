@@ -30,6 +30,8 @@ Each sequence isolates one regime that the demo does not cover well:
             pixel cannot hold
   rotate    a textured disc turning 3 degrees a frame over a still
             backdrop: no translation for a block matcher to find
+  zoom      a textured scene zooming in 2 % a frame about the centre: every
+            vector different, none a translation
   flash     the pan with a one-frame flash (brightness x1.7) every 6 frames,
             between two inputs: the same content, brighter
   pulse     the pan while the brightness oscillates by 15 % (period 8
@@ -244,6 +246,16 @@ def rotate(out, w, h, n, seed):
         im.save(out / f"f{i:04d}.ppm")
 
 
+def zoom(out, w, h, n, seed):
+    rng = np.random.default_rng(seed)
+    big = Image.fromarray(fractal(rng, 2 * h, 2 * w, scale(OCT, w / 480)).astype(np.uint8))
+    for i in range(n):
+        f = 1.02 ** i
+        cw, ch = 2 * w / (2 * f), 2 * h / (2 * f)  # the crop shrinks: the picture grows
+        box = (w - cw / 2 * 1.0, h - ch / 2 * 1.0, w + cw / 2 * 1.0, h + ch / 2 * 1.0)
+        big.resize((w, h), Image.BICUBIC, box=box).save(out / f"f{i:04d}.ppm")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("out")
@@ -265,6 +277,7 @@ def main():
                        ("particles", lambda d: particles(d, w, h, n, 41)),
                        ("smoke", lambda d: smoke(d, w, h, n, 43)),
                        ("rotate", lambda d: rotate(d, w, h, n, 47)),
+                       ("zoom", lambda d: zoom(d, w, h, n, 61)),
                        # one flash on frames 3, 9, ...: always between two x2 inputs
                        ("flash", lambda d: pan(d, w, h, n, max(1, round(8 * w / 960)), 53,
                                               lambda i: 1.7 if i % 6 == 3 else 1.0)),

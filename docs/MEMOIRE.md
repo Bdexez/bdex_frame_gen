@@ -815,6 +815,14 @@ fermée (retenir le jeu réduit son attente) ; les images écrasées d'un
 espacement trop serré n'arrivent que quand la couche ne connaît pas la
 grille (seulement la fréquence), la règle d'atterrissage les évite sinon.
 
+**`rot_weight` auto sur GPU dédié** (03/10) : variante « rotation seule » du
+matcher (constante `kRot`, `Pass::rot`) — la variante complète réserve la
+mémoire partagée de toutes les options (~21 Ko, occupation ÷2 : flux ×2,4) ;
+rotation seule ~13,5 Ko : flux ×1,5. La variante allégée fixe désormais les
+deux constantes à faux. Par-dessus pixel_vectors : occlude +1,17, rotation
+8°/image +1,09, zoom 5 % +1,12, scroll +0,40, subpixel +0,23, démo
++0,07..+0,12, aucune perte. Séquence `zoom` ajoutée au corpus.
+
 **`interp_splat`** (03/10, **auto sur GPU dédié**, comme pixel_vectors) :
 les deux images projetées vers t (passe `extrapolate_splat`, modes 1 et 2,
 carte de largeur 2W : l'extrapolation garde la moitié gauche, au bit près) ;

@@ -50,6 +50,7 @@ struct FgPipeline {
     VkPipelineLayout layout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
     VkPipeline lean = VK_NULL_HANDLE;  // specialization constant 0 = false, where the shader has one (see makePass)
+    VkPipeline rot = VK_NULL_HANDLE;   // the matcher's rotation-only variant (constants 0 false, 1 true)
 };
 
 // The finest flow level (level 0 of the pyramid).
