@@ -815,6 +815,14 @@ fermée (retenir le jeu réduit son attente) ; les images écrasées d'un
 espacement trop serré n'arrivent que quand la couche ne connaît pas la
 grille (seulement la fréquence), la règle d'atterrissage les évite sinon.
 
+**`flow_upsample`** (03/10, opt-in, écarté des défauts) : sur-échantillonnage
+bilatéral joint du flux aux frontières de mouvement. Mesuré contradictoire :
+sans pixel_vectors rotate +0,51 / scroll −0,88 / démo −0,06, avec
+pixel_vectors l'inverse (rotate −1,41, scroll +1,66). pixel_vectors fait déjà
+le choix par pixel, avec contrôle photométrique : un flux plus lisse affaiblit
+sa détection de frontière. Ne pas reprendre sans combiner les deux (le vecteur
+sur-échantillonné comme candidat supplémentaire de pixel_vectors).
+
 **`luma_match`** (03/10, **défaut 0,01**) : passe `luma_match.comp` après
 l'analyse — pyramide précédente ramenée à la moyenne / l'écart-type de la
 courante si toute l'image a changé de luminosité (≥ 13 tuiles 4×4 sur 16 dans

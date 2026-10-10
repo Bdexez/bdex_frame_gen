@@ -19,6 +19,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Quality (experimental)
 
+- **`flow_upsample`** (opt-in): joint bilateral upsampling of the finest flow
+  to the luma resolution at motion boundaries (`flow_upsample.comp`, its own
+  synthesis sets: `FgContext::synthesisSetWithFlow`). Without pixel_vectors:
+  rotate +0.51 dB, hud +0.15, occlusion edges +0.99, scroll −0.88, demo
+  −0.06; with pixel_vectors (on by default on discrete GPUs) the reverse
+  (rotate −1.41, scroll +1.66). A floor on the brightness weight and a
+  boundary-only rule were tried; no setting wins everywhere: off.
 - **Six hard sequences in the corpus** (`tools/make_corpus.py`): `scroll`
   (thin text scrolling), `particles` (rain), `smoke` (a transparent layer
   over a background moving the other way), `rotate`, `flash` (one bright

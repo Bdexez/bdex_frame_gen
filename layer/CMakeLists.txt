@@ -24,6 +24,7 @@ bdex_add_shaders(bdex_layer_shaders
     shaders/hud_mask.comp
     shaders/flow_confidence.comp
     shaders/learned_correction.comp
+    shaders/flow_upsample.comp
     shaders/luma_match.comp:f32
     shaders/luma_match.comp:f16:LUMA_FMT=r16f
     shaders/flow_compose.comp
@@ -105,6 +106,7 @@ set(BDEX_ENGINE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/flow_confidence.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/learned_correction.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/luma_match.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/flow_upsample.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/extrapolate_accel.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/extrapolate_splat.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/fps_hud.cpp

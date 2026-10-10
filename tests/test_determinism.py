@@ -42,6 +42,7 @@ SETTINGS = [
     ("flow_confidence=1,confidence_fallback=0.5", "ie"),
     ("learned_correction=1", "i"),
     ("luma_match=0.003", "ie"),
+    ("flow_upsample=0.05", "ie"),
     ("upscale_temporal=0.3", "ie", ["--render-scale", "0.5"]), ("render_scale=0.5", "ie", ["--render-scale", "0.5"]),
     ("upscale_filter=bicubic,sharpness=0.5", "ie", ["--render-scale", "0.5"]),
     # Everything at once, per mode.
