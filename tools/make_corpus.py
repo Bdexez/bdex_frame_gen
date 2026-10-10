@@ -19,6 +19,21 @@ Each sequence isolates one regime that the demo does not cover well:
   popup     the HUD scene's pan with an opaque menu panel (a quarter of the
             screen) opening and closing every 4 frames, between two inputs:
             a scene cut confined to part of the screen
+  scroll    lines of thin, high-contrast text scrolling up 5 px/frame over a
+            still backdrop (credits, a chat): sharp edges the eye reads, on
+            a moving layer that flat areas surround
+  particles bright dots falling diagonally at their own speeds over a slow
+            pan (rain, sparks): many small objects, each moving differently
+            from what is around it
+  smoke     a semi-transparent drifting layer over a background panning the
+            other way: two motions in the same pixel, which one vector per
+            pixel cannot hold
+  rotate    a textured disc turning 3 degrees a frame over a still
+            backdrop: no translation for a block matcher to find
+  flash     the pan with a one-frame flash (brightness x1.7) every 6 frames,
+            between two inputs: the same content, brighter
+  pulse     the pan while the brightness oscillates by 15 % (period 8
+            frames): lighting changes on moving content
 Usage: make_corpus.py <out_dir> [--width W --height H --frames N]
 The default size is small enough for CI on a software Vulkan driver.
 """
@@ -165,6 +180,70 @@ def occlude(out, w, h, n, seed):
         Image.fromarray((occl * 255).astype(np.uint8)).save(out / "occlusion" / f"f{i:04d}.png")
 
 
+def scroll(out, w, h, n, seed):
+    rng = np.random.default_rng(seed)
+    k = w / 480
+    speed = max(1, round(5 * k))
+    bg = fractal(rng, h, w, scale([(64, 1.0), (16, 0.4)], w / 960)) * 0.35
+    line_h = int(14 * k)
+    words = ["the", "frame", "light", "tower", "quest", "player", "joined", "said", "hello", "ready", "map", "ok"]
+    lines = [" ".join(rng.choice(words, size=int(rng.integers(3, 7)))) for _ in range(n * speed // line_h + h // line_h + 4)]
+    sheet = Image.new("L", (w, len(lines) * line_h + h), 0)
+    d = ImageDraw.Draw(sheet)
+    for j, text in enumerate(lines):
+        d.text((int(24 * k), h + j * line_h), text, fill=255)
+    sheet = np.asarray(sheet, np.float32)
+    for i in range(n):
+        txt = sheet[i * speed:i * speed + h][..., None] / 255.0
+        im = bg[..., :3] * (1 - txt) + np.array([240, 240, 200], np.float32) * txt
+        Image.fromarray(im.clip(0, 255).astype(np.uint8)).save(out / f"f{i:04d}.ppm")
+
+
+def particles(out, w, h, n, seed):
+    rng = np.random.default_rng(seed)
+    k = w / 480
+    bg_speed = max(1, round(2 * k))
+    bg = fractal(rng, h + 8, w + n * bg_speed + 8, scale(OCT, w / 960)) * 0.6
+    m = int(260 * k * k)
+    pos = rng.random((m, 2)) * [w, h]
+    vel = np.stack([rng.uniform(2, 6, m) * k, rng.uniform(8, 18, m) * k], 1)
+    size = rng.integers(1, 3, m)
+    for i in range(n):
+        im = bg[:h, i * bg_speed:i * bg_speed + w].copy()
+        p = (pos + vel * i) % [w, h]
+        for (x, y), r in zip(p.astype(int), size):
+            im[max(0, y - r):y + r + 1, max(0, x - r):x + r + 1] = 245
+        Image.fromarray(im.clip(0, 255).astype(np.uint8)).save(out / f"f{i:04d}.ppm")
+
+
+def smoke(out, w, h, n, seed):
+    rng = np.random.default_rng(seed)
+    k = w / 960
+    bg_speed, smoke_speed = max(1, round(6 * w / 480)), max(1, round(4 * w / 480))
+    bg = fractal(rng, h + 8, w + n * bg_speed + 8, scale(OCT, k))
+    alpha = fractal(rng, h + 8, w + n * smoke_speed + 8, scale([(96, 1.0), (32, 0.5)], k), channels=1)[..., 0] / 255
+    alpha = np.clip((alpha - 0.3) * 1.6, 0, 0.85)[..., None]
+    for i in range(n):
+        b = bg[:h, i * bg_speed:i * bg_speed + w]                          # pans left
+        x0 = n * smoke_speed - i * smoke_speed                             # the smoke drifts right
+        a = alpha[:h, x0:x0 + w]
+        im = b * (1 - a) + np.array([200, 200, 205], np.float32) * a
+        Image.fromarray(im.clip(0, 255).astype(np.uint8)).save(out / f"f{i:04d}.ppm")
+
+
+def rotate(out, w, h, n, seed):
+    rng = np.random.default_rng(seed)
+    bg = Image.fromarray(fractal(rng, h, w, scale([(64, 1.0), (16, 0.4)], w / 960)).astype(np.uint8))
+    r = int(0.42 * h)
+    disc = Image.fromarray(fractal(rng, 2 * r, 2 * r, scale([(24, 1.0), (8, 0.6), (3, 0.3)], w / 480)).astype(np.uint8))
+    mask = Image.new("L", (2 * r, 2 * r), 0)
+    ImageDraw.Draw(mask).ellipse([0, 0, 2 * r - 1, 2 * r - 1], fill=255)
+    for i in range(n):
+        im = bg.copy()
+        im.paste(disc.rotate(3.0 * i, resample=Image.BICUBIC), (w // 2 - r, h // 2 - r), mask)
+        im.save(out / f"f{i:04d}.ppm")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("out")
@@ -181,7 +260,16 @@ def main():
                        ("popup", lambda d: popup(d, w, h, n, 19)),
                        ("chroma", lambda d: chroma(d, w, h, n, 29)),
                        ("swing", lambda d: swing(d, w, h, n, 23)),
-                       ("occlude", lambda d: occlude(d, w, h, n, 31))):
+                       ("occlude", lambda d: occlude(d, w, h, n, 31)),
+                       ("scroll", lambda d: scroll(d, w, h, n, 37)),
+                       ("particles", lambda d: particles(d, w, h, n, 41)),
+                       ("smoke", lambda d: smoke(d, w, h, n, 43)),
+                       ("rotate", lambda d: rotate(d, w, h, n, 47)),
+                       # one flash on frames 3, 9, ...: always between two x2 inputs
+                       ("flash", lambda d: pan(d, w, h, n, max(1, round(8 * w / 960)), 53,
+                                              lambda i: 1.7 if i % 6 == 3 else 1.0)),
+                       ("pulse", lambda d: pan(d, w, h, n, max(1, round(8 * w / 960)), 59,
+                                              lambda i: 1.0 + 0.15 * np.sin(2 * np.pi * i / 8)))):
         d = root / name
         d.mkdir(parents=True, exist_ok=True)
         make(d)

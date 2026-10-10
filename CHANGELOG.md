@@ -8,6 +8,16 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Quality (experimental)
 
+- **Six hard sequences in the corpus** (`tools/make_corpus.py`): `scroll`
+  (thin text scrolling), `particles` (rain), `smoke` (a transparent layer
+  over a background moving the other way), `rotate`, `flash` (one bright
+  frame between inputs), `pulse` (brightness oscillating 15 %). First scores
+  (49 frames, 480x272, PSNR / cross-fade): scroll 32.1 / 22.7, particles
+  17.7 / 17.1, smoke 31.9 / 31.9, rotate 39.7 / 29.3, flash 39.3 / 23.9,
+  pulse 27.0 / 29.2 — under changing brightness the generated frame is worse
+  than a plain cross-fade. The corpus references (`tests/corpus_reference.json`)
+  refreshed from lavapipe: the old ones predated September's gains (pan
+  interpolation 43.4 against 46.5 now) and caught little.
 - **Learned correction** (`learned_correction`, opt-in): a network of 63
   inputs (the 3x3 neighbourhood of the generated colour, of the inputs'
   cross-fade and of their luma difference), 8 ReLU units and one output — a

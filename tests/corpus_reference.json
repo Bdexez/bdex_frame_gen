@@ -8,123 +8,219 @@
   "ssim": 0.9889
  },
  "chroma/interpolate/candidate": {
-  "psnr": 22.47,
-  "ssim": 0.9909
+  "psnr": 22.43,
+  "ssim": 0.9904
  },
  "chroma/interpolate/default": {
   "psnr": 22.27,
-  "ssim": 0.9905
+  "ssim": 0.9904
  },
  "fade/extrapolate/candidate": {
-  "psnr": 29.92,
-  "ssim": 0.8483
+  "psnr": 29.94,
+  "ssim": 0.8487
  },
  "fade/extrapolate/default": {
-  "psnr": 29.2,
-  "ssim": 0.8165
+  "psnr": 29.37,
+  "ssim": 0.8239
  },
  "fade/interpolate/candidate": {
-  "psnr": 34.19,
-  "ssim": 0.8899
+  "psnr": 34.18,
+  "ssim": 0.8894
  },
  "fade/interpolate/default": {
-  "psnr": 33.42,
-  "ssim": 0.863
+  "psnr": 33.54,
+  "ssim": 0.8688
+ },
+ "flash/extrapolate/candidate": {
+  "psnr": 34.88,
+  "ssim": 0.9102
+ },
+ "flash/extrapolate/default": {
+  "psnr": 34.73,
+  "ssim": 0.9101
+ },
+ "flash/interpolate/candidate": {
+  "psnr": 39.58,
+  "ssim": 0.9254
+ },
+ "flash/interpolate/default": {
+  "psnr": 39.69,
+  "ssim": 0.9255
  },
  "hud/extrapolate/candidate": {
-  "psnr": 23.04,
-  "ssim": 0.9549
+  "psnr": 23.17,
+  "ssim": 0.9556
  },
  "hud/extrapolate/default": {
-  "psnr": 22.52,
-  "ssim": 0.9493
+  "psnr": 22.78,
+  "ssim": 0.952
  },
  "hud/interpolate/candidate": {
-  "psnr": 25.5,
+  "psnr": 25.48,
   "ssim": 0.9679
  },
  "hud/interpolate/default": {
-  "psnr": 24.66,
-  "ssim": 0.9622
+  "psnr": 24.72,
+  "ssim": 0.9629
  },
  "occlude/extrapolate/candidate": {
-  "psnr": 30.92,
-  "ssim": 0.9707
+  "psnr": 31.03,
+  "ssim": 0.9708
  },
  "occlude/extrapolate/default": {
-  "psnr": 29.29,
-  "ssim": 0.9644
+  "psnr": 29.75,
+  "ssim": 0.968
  },
  "occlude/interpolate/candidate": {
   "psnr": 39.4,
   "ssim": 0.9917
  },
  "occlude/interpolate/default": {
-  "psnr": 35.68,
-  "ssim": 0.9856
+  "psnr": 36.35,
+  "ssim": 0.9877
  },
  "pan/extrapolate/candidate": {
-  "psnr": 41.8,
-  "ssim": 0.9913
+  "psnr": 43.24,
+  "ssim": 0.9938
  },
  "pan/extrapolate/default": {
-  "psnr": 35.99,
-  "ssim": 0.9655
+  "psnr": 40.85,
+  "ssim": 0.9891
  },
  "pan/interpolate/candidate": {
-  "psnr": 46.41,
-  "ssim": 0.9966
+  "psnr": 46.93,
+  "ssim": 0.9972
  },
  "pan/interpolate/default": {
-  "psnr": 43.38,
-  "ssim": 0.9906
+  "psnr": 46.53,
+  "ssim": 0.9967
+ },
+ "particles/extrapolate/candidate": {
+  "psnr": 15.95,
+  "ssim": 0.6396
+ },
+ "particles/extrapolate/default": {
+  "psnr": 15.87,
+  "ssim": 0.6411
+ },
+ "particles/interpolate/candidate": {
+  "psnr": 17.65,
+  "ssim": 0.659
+ },
+ "particles/interpolate/default": {
+  "psnr": 17.43,
+  "ssim": 0.6123
  },
  "popup/extrapolate/candidate": {
-  "psnr": 15.15,
-  "ssim": 0.7666
+  "psnr": 15.18,
+  "ssim": 0.7688
  },
  "popup/extrapolate/default": {
-  "psnr": 15.16,
-  "ssim": 0.7658
+  "psnr": 15.21,
+  "ssim": 0.7694
  },
  "popup/interpolate/candidate": {
-  "psnr": 22.82,
-  "ssim": 0.8677
+  "psnr": 22.85,
+  "ssim": 0.8684
  },
  "popup/interpolate/default": {
-  "psnr": 22.75,
-  "ssim": 0.8669
+  "psnr": 22.79,
+  "ssim": 0.8681
  },
- "subpixel/extrapolate/candidate": {
-  "psnr": 49.46,
-  "ssim": 0.9966
+ "pulse/extrapolate/candidate": {
+  "psnr": 22.72,
+  "ssim": 0.6212
  },
- "subpixel/extrapolate/default": {
-  "psnr": 46.34,
+ "pulse/extrapolate/default": {
+  "psnr": 23.04,
+  "ssim": 0.634
+ },
+ "pulse/interpolate/candidate": {
+  "psnr": 26.51,
+  "ssim": 0.7001
+ },
+ "pulse/interpolate/default": {
+  "psnr": 26.87,
+  "ssim": 0.7131
+ },
+ "rotate/extrapolate/candidate": {
+  "psnr": 36.64,
+  "ssim": 0.9877
+ },
+ "rotate/extrapolate/default": {
+  "psnr": 35.76,
+  "ssim": 0.9849
+ },
+ "rotate/interpolate/candidate": {
+  "psnr": 42.91,
+  "ssim": 0.9967
+ },
+ "rotate/interpolate/default": {
+  "psnr": 39.9,
   "ssim": 0.9932
  },
+ "scroll/extrapolate/candidate": {
+  "psnr": 26.89,
+  "ssim": 0.9742
+ },
+ "scroll/extrapolate/default": {
+  "psnr": 26.35,
+  "ssim": 0.9726
+ },
+ "scroll/interpolate/candidate": {
+  "psnr": 32.98,
+  "ssim": 0.9918
+ },
+ "scroll/interpolate/default": {
+  "psnr": 32.84,
+  "ssim": 0.9908
+ },
+ "smoke/extrapolate/candidate": {
+  "psnr": 27.57,
+  "ssim": 0.7774
+ },
+ "smoke/extrapolate/default": {
+  "psnr": 27.56,
+  "ssim": 0.7711
+ },
+ "smoke/interpolate/candidate": {
+  "psnr": 30.68,
+  "ssim": 0.8355
+ },
+ "smoke/interpolate/default": {
+  "psnr": 30.64,
+  "ssim": 0.8278
+ },
+ "subpixel/extrapolate/candidate": {
+  "psnr": 49.37,
+  "ssim": 0.9965
+ },
+ "subpixel/extrapolate/default": {
+  "psnr": 46.61,
+  "ssim": 0.9935
+ },
  "subpixel/interpolate/candidate": {
-  "psnr": 50.66,
+  "psnr": 50.42,
   "ssim": 0.9973
  },
  "subpixel/interpolate/default": {
-  "psnr": 52.05,
+  "psnr": 51.85,
   "ssim": 0.9983
  },
  "swing/extrapolate/candidate": {
-  "psnr": 28.57,
-  "ssim": 0.7517
+  "psnr": 28.59,
+  "ssim": 0.752
  },
  "swing/extrapolate/default": {
-  "psnr": 27.85,
-  "ssim": 0.7342
+  "psnr": 28.56,
+  "ssim": 0.7512
  },
  "swing/interpolate/candidate": {
-  "psnr": 36.89,
-  "ssim": 0.9485
+  "psnr": 36.88,
+  "ssim": 0.9486
  },
  "swing/interpolate/default": {
-  "psnr": 34.25,
-  "ssim": 0.9271
+  "psnr": 36.77,
+  "ssim": 0.9476
  }
 }

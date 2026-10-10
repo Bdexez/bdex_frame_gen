@@ -815,6 +815,14 @@ fermée (retenir le jeu réduit son attente) ; les images écrasées d'un
 espacement trop serré n'arrivent que quand la couche ne connaît pas la
 grille (seulement la fréquence), la règle d'atterrissage les évite sinon.
 
+**Corpus difficile** (03/10) : `scroll`, `particles`, `smoke`, `rotate`,
+`flash`, `pulse` ajoutés à `make_corpus.py`. Scores de départ (PSNR / fondu) :
+scroll 32,1 / 22,7, particles 17,7 / 17,1, smoke 31,9 / 31,9, rotate 39,7 /
+29,3, flash 39,3 / 23,9, **pulse 27,0 / 29,2 (pire que le fondu)**. Références
+du test `corpus` recalculées sous lavapipe (conteneur CI) : les anciennes
+dataient d'avant les gains de septembre. Toujours les calculer sous lavapipe
+(un GPU dédié active d'autres options en auto).
+
 **Correction apprise** (02/10, `learned_correction`, expérimental) : réseau
 63 → 8 → 1 entraîné en numpy (`tools/train_correction.py`, données =
 sorties de `bdex_offline`), tête « mix » bornée (déplace le pixel vers le
