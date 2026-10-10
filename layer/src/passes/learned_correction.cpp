@@ -56,7 +56,7 @@ public:
     void beforeSynthesis(FgContext&, VkCommandBuffer, float t, int32_t, bool, const Config& cfg, SynthesisInputs&) override {
         if (usable_ && next_ < pending_.size()) {
             pending_[next_].t = t;
-            pending_[next_].on = t <= 1.f && cfg.learnedCorrection > 0.f;  // interpolation only (trained so)
+            pending_[next_].on = cfg.learnedCorrection > 0.f;  // (both modes: one set of weights each)
             pending_[next_].strength = cfg.learnedCorrection;
         }
     }

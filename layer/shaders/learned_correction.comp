@@ -10,7 +10,8 @@
 #extension GL_GOOGLE_include_directive : require  // #include with glslangValidator too
 #include "common.glsl"
 #include "learned_correction_weights.glsl"
-#if LC_MIX != 1
+#include "learned_correction_extrap_weights.glsl"  // the predicted frames' (t > 1), moved toward the current frame
+#if LC_MIX != 1 || LCX_MIX != 1
 #error "this shader implements the mix head (tools/train_correction.py --head mix)"
 #endif
 
@@ -64,18 +65,30 @@ void main() {
             ivec2 q = clamp(p + ivec2(dx - 1, dy - 1), ivec2(0), pc.size - 1);
             vec3 gn = unpackOut(imageLoad(scratch, q).r);
             vec3 pv = source(prevTex, q), cv = source(curTex, q);
-            vec3 bn = pv * (1.0 - pc.t) + cv * pc.t;
+            // (past the current frame — extrapolation — the safe value is the
+            // current frame itself)
+            vec3 bn = pc.t > 1.0 ? cv : pv * (1.0 - pc.t) + cv * pc.t;
             if (dx == 1 && dy == 1) bc = bn;
             int k = (dy * 3 + dx) * 7;
             x[k + 0] = gn.r - g.r; x[k + 1] = gn.g - g.g; x[k + 2] = gn.b - g.b;
             x[k + 3] = bn.r - g.r; x[k + 4] = bn.g - g.g; x[k + 5] = bn.b - g.b;
             x[k + 6] = abs(luma8(pv) - luma8(cv));
         }
-    float s = LC_B2[0];
-    for (int j = 0; j < LC_HIDDEN; ++j) {
-        float h = LC_B1[j];
-        for (int i = 0; i < 63; ++i) h += x[i] * LC_W1[i * LC_HIDDEN + j];
-        s += max(h, 0.0) * LC_W2[j];
+    float s;
+    if (pc.t > 1.0) {
+        s = LCX_B2[0];
+        for (int j = 0; j < LCX_HIDDEN; ++j) {
+            float h = LCX_B1[j];
+            for (int i = 0; i < 63; ++i) h += x[i] * LCX_W1[i * LCX_HIDDEN + j];
+            s += max(h, 0.0) * LCX_W2[j];
+        }
+    } else {
+        s = LC_B2[0];
+        for (int j = 0; j < LC_HIDDEN; ++j) {
+            float h = LC_B1[j];
+            for (int i = 0; i < 63; ++i) h += x[i] * LC_W1[i * LC_HIDDEN + j];
+            s += max(h, 0.0) * LC_W2[j];
+        }
     }
     float alpha = pc.strength / (1.0 + exp(-s));
     imageStore(outImg, p, uvec4(packOut(clamp(g + alpha * (bc - g), 0.0, 1.0), centre), 0u, 0u, 0u));

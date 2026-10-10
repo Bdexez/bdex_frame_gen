@@ -36,6 +36,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Quality (experimental)
 
+- **Learned correction for extrapolation**: `tools/train_correction.py --mode
+  extrapolate` trains a second set of weights
+  (`learned_correction_extrap_weights.glsl`, `LCX_`) whose fallback is the
+  current frame (nothing safer to show past it); the shader picks them for
+  t > 1. Unseen sequences: demo +0.26 / +0.12 / +0.15 dB, popup +0.32, swing
+  +0.07, subpixel −0.38, scroll −3.07: still off by default. Also measured
+  for extrapolation and not kept: damping the prediction (demo −0.12 to
+  −0.49, pan −9.2) and `extrapolate_accel` as a default (swing +2.6 but pan
+  −0.78, occlude −1.05, scroll −1.40).
 - **`alt_vectors`** (opt-in): the matcher's second hypothesis per block
   (lowest cost 2 px or more from the winner, `altOut`, full variant only)
   tried per pixel by the synthesis (storage buffers: the matcher keeps to

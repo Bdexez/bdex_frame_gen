@@ -815,6 +815,12 @@ fermée (retenir le jeu réduit son attente) ; les images écrasées d'un
 espacement trop serré n'arrivent que quand la couche ne connaît pas la
 grille (seulement la fréquence), la règle d'atterrissage les évite sinon.
 
+**Extrapolation, 03/10** : correction apprise pour t > 1 (poids `LCX_`, repli
+sur l'image courante) : démo +0,12..+0,26, popup +0,32, mais scroll −3,07,
+subpixel −0,38 → reste opt-in. Essais refusés : amortir la prédiction (démo
+−0,12..−0,49, pan −9,2 : les erreurs ne sont pas des dépassements) ;
+`extrapolate_accel` par défaut (swing +2,6 seulement, pan −0,78, scroll −1,4).
+
 **`rot_weight` auto sur GPU dédié** (03/10) : variante « rotation seule » du
 matcher (constante `kRot`, `Pass::rot`) — la variante complète réserve la
 mémoire partagée de toutes les options (~21 Ko, occupation ÷2 : flux ×2,4) ;
