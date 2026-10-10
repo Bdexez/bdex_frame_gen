@@ -596,6 +596,7 @@ VKAPI_ATTR void VKAPI_CALL DestroyDevice(VkDevice device, const VkAllocationCall
     }
     statusRemove(statusKey(device));
     if (data->cmdPool) data->vt.DestroyCommandPool(device, data->cmdPool, nullptr);
+    data->destroyPipelineCache();
     data->vt.DestroyDevice(device, pAllocator);
 }
 

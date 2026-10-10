@@ -1,9 +1,13 @@
 #include "device.h"
-#include "platform.h"
 #include "log.h"
+#include "platform.h"
 #include "vk_util.h"
 
+#include <cstdio>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 
 namespace bdex {
 
@@ -130,6 +134,70 @@ void DeviceData::destroyImage(AllocatedImage& img) {
     if (img.image) vt.DestroyImage(device, img.image, nullptr);
     if (img.memory) vt.FreeMemory(device, img.memory, nullptr);
     img = AllocatedImage{};
+}
+
+namespace {
+std::string pipelineCacheFile(const VkPhysicalDeviceProperties& p) {
+    char name[96];
+    int n = snprintf(name, sizeof name, "/pipelines-%04x-%04x-", p.vendorID, p.deviceID);
+    for (uint8_t b : p.pipelineCacheUUID) n += snprintf(name + n, sizeof name - size_t(n), "%02x", b);
+    // (the 32-bit layer keeps a file of its own: its driver build is another)
+    snprintf(name + n, sizeof name - size_t(n), sizeof(void*) == 4 ? "-32.bin" : ".bin");
+    return platformCacheDir() + name;
+}
+} // namespace
+
+VkPipelineCache DeviceData::pipelineCache() {
+    std::lock_guard<std::mutex> lock(pipelineCacheMutex);
+    if (pipelineCacheTried_ || !config.pipelineCache || !vt.CreatePipelineCache) return pipelineCache_;
+    pipelineCacheTried_ = true;
+    std::vector<char> data;
+    {
+        std::ifstream in(pipelineCacheFile(props), std::ios::binary);
+        if (in) data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    // (the header's UUID must be this driver's; a driver also ignores data it
+    // does not recognise, but some have crashed on stale caches)
+    if (data.size() < 32 || memcmp(data.data() + 16, props.pipelineCacheUUID, VK_UUID_SIZE) != 0) data.clear();
+    VkPipelineCacheCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+    ci.initialDataSize = data.size();
+    ci.pInitialData = data.empty() ? nullptr : data.data();
+    if (vt.CreatePipelineCache(device, &ci, nullptr, &pipelineCache_) != VK_SUCCESS) {
+        ci.initialDataSize = 0;
+        ci.pInitialData = nullptr;
+        if (vt.CreatePipelineCache(device, &ci, nullptr, &pipelineCache_) != VK_SUCCESS) pipelineCache_ = VK_NULL_HANDLE;
+    }
+    pipelineCacheSaved_ = data.size();
+    return pipelineCache_;
+}
+
+void DeviceData::savePipelineCache() {
+    std::lock_guard<std::mutex> lock(pipelineCacheMutex);
+    if (!pipelineCache_ || !vt.GetPipelineCacheData) return;
+    size_t size = 0;
+    if (vt.GetPipelineCacheData(device, pipelineCache_, &size, nullptr) != VK_SUCCESS || size == pipelineCacheSaved_ ||
+        size > (64u << 20))
+        return;
+    std::vector<char> data(size);
+    if (vt.GetPipelineCacheData(device, pipelineCache_, &size, data.data()) != VK_SUCCESS) return;
+    // (a temporary name per process: two games may save at once; the rename is atomic)
+    const std::string path = pipelineCacheFile(props), tmp = path + ".tmp" + std::to_string(platformPid());
+    std::error_code ec;
+    std::filesystem::create_directories(platformCacheDir(), ec);
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (!out) return;
+        out.write(data.data(), std::streamsize(size));
+        if (!out) return;
+    }
+    if (std::rename(tmp.c_str(), path.c_str()) == 0) pipelineCacheSaved_ = size;
+}
+
+void DeviceData::destroyPipelineCache() {
+    savePipelineCache();
+    std::lock_guard<std::mutex> lock(pipelineCacheMutex);
+    if (pipelineCache_) vt.DestroyPipelineCache(device, pipelineCache_, nullptr);
+    pipelineCache_ = VK_NULL_HANDLE;
 }
 
 AllocatedBuffer DeviceData::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible) {
