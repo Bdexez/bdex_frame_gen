@@ -131,6 +131,14 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
     // +0.02. The splat runs after the real frame (not on its path).
     if (strong && !(autoOptionsSet & kAutoSplat)) extrapolateSplat = true;
     if (strong && !(autoOptionsSet & kAutoRevealFill)) revealFill = true;
+    // Both frames splatted to t as candidate trajectories of the
+    // interpolated frames (03/10): on top of pixel_vectors occlusions +0.22,
+    // scrolling text +0.41, popup +0.06, the demo +0.01 to +0.03, HUD -0.12;
+    // alone +0.05 to +0.7. ~0.6 ms at 1440p.
+    if (strong && !(autoOptionsSet & kAutoInterpSplat)) {
+        interpSplat = true;
+        interpSplatAuto = true;
+    }
     // The scene-cut fallback per region, each tile needing its own histogram
     // evidence (scene_cut_hist): a menu opening over part of the picture
     // +1.4 dB (flicker -6.3), elsewhere within +-0.02 dB. Kept off the lean
@@ -211,6 +219,7 @@ const std::vector<OptionDef>& registry() {
     F("luma_match", nullptr, &Config::lumaMatch, 0.f, 0.5f, kLive),
     F("flow_upsample", nullptr, &Config::flowUpsample, 0.f, 0.5f, kLive),
     B("alt_vectors", nullptr, &Config::altVectors, kLive),
+    B("interp_splat", nullptr, &Config::interpSplat, kLive),
     B("sync_present", "sync", &Config::syncPresent),
     B("hide_present_ext", nullptr, &Config::hidePresentExt),
     B("ignore_anticheat", nullptr, &Config::ignoreAntiCheat),
@@ -384,6 +393,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "extrapolate_splat") autoOptionsSet |= kAutoSplat;
     if (key == "reveal_fill") autoOptionsSet |= kAutoRevealFill;
     if (key == "scene_cut_local") autoOptionsSet |= kAutoLocalCut;
+    if (key == "interp_splat") autoOptionsSet |= kAutoInterpSplat;
     if (const OptionDef* d = findOption(key)) {
         switch (d->kind) {
         case Kind::Bool:  return parseBool(value, this->*(d->b));
@@ -588,6 +598,7 @@ void Config::applyLive(const Config& n) {
     }
     fpsLimit = n.fpsLimit; targetFps = n.targetFps;
     pixelVectorsAuto = n.pixelVectorsAuto;
+    interpSplatAuto = n.interpSplatAuto;
     sceneCutLocalAuto = n.sceneCutLocalAuto;
     if (gpuBudget > 0.f && n.gpuBudget > 0.f) gpuBudget = n.gpuBudget;  // 0 <-> >0 creates the timestamp queries
     // (dedup sizes the output stage in extrapolation: restart.)

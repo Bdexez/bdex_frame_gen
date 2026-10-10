@@ -815,6 +815,15 @@ fermée (retenir le jeu réduit son attente) ; les images écrasées d'un
 espacement trop serré n'arrivent que quand la couche ne connaît pas la
 grille (seulement la fréquence), la règle d'atterrissage les évite sinon.
 
+**`interp_splat`** (03/10, **auto sur GPU dédié**, comme pixel_vectors) :
+les deux images projetées vers t (passe `extrapolate_splat`, modes 1 et 2,
+carte de largeur 2W : l'extrapolation garde la moitié gauche, au bit près) ;
+les sources arrivées en q sont des trajectoires candidates (erreur actuelle
+> 0,02 et 10 % mieux). Seul : occlude +0,55, scroll +0,62, rotate +0,26, démo
++0,05..+0,08, aucune perte ; avec pixel_vectors : occlude +0,22, scroll
++0,41, démo +0,01..+0,03, **hud −0,12** (interaction avec pixel_vectors, ni
+la marge ni le seuil n'y changent rien). +0,09 ms à 960×540.
+
 **`alt_vectors`** (03/10, opt-in, écarté) : second candidat du matcher (≥ 2 px
 du gagnant) essayé par pixel dans la synthèse. Sans marge : scroll −3,0,
 subpixel −2,7 (il gagne sur du bruit) ; avec marge (×0,75 − 0,004) et seulement

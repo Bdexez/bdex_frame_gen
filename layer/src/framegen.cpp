@@ -1360,6 +1360,7 @@ Config FrameGen::effectiveConfig() const {
     if (double(displayExtent_.width) * displayExtent_.height * outputs_ > 8.3e6) {
         if (c.pixelVectorsAuto) c.pixelVectors = false;
         if (c.sceneCutLocalAuto) c.sceneCutLocal = false;
+        if (c.interpSplatAuto) c.interpSplat = false;
     }
     for (const auto& p : passes_) p->overrideConfig(c);
     // Only the lean matcher on this GPU (createPipelines): its opt-in terms off.
