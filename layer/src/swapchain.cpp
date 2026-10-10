@@ -1,6 +1,7 @@
 #include "swapchain.h"
 #include "frame_order.h"
 #include "pacing.h"
+#include "thread_priority.h"
 #include "gamescope.h"
 #include "online_tune.h"
 #include "status.h"
@@ -1426,6 +1427,14 @@ void VirtualSwapchain::workerLoop() {
     // (precise_wake: no 50 us of timer slack on this thread's sleeps)
     if (cfg_.preciseWake) prctl(PR_SET_TIMERSLACK, 1UL, 0UL, 0UL, 0UL);
 #endif
+    // thread_priority: the presents' moments matter more than any other
+    // thread's work of the game (thread_priority.h).
+    if (cfg_.threadPriority) {
+        const std::string got = raiseThreadPriority();
+        static std::atomic<bool> logged{false};
+        if (!logged.exchange(true))
+            BDEX_INFO("presentation thread priority: %s", got.empty() ? "normal (not permitted)" : got.c_str());
+    }
     for (;;) {
         Job job;
         {
