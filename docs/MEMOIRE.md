@@ -462,7 +462,8 @@ ou multiplicateur *Adaptatif*.
 **Divers** :
 - HDR (Deck OLED) : passe, métadonnées comprises.
 - Preset automatique `performance` (GPU intégré RDNA2, 8 CU).
-- Jeux 32 bits : couverts.
+- Jeux 32 bits : couverts. Exécutée pour la première fois le 03/10
+  (`tools/ci/lib32-check.sh` : vkcube 32 bits, lavapipe i386, ×2,00).
 
 **Autres cas gamescope**
 - **Sessions gamescope** ailleurs (Bazzite, ChimeraOS…) : même fonctionnement.

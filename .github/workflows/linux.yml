@@ -230,7 +230,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        check: [srpm-check, debsrc-check, gentoo-check, void-check, flatpak-check]
+        check: [srpm-check, debsrc-check, gentoo-check, void-check, flatpak-check, lib32-check]
     steps:
       - uses: actions/checkout@v4
       - name: ${{ matrix.check }}
