@@ -294,6 +294,10 @@ private:
     VkDescriptorSet realOutputSet(VkImageView src) override;
     void setStaticMask(VkImageView view) override;
     void setConfidenceMap(VkImageView view) override;
+    int pyramidLevels() const override { return levels_; }
+    VkExtent2D pyramidExtent(int level) const override { return levels_v_[size_t(level)].size; }
+    VkImageView pyramidView(int level, uint32_t parity) const override { return levels_v_[size_t(level)].pyr[parity & 1].view; }
+    VkFormat lumaFormat() const override { return lumaFormat_; }
     void reportConfidence(uint32_t uncertain, uint32_t total) override {
         std::lock_guard<std::mutex> lock(confMutex_);
         confUncertain_ += uncertain;

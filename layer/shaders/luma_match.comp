@@ -1,0 +1,86 @@
+#version 450
+// luma_match: the previous frame's luma pyramid brought to the current
+// frame's brightness before the flow — its mean and contrast matched to the
+// current frame's on the coarsest level — so a fade, a flash or a lighting
+// change does not read as a different picture to the block matcher.
+// Mode 0 (one workgroup): the statistics of both coarsest levels into
+// `stats`; mode 1 (per level): prev' = (prev - mean_p) * gain + mean_c, in
+// place, gain = std_c / std_p within [0.5, 2]. Small changes (motion moves
+// the statistics a little) and uneven ones (part of the content changed)
+// are left alone.
+layout(local_size_x = 16, local_size_y = 16) in;
+
+#ifndef LUMA_FMT
+#define LUMA_FMT r32f
+#endif
+layout(binding = 0) uniform sampler2D coarseCur;   // the current frame's coarsest level
+layout(binding = 1) uniform sampler2D coarsePrev;  // the previous frame's
+layout(binding = 2, LUMA_FMT) uniform image2D prevLevel;  // a level of the previous frame (mode 1)
+layout(std430, binding = 3) buffer Stats { float meanCur, meanPrev, gain, apply; } st;
+
+layout(push_constant) uniform PC {
+    ivec2 size;      // mode 0: the coarsest level; mode 1: this level
+    int mode;
+    float minShift;  // brightness change (mean, 0..1 luma) under which nothing is done
+} pc;
+
+shared float s[4][256];
+
+void main() {
+    if (pc.mode == 0) {
+        uint t = gl_LocalInvocationIndex;
+        float sc = 0.0, sp = 0.0, qc = 0.0, qp = 0.0;
+        for (int y = int(t / 16u); y < pc.size.y; y += 16)
+            for (int x = int(t % 16u); x < pc.size.x; x += 16) {
+                float c = texelFetch(coarseCur, ivec2(x, y), 0).r, p = texelFetch(coarsePrev, ivec2(x, y), 0).r;
+                sc += c; sp += p; qc += c * c; qp += p * p;
+            }
+        s[0][t] = sc; s[1][t] = sp; s[2][t] = qc; s[3][t] = qp;
+        barrier();
+        for (uint k = 128u; k > 0u; k >>= 1) {
+            if (t < k)
+                for (int i = 0; i < 4; ++i) s[i][t] += s[i][t + k];
+            barrier();
+        }
+        float n = float(pc.size.x * pc.size.y);
+        float mc = s[0][0] / n, mp = s[1][0] / n;
+        float vc = max(s[2][0] / n - mc * mc, 0.0), vp = max(s[3][0] / n - mp * mp, 0.0);
+        float shift = mc - mp;
+        barrier();
+        // A change of the whole picture's brightness, not of part of its
+        // content: at least 13 of the 4x4 tiles move the same way by half the
+        // mean's shift or more (a menu opening over a quarter of the screen
+        // moves the mean too — normalising it then cost 1.8 dB: the scene
+        // cut it is went less noticed).
+        int agree = 0;
+        for (int tile = 0; tile < 16; ++tile) {
+            ivec2 lo = ivec2(tile % 4, tile / 4) * pc.size / 4, hi = ivec2(tile % 4 + 1, tile / 4 + 1) * pc.size / 4;
+            float tc = 0.0, tp = 0.0;
+            for (int y = lo.y + int(t / 16u); y < hi.y; y += 16)
+                for (int x = lo.x + int(t % 16u); x < hi.x; x += 16) {
+                    tc += texelFetch(coarseCur, ivec2(x, y), 0).r;
+                    tp += texelFetch(coarsePrev, ivec2(x, y), 0).r;
+                }
+            s[0][t] = tc - tp;
+            barrier();
+            for (uint k = 128u; k > 0u; k >>= 1) {
+                if (t < k) s[0][t] += s[0][t + k];
+                barrier();
+            }
+            float tileShift = s[0][0] / float(max(1, (hi.x - lo.x) * (hi.y - lo.y)));
+            if (tileShift * sign(shift) >= 0.5 * abs(shift)) ++agree;
+            barrier();
+        }
+        if (t == 0u) {
+            st.meanCur = mc;
+            st.meanPrev = mp;
+            st.gain = vp > 1e-6 ? clamp(sqrt(vc / vp), 0.5, 2.0) : 1.0;
+            st.apply = abs(shift) >= pc.minShift && agree >= 13 ? 1.0 : 0.0;
+        }
+        return;
+    }
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, pc.size)) || st.apply == 0.0) return;
+    float v = imageLoad(prevLevel, p).r;
+    imageStore(prevLevel, p, vec4((v - st.meanPrev) * st.gain + st.meanCur));
+}

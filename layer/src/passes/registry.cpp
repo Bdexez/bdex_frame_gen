@@ -15,6 +15,7 @@ std::unique_ptr<FgPass> makeExtrapolateSplatPass();
 std::unique_ptr<FgPass> makeFpsHudPass();
 std::unique_ptr<FgPass> makeFlowConfidencePass();
 std::unique_ptr<FgPass> makeLearnedCorrectionPass();
+std::unique_ptr<FgPass> makeLumaMatchPass();
 
 std::vector<std::unique_ptr<FgPass>> createOptionalPasses(const Config& cfg, DeviceData& dev, uint32_t outputs,
                                                           bool upscaling, VkExtent2D display) {
@@ -26,6 +27,8 @@ std::vector<std::unique_ptr<FgPass>> createOptionalPasses(const Config& cfg, Dev
         return std::move(passes);
     };
     if (outputs == 0) return withHud();  // no generation: no flow to work on
+    // The previous pyramid at the current brightness, before anything matches on it.
+    if (cfg.lumaMatch > 0.f) passes.push_back(makeLumaMatchPass());
     // Self-evaluation first: it rates the previous flow before anything rewrites it.
     if (cfg.onlineTune) passes.push_back(makeOnlineTunePass());
     passes.push_back(makeFlowTemporalPass());  // flow_temporal can be switched on live

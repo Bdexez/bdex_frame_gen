@@ -208,6 +208,7 @@ const std::vector<OptionDef>& registry() {
     B("flow_confidence", nullptr, &Config::flowConfidence),
     F("confidence_fallback", nullptr, &Config::confidenceFallback, 0.f, 1.f, kLive),
     F("learned_correction", nullptr, &Config::learnedCorrection, 0.f, 1.f, kLive),
+    F("luma_match", nullptr, &Config::lumaMatch, 0.f, 0.5f, kLive),
     B("sync_present", "sync", &Config::syncPresent),
     B("hide_present_ext", nullptr, &Config::hidePresentExt),
     B("ignore_anticheat", nullptr, &Config::ignoreAntiCheat),

@@ -6,6 +6,17 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Quality
+
+- **`luma_match`** (default 0.01): fades and lighting changes no longer break
+  the motion. Before the flow, a pass brings the previous frame's luma
+  pyramid to the current frame's mean and contrast (`luma_match.comp`, all on
+  the GPU) when the whole picture's brightness moved — at least 13 of 4x4
+  tiles the same way (a menu opening over a quarter of the screen moved the
+  mean too: normalising it cost popup 1.8 dB, now 0.00). Corpus: pulse 27.0 →
+  35.2 dB, fade +6.2 (extrapolation +5.7 / +1.2); every other sequence and
+  the demo identical. +0.04 ms at 960x540.
+
 ### Quality (experimental)
 
 - **Six hard sequences in the corpus** (`tools/make_corpus.py`): `scroll`
