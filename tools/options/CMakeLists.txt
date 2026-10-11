@@ -17,8 +17,9 @@ target_link_libraries(bdex_options PRIVATE bdex_core)
 set(BDEX_OPTIONS_UI_JSON "${CMAKE_BINARY_DIR}/options_ui.json")
 add_custom_command(
   OUTPUT "${BDEX_OPTIONS_UI_JSON}"
-  COMMAND bdex_options "${CMAKE_SOURCE_DIR}/layer/options_ui.conf" "${BDEX_OPTIONS_UI_JSON}"
-  DEPENDS bdex_options "${CMAKE_SOURCE_DIR}/layer/options_ui.conf"
+  COMMAND bdex_options "${CMAKE_SOURCE_DIR}/layer/options_ui.conf" "${CMAKE_SOURCE_DIR}/layer/options_ui.en.conf"
+          "${BDEX_OPTIONS_UI_JSON}"
+  DEPENDS bdex_options "${CMAKE_SOURCE_DIR}/layer/options_ui.conf" "${CMAKE_SOURCE_DIR}/layer/options_ui.en.conf"
   COMMENT "Generating options_ui.json")
 add_custom_target(bdex_options_ui ALL DEPENDS "${BDEX_OPTIONS_UI_JSON}")
 install(FILES "${BDEX_OPTIONS_UI_JSON}" DESTINATION share/bdex-framegen)
