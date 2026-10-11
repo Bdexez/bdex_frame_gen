@@ -5,6 +5,7 @@
 //   bdex_demo [--fps N] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]
 //             [--deterministic] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]
 //             [--gpu-load N] [--latency-test [auto]] [--latency-log FILE]
+//             [--stress KIND:N[,KIND:N...]] [--stress-until N]
 //
 // Run it with BDEX_FG=1 (and VK_LAYER_PATH pointing at the build tree if the
 // layer is not installed) to see the generated frames.
@@ -50,7 +51,18 @@ struct Options {
     // clock, the layer's latency_log clock), for tools/latency_report.py.
     int latencyTest = 0;         // 0 off, 1 key presses, 2 automatic
     std::string latencyLog;
+    // --stress: what games do to their swapchain, every N frames (tests/
+    // swapchain_stress.sh): resize (the window to another size), recreate
+    // (a new swapchain from the old one, same size, another present mode and
+    // image count), surface (swapchain and surface destroyed, new ones on the
+    // same window), window (a new window altogether), fullscreen (toggled on
+    // the primary monitor), minimize (iconified for a few frames). Until
+    // frame --stress-until, steady afterwards.
+    long stressEvery[6] = {};
+    long stressUntil = -1;
 };
+enum Stress { kResize, kRecreate, kSurface, kWindow, kFullscreen, kMinimize, kStressKinds };
+const char* const kStressNames[kStressKinds] = {"resize", "recreate", "surface", "window", "fullscreen", "minimize"};
 
 struct PushConstants {
     float resolution[2];
@@ -73,6 +85,9 @@ private:
     void createPipeline();
     void drawFrame();
     void cleanup();
+    void makeWindow();
+    void stress();
+    void recreateSwapchain();
 
     Options opt_;
     GLFWwindow* window_ = nullptr;
@@ -105,6 +120,13 @@ private:
     double inputMs_ = -1.0;    // --latency-test: a pending input (steady ms), -1 none
     double nextAutoMs_ = 0.0;
     FILE* latencyLog_ = nullptr;
+    // --stress state: present mode and image count overrides (recreate), a
+    // pseudo-random sequence, frames left iconified, fullscreen on.
+    int stressMode_ = -1, stressCount_ = 0;
+    uint32_t stressRng_ = 12345u;
+    int minimizedFrames_ = 0;
+    bool fullscreen_ = false;
+    uint32_t lastStress_ = 0;
 };
 
 double steadyMs() {
@@ -113,6 +135,14 @@ double steadyMs() {
 
 void Demo::initWindow() {
     if (!glfwInit()) throw std::runtime_error("glfwInit failed");
+    if (!opt_.latencyLog.empty()) {
+        latencyLog_ = fopen(opt_.latencyLog.c_str(), "w");
+        if (!latencyLog_) throw std::runtime_error("cannot write " + opt_.latencyLog);
+    }
+    makeWindow();
+}
+
+void Demo::makeWindow() {
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     // Deterministic runs (the quality eval) must start at the same window
     // size every time; a tiling window manager otherwise re-tiles the window
@@ -127,10 +157,6 @@ void Demo::initWindow() {
             auto* d = static_cast<Demo*>(glfwGetWindowUserPointer(w));
             if (action == GLFW_PRESS && key != GLFW_KEY_ESCAPE && d->inputMs_ < 0.0) d->inputMs_ = steadyMs();
         });
-    if (!opt_.latencyLog.empty()) {
-        latencyLog_ = fopen(opt_.latencyLog.c_str(), "w");
-        if (!latencyLog_) throw std::runtime_error("cannot write " + opt_.latencyLog);
-    }
     glfwSetFramebufferSizeCallback(window_, [](GLFWwindow* w, int, int) {
         static_cast<Demo*>(glfwGetWindowUserPointer(w))->resized_ = true;
     });
@@ -239,6 +265,12 @@ void Demo::createSwapchain() {
     vkGetPhysicalDeviceSurfacePresentModesKHR(physDev_, surface_, &mn, modes.data());
     VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
     if (std::find(modes.begin(), modes.end(), opt_.mode) != modes.end()) mode = opt_.mode;
+    if (stressMode_ >= 0) {  // a core mode the surface supports (others need features enabled)
+        std::vector<VkPresentModeKHR> core;
+        for (VkPresentModeKHR m : modes)
+            if (m <= VK_PRESENT_MODE_FIFO_RELAXED_KHR) core.push_back(m);
+        if (!core.empty()) mode = core[stressMode_ % core.size()];
+    }
 
     int w = 0, h = 0;
     glfwGetFramebufferSize(window_, &w, &h);
@@ -247,6 +279,7 @@ void Demo::createSwapchain() {
                     std::clamp<uint32_t>(h, caps.minImageExtent.height, caps.maxImageExtent.height)};
 
     uint32_t count = std::max(caps.minImageCount, 3u);
+    if (stressMode_ >= 0) count = caps.minImageCount + stressCount_;  // min, min + 1, min + 2
     if (caps.maxImageCount) count = std::min(count, caps.maxImageCount);
 
     VkSwapchainCreateInfoKHR sci{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
@@ -488,6 +521,68 @@ void Demo::drawFrame() {
     ++frameCount_;
 }
 
+void Demo::recreateSwapchain() {
+    vkDeviceWaitIdle(device_);
+    destroySwapchain();
+    createSwapchain();
+}
+
+void Demo::stress() {
+    if (opt_.stressUntil >= 0 && frameCount_ >= static_cast<uint32_t>(opt_.stressUntil)) return;
+    if (frameCount_ == 0 || frameCount_ == lastStress_) return;  // (once a frame: minimized, out of date)
+    lastStress_ = frameCount_;
+    auto due = [&](Stress k) { return opt_.stressEvery[k] > 0 && frameCount_ % opt_.stressEvery[k] == 0; };
+    auto rnd = [&](uint32_t n) {
+        stressRng_ = stressRng_ * 1664525u + 1013904223u;
+        return (stressRng_ >> 8) % n;
+    };
+    if (due(kResize)) {
+        const int w = 160 + int(rnd(uint32_t(std::max(1, opt_.width - 159))));
+        const int h = 120 + int(rnd(uint32_t(std::max(1, opt_.height - 119))));
+        printf("demo: stress resize %dx%d\n", w, h);
+        glfwSetWindowSize(window_, w, h);
+    }
+    if (due(kRecreate)) {
+        stressMode_ = int(rnd(8));
+        stressCount_ = int(rnd(3));
+        printf("demo: stress recreate\n");
+        recreateSwapchain();
+    }
+    if (due(kSurface) || due(kWindow)) {
+        const bool window = due(kWindow);
+        printf("demo: stress %s\n", window ? "window" : "surface");
+        vkDeviceWaitIdle(device_);
+        destroySwapchain();
+        vkDestroySwapchainKHR(device_, swapchain_, nullptr);
+        swapchain_ = VK_NULL_HANDLE;
+        vkDestroySurfaceKHR(instance_, surface_, nullptr);
+        surface_ = VK_NULL_HANDLE;
+        if (window) {
+            glfwDestroyWindow(window_);
+            fullscreen_ = false;
+            makeWindow();
+        }
+        VK_CHECK(glfwCreateWindowSurface(instance_, window_, nullptr, &surface_));
+        VkBool32 present = VK_FALSE;
+        vkGetPhysicalDeviceSurfaceSupportKHR(physDev_, queueFamily_, surface_, &present);
+        if (!present) throw std::runtime_error("the new surface cannot be presented to");
+        createSwapchain();
+    }
+    if (due(kFullscreen)) {
+        GLFWmonitor* mon = glfwGetPrimaryMonitor();
+        const GLFWvidmode* vm = mon ? glfwGetVideoMode(mon) : nullptr;
+        fullscreen_ = !fullscreen_ && vm;
+        printf("demo: stress fullscreen %s\n", fullscreen_ ? "on" : "off");
+        if (fullscreen_) glfwSetWindowMonitor(window_, mon, 0, 0, vm->width, vm->height, vm->refreshRate);
+        else glfwSetWindowMonitor(window_, nullptr, 40, 40, opt_.width, opt_.height, 0);
+    }
+    if (due(kMinimize)) {
+        printf("demo: stress minimize\n");
+        glfwIconifyWindow(window_);
+        minimizedFrames_ = 5;
+    }
+}
+
 void Demo::run() {
     initWindow();
     initVulkan();
@@ -500,9 +595,15 @@ void Demo::run() {
     while (!glfwWindowShouldClose(window_)) {
         glfwPollEvents();
         if (glfwGetKey(window_, GLFW_KEY_ESCAPE) == GLFW_PRESS) break;
+        stress();
+        if (minimizedFrames_ > 0 && --minimizedFrames_ == 0) glfwRestoreWindow(window_);
         int w = 0, h = 0;
         glfwGetFramebufferSize(window_, &w, &h);
-        if (w == 0 || h == 0) { std::this_thread::sleep_for(std::chrono::milliseconds(50)); continue; }
+        if (w == 0 || h == 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            if (minimizedFrames_ == 0 && opt_.stressEvery[kMinimize] > 0) glfwRestoreWindow(window_);
+            continue;
+        }
         drawFrame();
         ++statFrames;
         if (opt_.frames >= 0 && frameCount_ >= static_cast<uint32_t>(opt_.frames)) break;
@@ -578,10 +679,24 @@ Options parseArgs(int argc, char** argv) {
             else if (v == "mailbox") o.mode = VK_PRESENT_MODE_MAILBOX_KHR;
             else if (v == "immediate") o.mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
             else throw std::runtime_error("bad --mode");
-        } else if (a == "-h" || a == "--help") {
+        } else if (a == "--stress") {
+            std::string v = value();
+            for (size_t p = 0; p < v.size();) {
+                const size_t e = std::min(v.find(',', p), v.size()), c = v.find(':', p);
+                if (c == std::string::npos || c > e) throw std::runtime_error("bad --stress (KIND:N)");
+                const std::string kind = v.substr(p, c - p);
+                int k = 0;
+                while (k < kStressKinds && kind != kStressNames[k]) ++k;
+                if (k == kStressKinds) throw std::runtime_error("bad --stress kind " + kind);
+                o.stressEvery[k] = std::max(0L, atol(v.substr(c + 1, e - c - 1).c_str()));
+                p = e + 1;
+            }
+        } else if (a == "--stress-until") o.stressUntil = atol(value().c_str());
+        else if (a == "-h" || a == "--help") {
             printf("usage: bdex_demo [--fps N] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]\n"
                    "                 [--deterministic] [--ignore-resize] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]\n"
-                   "                 [--gpu-load N] [--latency-test [auto]] [--latency-log FILE]\n");
+                   "                 [--gpu-load N] [--latency-test [auto]] [--latency-log FILE]\n"
+                   "                 [--stress resize|recreate|surface|window|fullscreen|minimize:N[,...]] [--stress-until N]\n");
             exit(0);
         } else {
             throw std::runtime_error("unknown option " + a);
@@ -593,6 +708,7 @@ Options parseArgs(int argc, char** argv) {
 } // namespace
 
 int main(int argc, char** argv) {
+    setvbuf(stdout, nullptr, _IOLBF, 0);  // in order with the layer's log (stderr) when piped
     try {
         Demo demo(parseArgs(argc, argv));
         demo.run();
