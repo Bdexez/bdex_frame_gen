@@ -30,6 +30,445 @@ import subprocess
 import sys
 import threading
 
+
+def _french():
+    """The panel's language: French when the system's is (LANGUAGE, LC_ALL,
+    LC_MESSAGES, LANG, the first one set), English otherwise; BDEX_LANG=fr|en
+    chooses."""
+    v = os.environ.get("BDEX_LANG", "")
+    for var in ("LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"):
+        if v:
+            break
+        v = os.environ.get(var, "")
+    return v.split(":")[0].lower().startswith("fr")
+
+
+FRENCH = _french()
+
+# The English texts: the French one -> its translation; "{}" stands for a
+# value interpolated into the text (an f-string's field), so that tr() takes
+# the finished French text and gives it back in English.
+_EN = {'Appliquer': 'Apply',
+ 'Interpolation (défaut)': 'Interpolation (default)',
+ 'Hybride — ×3/×4 : latence divisée par 2 à 3': 'Hybrid — ×3/×4: latency divided by 2 to 3',
+ 'Extrapolation — latence minimale': 'Extrapolation — lowest latency',
+ 'Auto — adapté au GPU': 'Auto — suited to the GPU',
+ 'Qualité': 'Quality',
+ 'Équilibré': 'Balanced',
+ 'Amélioré — options de qualité mesurées': 'Enhanced — measured quality options',
+ 'Lanczos (le plus net)': 'Lanczos (sharpest)',
+ 'Bicubique': 'Bicubic',
+ 'Bilinéaire': 'Bilinear',
+ 'Auto (recommandé)': 'Auto (recommended)',
+ 'Mode du jeu': "The game's mode",
+ 'Immediate (sans vsync)': 'Immediate (no vsync)',
+ 'Désactivé': 'Off',
+ 'FPS + génération': 'FPS + generation',
+ '+ 1% et 0.1% low': '+ 1% and 0.1% low',
+ '+ latence': '+ latency',
+ '+ graphe de cadencement': '+ pacing graph',
+ 'Couche inactive : {}': 'Layer inactive: {}',
+ 'Prêt — sélectionne-le puis « Démarrer »': 'Ready — select it, then « Start »',
+ 'Transparente — {}': 'Pass-through — {}',
+ 'raison inconnue': 'unknown reason',
+ '{} → {} i/s (×{}, {})': '{} → {} fps (×{}, {})',
+ 'hybride': 'hybrid',
+ "limite Steam {} i/s (rien au-delà ne s'affiche)": 'Steam limit {} fps (nothing above it is shown)',
+ 'écran {} Hz': 'screen {} Hz',
+ 'latence {} ms': 'latency {} ms',
+ 'budget GPU : niveau {}': 'GPU budget: level {}',
+ "flux incertain sur {} % de l'image": 'flow uncertain on {} % of the picture',
+ "génération inutile : le jeu tient déjà la fréquence de l'écran": 'generation not needed: the game already '
+                                                                   "holds the screen's refresh rate",
+ 'En pause — ': 'Paused — ',
+ 'Passes : ': 'Passes: ',
+ 'Réglage auto : ': 'Auto tuning: ',
+ "Génération d'images": 'Frame generation',
+ 'Copier les options de lancement Steam équivalentes (par jeu)': 'Copy the equivalent Steam launch options '
+                                                                 '(per game)',
+ 'Session impossible : {}': 'Cannot open the session: {}',
+ 'Couche mise à jour dans : ': 'Layer updated in: ',
+ 'Mode Jeu — sans le panneau': 'Game Mode — without the panel',
+ 'Dans le mode Jeu de SteamOS (Steam Deck), ce panneau ne peut pas rester ouvert à côté du jeu : ces jeux génèrent dès leur lancement, avec les réglages ci-dessous. Steam, gamescope et les applications de bureau restent exclus. Autre voie, par jeu : les options de lancement Steam (bouton copier en haut).': 'In '
+                                                                                                                                                                                                                                                                                                                    "SteamOS's "
+                                                                                                                                                                                                                                                                                                                    'Game '
+                                                                                                                                                                                                                                                                                                                    'Mode '
+                                                                                                                                                                                                                                                                                                                    '(Steam '
+                                                                                                                                                                                                                                                                                                                    'Deck), '
+                                                                                                                                                                                                                                                                                                                    'this '
+                                                                                                                                                                                                                                                                                                                    'panel '
+                                                                                                                                                                                                                                                                                                                    'cannot '
+                                                                                                                                                                                                                                                                                                                    'stay '
+                                                                                                                                                                                                                                                                                                                    'open '
+                                                                                                                                                                                                                                                                                                                    'beside '
+                                                                                                                                                                                                                                                                                                                    'the '
+                                                                                                                                                                                                                                                                                                                    'game: '
+                                                                                                                                                                                                                                                                                                                    'these '
+                                                                                                                                                                                                                                                                                                                    'games '
+                                                                                                                                                                                                                                                                                                                    'generate '
+                                                                                                                                                                                                                                                                                                                    'from '
+                                                                                                                                                                                                                                                                                                                    'their '
+                                                                                                                                                                                                                                                                                                                    'start, '
+                                                                                                                                                                                                                                                                                                                    'with '
+                                                                                                                                                                                                                                                                                                                    'the '
+                                                                                                                                                                                                                                                                                                                    'settings '
+                                                                                                                                                                                                                                                                                                                    'below. '
+                                                                                                                                                                                                                                                                                                                    'Steam, '
+                                                                                                                                                                                                                                                                                                                    'gamescope '
+                                                                                                                                                                                                                                                                                                                    'and '
+                                                                                                                                                                                                                                                                                                                    'desktop '
+                                                                                                                                                                                                                                                                                                                    'applications '
+                                                                                                                                                                                                                                                                                                                    'stay '
+                                                                                                                                                                                                                                                                                                                    'excluded. '
+                                                                                                                                                                                                                                                                                                                    'Another '
+                                                                                                                                                                                                                                                                                                                    'way, '
+                                                                                                                                                                                                                                                                                                                    'per '
+                                                                                                                                                                                                                                                                                                                    'game: '
+                                                                                                                                                                                                                                                                                                                    'the '
+                                                                                                                                                                                                                                                                                                                    'Steam '
+                                                                                                                                                                                                                                                                                                                    'launch '
+                                                                                                                                                                                                                                                                                                                    'options '
+                                                                                                                                                                                                                                                                                                                    '(copy '
+                                                                                                                                                                                                                                                                                                                    'button '
+                                                                                                                                                                                                                                                                                                                    'at '
+                                                                                                                                                                                                                                                                                                                    'the '
+                                                                                                                                                                                                                                                                                                                    'top).',
+ 'Tous les jeux': 'Every game',
+ 'Chaque jeu Vulkan génère dès son lancement, panneau fermé': 'Every Vulkan game generates from its start, '
+                                                              'panel closed',
+ 'Le jeu sélectionné': 'The selected game',
+ 'Ce jeu : {}': 'This game: {}',
+ 'Génère dès son lancement, panneau fermé': 'Generates from its start, panel closed',
+ 'Sélectionne un jeu dans « Jeux détectés » (lancé une fois ici)': 'Select a game in « Detected games » '
+                                                                   '(started once here)',
+ 'Génère sans le panneau': 'Generates without the panel',
+ 'Retirer': 'Remove',
+ "Échec de l'enregistrement : {}": 'Could not save: {}',
+ '{} : génère sans le panneau.': '{}: generates without the panel.',
+ '{} : seulement avec « Démarrer ».': '{}: only with « Start ».',
+ 'Actif dans tous les jeux, sans le panneau': 'On in every game, without the panel',
+ "Chaque jeu génère dès son lancement ; les réglages s'appliquent en direct, « En pause » suspend la génération.": 'Every '
+                                                                                                                   'game '
+                                                                                                                   'generates '
+                                                                                                                   'from '
+                                                                                                                   'its '
+                                                                                                                   'start; '
+                                                                                                                   'the '
+                                                                                                                   'settings '
+                                                                                                                   'apply '
+                                                                                                                   'live, '
+                                                                                                                   '« '
+                                                                                                                   'Paused '
+                                                                                                                   '» '
+                                                                                                                   'suspends '
+                                                                                                                   'the '
+                                                                                                                   'generation.',
+ 'Génération en cours : {}': 'Generating: {}',
+ "Les réglages s'appliquent en direct. « Arrêter » ou fermer cette fenêtre coupe la génération.": 'The '
+                                                                                                  'settings '
+                                                                                                  'apply '
+                                                                                                  'live. « '
+                                                                                                  'Stop » or '
+                                                                                                  'closing '
+                                                                                                  'this '
+                                                                                                  'window '
+                                                                                                  'stops the '
+                                                                                                  'generation.',
+ 'Framegen arrêté': 'Frame generation stopped',
+ 'Jeu sélectionné : {} — clique « Démarrer ».': 'Selected game: {} — click « Start ».',
+ 'Lance ton jeu, sélectionne-le dans « Jeux détectés », puis « Démarrer ».': 'Start your game, select it in '
+                                                                             '« Detected games », then « '
+                                                                             'Start ».',
+ 'Arrêter': 'Stop',
+ 'Démarrer': 'Start',
+ 'Échec : {}': 'Failed: {}',
+ 'État': 'Status',
+ 'Couche Vulkan': 'Vulkan layer',
+ 'Installée — chargée automatiquement dans tous les jeux Vulkan': 'Installed — loaded automatically into '
+                                                                  'every Vulkan game',
+ "Non installée : lance tools/install.sh pour qu'elle s'active sans options Steam": 'Not installed: run '
+                                                                                    'tools/install.sh so '
+                                                                                    'that it works without '
+                                                                                    'Steam options',
+ 'Installer': 'Install',
+ 'Carte graphique': 'Graphics card',
+ '\nProfil « Auto » : réglé selon ce GPU': '\n« Auto » preset: set for this GPU',
+ 'non détectée': 'not detected',
+ 'Signaler un problème': 'Report a problem',
+ 'Écrit le rapport de diagnostic et ouvre le formulaire pré-rempli (à faire pendant que le jeu tourne)': 'Writes '
+                                                                                                         'the '
+                                                                                                         'diagnostic '
+                                                                                                         'report '
+                                                                                                         'and '
+                                                                                                         'opens '
+                                                                                                         'the '
+                                                                                                         'pre-filled '
+                                                                                                         'form '
+                                                                                                         '(do '
+                                                                                                         'it '
+                                                                                                         'while '
+                                                                                                         'the '
+                                                                                                         'game '
+                                                                                                         'runs)',
+ 'Rapport…': 'Report…',
+ 'Rapport impossible : bdex-framegen introuvable': 'No report: bdex-framegen not found',
+ 'Rapport écrit dans {} — à joindre au formulaire': 'Report written to {} — attach it to the form',
+ 'Ouvre le lien affiché par « bdex-framegen --issue-url »': 'Open the link « bdex-framegen --issue-url » '
+                                                            'prints',
+ 'Jeux détectés': 'Detected games',
+ 'Jeux Vulkan en cours (natifs ou via Proton). Sélectionne celui où générer des images, puis « Démarrer » en haut.': 'Vulkan '
+                                                                                                                     'games '
+                                                                                                                     'running '
+                                                                                                                     '(native '
+                                                                                                                     'or '
+                                                                                                                     'through '
+                                                                                                                     'Proton). '
+                                                                                                                     'Select '
+                                                                                                                     'the '
+                                                                                                                     'one '
+                                                                                                                     'to '
+                                                                                                                     'generate '
+                                                                                                                     'frames '
+                                                                                                                     'in, '
+                                                                                                                     'then '
+                                                                                                                     '« '
+                                                                                                                     'Start '
+                                                                                                                     '» '
+                                                                                                                     'at '
+                                                                                                                     'the '
+                                                                                                                     'top.',
+ 'Actualiser la liste': 'Refresh the list',
+ 'Aucun jeu en cours': 'No game running',
+ 'Lance un jeu Vulkan (natif ou via Proton), puis « Actualiser la liste »': 'Start a Vulkan game (native or '
+                                                                            'through Proton), then « Refresh '
+                                                                            'the list »',
+ "Lancé avant l'installation de cette version — relance le jeu": 'Started before this version was installed '
+                                                                 '— restart the game',
+ 'Insère des images de synthèse entre celles du jeu.': "Inserts synthesized frames between the game's.",
+ 'Activer': 'Enable',
+ 'Profil de qualité': 'Quality preset',
+ "Auto s'adapte à la puissance du GPU": "Auto adapts to the GPU's power",
+ 'Images affichées par image rendue': 'Frames shown per frame rendered',
+ "Auto : le plus grand multiple entier sous la fréquence de l'écran (×2 à 60 i/s sur 144 Hz). Adaptatif : toute la fréquence de l'écran, même en ratio fractionnaire (50 i/s → 144 i/s), une image par rafraîchissement": 'Auto: '
+                                                                                                                                                                                                                          'the '
+                                                                                                                                                                                                                          'largest '
+                                                                                                                                                                                                                          'whole '
+                                                                                                                                                                                                                          'multiple '
+                                                                                                                                                                                                                          'under '
+                                                                                                                                                                                                                          'the '
+                                                                                                                                                                                                                          "screen's "
+                                                                                                                                                                                                                          'refresh '
+                                                                                                                                                                                                                          'rate '
+                                                                                                                                                                                                                          '(×2 '
+                                                                                                                                                                                                                          'at '
+                                                                                                                                                                                                                          '60 '
+                                                                                                                                                                                                                          'fps '
+                                                                                                                                                                                                                          'on '
+                                                                                                                                                                                                                          '144 '
+                                                                                                                                                                                                                          'Hz). '
+                                                                                                                                                                                                                          'Adaptive: '
+                                                                                                                                                                                                                          'the '
+                                                                                                                                                                                                                          "screen's "
+                                                                                                                                                                                                                          'whole '
+                                                                                                                                                                                                                          'refresh '
+                                                                                                                                                                                                                          'rate, '
+                                                                                                                                                                                                                          'even '
+                                                                                                                                                                                                                          'at '
+                                                                                                                                                                                                                          'a '
+                                                                                                                                                                                                                          'fractional '
+                                                                                                                                                                                                                          'ratio '
+                                                                                                                                                                                                                          '(50 '
+                                                                                                                                                                                                                          'fps '
+                                                                                                                                                                                                                          '→ '
+                                                                                                                                                                                                                          '144 '
+                                                                                                                                                                                                                          'fps), '
+                                                                                                                                                                                                                          'one '
+                                                                                                                                                                                                                          'frame '
+                                                                                                                                                                                                                          'per '
+                                                                                                                                                                                                                          'refresh',
+ "Auto — selon l'écran": 'Auto — from the screen',
+ "Adaptatif — toute la fréquence de l'écran": "Adaptive — the screen's whole refresh rate",
+ "L'extrapolation supprime la latence ajoutée": 'Extrapolation removes the added latency',
+ 'En pause': 'Paused',
+ "Suspend la génération dans les jeux en cours (s'applique en moins d'une seconde ; raccourci : bdex-framegen --toggle)": 'Suspends '
+                                                                                                                          'the '
+                                                                                                                          'generation '
+                                                                                                                          'in '
+                                                                                                                          'the '
+                                                                                                                          'running '
+                                                                                                                          'games '
+                                                                                                                          '(applies '
+                                                                                                                          'within '
+                                                                                                                          'a '
+                                                                                                                          'second; '
+                                                                                                                          'shortcut: '
+                                                                                                                          'bdex-framegen '
+                                                                                                                          '--toggle)',
+ 'Compteur de FPS': 'FPS counter',
+ 'Affiche les FPS en surimpression dans le jeu (coin haut-gauche).': 'Shows the FPS over the game (top-left '
+                                                                     'corner).',
+ 'Affichage': 'Display',
+ 'Les 1% / 0.1% low sont les FPS aux 99e / 99,9e centiles du jeu': "The 1% / 0.1% lows are the game's FPS at "
+                                                                   'the 99th / 99.9th percentiles',
+ "Le jeu rend en résolution réduite, agrandie à l'affichage (X11, Xwayland et Wayland natif).": 'The game '
+                                                                                                'renders at '
+                                                                                                'a lower '
+                                                                                                'resolution, '
+                                                                                                'enlarged '
+                                                                                                'for display '
+                                                                                                '(X11, '
+                                                                                                'Xwayland '
+                                                                                                'and native '
+                                                                                                'Wayland).',
+ 'Résolution de rendu': 'Render resolution',
+ "pourcentage de la résolution d'affichage": 'percentage of the display resolution',
+ "Filtre d'agrandissement": 'Upscaling filter',
+ 'Netteté (CAS)': 'Sharpness (CAS)',
+ '0 = désactivé': '0 = off',
+ 'Présentation': 'Presentation',
+ 'Mode de présentation': 'Present mode',
+ 'Faible latence': 'Low latency',
+ "Empêche le jeu de prendre de l'avance (utile en FIFO)": 'Keeps the game from running ahead (useful with '
+                                                          'FIFO)',
+ 'Réglages avancés': 'Advanced settings',
+ "Toutes les autres options du layer. Les valeurs par défaut conviennent à la plupart des jeux ; seules les valeurs modifiées sont écrites. La plupart s'appliquent aussi aux jeux déjà lancés.": 'Every '
+                                                                                                                                                                                                  'other '
+                                                                                                                                                                                                  'option '
+                                                                                                                                                                                                  'of '
+                                                                                                                                                                                                  'the '
+                                                                                                                                                                                                  'layer. '
+                                                                                                                                                                                                  'The '
+                                                                                                                                                                                                  'defaults '
+                                                                                                                                                                                                  'suit '
+                                                                                                                                                                                                  'most '
+                                                                                                                                                                                                  'games; '
+                                                                                                                                                                                                  'only '
+                                                                                                                                                                                                  'the '
+                                                                                                                                                                                                  'values '
+                                                                                                                                                                                                  'changed '
+                                                                                                                                                                                                  'are '
+                                                                                                                                                                                                  'written. '
+                                                                                                                                                                                                  'Most '
+                                                                                                                                                                                                  'also '
+                                                                                                                                                                                                  'apply '
+                                                                                                                                                                                                  'to '
+                                                                                                                                                                                                  'games '
+                                                                                                                                                                                                  'already '
+                                                                                                                                                                                                  'running.',
+ 'Options Steam (équivalent par jeu) copiées.': 'Steam options (the per-game equivalent) copied.',
+ 'tools/install.sh introuvable.': 'tools/install.sh not found.',
+ 'Installation…': 'Installing…',
+ 'Installation de la couche… (compilation, quelques instants)': 'Installing the layer… (building, a moment)',
+ "Couche installée. Lance ton jeu — c'est actif.": 'Layer installed. Start your game — it is on.',
+ 'Réessayer': 'Try again',
+ "Échec de l'installation : {}": 'Installation failed: {}',
+ 'adaptatif': 'adaptive',
+ 'désactivé': 'off',
+ 'multiplicateur {} · mode {} · préréglage {} · compteur {}': 'multiplier {} · mode {} · preset {} · counter '
+                                                              '{}',
+ ' · mode Jeu : tous les jeux sans le panneau': ' · Game Mode: every game without the panel',
+ '   ← actuel': '   ← current',
+ 'Choix (Entrée : inchangé) : ': 'Choice (Enter: unchanged): ',
+ "Couche mise à jour dans {} (copie d'une version précédente)": 'Layer updated in {} (a copy of an earlier '
+                                                                'version)',
+ 'bdex-framegen — panneau en mode texte': 'bdex-framegen — text-mode panel',
+ ' (GTK 4 absent)': ' (no GTK 4)',
+ "  La couche n'est pas installée pour ce compte (install.sh, ou le paquet de la distribution).": '  The '
+                                                                                                  'layer is '
+                                                                                                  'not '
+                                                                                                  'installed '
+                                                                                                  'for this '
+                                                                                                  'account '
+                                                                                                  '(install.sh, '
+                                                                                                  'or the '
+                                                                                                  "distribution's "
+                                                                                                  'package).',
+ '  Lance le jeu normalement, puis choisis-le ici. Tant que ce panneau est ouvert,': '  Start the game as '
+                                                                                     'usual, then choose it '
+                                                                                     'here. While this panel '
+                                                                                     'is open,',
+ '  le jeu choisi génère des images ; le fermer (q, Ctrl+C) arrête.': '  the game chosen generates frames; '
+                                                                      'closing it (q, Ctrl+C) stops.',
+ 'Jeux détectés :': 'Detected games:',
+ 'Jeux détectés : aucun (lance un jeu Vulkan, puis r)': 'Detected games: none (start a Vulkan game, then r)',
+ '  ▶ génère': '  ▶ generating',
+ 'Options : ': 'Options: ',
+ '[numéro] démarrer dans ce jeu · a arrêter · r actualiser · m multiplicateur · o mode · p préréglage · h compteur · j mode Jeu · s options Steam · b signaler un problème · q quitter': '[number] '
+                                                                                                                                                                                         'start '
+                                                                                                                                                                                         'in '
+                                                                                                                                                                                         'that '
+                                                                                                                                                                                         'game '
+                                                                                                                                                                                         '· '
+                                                                                                                                                                                         'a '
+                                                                                                                                                                                         'stop '
+                                                                                                                                                                                         '· '
+                                                                                                                                                                                         'r '
+                                                                                                                                                                                         'refresh '
+                                                                                                                                                                                         '· '
+                                                                                                                                                                                         'm '
+                                                                                                                                                                                         'multiplier '
+                                                                                                                                                                                         '· '
+                                                                                                                                                                                         'o '
+                                                                                                                                                                                         'mode '
+                                                                                                                                                                                         '· '
+                                                                                                                                                                                         'p '
+                                                                                                                                                                                         'preset '
+                                                                                                                                                                                         '· '
+                                                                                                                                                                                         'h '
+                                                                                                                                                                                         'counter '
+                                                                                                                                                                                         '· '
+                                                                                                                                                                                         'j '
+                                                                                                                                                                                         'Game '
+                                                                                                                                                                                         'Mode '
+                                                                                                                                                                                         '· '
+                                                                                                                                                                                         's '
+                                                                                                                                                                                         'Steam '
+                                                                                                                                                                                         'options '
+                                                                                                                                                                                         '· '
+                                                                                                                                                                                         'b '
+                                                                                                                                                                                         'report '
+                                                                                                                                                                                         'a '
+                                                                                                                                                                                         'problem '
+                                                                                                                                                                                         '· '
+                                                                                                                                                                                         'q '
+                                                                                                                                                                                         'quit',
+ 'Génération démarrée dans {}.': 'Generation started in {}.',
+ 'Désactivé (×1)': 'Off (×1)',
+ "Auto — jusqu'à la fréquence de l'écran": "Auto — up to the screen's refresh rate",
+ 'Adaptatif — toute la fréquence, rapports fractionnaires': 'Adaptive — the whole refresh rate, fractional '
+                                                            'ratios',
+ 'Multiplicateur :': 'Multiplier:',
+ 'Mode :': 'Mode:',
+ 'Préréglage :': 'Preset:',
+ "Compteur à l'écran :": 'On-screen counter:',
+ 'Mode Jeu (Steam Deck) — tous les jeux génèrent dès leur lancement, sans le panneau :': 'Game Mode (Steam '
+                                                                                         'Deck) — every game '
+                                                                                         'generates from its '
+                                                                                         'start, without the '
+                                                                                         'panel:',
+ 'Non — le panneau décide (« Démarrer »)': 'No — the panel decides (« Start »)',
+ 'Oui': 'Yes',
+ 'Options de lancement Steam équivalentes (par jeu) :': 'Equivalent Steam launch options (per game):',
+ 'Rapport écrit dans {} — à joindre au formulaire :': 'Report written to {} — attach it to the form:',
+ 'bdex-framegen introuvable : pas de rapport.': 'bdex-framegen not found: no report.'}
+_EN_PATTERNS = [(re.compile("^" + "(.*?)".join(re.escape(p) for p in fr.split("{}")) + "$", re.S), en)
+                for fr, en in _EN.items() if "{}" in fr]
+
+
+def tr(text):
+    """`text` (French) in the panel's language."""
+    if FRENCH:
+        return text
+    en = _EN.get(text)
+    if en is not None:
+        return en
+    for pattern, en in _EN_PATTERNS:
+        m = pattern.match(text)
+        if m:
+            parts = en.split("{}")
+            return parts[0] + "".join(g + p for g, p in zip(m.groups(), parts[1:]))
+    return text
+
 # GTK 4 through PyGObject; without it (Ubuntu 20.04, Debian 11: no GTK 4) the
 # same panel in text mode (text_main), in a terminal.
 try:
@@ -269,7 +708,7 @@ class _Compat:
             self.add_suffix(self._entry)
             if show_apply_button:
                 ok = Gtk.Button(icon_name="object-select-symbolic", valign=Gtk.Align.CENTER,
-                                tooltip_text="Appliquer")
+                                tooltip_text=tr("Appliquer"))
                 ok.connect("clicked", lambda *_: self.emit("apply"))
                 self.add_suffix(ok)
 
@@ -306,23 +745,23 @@ CONFIG_PATH = os.path.join(
     os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "bdex-framegen.conf"
 )
 
-MODES = [("Interpolation (défaut)", "interpolate"),
-         ("Hybride — ×3/×4 : latence divisée par 2 à 3", "hybrid"),
-         ("Extrapolation — latence minimale", "extrapolate")]
-PRESETS = [("Auto — adapté au GPU", "auto"), ("Qualité", "quality"),
-           ("Équilibré", "balanced"), ("Amélioré — options de qualité mesurées", "enhanced"),
+MODES = [(tr("Interpolation (défaut)"), "interpolate"),
+         (tr("Hybride — ×3/×4 : latence divisée par 2 à 3"), "hybrid"),
+         (tr("Extrapolation — latence minimale"), "extrapolate")]
+PRESETS = [(tr("Auto — adapté au GPU"), "auto"), (tr("Qualité"), "quality"),
+           (tr("Équilibré"), "balanced"), (tr("Amélioré — options de qualité mesurées"), "enhanced"),
            ("Performance", "performance")]
-FILTERS = [("Lanczos (le plus net)", "lanczos"), ("Bicubique", "bicubic"), ("Bilinéaire", "bilinear")]
-PRESENT = [("Auto (recommandé)", "auto"), ("Mode du jeu", "app"), ("FIFO (vsync)", "fifo"),
-           ("Mailbox", "mailbox"), ("Immediate (sans vsync)", "immediate")]
+FILTERS = [(tr("Lanczos (le plus net)"), "lanczos"), (tr("Bicubique"), "bicubic"), (tr("Bilinéaire"), "bilinear")]
+PRESENT = [(tr("Auto (recommandé)"), "auto"), (tr("Mode du jeu"), "app"), ("FIFO (vsync)", "fifo"),
+           ("Mailbox", "mailbox"), (tr("Immediate (sans vsync)"), "immediate")]
 # On-screen fps counter detail levels (index == the layer's HUD level).
-HUD_MODES = [("Désactivé", 0),
+HUD_MODES = [(tr("Désactivé"), 0),
              ("FPS", 1),
-             ("FPS + génération", 2),
+             (tr("FPS + génération"), 2),
              ("+ 1% low", 3),
-             ("+ 1% et 0.1% low", 4),
-             ("+ latence", 5),
-             ("+ graphe de cadencement", 6)]
+             (tr("+ 1% et 0.1% low"), 4),
+             (tr("+ latence"), 5),
+             (tr("+ graphe de cadencement"), 6)]
 HUD_NAMED = {"off": 0, "false": 0, "no": 0, "none": 0, "fps": 1,
              "framegen": 2, "fg": 2, "on": 2, "true": 2, "yes": 2,
              "low": 3, "1low": 3, "lows": 3, "full": 4, "detailed": 4, "all": 4,
@@ -401,6 +840,10 @@ def load_sections():
             if not o["gui"]:
                 continue
             k, key, label, sub = o["kind"], o["key"], o["label"], o["help"]
+            if not FRENCH and o.get("label_en"):   # (layer/options_ui.en.conf)
+                label, sub = o["label_en"], o.get("help_en", "")
+                if o.get("choices_en"):
+                    o["choices"] = [[val, en] for (val, _), en in zip(o["choices"], o["choices_en"])]
             if k == "switch":
                 opts.append(switch(key, label, sub, o["default"] == "1"))
             elif k == "spin":
@@ -410,7 +853,9 @@ def load_sections():
                 opts.append(choice(key, label, sub, [(lab, val) for val, lab in o["choices"]], o["default"]))
             elif k == "text":
                 opts.append(text(key, label, sub))
-        sections.append((sec["id"], sec["title"], sec["subtitle"], sec["expanded"], opts))
+        english = not FRENCH and sec.get("title_en")
+        sections.append((sec["id"], sec["title_en"] if english else sec["title"],
+                         sec.get("subtitle_en", "") if english else sec["subtitle"], sec["expanded"], opts))
     return sections
 
 
@@ -1168,46 +1613,48 @@ def describe_entry(e):
     if e.get("kind") == "device":
         if e.get("state") == "active":
             return None
-        return f"Couche inactive : {e.get('reason', e.get('state', ''))}"
+        return tr(f"Couche inactive : {e.get('reason', e.get('state', ''))}")
     state = e.get("state", "")
     if state == "ready":
-        return "Prêt — sélectionne-le puis « Démarrer »"
+        return tr("Prêt — sélectionne-le puis « Démarrer »")
     if state == "pass-through":
-        return f"Transparente — {e.get('reason', 'raison inconnue')}"
+        return tr(f"Transparente — {e.get('reason', tr('raison inconnue'))}")
     parts = []
     try:
         game, outp = float(e.get("game_fps", 0)), float(e.get("output_fps", 0))
-        parts.append(f"{game:.0f} → {outp:.0f} i/s (×{e.get('multiplier', '?')}, "
-                     f"{ {'extrapolate': 'extrapolation', 'hybrid': 'hybride'}.get(e.get('mode'), 'interpolation')})")
+        parts.append(tr(f"{game:.0f} → {outp:.0f} i/s (×{e.get('multiplier', '?')}, "
+                     f"{ {'extrapolate': 'extrapolation', 'hybrid': tr('hybride')}.get(e.get('mode'), 'interpolation')})"))
         hz, limit = float(e.get("refresh_hz", 0)), float(e.get("limit_hz", 0))
         if limit > 0:   # Steam's framerate limit (gamescope): nothing past it is shown
-            parts.append(f"limite Steam {limit:.0f} i/s (rien au-delà ne s'affiche)")
+            parts.append(tr(f"limite Steam {limit:.0f} i/s (rien au-delà ne s'affiche)"))
         elif hz > 0:
-            parts.append(f"écran {hz:.0f} Hz")
+            parts.append(tr(f"écran {hz:.0f} Hz"))
         lat = float(e.get("latency_ms", -1))
         if lat >= 0:
-            parts.append(f"latence {lat:.0f} ms")
+            parts.append(tr(f"latence {lat:.0f} ms"))
         lvl = int(e.get("gpu_budget_level", 0))
         if lvl > 0:
-            parts.append(f"budget GPU : niveau {lvl}")
+            parts.append(tr(f"budget GPU : niveau {lvl}"))
         unc = float(e.get("flow_uncertain_pct", -1))
         if unc >= 0:   # flow_confidence
-            parts.append(f"flux incertain sur {unc:.0f} % de l'image")
+            parts.append(tr(f"flux incertain sur {unc:.0f} % de l'image"))
         if e.get("reason") == "fast":   # skip_fast
-            parts.append("génération inutile : le jeu tient déjà la fréquence de l'écran")
+            parts.append(tr("génération inutile : le jeu tient déjà la fréquence de l'écran"))
     except ValueError:
         pass
-    prefix = "En pause — " if state == "paused" else ""
+    prefix = tr("En pause — ") if state == "paused" else ""
     lines = [prefix + " · ".join(parts)]
     if e.get("passes"):
-        lines.append("Passes : " + e["passes"].replace(",", ", "))
+        lines.append(tr("Passes : ") + e["passes"].replace(",", ", "))
     if e.get("online_tune"):
-        tune = e["online_tune"]
-        if tune.startswith("trying "):
+        tune = e["online_tune"]   # (the layer writes it in English)
+        if not FRENCH:
+            pass
+        elif tune.startswith("trying "):
             tune = "essai de " + tune[len("trying "):].replace(" decided)", " décidées)").replace(" of ", " sur ")
         else:
             tune = tune.replace(" kept", " gardée").replace(" dropped", " écartée").replace("flow change", "variation du flux")
-        lines.append("Réglage auto : " + tune)
+        lines.append(tr("Réglage auto : ") + tune)
     return "\n".join(lines)
 
 
@@ -1226,10 +1673,10 @@ class Window(Adw.ApplicationWindow):
         self.toasts.set_child(box)
 
         header = Adw.HeaderBar()
-        title = Adw.WindowTitle(title="bdex-framegen", subtitle="Génération d'images")
+        title = Adw.WindowTitle(title="bdex-framegen", subtitle=tr("Génération d'images"))
         header.set_title_widget(title)
         menu = Gtk.Button(icon_name="edit-copy-symbolic",
-                          tooltip_text="Copier les options de lancement Steam équivalentes (par jeu)")
+                          tooltip_text=tr("Copier les options de lancement Steam équivalentes (par jeu)"))
         menu.connect("clicked", self.on_copy)
         header.pack_end(menu)
         if HAVE_ADW:
@@ -1263,7 +1710,7 @@ class Window(Adw.ApplicationWindow):
         try:
             write_session(0)   # open: upscaling applies to games started from now
         except OSError as e:
-            self.toast(f"Session impossible : {e}")
+            self.toast(tr(f"Session impossible : {e}"))
         self._refresh_running()
         GLib.timeout_add_seconds(1, self._beat)
         GLib.idle_add(self._refresh_sandboxes)
@@ -1272,7 +1719,7 @@ class Window(Adw.ApplicationWindow):
     def _refresh_sandboxes(self):
         apps = refresh_sandboxes()
         if apps:
-            self.toast("Couche mise à jour dans : " + ", ".join(a.replace("snap:", "Snap ") for a in apps))
+            self.toast(tr("Couche mise à jour dans : ") + ", ".join(a.replace("snap:", "Snap ") for a in apps))
         return False
 
     def _beat(self):
@@ -1304,17 +1751,17 @@ class Window(Adw.ApplicationWindow):
         the panel cannot stay open beside the game there. These games generate
         from their start, with the settings below, the panel closed."""
         g = Adw.PreferencesGroup(
-            title="Mode Jeu — sans le panneau",
-            description="Dans le mode Jeu de SteamOS (Steam Deck), ce panneau ne peut pas rester ouvert "
+            title=tr("Mode Jeu — sans le panneau"),
+            description=tr("Dans le mode Jeu de SteamOS (Steam Deck), ce panneau ne peut pas rester ouvert "
                         "à côté du jeu : ces jeux génèrent dès leur lancement, avec les réglages ci-dessous. "
                         "Steam, gamescope et les applications de bureau restent exclus. Autre voie, par jeu : "
-                        "les options de lancement Steam (bouton copier en haut).")
+                        "les options de lancement Steam (bouton copier en haut)."))
         page.add(g)
-        self.always_all_row = Adw.SwitchRow(title="Tous les jeux", active=self.opt.without_panel,
-                                            subtitle="Chaque jeu Vulkan génère dès son lancement, panneau fermé")
+        self.always_all_row = Adw.SwitchRow(title=tr("Tous les jeux"), active=self.opt.without_panel,
+                                            subtitle=tr("Chaque jeu Vulkan génère dès son lancement, panneau fermé"))
         self.always_all_row.connect("notify::active", self.on_change)
         g.add(self.always_all_row)
-        self.always_row = Adw.SwitchRow(title="Le jeu sélectionné")
+        self.always_row = Adw.SwitchRow(title=tr("Le jeu sélectionné"))
         self.always_row.connect("notify::active", self.on_always)
         g.add(self.always_row)
         self.always_group = g
@@ -1326,9 +1773,9 @@ class Window(Adw.ApplicationWindow):
         always = self.cfg.always_games()
         name = self.selected[1] if self.selected else None
         self._always_loading = True
-        self.always_row.set_title(f"Ce jeu : {name}" if name else "Le jeu sélectionné")
-        self.always_row.set_subtitle("Génère dès son lancement, panneau fermé" if name else
-                                     "Sélectionne un jeu dans « Jeux détectés » (lancé une fois ici)")
+        self.always_row.set_title(tr(f"Ce jeu : {name}") if name else tr("Le jeu sélectionné"))
+        self.always_row.set_subtitle(tr("Génère dès son lancement, panneau fermé") if name else
+                                     tr("Sélectionne un jeu dans « Jeux détectés » (lancé une fois ici)"))
         self.always_row.set_active(name is not None and name.lower() in (a.lower() for a in always))
         self.always_row.set_sensitive(name is not None and not self.opt.without_panel)
         self._always_loading = False
@@ -1338,8 +1785,8 @@ class Window(Adw.ApplicationWindow):
         for game in always:
             if name is not None and game.lower() == name.lower():
                 continue
-            row = Adw.ActionRow(title=game, subtitle="Génère sans le panneau")
-            btn = Gtk.Button(label="Retirer", valign=Gtk.Align.CENTER)
+            row = Adw.ActionRow(title=game, subtitle=tr("Génère sans le panneau"))
+            btn = Gtk.Button(label=tr("Retirer"), valign=Gtk.Align.CENTER)
             btn.connect("clicked", lambda _b, gname=game: self._set_always(gname, False))
             row.add_suffix(btn)
             self.always_group.add(row)
@@ -1356,18 +1803,18 @@ class Window(Adw.ApplicationWindow):
         try:
             self.cfg.write()
         except OSError as e:
-            self.toast(f"Échec de l'enregistrement : {e}")
+            self.toast(tr(f"Échec de l'enregistrement : {e}"))
             return
         mirror_config()
-        self.toast(f"{name} : génère sans le panneau." if on else f"{name} : seulement avec « Démarrer ».")
+        self.toast(tr(f"{name} : génère sans le panneau.") if on else tr(f"{name} : seulement avec « Démarrer »."))
         self._refresh_always()
 
     def _refresh_session(self):
         on = self.target is not None
         if self.opt.without_panel:
-            self.session_row.set_title("Actif dans tous les jeux, sans le panneau")
-            self.session_row.set_subtitle("Chaque jeu génère dès son lancement ; les réglages s'appliquent en "
-                                          "direct, « En pause » suspend la génération.")
+            self.session_row.set_title(tr("Actif dans tous les jeux, sans le panneau"))
+            self.session_row.set_subtitle(tr("Chaque jeu génère dès son lancement ; les réglages s'appliquent en "
+                                          "direct, « En pause » suspend la génération."))
             self.session_icon.set_from_icon_name("media-playback-start-symbolic")
             self.session_btn.set_visible(False)
             if hasattr(self, "always_row"):
@@ -1377,17 +1824,17 @@ class Window(Adw.ApplicationWindow):
         if hasattr(self, "always_row"):
             self._refresh_always()
         if on:
-            self.session_row.set_title(f"Génération en cours : {self.target[1]}")
-            self.session_row.set_subtitle("Les réglages s'appliquent en direct. « Arrêter » ou fermer "
-                                          "cette fenêtre coupe la génération.")
+            self.session_row.set_title(tr(f"Génération en cours : {self.target[1]}"))
+            self.session_row.set_subtitle(tr("Les réglages s'appliquent en direct. « Arrêter » ou fermer "
+                                          "cette fenêtre coupe la génération."))
         else:
-            self.session_row.set_title("Framegen arrêté")
+            self.session_row.set_title(tr("Framegen arrêté"))
             self.session_row.set_subtitle(
-                f"Jeu sélectionné : {self.selected[1]} — clique « Démarrer »." if self.selected else
-                "Lance ton jeu, sélectionne-le dans « Jeux détectés », puis « Démarrer ».")
+                tr(f"Jeu sélectionné : {self.selected[1]} — clique « Démarrer ».") if self.selected else
+                tr("Lance ton jeu, sélectionne-le dans « Jeux détectés », puis « Démarrer »."))
         self.session_icon.set_from_icon_name("media-playback-start-symbolic" if on
                                              else "media-playback-stop-symbolic")
-        self.session_btn.set_label("Arrêter" if on else "Démarrer")
+        self.session_btn.set_label(tr("Arrêter") if on else tr("Démarrer"))
         self.session_btn.set_sensitive(on or self.selected is not None)
         for c in ("suggested-action", "destructive-action"):
             self.session_btn.remove_css_class(c)
@@ -1399,7 +1846,7 @@ class Window(Adw.ApplicationWindow):
                 self.save()   # the game reads the options shown here
             write_session(target[0] if target else 0)
         except OSError as e:
-            self.toast(f"Échec : {e}")
+            self.toast(tr(f"Échec : {e}"))
             return
         self.target = target
         self._refresh_session()
@@ -1413,20 +1860,20 @@ class Window(Adw.ApplicationWindow):
         return False
 
     def _build_status(self, page):
-        g = Adw.PreferencesGroup(title="État")
+        g = Adw.PreferencesGroup(title=tr("État"))
         page.add(g)
         installed, path = find_layer()
         self.installed = installed
         self.status_row = Adw.ActionRow(
-            title="Couche Vulkan",
-            subtitle=("Installée — chargée automatiquement dans tous les jeux Vulkan"
+            title=tr("Couche Vulkan"),
+            subtitle=(tr("Installée — chargée automatiquement dans tous les jeux Vulkan")
                       if installed else
-                      "Non installée : lance tools/install.sh pour qu'elle s'active sans options Steam"))
+                      tr("Non installée : lance tools/install.sh pour qu'elle s'active sans options Steam")))
         self.status_row.add_prefix(Gtk.Image(
             icon_name="emblem-ok-symbolic" if installed else "dialog-warning-symbolic",
             valign=Gtk.Align.CENTER))
         if not installed:
-            btn = Gtk.Button(label="Installer", valign=Gtk.Align.CENTER)
+            btn = Gtk.Button(label=tr("Installer"), valign=Gtk.Align.CENTER)
             btn.add_css_class("suggested-action")
             btn.connect("clicked", self.on_install)
             self.status_row.add_suffix(btn)
@@ -1434,16 +1881,16 @@ class Window(Adw.ApplicationWindow):
 
         gpus = detect_gpus()
         gpu_row = Adw.ActionRow(
-            title="Carte graphique",
-            subtitle=(" · ".join(gpus) + "\nProfil « Auto » : réglé selon ce GPU" if gpus else "non détectée"))
+            title=tr("Carte graphique"),
+            subtitle=(" · ".join(gpus) + tr("\nProfil « Auto » : réglé selon ce GPU") if gpus else tr("non détectée")))
         gpu_row.add_prefix(Gtk.Image(icon_name="video-display-symbolic", valign=Gtk.Align.CENTER))
         g.add(gpu_row)
 
-        report_row = Adw.ActionRow(title="Signaler un problème",
-                                   subtitle="Écrit le rapport de diagnostic et ouvre le formulaire pré-rempli "
-                                            "(à faire pendant que le jeu tourne)")
+        report_row = Adw.ActionRow(title=tr("Signaler un problème"),
+                                   subtitle=tr("Écrit le rapport de diagnostic et ouvre le formulaire pré-rempli "
+                                            "(à faire pendant que le jeu tourne)"))
         report_row.add_prefix(Gtk.Image(icon_name="dialog-question-symbolic", valign=Gtk.Align.CENTER))
-        btn = Gtk.Button(label="Rapport…", valign=Gtk.Align.CENTER)
+        btn = Gtk.Button(label=tr("Rapport…"), valign=Gtk.Align.CENTER)
         btn.connect("clicked", self.on_report)
         report_row.add_suffix(btn)
         g.add(report_row)
@@ -1451,24 +1898,24 @@ class Window(Adw.ApplicationWindow):
     def on_report(self, _btn):
         path, url = write_report()
         if not path:
-            self.toast("Rapport impossible : bdex-framegen introuvable")
+            self.toast(tr("Rapport impossible : bdex-framegen introuvable"))
             return
-        self.toast(f"Rapport écrit dans {path} — à joindre au formulaire")
+        self.toast(tr(f"Rapport écrit dans {path} — à joindre au formulaire"))
         if url:
             try:
                 Gio.AppInfo.launch_default_for_uri(url, None)
             except GLib.Error:
-                self.toast("Ouvre le lien affiché par « bdex-framegen --issue-url »")
+                self.toast(tr("Ouvre le lien affiché par « bdex-framegen --issue-url »"))
 
     def _build_running(self, page):
         """The games running now (Vulkan programs the layer is loaded into), like
         the Windows launcher's window list: pick one, then « Démarrer »."""
         self.running_group = Adw.PreferencesGroup(
-            title="Jeux détectés",
-            description="Jeux Vulkan en cours (natifs ou via Proton). Sélectionne celui où "
-                        "générer des images, puis « Démarrer » en haut.")
+            title=tr("Jeux détectés"),
+            description=tr("Jeux Vulkan en cours (natifs ou via Proton). Sélectionne celui où "
+                        "générer des images, puis « Démarrer » en haut."))
         page.add(self.running_group)
-        refresh = Gtk.Button(label="Actualiser la liste", valign=Gtk.Align.CENTER)
+        refresh = Gtk.Button(label=tr("Actualiser la liste"), valign=Gtk.Align.CENTER)
         refresh.connect("clicked", lambda *_: self._refresh_running())
         self.running_group.set_header_suffix(refresh)
         self.running_rows = []
@@ -1493,8 +1940,8 @@ class Window(Adw.ApplicationWindow):
             self.selected = games[0][:2]
         self._refresh_session()
         if not games:
-            row = Adw.ActionRow(title="Aucun jeu en cours",
-                                subtitle="Lance un jeu Vulkan (natif ou via Proton), puis « Actualiser la liste »")
+            row = Adw.ActionRow(title=tr("Aucun jeu en cours"),
+                                subtitle=tr("Lance un jeu Vulkan (natif ou via Proton), puis « Actualiser la liste »"))
             self.running_group.add(row)
             self.running_rows.append(row)
             return
@@ -1503,7 +1950,7 @@ class Window(Adw.ApplicationWindow):
             lines = [d for d in (describe_entry(e) for e in entries) if d]
             armed = any(e.get("kind") == "swapchain" for e in entries)
             row = Adw.ActionRow(title=name, subtitle="\n".join(lines) if lines else
-                                "Lancé avant l'installation de cette version — relance le jeu")
+                                tr("Lancé avant l'installation de cette version — relance le jeu"))
             radio = Gtk.CheckButton(valign=Gtk.Align.CENTER, sensitive=armed)
             if group is None:
                 group = radio
@@ -1525,51 +1972,51 @@ class Window(Adw.ApplicationWindow):
         self._refresh_session()
 
     def _build_framegen(self, page):
-        g = Adw.PreferencesGroup(title="Génération d'images",
-                                 description="Insère des images de synthèse entre celles du jeu.")
+        g = Adw.PreferencesGroup(title=tr("Génération d'images"),
+                                 description=tr("Insère des images de synthèse entre celles du jeu."))
         page.add(g)
-        self.gen_row = Adw.SwitchRow(title="Activer", active=self.opt.generate)
+        self.gen_row = Adw.SwitchRow(title=tr("Activer"), active=self.opt.generate)
         self.gen_row.connect("notify::active", self.on_change)
         g.add(self.gen_row)
-        self.preset_row = Adw.ComboRow(title="Profil de qualité",
-                                       subtitle="Auto s'adapte à la puissance du GPU",
+        self.preset_row = Adw.ComboRow(title=tr("Profil de qualité"),
+                                       subtitle=tr("Auto s'adapte à la puissance du GPU"),
                                        model=Gtk.StringList.new([p[0] for p in PRESETS]))
         self.preset_row.set_selected(_combo_index(PRESETS, self.opt.preset))
         self.preset_row.connect("notify::selected", self.on_change)
         g.add(self.preset_row)
         self.mult_row = Adw.ComboRow(
-            title="Images affichées par image rendue",
-            subtitle="Auto : le plus grand multiple entier sous la fréquence de l'écran (×2 à 60 i/s "
+            title=tr("Images affichées par image rendue"),
+            subtitle=tr("Auto : le plus grand multiple entier sous la fréquence de l'écran (×2 à 60 i/s "
                      "sur 144 Hz). Adaptatif : toute la fréquence de l'écran, même en ratio fractionnaire "
-                     "(50 i/s → 144 i/s), une image par rafraîchissement",
-            model=Gtk.StringList.new(["Auto — selon l'écran", "Adaptatif — toute la fréquence de l'écran",
+                     "(50 i/s → 144 i/s), une image par rafraîchissement"),
+            model=Gtk.StringList.new([tr("Auto — selon l'écran"), tr("Adaptatif — toute la fréquence de l'écran"),
                                       "×2", "×3", "×4", "×5", "×6", "×7", "×8"]))
         self.mult_row.set_selected(1 if self.opt.adaptive else 0 if self.opt.auto_mult
                                    else max(2, min(8, self.opt.multiplier)))
         self.mult_row.connect("notify::selected", self.on_change)
         g.add(self.mult_row)
         self.mode_row = Adw.ComboRow(title="Mode",
-                                     subtitle="L'extrapolation supprime la latence ajoutée",
+                                     subtitle=tr("L'extrapolation supprime la latence ajoutée"),
                                      model=Gtk.StringList.new([m[0] for m in MODES]))
         self.mode_row.set_selected(_combo_index(MODES, self.opt.mode))
         self.mode_row.connect("notify::selected", self.on_change)
         g.add(self.mode_row)
         self.pause_row = Adw.SwitchRow(
-            title="En pause",
-            subtitle="Suspend la génération dans les jeux en cours (s'applique en moins d'une seconde ; "
-                     "raccourci : bdex-framegen --toggle)",
+            title=tr("En pause"),
+            subtitle=tr("Suspend la génération dans les jeux en cours (s'applique en moins d'une seconde ; "
+                     "raccourci : bdex-framegen --toggle)"),
             active=self.opt.paused)
         self.pause_row.connect("notify::active", self.on_change)
         g.add(self.pause_row)
 
     def _build_hud(self, page):
         g = Adw.PreferencesGroup(
-            title="Compteur de FPS",
-            description="Affiche les FPS en surimpression dans le jeu (coin haut-gauche).")
+            title=tr("Compteur de FPS"),
+            description=tr("Affiche les FPS en surimpression dans le jeu (coin haut-gauche)."))
         page.add(g)
         self.hud_row = Adw.ComboRow(
-            title="Affichage",
-            subtitle="Les 1% / 0.1% low sont les FPS aux 99e / 99,9e centiles du jeu",
+            title=tr("Affichage"),
+            subtitle=tr("Les 1% / 0.1% low sont les FPS aux 99e / 99,9e centiles du jeu"),
             model=Gtk.StringList.new([m[0] for m in HUD_MODES]))
         self.hud_row.set_selected(self.opt.hud if 0 <= self.opt.hud < len(HUD_MODES) else 0)
         self.hud_row.connect("notify::selected", self.on_change)
@@ -1577,46 +2024,46 @@ class Window(Adw.ApplicationWindow):
 
     def _build_upscale(self, page):
         g = Adw.PreferencesGroup(title="Upscaling",
-                                 description="Le jeu rend en résolution réduite, agrandie à l'affichage (X11, Xwayland et Wayland natif).")
+                                 description=tr("Le jeu rend en résolution réduite, agrandie à l'affichage (X11, Xwayland et Wayland natif)."))
         page.add(g)
-        self.up_row = Adw.SwitchRow(title="Activer", active=self.opt.upscale)
+        self.up_row = Adw.SwitchRow(title=tr("Activer"), active=self.opt.upscale)
         self.up_row.connect("notify::active", self.on_change)
         g.add(self.up_row)
         adj = Gtk.Adjustment(lower=50, upper=100, step_increment=1, page_increment=5, value=self.opt.render_scale)
-        self.scale_row = Adw.SpinRow(title="Résolution de rendu",
-                                     subtitle="pourcentage de la résolution d'affichage", adjustment=adj)
+        self.scale_row = Adw.SpinRow(title=tr("Résolution de rendu"),
+                                     subtitle=tr("pourcentage de la résolution d'affichage"), adjustment=adj)
         self.scale_row.connect("notify::value", self.on_change)
         g.add(self.scale_row)
-        self.filter_row = Adw.ComboRow(title="Filtre d'agrandissement",
+        self.filter_row = Adw.ComboRow(title=tr("Filtre d'agrandissement"),
                                        model=Gtk.StringList.new([f[0] for f in FILTERS]))
         self.filter_row.set_selected(_combo_index(FILTERS, self.opt.filter))
         self.filter_row.connect("notify::selected", self.on_change)
         g.add(self.filter_row)
         adj2 = Gtk.Adjustment(lower=0, upper=100, step_increment=1, page_increment=10, value=self.opt.sharpness)
-        self.sharp_row = Adw.SpinRow(title="Netteté (CAS)", subtitle="0 = désactivé", adjustment=adj2)
+        self.sharp_row = Adw.SpinRow(title=tr("Netteté (CAS)"), subtitle=tr("0 = désactivé"), adjustment=adj2)
         self.sharp_row.connect("notify::value", self.on_change)
         g.add(self.sharp_row)
 
     def _build_present(self, page):
-        g = Adw.PreferencesGroup(title="Présentation")
+        g = Adw.PreferencesGroup(title=tr("Présentation"))
         page.add(g)
-        self.present_row = Adw.ComboRow(title="Mode de présentation",
+        self.present_row = Adw.ComboRow(title=tr("Mode de présentation"),
                                         model=Gtk.StringList.new([p[0] for p in PRESENT]))
         self.present_row.set_selected(_combo_index(PRESENT, self.opt.present))
         self.present_row.connect("notify::selected", self.on_change)
         g.add(self.present_row)
-        self.ll_row = Adw.SwitchRow(title="Faible latence",
-                                    subtitle="Empêche le jeu de prendre de l'avance (utile en FIFO)")
+        self.ll_row = Adw.SwitchRow(title=tr("Faible latence"),
+                                    subtitle=tr("Empêche le jeu de prendre de l'avance (utile en FIFO)"))
         self.ll_row.set_active(self.opt.low_latency)
         self.ll_row.connect("notify::active", self.on_change)
         g.add(self.ll_row)
 
     def _build_advanced(self, page):
         g = Adw.PreferencesGroup(
-            title="Réglages avancés",
-            description="Toutes les autres options du layer. Les valeurs par défaut conviennent à "
+            title=tr("Réglages avancés"),
+            description=tr("Toutes les autres options du layer. Les valeurs par défaut conviennent à "
                         "la plupart des jeux ; seules les valeurs modifiées sont écrites. La plupart "
-                        "s'appliquent aussi aux jeux déjà lancés.")
+                        "s'appliquent aussi aux jeux déjà lancés."))
         page.add(g)
         self.opt_rows = {}
         self.section_rows = {}
@@ -1703,7 +2150,7 @@ class Window(Adw.ApplicationWindow):
         try:
             self.cfg.write()
         except OSError as e:
-            self.toast(f"Échec de l'enregistrement : {e}")
+            self.toast(tr(f"Échec de l'enregistrement : {e}"))
             return
         mirror_config()   # sandboxed games (Flatpak Steam...) read their own copy
 
@@ -1715,17 +2162,17 @@ class Window(Adw.ApplicationWindow):
     def on_copy(self, _btn):
         self.sync()
         Gdk.Display.get_default().get_clipboard().set(self.opt.steam_string())
-        self.toast("Options Steam (équivalent par jeu) copiées.")
+        self.toast(tr("Options Steam (équivalent par jeu) copiées."))
 
     def on_install(self, btn):
         here = os.path.dirname(os.path.abspath(__file__))
         script = os.path.join(here, "install.sh")
         if not os.path.exists(script):
-            self.toast("tools/install.sh introuvable.")
+            self.toast(tr("tools/install.sh introuvable."))
             return
         btn.set_sensitive(False)
-        btn.set_label("Installation…")
-        self.toast("Installation de la couche… (compilation, quelques instants)")
+        btn.set_label(tr("Installation…"))
+        self.toast(tr("Installation de la couche… (compilation, quelques instants)"))
 
         def run():
             try:
@@ -1739,13 +2186,13 @@ class Window(Adw.ApplicationWindow):
 
     def _install_done(self, btn, ok, msg):
         if ok:
-            self.status_row.set_subtitle("Installée — chargée automatiquement dans tous les jeux Vulkan")
+            self.status_row.set_subtitle(tr("Installée — chargée automatiquement dans tous les jeux Vulkan"))
             self.status_row.remove(btn)
-            self.toast("Couche installée. Lance ton jeu — c'est actif.")
+            self.toast(tr("Couche installée. Lance ton jeu — c'est actif."))
         else:
             btn.set_sensitive(True)
-            btn.set_label("Réessayer")
-            self.toast(f"Échec de l'installation : {msg}")
+            btn.set_label(tr("Réessayer"))
+            self.toast(tr(f"Échec de l'installation : {msg}"))
         return False
 
 
@@ -1763,20 +2210,20 @@ class App(Adw.Application):
 # ---------------------------------------------------------------------------
 
 def _text_options(opt):
-    mult = ("adaptatif" if opt.adaptive else "Auto" if opt.auto_mult else f"×{opt.multiplier}") \
-        if opt.generate else "désactivé"
+    mult = (tr("adaptatif") if opt.adaptive else "Auto" if opt.auto_mult else f"×{opt.multiplier}") \
+        if opt.generate else tr("désactivé")
     mode = {m: lab.split(" —")[0].split(" (")[0] for lab, m in MODES}.get(opt.mode, opt.mode)
     hud = dict((v, lab) for lab, v in HUD_MODES).get(opt.hud, str(opt.hud))
-    return (f"multiplicateur {mult} · mode {mode} · préréglage {opt.preset} · compteur {hud}"
-            + (" · mode Jeu : tous les jeux sans le panneau" if opt.without_panel else ""))
+    return (tr(f"multiplicateur {mult} · mode {mode} · préréglage {opt.preset} · compteur {hud}")
+            + (tr(" · mode Jeu : tous les jeux sans le panneau") if opt.without_panel else ""))
 
 
 def _text_pick(title, table, current):
     print(title)
     for i, (label, value) in enumerate(table, 1):
-        print(f"  {i}) {label}{'   ← actuel' if value == current else ''}")
+        print(f"  {i}) {label}{tr('   ← actuel') if value == current else ''}")
     try:
-        answer = input("Choix (Entrée : inchangé) : ").strip()
+        answer = input(tr("Choix (Entrée : inchangé) : ")).strip()
     except EOFError:
         return current
     if answer.isdigit() and 1 <= int(answer) <= len(table):
@@ -1842,36 +2289,36 @@ def text_main():
     if cfg.glob.get("require_app") != "1" or cfg.glob.get("enabled") != "1":
         save()
     for app in refresh_sandboxes():
-        print(f"Couche mise à jour dans {app.replace('snap:', 'Snap ')} (copie d'une version précédente)")
+        print(tr(f"Couche mise à jour dans {app.replace('snap:', 'Snap ')} (copie d'une version précédente)"))
     try:
         write_session(0)
     except OSError as e:
-        print(f"Session impossible : {e}")
+        print(tr(f"Session impossible : {e}"))
         return 1
     threading.Thread(target=beat, daemon=True).start()
     installed, _ = find_layer()
-    print("bdex-framegen — panneau en mode texte" + ("" if HAVE_GTK else " (GTK 4 absent)"))
+    print(tr("bdex-framegen — panneau en mode texte") + ("" if HAVE_GTK else tr(" (GTK 4 absent)")))
     if not installed:
-        print("  La couche n'est pas installée pour ce compte (install.sh, ou le paquet de la distribution).")
-    print("  Lance le jeu normalement, puis choisis-le ici. Tant que ce panneau est ouvert,")
-    print("  le jeu choisi génère des images ; le fermer (q, Ctrl+C) arrête.")
+        print(tr("  La couche n'est pas installée pour ce compte (install.sh, ou le paquet de la distribution)."))
+    print(tr("  Lance le jeu normalement, puis choisis-le ici. Tant que ce panneau est ouvert,"))
+    print(tr("  le jeu choisi génère des images ; le fermer (q, Ctrl+C) arrête."))
     try:
         while True:
             games = detect_games()
             if state["target"] and state["target"][0] not in [pid for pid, _ in games]:
                 state["target"] = None
             print()
-            print("Jeux détectés :" if games else "Jeux détectés : aucun (lance un jeu Vulkan, puis r)")
+            print(tr("Jeux détectés :") if games else tr("Jeux détectés : aucun (lance un jeu Vulkan, puis r)"))
             for i, (pid, name) in enumerate(games, 1):
-                mark = "  ▶ génère" if state["target"] and state["target"][0] == pid else ""
+                mark = tr("  ▶ génère") if state["target"] and state["target"][0] == pid else ""
                 lines = [d for d in (describe_entry(e) for e in read_status(pid)) if d]
                 print(f"  {i}) {name} (pid {pid}){mark}")
                 for d in lines:
                     for ln in d.splitlines():
                         print(f"       {ln}")
-            print("Options : " + _text_options(opt))
-            print("[numéro] démarrer dans ce jeu · a arrêter · r actualiser · m multiplicateur · "
-                  "o mode · p préréglage · h compteur · j mode Jeu · s options Steam · b signaler un problème · q quitter")
+            print(tr("Options : ") + _text_options(opt))
+            print(tr("[numéro] démarrer dans ce jeu · a arrêter · r actualiser · m multiplicateur · "
+                  "o mode · p préréglage · h compteur · j mode Jeu · s options Steam · b signaler un problème · q quitter"))
             try:
                 cmd = input("> ").strip().lower()
             except EOFError:
@@ -1881,17 +2328,17 @@ def text_main():
             if cmd.isdigit() and 1 <= int(cmd) <= len(games):
                 state["target"] = games[int(cmd) - 1]
                 write_session(state["target"][0])
-                print(f"Génération démarrée dans {state['target'][1]}.")
+                print(tr(f"Génération démarrée dans {state['target'][1]}."))
             elif cmd == "a":
                 state["target"] = None
                 write_session(0)
             elif cmd == "m":
-                table = [("Désactivé (×1)", "1"), ("Auto — jusqu'à la fréquence de l'écran", "auto"),
-                         ("Adaptatif — toute la fréquence, rapports fractionnaires", "adaptive")] + \
+                table = [(tr("Désactivé (×1)"), "1"), (tr("Auto — jusqu'à la fréquence de l'écran"), "auto"),
+                         (tr("Adaptatif — toute la fréquence, rapports fractionnaires"), "adaptive")] + \
                         [(f"×{n}", str(n)) for n in range(2, 9)]
                 cur = "1" if not opt.generate else "adaptive" if opt.adaptive else \
                       "auto" if opt.auto_mult else str(opt.multiplier)
-                v = _text_pick("Multiplicateur :", table, cur)
+                v = _text_pick(tr("Multiplicateur :"), table, cur)
                 opt.generate = v != "1"
                 opt.adaptive = v == "adaptive"
                 opt.auto_mult = v == "auto"
@@ -1899,29 +2346,29 @@ def text_main():
                     opt.multiplier = int(v)
                 save()
             elif cmd == "o":
-                opt.mode = _text_pick("Mode :", MODES, opt.mode)
+                opt.mode = _text_pick(tr("Mode :"), MODES, opt.mode)
                 save()
             elif cmd == "p":
-                opt.preset = _text_pick("Préréglage :", PRESETS, opt.preset)
+                opt.preset = _text_pick(tr("Préréglage :"), PRESETS, opt.preset)
                 save()
             elif cmd == "h":
-                opt.hud = _text_pick("Compteur à l'écran :", HUD_MODES, opt.hud)
+                opt.hud = _text_pick(tr("Compteur à l'écran :"), HUD_MODES, opt.hud)
                 save()
             elif cmd == "j":
                 opt.without_panel = _text_pick(
-                    "Mode Jeu (Steam Deck) — tous les jeux génèrent dès leur lancement, sans le panneau :",
-                    [("Non — le panneau décide (« Démarrer »)", False), ("Oui", True)], opt.without_panel)
+                    tr("Mode Jeu (Steam Deck) — tous les jeux génèrent dès leur lancement, sans le panneau :"),
+                    [(tr("Non — le panneau décide (« Démarrer »)"), False), (tr("Oui"), True)], opt.without_panel)
                 save()
             elif cmd == "s":
-                print("Options de lancement Steam équivalentes (par jeu) :")
+                print(tr("Options de lancement Steam équivalentes (par jeu) :"))
                 print("  " + opt.steam_string())
             elif cmd == "b":
                 path, url = write_report()
                 if path:
-                    print(f"Rapport écrit dans {path} — à joindre au formulaire :")
+                    print(tr(f"Rapport écrit dans {path} — à joindre au formulaire :"))
                     print("  " + (url or "(bdex-framegen --issue-url " + path + ")"))
                 else:
-                    print("bdex-framegen introuvable : pas de rapport.")
+                    print(tr("bdex-framegen introuvable : pas de rapport."))
     except KeyboardInterrupt:
         print()
     finally:
