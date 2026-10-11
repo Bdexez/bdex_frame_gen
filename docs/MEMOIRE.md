@@ -363,6 +363,14 @@ programme Vulkan et reste **transparente** tant qu'elle n'est pas activée
 - Les blocages DXVK/VKD3D (Oblivion Remastered) sont réglés. La couche ne
   transmet pas `VK_SUBOPTIMAL_KHR`, cache les extensions de présentation et ne
   présente jamais en FIFO.
+- **Vérifié en CI depuis le 03/10** (`tools/ci/proton-check.sh`, job
+  `source-packages`) : un programme Direct3D 11 (`tests/proton/d3d11_probe.cpp`,
+  MinGW) sous Wine 9 + DXVK 2.5.3, lavapipe, Ubuntu 24.04 — la couche se
+  charge dans le processus Wine (winevulkan), génère, ×2,00. Piège : sous
+  Xvfb, Wine voit l'écran à 0 Hz et DXVK (2.5 à 2.7) divise par zéro au
+  premier `Present` ; d'où Xorg + pilote `dummy` avec un mode à 60 Hz
+  (`tests/proton/xorg-dummy.conf`). DXVK 3.x refuse le lavapipe de Mesa 25.2
+  (`VK_KHR_load_store_op_none`).
 
 **Points propres au runtime Steam**
 - Dossier de session et de statut dans `~/.cache/bdex-framegen/run`, pas
