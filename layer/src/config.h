@@ -1,6 +1,7 @@
 #pragma once
 #include "vk_compat.h"
 
+#include <iosfwd>
 #include <string>
 #include <utility>
 #include <vector>
@@ -146,7 +147,13 @@ struct Config {
     // `bundled`: a shipped profiles file — only named-game sections, never
     // `enabled` / `paused` (see platformBundledProfilesPath).
     void loadFile(const std::string& path, const std::string& processName, bool bundled = false);
+    // The same from a stream (`name` for the warnings).
+    void loadStream(std::istream& in, const std::string& name, const std::string& processName, bool bundled = false);
     void loadEnv();
+    // The first registered option outside its declared range (or a float
+    // that is not a number), "" if none: whatever the input, parsing must
+    // leave every option in range (tests/fuzz).
+    std::string outOfBounds() const;
 
     // Named presets applied before the other options: "quality",
     // "balanced" (the defaults), "performance", "latency" (extrapolation for

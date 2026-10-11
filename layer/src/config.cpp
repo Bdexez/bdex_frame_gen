@@ -61,6 +61,8 @@ const char* presentModeName(int mode) {
     case VK_PRESENT_MODE_MAILBOX_KHR:      return "mailbox";
     case VK_PRESENT_MODE_FIFO_KHR:         return "fifo";
     case VK_PRESENT_MODE_FIFO_RELAXED_KHR: return "relaxed";
+    case 1000361000:                       return "fifo_latest_ready";  // (headers before 1.4.304)
+    case 1000111000: case 1000111001:      return "shared";
     case -1:                               return "app";
     default:                               return "auto";
     }
@@ -365,6 +367,14 @@ std::vector<Config::OptionInfo> Config::optionInfo() {
     return out;
 }
 
+std::string Config::outOfBounds() const {
+    for (const auto& d : registry()) {
+        if (d.i && (this->*(d.i) < int(d.lo) || this->*(d.i) > int(d.hi))) return d.key;
+        if (d.f && !(this->*(d.f) >= d.lo && this->*(d.f) <= d.hi)) return d.key;
+    }
+    return "";
+}
+
 std::vector<Config::TuneCandidate> Config::tuneCandidates() const {
     std::vector<const OptionDef*> defs;
     for (const auto& d : registry()) {
@@ -520,7 +530,10 @@ bool Config::sectionMatches(const std::string& section, const std::vector<std::s
 
 void Config::loadFile(const std::string& path, const std::string& processName, bool bundled) {
     std::ifstream in(path);
-    if (!in) return;
+    if (in) loadStream(in, path, processName, bundled);
+}
+
+void Config::loadStream(std::istream& in, const std::string& path, const std::string& processName, bool bundled) {
     std::vector<std::string> names = processNames();
     if (!processName.empty()) names.push_back(baseName(processName));
     std::string line;
@@ -711,7 +724,8 @@ int Config::flowScaleFor(uint32_t width, uint32_t height) const {
 }
 
 std::string Config::describe() const {
-    static const char* dbg[] = {"none", "flow", "split", "passthrough"};
+    static const char* const dbg[] = {"none", "flow", "split", "passthrough", "confidence"};
+    static_assert(sizeof(dbg) / sizeof(dbg[0]) == size_t(Debug::Confidence) + 1, "a name per Debug value");
     std::ostringstream o;
     o << "enabled=" << enabled << " multiplier=" << multiplier << " levels=" << levels
       << " mode=" << modeName() << " flow_scale=" << (flowScale ? std::to_string(flowScale) : "auto") << " search=" << searchRadius << "/" << searchFine << " refine=" << refine

@@ -477,3 +477,17 @@ TEST(frame_order_interp_hold) {
     c.extrapolate = false;
     CHECK(FrameOrder::of(c, 2, true).hold == 0.1f);  // auto: the smallest, raised by the caller to one refresh
 }
+
+TEST(config_debug_confidence_is_described) {
+    // (describe() indexed a four-name table with Debug::Confidence: found by tests/fuzz)
+    Config c;
+    CHECK(c.apply("debug", "confidence"));
+    CHECK(c.describe().find("debug=confidence") != std::string::npos);
+}
+
+TEST(config_defaults_in_range) {
+    CHECK(Config{}.outOfBounds().empty());
+    Config c;
+    CHECK(c.apply("multiplier", "99"));  // clamped
+    CHECK(c.outOfBounds().empty());
+}

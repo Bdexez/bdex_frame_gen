@@ -22,6 +22,12 @@ namespace bdex {
 namespace {
 
 constexpr uint32_t kAppSlots = 4;
+// VK_PRESENT_MODE_FIFO_LATEST_READY_KHR (VK_EXT/KHR_present_mode_fifo_latest_ready),
+// missing from the oldest supported headers: FIFO-like (one present a vblank).
+constexpr auto kPresentModeFifoLatestReady = static_cast<VkPresentModeKHR>(1000361000);
+bool fifoLike(VkPresentModeKHR m) {
+    return m == VK_PRESENT_MODE_FIFO_KHR || m == VK_PRESENT_MODE_FIFO_RELAXED_KHR || m == kPresentModeFifoLatestReady;
+}
 constexpr uint32_t kWorkerSlots = 16;  // (FrameGen::kProfileSlots = kAppSlots + kWorkerSlots)
 
 bool presentModeSupported(DeviceData& dev, VkSurfaceKHR surface, VkPresentModeKHR mode) {
@@ -143,8 +149,7 @@ void VirtualSwapchain::createReal(const VkSwapchainCreateInfoKHR& appInfo) {
         auto mode = static_cast<VkPresentModeKHR>(cfg_.presentMode);
         if (presentModeSupported(dev_, appInfo.surface, mode)) ci.presentMode = mode;
         else BDEX_WARN("present mode %s not supported by the surface, keeping %s", presentModeName(mode), presentModeName(appInfo.presentMode));
-    } else if (cfg_.presentMode == -2 &&
-               (ci.presentMode == VK_PRESENT_MODE_FIFO_KHR || ci.presentMode == VK_PRESENT_MODE_FIFO_RELAXED_KHR)) {
+    } else if (cfg_.presentMode == -2 && fifoLike(ci.presentMode)) {
         // Never present the real swapchain in FIFO: our worker presents
         // asynchronously, and a FIFO present hard-hangs Direct3D translation
         // layers (DXVK/VKD3D) after one frame. FIFO also queues our extra
@@ -1231,7 +1236,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
                 presentMode_ = pm->pPresentModes[0];  // the pacing logic follows the switch
             }
     }
-    job.fifo = presentMode_ == VK_PRESENT_MODE_FIFO_KHR || presentMode_ == VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+    job.fifo = fifoLike(presentMode_);
     job.queuedAt = clock::now();
     {
         std::lock_guard<std::mutex> wlock(workerMutex_);
