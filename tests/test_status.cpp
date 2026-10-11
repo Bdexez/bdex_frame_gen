@@ -87,3 +87,20 @@ TEST(status_parse_and_describe) {
     const StatusFile g = statusParse("process=x\r\npid=3\r\nnoise\r\n\r\n[device 1]\r\nstate=inactive\r\nreason=disabled\r\n");
     CHECK(g.pid == 3 && statusDescribe(g).size() == 1 && statusDescribe(g)[0] == "Couche inactive : disabled");
 }
+
+TEST(status_describe_in_english) {
+    std::map<uint64_t, StatusEntry> m;
+    StatusEntry c;
+    c.kind = "swapchain";
+    c.state = "paused";
+    c.mode = "hybrid";
+    c.multiplier = 3;
+    c.gameFps = 40;
+    c.outFps = 120;
+    c.refreshHz = 120;
+    m[1] = c;
+    const StatusFile f = statusParse(statusFormat("game", 7, 99, m));
+    const auto en = statusDescribe(f, true), fr = statusDescribe(f);
+    CHECK(!en.empty() && en[0].find("Paused — 40 → 120 fps (×3, hybrid) · screen 120 Hz") == 0);
+    CHECK(!fr.empty() && fr[0].find("En pause — 40 → 120 i/s (×3, hybride)") == 0);
+}

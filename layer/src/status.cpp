@@ -137,8 +137,9 @@ StatusFile statusParse(const std::string& text) {
     return f;
 }
 
-std::vector<std::string> statusDescribe(const StatusFile& file) {
+std::vector<std::string> statusDescribe(const StatusFile& file, bool english) {
     std::vector<std::string> out;
+    auto T = [english](const char* fr, const char* en) { return english ? en : fr; };
     auto num = [](const std::map<std::string, std::string>& v, const char* k, double def) {
         auto it = v.find(k);
         if (it == v.end()) return def;
@@ -156,45 +157,55 @@ std::vector<std::string> statusDescribe(const StatusFile& file) {
         const auto& v = s.values;
         const std::string state = get(v, "state");
         if (s.kind == "device") {
-            if (state != "active") out.push_back("Couche inactive : " + (v.count("reason") ? get(v, "reason") : state));
+            if (state != "active")
+                out.push_back(T("Couche inactive : ", "Layer inactive: ") + (v.count("reason") ? get(v, "reason") : state));
             continue;
         }
-        const std::string who = s.kind == "capture" && !get(v, "target").empty() ? get(v, "target") + " : " : "";
+        const std::string who =
+            s.kind == "capture" && !get(v, "target").empty() ? get(v, "target") + T(" : ", ": ") : "";
         if (state == "pass-through") {
-            out.push_back(who + "transparente — " + (v.count("reason") ? get(v, "reason") : "raison inconnue"));
+            out.push_back(who + T("transparente — ", "pass-through — ") +
+                          (v.count("reason") ? get(v, "reason") : T("raison inconnue", "unknown reason")));
             continue;
         }
         char buf[160];
-        snprintf(buf, sizeof buf, "%.0f → %.0f i/s (×%s, %s)", num(v, "game_fps", 0), num(v, "output_fps", 0),
-                 get(v, "multiplier").c_str(), get(v, "mode") == "extrapolate" ? "extrapolation" : "interpolation");
-        std::string line = (state == "paused" ? "En pause — " : "") + who + buf;
+        const std::string mode = get(v, "mode");
+        snprintf(buf, sizeof buf, T("%.0f → %.0f i/s (×%s, %s)", "%.0f → %.0f fps (×%s, %s)"), num(v, "game_fps", 0),
+                 num(v, "output_fps", 0), get(v, "multiplier").c_str(),
+                 mode == "extrapolate" ? "extrapolation" : mode == "hybrid" ? T("hybride", "hybrid") : "interpolation");
+        std::string line = (state == "paused" ? T("En pause — ", "Paused — ") : "") + who + buf;
         if (num(v, "limit_hz", 0) > 0) {
-            snprintf(buf, sizeof buf, " · limite Steam %.0f i/s (rien au-delà ne s'affiche)", num(v, "limit_hz", 0));
+            snprintf(buf, sizeof buf, T(" · limite Steam %.0f i/s (rien au-delà ne s'affiche)",
+                                        " · Steam limit %.0f fps (nothing above it is shown)"), num(v, "limit_hz", 0));
             line += buf;
         } else if (num(v, "refresh_hz", 0) > 0) {
-            snprintf(buf, sizeof buf, " · écran %.0f Hz", num(v, "refresh_hz", 0));
+            snprintf(buf, sizeof buf, T(" · écran %.0f Hz", " · screen %.0f Hz"), num(v, "refresh_hz", 0));
             line += buf;
         }
         if (num(v, "latency_ms", -1) >= 0) {
-            snprintf(buf, sizeof buf, " · latence %.0f ms", num(v, "latency_ms", -1));
+            snprintf(buf, sizeof buf, T(" · latence %.0f ms", " · latency %.0f ms"), num(v, "latency_ms", -1));
             line += buf;
         }
         if (num(v, "gpu_budget_level", 0) > 0) {
-            snprintf(buf, sizeof buf, " · budget GPU : niveau %.0f", num(v, "gpu_budget_level", 0));
+            snprintf(buf, sizeof buf, T(" · budget GPU : niveau %.0f", " · GPU budget: level %.0f"),
+                     num(v, "gpu_budget_level", 0));
             line += buf;
         }
-        if (get(v, "reason") == "fast") line += " · génération inutile : le jeu tient déjà la fréquence de l'écran";
+        if (get(v, "reason") == "fast")
+            line += T(" · génération inutile : le jeu tient déjà la fréquence de l'écran",
+                      " · generation not needed: the game already holds the screen's refresh rate");
         if (num(v, "flow_uncertain_pct", -1) >= 0) {
-            snprintf(buf, sizeof buf, " · flux incertain sur %.0f %% de l'image", num(v, "flow_uncertain_pct", -1));
+            snprintf(buf, sizeof buf, T(" · flux incertain sur %.0f %% de l'image", " · flow uncertain on %.0f %% of the picture"),
+                     num(v, "flow_uncertain_pct", -1));
             line += buf;
         }
         out.push_back(line);
         if (!get(v, "passes").empty()) {
             std::string p = get(v, "passes");
             for (size_t i = 0; (i = p.find(',', i)) != std::string::npos; i += 2) p.replace(i, 1, ", ");
-            out.push_back("   passes : " + p);
+            out.push_back(T("   passes : ", "   passes: ") + p);
         }
-        if (!get(v, "online_tune").empty()) out.push_back("   réglage auto : " + get(v, "online_tune"));
+        if (!get(v, "online_tune").empty()) out.push_back(T("   réglage auto : ", "   auto tuning: ") + get(v, "online_tune"));
     }
     return out;
 }
