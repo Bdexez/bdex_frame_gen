@@ -215,9 +215,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 - **The Proton path in CI** (`tools/ci/proton-check.sh`, CI job
   `source-packages`): a Direct3D 11 program cross-compiled with MinGW
-  (`tests/proton/d3d11_probe.cpp`) runs under Wine 9 with DXVK 2.5.3 on
-  lavapipe; DXVK's swapchain reaches the layer through winevulkan as a
-  Proton game's does — loaded, generating, x2.00. The display is Xorg's
+  (`tests/proton/d3d11_probe.cpp`) runs under Wine 9 with DXVK 2.5.3, and
+  a Direct3D 12 one (`d3d12_probe.cpp`) with VKD3D-Proton 3.0.1 and DXVK's
+  dxgi, on lavapipe; their swapchains reach the layer through winevulkan as
+  a Proton game's do — loaded, generating, x2.00 in both. The display is Xorg's
   dummy driver with a 60 Hz mode: under Xvfb Wine reports 0 Hz and DXVK
   divides by it in its first Present.
 - **The 32-bit layer at run time** (`tools/ci/lib32-check.sh`, CI job
