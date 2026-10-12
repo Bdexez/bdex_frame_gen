@@ -42,3 +42,29 @@ TEST(options_ui_the_shipped_file_is_valid) {
     for (const auto& e : errors) fprintf(stderr, "  %s\n", e.c_str());
     CHECK(errors.empty() && s.size() >= 6);
 }
+
+TEST(options_ui_every_option_has_english_texts) {
+    auto read = [](const char* name) {
+        std::ifstream in(std::string(BDEX_SOURCE_DIR) + "/layer/" + name);
+        std::stringstream text;
+        text << in.rdbuf();
+        return text.str();
+    };
+    std::vector<std::string> errors;
+    auto s = parseOptionsUi(read("options_ui.conf"), errors);
+    applyOptionsUiEnglish(read("options_ui.en.conf"), s, errors);
+    for (const auto& e : errors) fprintf(stderr, "  %s\n", e.c_str());
+    CHECK(errors.empty());
+    localizeOptionsUi(s, true);
+    CHECK(s[0].title == "Pacing");
+    bool choices = false;
+    for (const auto& sec : s)
+        for (const auto& o : sec.options)
+            if (o.key == "debug") choices = o.choices.size() == 4 && o.choices[2].second == "Split screen";
+    CHECK(choices);
+    // A missing translation is an error.
+    auto t = parseOptionsUi(read("options_ui.conf"), errors);
+    errors.clear();
+    applyOptionsUiEnglish("section | cadence | Pacing | x\n", t, errors);
+    CHECK(!errors.empty());
+}
