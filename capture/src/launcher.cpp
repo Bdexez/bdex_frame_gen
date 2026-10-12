@@ -9,6 +9,7 @@
 #include "platform.h"
 #include "options_ui.h"
 #include "options_ui_conf.h"
+#include "options_ui_en_conf.h"
 #include "status.h"
 
 #include <windows.h>
@@ -29,6 +30,17 @@
 #include <vector>
 
 namespace bdex {
+
+// The launcher's language: French when Windows' display language is
+// (GetUserDefaultUILanguage), English otherwise; BDEX_LANG=fr|en chooses.
+static bool launcherFrench() {
+    static const bool french = [] {
+        if (const char* v = std::getenv("BDEX_LANG"); v && *v) return (v[0] == 'f' || v[0] == 'F');
+        return PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_FRENCH;
+    }();
+    return french;
+}
+template <typename C> static const C* T(const C* fr, const C* en) { return launcherFrench() ? fr : en; }
 
 // ------------------------------------------------------- window picking --
 
@@ -295,7 +307,9 @@ const std::vector<ExtraOpt>& extraOptions() {
     static const std::vector<ExtraOpt> opts = [] {
         std::vector<ExtraOpt> out;
         std::vector<std::string> errors;
-        const auto sections = parseOptionsUi(reinterpret_cast<const char*>(kOptionsUiConf), errors);
+        auto sections = parseOptionsUi(reinterpret_cast<const char*>(kOptionsUiConf), errors);
+        applyOptionsUiEnglish(reinterpret_cast<const char*>(kOptionsUiEnConf), sections, errors);
+        localizeOptionsUi(sections, !launcherFrench());
         for (const auto& e : errors) LOGW("%s", e.c_str());
         for (const auto& sec : sections) {
             if (!sec.launcher) continue;
@@ -330,7 +344,7 @@ const std::vector<ExtraOpt>& extraOptions() {
                     std::snprintf(range, sizeof range, " (%g–%g)", o.lo, o.hi);
                     std::string r = range;
                     for (auto& ch : r)
-                        if (ch == '.') ch = ',';
+                        if (ch == '.' && launcherFrench()) ch = ',';
                     e.label += wideUtf8(r);
                 }
                 out.push_back(e);
@@ -489,12 +503,12 @@ enum {
     ID_TIMER_RUNNING = 1,
 };
 
-const wchar_t* const kPresets[] = {L"Auto", L"Qualité", L"Équilibré", L"Amélioré (options mesurées)", L"Performance"};
+const wchar_t* const kPresets[] = {L"Auto", T(L"Qualité", L"Quality"), T(L"Équilibré", L"Balanced"), T(L"Amélioré (options mesurées)", L"Enhanced (measured options)"), L"Performance"};
 const char* const kPresetVals[] = {"", "quality", "balanced", "enhanced", "performance"};
-const wchar_t* const kFilters[] = {L"Lanczos (le plus net)", L"Bicubique", L"Bilinéaire"};
+const wchar_t* const kFilters[] = {T(L"Lanczos (le plus net)", L"Lanczos (sharpest)"), T(L"Bicubique", L"Bicubic"), T(L"Bilinéaire", L"Bilinear")};
 const int kFilterVals[] = {2, 1, 0};
-const wchar_t* const kHud[] = {L"Désactivé", L"FPS", L"FPS + génération", L"+ 1% low",
-                               L"+ 1% et 0.1% low"};
+const wchar_t* const kHud[] = {T(L"Désactivé", L"Off"), L"FPS", T(L"FPS + génération", L"FPS + generation"), L"+ 1% low",
+                               T(L"+ 1% et 0.1% low", L"+ 1% and 0.1% low")};
 
 struct Ui {
     LaunchChoice* choice;
@@ -544,11 +558,11 @@ void refreshRunning(Ui& ui) {
             const StatusFile f = statusParse(buf.str());
             if (f.pid <= 0 || !processAlive(f.pid) || now - f.time > 30) continue;
             text += f.process + " (" + std::to_string(f.pid) + ")\r\n";
-            const auto lines = statusDescribe(f);
-            if (lines.empty()) text += "   couche chargée\r\n";
+            const auto lines = statusDescribe(f, !launcherFrench());
+            if (lines.empty()) text += T("   couche chargée\r\n", "   layer loaded\r\n");
             for (const auto& l : lines) text += "   " + l + "\r\n";
         }
-    if (text.empty()) text = "Aucun jeu en cours avec bdex-framegen (couche Vulkan ou capture).";
+    if (text.empty()) text = T("Aucun jeu en cours avec bdex-framegen (couche Vulkan ou capture).", "No game running with bdex-framegen (Vulkan layer or capture).");
     const std::wstring w = wideFromUtf8(text);
     if (w != ui.runningText) {  // no flicker nor lost scroll position when nothing changed
         ui.runningText = w;
@@ -848,67 +862,67 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                        x, y, w, 150, id);
         };
 
-        group(L"Jeu à capturer", 12, 8, 472, 168);
+        group(T(L"Jeu à capturer", L"Game to capture"), 12, 8, 472, 168);
         ui->lb = add(L"LISTBOX", nullptr,
                      LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_BORDER | WS_TABSTOP,
                      24, 26, 448, 108, ID_LB);
-        add(L"BUTTON", L"Actualiser la liste", BS_PUSHBUTTON | WS_TABSTOP, 356, 140, 116, 23,
+        add(L"BUTTON", T(L"Actualiser la liste", L"Refresh the list"), BS_PUSHBUTTON | WS_TABSTOP, 356, 140, 116, 23,
             ID_REFRESH);
-        ui->perGame = add(L"BUTTON", L"Profil pour ce jeu (sinon réglages globaux)",
+        ui->perGame = add(L"BUTTON", T(L"Profil pour ce jeu (sinon réglages globaux)", L"Profile for this game (else global settings)"),
                           BS_AUTOCHECKBOX | WS_TABSTOP, 24, 143, 324, 20, ID_PERGAME);
 
-        group(L"Génération d'images", 12, 184, 472, 136);
-        ui->gen = add(L"BUTTON", L"Activer (plusieurs images par image du jeu)",
+        group(T(L"Génération d'images", L"Frame generation"), 12, 184, 472, 136);
+        ui->gen = add(L"BUTTON", T(L"Activer (plusieurs images par image du jeu)", L"Enable (several frames per game frame)"),
                       BS_AUTOCHECKBOX | WS_TABSTOP, 24, 202, 360, 20, ID_GEN);
-        add(L"STATIC", L"Profil de qualité", SS_LEFT, 36, 231, 140, 16, 0);
+        add(L"STATIC", T(L"Profil de qualité", L"Quality preset"), SS_LEFT, 36, 231, 140, 16, 0);
         ui->preset = combo(180, 228, 292, ID_PRESET);
-        add(L"STATIC", L"Images par image", SS_LEFT, 36, 257, 140, 16, 0);
+        add(L"STATIC", T(L"Images par image", L"Frames per frame"), SS_LEFT, 36, 257, 140, 16, 0);
         ui->mult = combo(180, 254, 292, ID_MULT);
         add(L"STATIC", L"Mode", SS_LEFT, 36, 283, 140, 16, 0);
         ui->mode = combo(180, 280, 292, ID_MODE);
 
-        group(L"Affichage", 12, 328, 472, 134);
-        add(L"STATIC", L"Taille de la fenêtre", SS_LEFT, 36, 346, 140, 16, 0);
+        group(T(L"Affichage", L"Display"), 12, 328, 472, 134);
+        add(L"STATIC", T(L"Taille de la fenêtre", L"Window size"), SS_LEFT, 36, 346, 140, 16, 0);
         ui->size = combo(180, 343, 292, ID_SIZE);
-        add(L"STATIC", L"Échelle", SS_LEFT, 36, 372, 140, 16, 0);
+        add(L"STATIC", T(L"Échelle", L"Scale"), SS_LEFT, 36, 372, 140, 16, 0);
         ui->scaleEd = add(L"EDIT", nullptr, ES_NUMBER | WS_TABSTOP, 180, 369, 90, 23, ID_SCALE);
         add(L"STATIC", L"%", SS_LEFT, 276, 372, 20, 16, 0);
-        add(L"STATIC", L"Filtre d'agrandissement", SS_LEFT, 36, 398, 140, 16, 0);
+        add(L"STATIC", T(L"Filtre d'agrandissement", L"Upscaling filter"), SS_LEFT, 36, 398, 140, 16, 0);
         ui->filter = combo(180, 395, 292, ID_FILTER);
-        add(L"STATIC", L"Netteté (CAS)", SS_LEFT, 36, 424, 140, 16, 0);
+        add(L"STATIC", T(L"Netteté (CAS)", L"Sharpness (CAS)"), SS_LEFT, 36, 424, 140, 16, 0);
         ui->sharpEd = add(L"EDIT", nullptr, ES_NUMBER | WS_TABSTOP, 180, 421, 90, 23, ID_SHARP);
         add(L"STATIC", L"%", SS_LEFT, 276, 424, 20, 16, 0);
 
-        group(L"Présentation", 12, 470, 472, 76);
-        ui->fifo = add(L"BUTTON", L"Synchroniser avec l'écran (FIFO / vsync)",
+        group(T(L"Présentation", L"Presentation"), 12, 470, 472, 76);
+        ui->fifo = add(L"BUTTON", T(L"Synchroniser avec l'écran (FIFO / vsync)", L"Sync with the screen (FIFO / vsync)"),
                        BS_AUTOCHECKBOX | WS_TABSTOP, 24, 488, 360, 20, ID_FIFO);
-        add(L"STATIC", L"Compteur de FPS", SS_LEFT, 36, 515, 140, 16, 0);
+        add(L"STATIC", T(L"Compteur de FPS", L"FPS counter"), SS_LEFT, 36, 515, 140, 16, 0);
         ui->hud = combo(180, 512, 292, ID_HUD);
 
         // Advanced optical-flow tuning. A plain EDIT (no ES_NUMBER) accepts a
         // decimal point; the two integer radii use ES_NUMBER.
-        group(L"Réglages avancés", 12, 552, 472, 226);
-        add(L"STATIC", L"Laisser par défaut convient à la plupart des jeux. 0 pour désactiver la netteté.",
+        group(T(L"Réglages avancés", L"Advanced settings"), 12, 552, 472, 226);
+        add(L"STATIC", T(L"Laisser par défaut convient à la plupart des jeux. 0 pour désactiver la netteté.", L"The defaults suit most games. 0 turns sharpening off."),
             SS_LEFT, 24, 570, 452, 16, 0);
         auto advEdit = [&](const wchar_t* label, int y, int id, bool integer) -> HWND {
             add(L"STATIC", label, SS_LEFT, 36, y + 3, 214, 16, 0);
             const DWORD st = WS_TABSTOP | WS_BORDER | (integer ? ES_NUMBER : 0);
             return add(L"EDIT", nullptr, st, 258, y, 90, 23, id);
         };
-        ui->grad   = advEdit(L"Netteté du mouvement rapide", 592, ID_GRAD, false);
-        ui->scLow  = advEdit(L"Coupure de scène — début du fondu", 618, ID_SCLOW, false);
-        ui->scHigh = advEdit(L"Coupure de scène — image réelle", 644, ID_SCHIGH, false);
-        ui->smooth = advEdit(L"Lissage du mouvement", 670, ID_SMOOTH, false);
-        ui->zbias  = advEdit(L"Stabilité de l'image fixe", 696, ID_ZBIAS, false);
-        ui->sfine  = advEdit(L"Précision de recherche (1–4)", 722, ID_SFINE, true);
-        ui->fiter  = advEdit(L"Itérations de synthèse (0–3)", 748, ID_FITER, true);
+        ui->grad   = advEdit(T(L"Netteté du mouvement rapide", L"Sharp fast motion"), 592, ID_GRAD, false);
+        ui->scLow  = advEdit(T(L"Coupure de scène — début du fondu", L"Scene cut — blend start"), 618, ID_SCLOW, false);
+        ui->scHigh = advEdit(T(L"Coupure de scène — image réelle", L"Scene cut — real frame"), 644, ID_SCHIGH, false);
+        ui->smooth = advEdit(T(L"Lissage du mouvement", L"Motion smoothing"), 670, ID_SMOOTH, false);
+        ui->zbias  = advEdit(T(L"Stabilité de l'image fixe", L"Still-picture stability"), 696, ID_ZBIAS, false);
+        ui->sfine  = advEdit(T(L"Précision de recherche (1–4)", L"Search precision (1–4)"), 722, ID_SFINE, true);
+        ui->fiter  = advEdit(T(L"Itérations de synthèse (0–3)", L"Synthesis iterations (0–3)"), 748, ID_FITER, true);
 
         // Second column: the engine options of layer/options_ui.conf's
         // launcher sections (extraOptions), section by section.
         const Layout layout = launcherLayout();
         const auto& extra = extraOptions();
-        group(L"Options avancées", 496, 8, 472, layout.columnGroupH);
-        add(L"STATIC", L"Seules les valeurs modifiées sont enregistrées ; par défaut convient à la plupart des jeux.",
+        group(T(L"Options avancées", L"Advanced options"), 496, 8, 472, layout.columnGroupH);
+        add(L"STATIC", T(L"Seules les valeurs modifiées sont enregistrées ; par défaut convient à la plupart des jeux.", L"Only the values changed are saved; the defaults suit most games."),
             SS_LEFT, 508, 26, 452, 16, 0);
         ui->extra.assign(extra.size(), nullptr);
         int y = 48;
@@ -937,22 +951,22 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
 
         // Under the left column.
-        group(L"En cours", 12, 786, 472, 124);
+        group(T(L"En cours", L"Running"), 12, 786, 472, 124);
         ui->running = add(L"EDIT", nullptr, ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL | WS_BORDER,
                           24, 804, 448, 98, ID_RUNNING);
         SetTimer(hwnd, ID_TIMER_RUNNING, 1000, nullptr);
 
-        add(L"BUTTON", L"Démarrer", BS_DEFPUSHBUTTON | WS_TABSTOP, 770, layout.buttonsY, 96, 26, IDOK);
-        add(L"BUTTON", L"Quitter", BS_PUSHBUTTON | WS_TABSTOP, 874, layout.buttonsY, 94, 26, IDCANCEL);
+        add(L"BUTTON", T(L"Démarrer", L"Start"), BS_DEFPUSHBUTTON | WS_TABSTOP, 770, layout.buttonsY, 96, 26, IDOK);
+        add(L"BUTTON", T(L"Quitter", L"Quit"), BS_PUSHBUTTON | WS_TABSTOP, 874, layout.buttonsY, 94, 26, IDCANCEL);
 
         for (const wchar_t* s : kPresets)
             SendMessageW(ui->preset, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
-        for (const wchar_t* s : {L"x2", L"x3", L"x4", L"x5", L"x6", L"x7", L"x8", L"Adaptatif (fréquence de l'écran)"})
+        for (const wchar_t* s : {L"x2", L"x3", L"x4", L"x5", L"x6", L"x7", L"x8", T(L"Adaptatif (fréquence de l'écran)", L"Adaptive (the screen's refresh rate)")})
             SendMessageW(ui->mult, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
-        for (const wchar_t* s : {L"Extrapolation (latence minimale)", L"Interpolation (défaut, moins d'artefacts)",
-                                 L"Hybride (×3/×4 : latence divisée par 2 à 3)"})
+        for (const wchar_t* s : {T(L"Extrapolation (latence minimale)", L"Extrapolation (lowest latency)"), T(L"Interpolation (défaut, moins d'artefacts)", L"Interpolation (default, fewer artifacts)"),
+                                 T(L"Hybride (×3/×4 : latence divisée par 2 à 3)", L"Hybrid (×3/×4: latency divided by 2 to 3)")})
             SendMessageW(ui->mode, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
-        for (const wchar_t* s : {L"Identique au jeu", L"Ajustée à l'écran", L"Échelle personnalisée"})
+        for (const wchar_t* s : {T(L"Identique au jeu", L"Same as the game"), T(L"Ajustée à l'écran", L"Fitted to the screen"), T(L"Échelle personnalisée", L"Custom scale")})
             SendMessageW(ui->size, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
         for (const wchar_t* s : kFilters)
             SendMessageW(ui->filter, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
@@ -982,7 +996,7 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case IDOK: {
             gather(*ui);
             if (!ui->choice->target) {
-                MessageBoxW(hwnd, L"Sélectionne d'abord la fenêtre du jeu à capturer.",
+                MessageBoxW(hwnd, T(L"Sélectionne d'abord la fenêtre du jeu à capturer.", L"Select the game's window to capture first."),
                             L"bdex framegen", MB_OK | MB_ICONINFORMATION);
                 return 0;
             }
@@ -1039,7 +1053,7 @@ bool runLauncher(LaunchChoice& choice) {
     const int y = wa.top + static_cast<int>(std::max<LONG>(0, (wa.bottom - wa.top) - h)) / 2;
     Ui ui;
     ui.choice = &choice;
-    HWND hwnd = CreateWindowExW(WS_EX_CONTROLPARENT, cls, L"bdex framegen — lanceur",
+    HWND hwnd = CreateWindowExW(WS_EX_CONTROLPARENT, cls, T(L"bdex framegen — lanceur", L"bdex framegen — launcher"),
                                 WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, x, y,
                                 w, h, nullptr, nullptr, inst, &ui);
     if (!hwnd) return false;
