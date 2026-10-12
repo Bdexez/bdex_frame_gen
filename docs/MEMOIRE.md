@@ -651,6 +651,14 @@ l'impose.
 
 ---
 
+**Langue des interfaces** (03/10) : panneau GTK, mode texte et lanceur
+Windows en anglais quand la langue du système n'est pas le français
+(`BDEX_LANG=fr|en` force). Une option ajoutée demande sa ligne dans
+`layer/options_ui.en.conf` (le build échoue sinon) ; un texte du panneau
+passe par `tr()` et la table `_EN`. Le rapport `--report` reste en français.
+
+---
+
 ## 6. Outils, tests et CI
 
 **Outils d'évaluation**

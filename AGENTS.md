@@ -370,7 +370,12 @@ ressource, colonne `Tune` si `online_tune` peut l'essayer). Une syntaxe
 spéciale va dans `Config::apply` + `kCustomKeys`. Pour qu'elle apparaisse
 dans la GUI GTK **et** le launcher Windows : une ligne dans
 `layer/options_ui.conf` (libellé, aide, surfaces ; type, bornes et défaut
-viennent du registre). La GUI lit `options_ui.json` (généré par
+viennent du registre) **et sa traduction dans `layer/options_ui.en.conf`**
+(le build échoue sinon). Langue des interfaces (2026-10-03) : français si la
+langue du système l'est (`LANGUAGE`/`LC_ALL`/`LC_MESSAGES`/`LANG`, Windows :
+`GetUserDefaultUILanguage`), anglais sinon, `BDEX_LANG=fr|en` force ; panneau :
+`tr()` + table `_EN` (gabarits `{}` pour les f-strings, rendus par motif),
+launcher : `T(fr, en)`, `statusDescribe(f, english)`. La GUI lit `options_ui.json` (généré par
 `tools/options/bdex_options` au build, installé dans share/bdex-framegen) ;
 le launcher embarque le `.conf` (`options_ui_conf.h`, octets). Le build
 échoue sur une clé inconnue du `.conf` ; le test `option_keys` exige la clé
