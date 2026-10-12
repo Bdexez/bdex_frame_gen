@@ -1,0 +1,11 @@
+{
+  "name": "bdex-framegen",
+  "author": "Bdexez",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": ["frame generation", "performance"],
+    "description": "Frame generation for Vulkan and Proton games (the bdex-framegen layer): on/off, multiplier, mode, pause and FPS counter from the quick access menu.",
+    "image": ""
+  }
+}
