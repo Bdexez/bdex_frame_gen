@@ -311,6 +311,8 @@ jobs:
           tools/ci/package-release.sh dist "$version"
           # The same files as .deb and .rpm (x86_64 and aarch64).
           for a in dist/bdex-framegen-linux-*.tar.gz; do tools/package-native.sh "$a" dist "$version"; done
+          # The Steam Deck's quick access menu (Decky Loader plugin).
+          tools/ci/decky-check.sh dist
       - uses: actions/upload-artifact@v4
         with:
           name: bdex-framegen-linux
@@ -318,6 +320,7 @@ jobs:
             dist/*.tar.gz
             dist/*.deb
             dist/*.rpm
+            dist/*.zip
           if-no-files-found: error
       # Mesa's software Vulkan and Xvfb in each container (arm64: Debian arm64
       # under qemu-user): the layer loads with that glibc and loader, and
@@ -338,5 +341,6 @@ jobs:
             dist/*.tar.gz
             dist/*.deb
             dist/*.rpm
+            dist/*.zip
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
