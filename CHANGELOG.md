@@ -339,6 +339,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### SteamOS / Steam Deck (gamescope)
 
+- **Decky Loader plugin** (`packaging/decky`, `tools/ci/decky-check.sh`,
+  zip attached to releases): the Steam Deck's quick access menu in Game
+  Mode — frame generation in every game, multiplier (Auto, Adaptive, ×2–×4),
+  mode, pause, FPS counter, and the running game's frame rates. The backend
+  edits the configuration as the panel does (games' sections kept, one line
+  per key) and the layer applies it to the running game within a second.
+  Built and type-checked against `@decky/ui`/`@decky/api` in a Node
+  container; the backend is tested without Decky (ctest `decky_backend`).
+  Not yet tried on a Deck.
 - **Game Mode without the control panel.** Game Mode runs one application
   at a time, so the panel cannot stay open beside a game: its new « Mode
   Jeu — sans le panneau » makes every game, or the selected one, generate

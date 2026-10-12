@@ -103,6 +103,7 @@ tools/ci/archive-check.sh ARCHIVE [image|suite...]     # installe une archive ai
 tools/ci/distro-check.sh [image...]                    # build + tests + démo dans d'autres distributions (job CI `distros`)
 tools/ci/proton-check.sh                               # D3D11 (DXVK) et D3D12 (VKD3D-Proton) sous Wine à travers la couche (lavapipe, Xorg dummy 60 Hz : Xvfb = 0 Hz, DXVK divise par 0)
 tools/ci/lib32-check.sh                                # couche 32 bits exécutée (vkcube i386)
+tools/ci/decky-check.sh [outdir]                       # plugin Decky (packaging/decky) : tsc + rollup (Docker Node), zip
 tools/ci/fuzz.sh [secondes] [cible...]                # libFuzzer + ASan/UBSan sur les analyseurs (config, statut, options_ui, cache online_tune) ; entrée fautive -> tests/fuzz/corpus/
 tools/ci/panel-check.sh build/options_ui.json [image]  # panneau sur écran virtuel en conteneur (versions SteamOS : Arch)
 bdex-framegen --always-on [JEU] | --always-off [JEU]   # générer sans le panneau (mode Jeu SteamOS)
@@ -894,9 +895,8 @@ env BDEX_FG_PROFILE=1 BDEX_FG_LOG=2 bdex_demo --size 2560x1440
     2.29/arm64, .deb/.rpm, PKGBUILD -bin/-git, flake NixOS, panneau texte,
     couche dans les lanceurs Flatpak/Snap ; Flatpak du panneau impossible :
     espace de PID du bac à sable) ; polish de `windows-README.md` (section Windows
-    dans le README principal). Steam Deck : un plugin Decky (menu rapide :
-    activer, multiplicateur, pause en jeu) — le mode Jeu n'a aujourd'hui que
-    « sans le panneau » et les options de lancement ; validation sur un vrai
+    dans le README principal). Steam Deck : plugin Decky fait (2026-10-03,
+    `packaging/decky`, jamais lancé sur un Deck) ; validation sur un vrai
     Deck (performance de la synthèse sur RDNA2 8 CU, HDR OLED).
 12. Piste phase 4 (optionnelle, fragile) : present-hook injection D3D11/12 en
     mode low-latency opt-in par jeu solo — jamais par défaut (anti-cheat).
