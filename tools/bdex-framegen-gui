@@ -2430,7 +2430,8 @@ class Window(Adw.ApplicationWindow):
             armed = any(e.get("kind") == "swapchain" for e in entries)
             how = plan(entries, self.opt, capture_binary() is not None)
             lines.append("→ " + how[1])
-            if layer_replaced(pid):
+            replaced = layer_replaced(pid)
+            if replaced:
                 lines.insert(0, "⚠ " + tr("Lancé avant l'installation de cette version — relance le jeu"))
             row = Adw.ActionRow(title=name, subtitle="\n".join(lines))
             radio = Gtk.CheckButton(valign=Gtk.Align.CENTER, sensitive=armed or how[0] == "capture")
@@ -2448,6 +2449,9 @@ class Window(Adw.ApplicationWindow):
                 rec = Gtk.Button(label=tr("● Enregistrer"), valign=Gtk.Align.CENTER,
                                  tooltip_text=tr("Enregistrer quelques secondes de ce jeu (corpus d'évaluation)"))
                 rec.connect("clicked", self.on_record, (pid, name))
+                if replaced:   # an older layer may not record: the request would wait in vain
+                    rec.set_sensitive(False)
+                    rec.set_tooltip_text(tr("Lancé avant l'installation de cette version — relance le jeu"))
                 row.add_suffix(rec)
             self.running_group.add(row)
             self.running_rows.append(row)
@@ -2935,7 +2939,8 @@ def text_main():
                 except OSError as e:
                     print(tr(f"Échec : {e}"))
             elif cmd == "e":
-                armed = [(n, (p, n)) for p, n in games if any(e.get("kind") == "swapchain" for e in read_status(p))]
+                armed = [(n, (p, n)) for p, n in games
+                         if any(e.get("kind") == "swapchain" for e in read_status(p)) and not layer_replaced(p)]
                 if not armed:
                     print(tr("Aucun jeu armé par la couche à enregistrer."))
                     continue
