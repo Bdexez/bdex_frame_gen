@@ -6,7 +6,9 @@
 #include "vk_util.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 
@@ -56,6 +58,7 @@ FrameGen::FrameGen(DeviceData& dev, VkFormat format, VkExtent2D renderExtent, Vk
         createResources();
         createDescriptors();
         for (auto& p : passes_) p->create(*this);
+        prebuildSynthesisVariants();
         dev_.savePipelineCache();  // (what this build compiled, for the next start)
     } catch (...) {
         destroyAll();
@@ -126,7 +129,7 @@ static void checkPassLimits(const VkPhysicalDeviceLimits& lim, const uint32_t* s
 // little shared memory for the full one). rot: also Pass::rot, constant 0
 // false and 1 true (the matcher's rotation re-ranking alone).
 FrameGen::Pass FrameGen::makePass(const uint32_t* spv, size_t spvSize, const std::vector<VkDescriptorType>& bindings,
-                                  bool lean, bool leanOnly, bool rot) {
+                                  bool lean, bool leanOnly, bool rot, bool variants) {
     checkPassLimits(dev_.props.limits, spv, spvSize, bindings);
     Pass p;
     std::vector<VkDescriptorSetLayoutBinding> b(bindings.size());
@@ -171,9 +174,70 @@ FrameGen::Pass FrameGen::makePass(const uint32_t* spv, size_t spvSize, const std
         ci.stage.pSpecializationInfo = &rotSpec;
         r = dev_.vt.CreateComputePipelines(dev_.device, cache, 1, &ci, nullptr, &p.rot);
     }
-    dev_.vt.DestroyShaderModule(dev_.device, mod, nullptr);
+    if (variants && !leanOnly && r >= 0) p.module = mod;  // (synthesisVariant)
+    else dev_.vt.DestroyShaderModule(dev_.device, mod, nullptr);
     if (r < 0) throw VkError(r, "vkCreateComputePipelines");
     return p;
+}
+
+VkPipeline FrameGen::synthesisVariant(const Pass& p, uint32_t features) {
+    if (!p.module) return p.pipeline;
+    for (const auto& [f, pipe] : p.variants)
+        if (f == features) return pipe;
+    struct Spec {
+        VkBool32 optIns;
+        uint32_t features;
+    } data{VK_TRUE, features};
+    const VkSpecializationMapEntry entries[2] = {{0, offsetof(Spec, optIns), sizeof(VkBool32)},
+                                                 {1, offsetof(Spec, features), sizeof(uint32_t)}};
+    const VkSpecializationInfo spec{2, entries, sizeof(data), &data};
+    VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    ci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, p.module,
+                "main", &spec};
+    ci.layout = p.layout;
+    VkPipeline pipe = VK_NULL_HANDLE;
+    const auto t0 = std::chrono::steady_clock::now();
+    if (dev_.vt.CreateComputePipelines(dev_.device, dev_.pipelineCache(), 1, &ci, nullptr, &pipe) != VK_SUCCESS) {
+        BDEX_WARN("synthesis variant 0x%x unavailable: the full one is used", features);
+        pipe = p.pipeline;  // (kept as the entry: not retried every frame)
+    } else {
+        BDEX_DBG("synthesis variant 0x%x built in %.1f ms", features,
+                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+    }
+    p.variants.emplace_back(features, pipe);
+    return pipe;
+}
+
+// The variants the configuration will bind (interpolated frames, predicted
+// ones; with and without the frame-timing state), built with the other
+// pipelines rather than on their first frame: 80 ms without a cache.
+void FrameGen::prebuildSynthesisVariants() {
+    if (outputs_ == 0 || !interp_.module) return;
+    const Config cfg = effectiveConfig();
+    for (bool extrap : {false, true}) {
+        if (extrap ? !(cfg.extrapolate || cfg.hybrid) : (cfg.extrapolate && !cfg.hybrid)) continue;
+        for (bool timing : {false, true}) {
+            const uint32_t f = (cfg.synthBicubic ? SYNTH_BICUBIC : 0u) | (timing ? SYNTH_TIMING : 0u) |
+                               (cfg.sceneCutLocal ? SYNTH_LOCAL_CUT : 0u) |
+                               (extrap && cfg.extrapolateAccel > 0.f ? SYNTH_ACCEL : 0u) |
+                               (extrap && cfg.revealFill ? SYNTH_REVEAL : 0u) |
+                               ((extrap ? cfg.extrapolateSplat : cfg.interpSplat) ? SYNTH_SPLAT : 0u) |
+                               (cfg.pixelVectors ? SYNTH_PIXEL_VECTORS : 0u) | (!extrap && cfg.altVectors ? SYNTH_ALT : 0u) |
+                               (cfg.occlusionStrength != 0.f ? SYNTH_OCCLUSION : 0u) |
+                               (!extrap && hasConfMap_ && cfg.confidenceFallback != 0.f ? SYNTH_CONF_FALLBACK : 0u) |
+                               (cfg.staticGuard != 0.f ? SYNTH_STATIC_GUARD : 0u) |
+                               (hasStaticMask_ && cfg.hudMask != 0 ? SYNTH_STATIC_MASK : 0u);
+            if (f) synthesisVariant(interp_, f);
+        }
+    }
+}
+
+void FrameGen::destroyVariants(Pass& p) {
+    for (const auto& [f, pipe] : p.variants)
+        if (pipe != p.pipeline) dev_.vt.DestroyPipeline(dev_.device, pipe, nullptr);
+    p.variants.clear();
+    if (p.module) dev_.vt.DestroyShaderModule(dev_.device, p.module, nullptr);
+    p.module = VK_NULL_HANDLE;
 }
 
 void FrameGen::createPipelines() {
@@ -209,9 +273,9 @@ void FrameGen::createPipelines() {
         reduce_ = makePass(reduce_cost_comp, reduce_cost_comp_size, {SI, SB});
         // With sharpening, the interpolation writes a linear rgba16f image that
         // the CAS pass then sharpens and packs; otherwise it packs directly.
-        if (sharpen_)       interp_ = makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SB, CIS, CIS, CIS, SB, SB}, true);
-        else if (enc_.is64) interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB, SB, CIS, CIS, CIS, SB, SB}, true);
-        else                interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB, SB, CIS, CIS, CIS, SB, SB}, true);
+        if (sharpen_)       interp_ = makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SB, CIS, CIS, CIS, SB, SB}, true, false, false, true);
+        else if (enc_.is64) interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB, SB, CIS, CIS, CIS, SB, SB}, true, false, false, true);
+        else                interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB, SB, CIS, CIS, CIS, SB, SB}, true, false, false, true);
         frameState_ = makePass(frame_state_comp, frame_state_comp_size, {CIS, CIS, SB});
         sceneHist_ = makePass(scene_hist_comp, scene_hist_comp_size, {CIS, CIS, SB});
         if (chroma_) downChroma_ = makePass(downsample_chroma_comp, downsample_chroma_comp_size, {CIS, SI});
@@ -584,6 +648,7 @@ void FrameGen::createDescriptors() {
 
 void FrameGen::destroyPipeline(FgPipeline& p) {
     auto& vt = dev_.vt;
+    destroyVariants(p);
     if (p.pipeline) vt.DestroyPipeline(dev_.device, p.pipeline, nullptr);
     if (p.lean) vt.DestroyPipeline(dev_.device, p.lean, nullptr);
     if (p.rot) vt.DestroyPipeline(dev_.device, p.rot, nullptr);
@@ -687,6 +752,7 @@ void FrameGen::destroyAll() {
     planner_.reset();
     for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_, &frameState_, &downChroma_,
                     &sceneHist_}) {
+        destroyVariants(*p);
         if (p->pipeline) vt.DestroyPipeline(d, p->pipeline, nullptr);
         if (p->lean) vt.DestroyPipeline(d, p->lean, nullptr);
         if (p->rot) vt.DestroyPipeline(d, p->rot, nullptr);
@@ -1197,15 +1263,21 @@ void FrameGen::recordSynthesisImpl(VkCommandBuffer cmd, const Pass& pipe, VkDesc
                  1.f / (fine.fine.height * blk * flowScale_ * sy)},
                 cfg.flowIterations, cfg.occlusionStrength, cfg.staticGuard, cfg.extrapolateHold, in.splat ? 1 : 0, cfg.pixelVectors ? 1 : 0, enc_.transfer,
                 timing, cfg.sceneCutLocal ? (int32_t)kCutTiles : 0, t > 1.f ? in.accel : 0.f,
-                cfg.synthBicubic ? 1 : 0, hasStaticMask_ ? float(cfg.hudMask) : 0.f, cfg.revealFill ? 1 : 0,
+                cfg.synthBicubic ? 1 : 0, hasStaticMask_ ? float(cfg.hudMask) : 0.f, cfg.revealFill && t > 1.f ? 1 : 0,
                 hasConfMap_ && t <= 1.f ? cfg.confidenceFallback : 0.f, cfg.altVectors && t <= 1.f ? 1 : 0,
                 {(int32_t)fine.blocks.width, (int32_t)fine.blocks.height}};
-    // The lean shader variant when none of its opt-ins is on (same results).
-    const bool lean = pipe.lean && pc.occlusionStrength == 0.f && pc.staticGuard == 0.f && pc.splat == 0 &&
-                      pc.pixelVectors == 0 && pc.timing == 0 && pc.localCut == 0 && pc.accel == 0.f &&
-                      pc.bicubic == 0 && pc.staticFrames == 0.f && pc.revealFill == 0 && pc.confFallback == 0.f &&
-                      pc.debugMode != 3 && pc.altVectors == 0;
-    vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, lean ? pipe.lean : pipe.pipeline);
+    // The variant with exactly the opt-ins in use compiled in: the lean one
+    // when none is (same results as the full one), else one per set.
+    const uint32_t features = (pc.bicubic ? SYNTH_BICUBIC : 0u) | (pc.timing ? SYNTH_TIMING : 0u) |
+                              (pc.localCut ? SYNTH_LOCAL_CUT : 0u) | (pc.accel != 0.f ? SYNTH_ACCEL : 0u) |
+                              (pc.revealFill ? SYNTH_REVEAL : 0u) | (pc.splat ? SYNTH_SPLAT : 0u) |
+                              (pc.pixelVectors ? SYNTH_PIXEL_VECTORS : 0u) | (pc.altVectors ? SYNTH_ALT : 0u) |
+                              (pc.occlusionStrength != 0.f ? SYNTH_OCCLUSION : 0u) |
+                              (pc.confFallback != 0.f ? SYNTH_CONF_FALLBACK : 0u) |
+                              (pc.staticGuard != 0.f ? SYNTH_STATIC_GUARD : 0u) |
+                              (pc.staticFrames != 0.f ? SYNTH_STATIC_MASK : 0u) | (pc.debugMode == 3 ? SYNTH_DEBUG_CONF : 0u);
+    const VkPipeline bound = features == 0 && pipe.lean ? pipe.lean : synthesisVariant(pipe, features);
+    vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, bound);
     vt.CmdPushConstants(cmd, pipe.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe.layout, 0, 1, &set, 0, nullptr);
     dispatch();

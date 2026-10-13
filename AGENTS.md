@@ -813,7 +813,15 @@ et des registres à la synthèse → flow + synthèse ×2 depuis le 14/09
 (2,7 → 1,35 ms en 1440p, preset quality), latence ressentie en
 interpolation. **Un nouvel opt-in de ces shaders doit être gardé par
 `kOptIns &&`, et ses tableaux partagés dimensionnés par une constante
-`kOptIns ? N : 1`** (glslang refuse un indice constant hors d'une taille
+`kOptIns ? N : 1`** — sauf dans `interpolate.comp` depuis le 2026-10-03 :
+chaque opt-in y a son bit de `kFeatures` (constante 1, `SYNTH_*` de
+`framegen_internal.h`, garde `kX && pc.x`), le moteur lie la variante
+compilée pour exactement l'ensemble utilisé (`synthesisVariant`, pré-construite
+par `prebuildSynthesisVariants`) : un nouvel opt-in de la synthèse = un bit,
+sa constante, son test dans le calcul du masque (deux endroits). Mesuré :
+la variante complète coûtait 0,33 ms de plus que l'allégée à travail égal
+(1440p) ; défauts dGPU 0,99 → 0,66 ms. Ne pas écrire `kOptIns && (kFeatures
+& n)` : l'optimiseur de glslc échoue (« does not dominate its use ») (glslang refuse un indice constant hors d'une taille
 spécialisée : `rsum` reste pleine taille). Sur NVIDIA, les branches mortes
 changent la génération de code (FMA) : `main` différait de `f2cec5f` de
 1 LSB en interpolation, la variante allégée lui est identique.
