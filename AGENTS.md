@@ -93,6 +93,13 @@ tous les shaders de `layer/shaders/`.
   utilisateur, 2026-10-08) : build + tests unit/intégration (Xvfb,
   lavapipe) + gate qualité PSNR (échec sous 28,0 dB normal / 23,0 dB rapide),
   sanitizers, fuzz, syntaxe MinGW.
+- **Sécurité** (2026-10-13, `SECURITY.md`) : jeton CI en lecture seule par
+  défaut (`permissions` en tête de chaque workflow, un job qui publie
+  demande `contents: write` lui-même), actions tierces épinglées par commit,
+  `.github/dependabot.yml`, job `secrets` (gitleaks), `SHA256SUMS-*.txt` et
+  source de VKD3D-Proton (LGPL §4) sur chaque release, étape « Sign »
+  (Authenticode, inactive sans secrets). Le panneau affiche tout en texte
+  brut (`_PlainAdw`) : ne pas réintroduire de balisage Pango dans une ligne.
 - `.github/workflows/compat.yml` — le lourd, **hors push** : chaque nuit
   (s'il y a eu un commit dans les 24 h), sur les tags `v*`, à la main
   (`workflow_dispatch`) : `distros` (6 distributions), `source-packages`

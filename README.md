@@ -854,7 +854,9 @@ FILE` makes the link again. What to try on which machine:
 To contribute code, read [CONTRIBUTING.md](CONTRIBUTING.md): setup, what to
 check before a pull request (tests, Khronos validation, quality and
 performance measurements) and code conventions. The version history is in
-[CHANGELOG.md](CHANGELOG.md).
+[CHANGELOG.md](CHANGELOG.md). Security model, what the software never does
+(network, data collection) and how to report a vulnerability:
+[SECURITY.md](SECURITY.md).
 
 ---
 

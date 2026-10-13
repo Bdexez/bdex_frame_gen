@@ -37,7 +37,8 @@ Copyright 2015-2023 The Khronos Group Inc.
 ## DXVK (Windows package)
 
 The Windows package ships DXVK's `d3d9.dll`, `d3d10core.dll`, `d3d11.dll`
-and `dxgi.dll` (folder `dxvk/`), copied next to a game's executable when the
+and `dxgi.dll` (folder `dxvk/`, version in `dxvk/VERSION.txt`, license in
+`dxvk/LICENSE.txt`), unmodified, copied next to a game's executable when the
 launcher injects into a Direct3D 9/10/11 game.
 
 Copyright (c) 2017 Philip Rebohle, Copyright (c) 2019 Joshua Ashton
@@ -70,11 +71,14 @@ Direct3D 12 game.
 Copyright (c) the VKD3D-Proton authors (HansKristian-Work/vkd3d-proton, a
 fork of Wine's vkd3d, Copyright (c) the Wine project authors).
 
-Licensed under the GNU Lesser General Public License, version 2.1 or later.
-They are separate, dynamically loaded libraries: you may replace them with
-your own build of VKD3D-Proton. Their full source code is available at
-https://github.com/HansKristian-Work/vkd3d-proton (tag v3.0.1); the license
-text: https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt
+Licensed under the GNU Lesser General Public License, version 2.1 or later:
+its full text is in `vkd3d-proton/LICENSE.txt`, the copyright notices in
+`vkd3d-proton/COPYING.txt` and `vkd3d-proton/AUTHORS.txt`. They are separate,
+dynamically loaded libraries, not linked with bdex-framegen: you may replace
+them with your own build of VKD3D-Proton. Their complete corresponding
+source code (tag v3.0.1, submodules included) is published on the same
+release page as the Windows package, `vkd3d-proton-3.0.1-source.tar.gz`, and
+upstream at https://github.com/HansKristian-Work/vkd3d-proton.
 
 ## GLFW (demo program only)
 

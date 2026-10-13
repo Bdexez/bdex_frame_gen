@@ -71,6 +71,30 @@ std::string section(const std::string& report, const std::string& name) {
 
 std::string firstLine(const std::string& s) { return s.substr(0, s.find('\n')); }
 
+// The report goes to a public issue: the profile's path (it names the user)
+// becomes %USERPROFILE%, like ~ in the Linux report. Case-insensitive, as
+// Windows paths are.
+std::string hideProfile(std::string s) {
+    wchar_t buf[MAX_PATH];
+    const DWORD n = GetEnvironmentVariableW(L"USERPROFILE", buf, MAX_PATH);
+    if (!n || n >= MAX_PATH) return s;
+    std::string h = narrow(std::wstring(buf, n));
+    while (!h.empty() && (h.back() == '\\' || h.back() == '/')) h.pop_back();
+    if (h.size() < 4) return s;
+    auto lower = [](std::string t) {
+        for (char& c : t) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return t;
+    };
+    const std::string lh = lower(h), ls = lower(s);
+    std::string out;
+    size_t from = 0;
+    for (size_t i = ls.find(lh); i != std::string::npos; i = ls.find(lh, from)) {
+        out += s.substr(from, i - from) + "%USERPROFILE%";
+        from = i + h.size();
+    }
+    return out + s.substr(from);
+}
+
 } // namespace
 
 std::string buildReport() {
@@ -97,7 +121,7 @@ std::string buildReport() {
     o << "\n== settings (" << platformConfigPath() << ")\n" << readFile(platformConfigPath(), 8000) << "\n";
     const Config c = Config::load("");
     if (!c.logFile.empty()) o << "\n== log (" << c.logFile << ", end)\n" << readFile(platformExpandPath(c.logFile), 12000) << "\n";
-    return o.str();
+    return hideProfile(o.str());
 }
 
 std::string issueUrl(const std::string& r) {

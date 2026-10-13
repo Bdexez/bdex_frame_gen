@@ -18,6 +18,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
+# Read-only token by default; the jobs that publish (release, CI logs) ask
+# for more themselves.
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: windows-2022
@@ -117,6 +122,34 @@ jobs:
           git commit -q -m "logs of run ${{ github.run_id }} (${{ github.sha }})"
           git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD:refs/heads/ci-log-${{ matrix.arch }}
 
+      # Authenticode (our binaries only, not DXVK / VKD3D-Proton): on tags and
+      # manual runs, once the certificate is in the repository's secrets —
+      # WINDOWS_SIGN_PFX_BASE64 (the .pfx, base64) and WINDOWS_SIGN_PFX_PASSWORD.
+      # Without them the step does nothing. The secrets reach this step only.
+      - name: Sign
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          PFX_BASE64: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 }}
+          PFX_PASSWORD: ${{ secrets.WINDOWS_SIGN_PFX_PASSWORD }}
+        run: |
+          if (-not $env:PFX_BASE64) { "no signing certificate in the secrets: binaries left unsigned"; exit 0 }
+          $pfx = Join-Path $env:RUNNER_TEMP "sign.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_BASE64))
+          try {
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+              Sort-Object FullName | Select-Object -Last 1
+            $files = @("build/layer/Release/VkLayer_bdex_framegen.dll", "build/capture/Release/bdex_capture.exe",
+                       "build/tools/calibrate/Release/bdex-calibrate.exe") | Where-Object { Test-Path $_ }
+            & $signtool.FullName sign /fd SHA256 /f $pfx /p $env:PFX_PASSWORD `
+              /tr http://timestamp.digicert.com /td SHA256 $files
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & $signtool.FullName verify /pa $files
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Remove-Item -Force $pfx
+          }
+
       - name: Package
         shell: pwsh
         run: |
@@ -180,6 +213,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -188,8 +222,17 @@ jobs:
           cd dist
           for d in bdex-framegen-windows-*; do (cd "$d" && zip -r "../$d.zip" .); done
           ls -l *.zip
-      - uses: softprops/action-gh-release@v2
+      # The package ships VKD3D-Proton (LGPL-2.1): its complete source goes on
+      # the same release page (section 4), submodules included.
+      - name: VKD3D-Proton source
+        run: python3 tools/fetch_translation_layers.py --source dist
+      - name: Checksums
+        run: cd dist && sha256sum *.zip vkd3d-proton-*-source.tar.gz | tee SHA256SUMS-windows.txt
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2.6.2 (third party, with write access: pinned)
         with:
-          files: dist/*.zip
+          files: |
+            dist/*.zip
+            dist/vkd3d-proton-*-source.tar.gz
+            dist/SHA256SUMS-windows.txt
           prerelease: ${{ contains(github.ref_name, '-') }}   # v0.4.0-pre1 → pre-release
           generate_release_notes: true

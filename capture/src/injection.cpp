@@ -181,6 +181,14 @@ std::vector<std::wstring> translationFiles(GameInfo::Api api) {
     }
 }
 
+// One of the files translationFiles names, as a bare file name.
+static bool isTranslationFile(const std::wstring& name) {
+    const std::wstring n = wideLower(name);
+    for (const auto* f : {L"d3d9.dll", L"d3d10core.dll", L"d3d11.dll", L"dxgi.dll", L"d3d12.dll", L"d3d12core.dll"})
+        if (n == f) return true;
+    return false;
+}
+
 // Where the package keeps a file: d3d12*.dll from VKD3D-Proton, the rest from DXVK.
 static fs::path translationSource(const std::wstring& file, bool is64) {
     const bool vkd3d = file.rfind(L"d3d12", 0) == 0;
@@ -250,6 +258,14 @@ bool removeTranslation(const std::wstring& exePath, std::string& why) {
         while (std::getline(marker, line)) {
             if (line.empty() || line[0] == '#') continue;
             if (!line.empty() && line.back() == '\r') line.pop_back();
+            // Only the names installTranslation writes: the marker sits in the
+            // game's folder, and an edited line (a full path, "..\\") would
+            // otherwise delete any file.
+            if (!isTranslationFile(wide(line))) {
+                LOGW("injection marker in %s: \"%s\" is not a translation DLL, left alone",
+                     narrow(dir.wstring()).c_str(), line.c_str());
+                continue;
+            }
             fs::remove(dir / wide(line), ec);
             if (ec) {
                 why = line + T(" : suppression impossible (jeu encore ouvert ?)", ": cannot be removed (game still running?)");

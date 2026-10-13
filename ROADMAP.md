@@ -45,7 +45,15 @@ log is in [`CHANGELOG.md`](CHANGELOG.md).
    `async_compute` and `gpu_budget` on an AMD iGPU.
 6. **Publishing**: 0.5.6 (2026-10-05) is a GitHub release. The AUR,
    COPR / OBS, a PPA or Flathub need a public repository and accounts; the
-   packages are ready.
+   packages are ready. Before the AUR: `bdex-framegen-bin`'s
+   `sha256sums=SKIP` replaced by the release's `SHA256SUMS-linux.txt`.
+7. **Code signing (Windows)**: an Authenticode certificate, then its `.pfx`
+   (base64) and password in the repository's secrets
+   `WINDOWS_SIGN_PFX_BASE64` / `WINDOWS_SIGN_PFX_PASSWORD`; `windows.yml`
+   signs the layer, `bdex_capture.exe` and `bdex-calibrate.exe` on tags from
+   then on (SmartScreen, antivirus wary of an .exe copying DLLs into game
+   folders). Also: enable Dependabot alerts in the repository's settings
+   (`.github/dependabot.yml` only schedules the update pull requests).
 
 ## Next — code
 

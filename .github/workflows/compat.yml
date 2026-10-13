@@ -14,6 +14,11 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# Read-only token by default; the jobs that publish (release, CI logs) ask
+# for more themselves.
+permissions:
+  contents: read
+
 jobs:
   # A nightly run with nothing new since the previous one is skipped (minutes
   # of a private repository are counted).
@@ -95,7 +100,7 @@ jobs:
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
-      - uses: cachix/install-nix-action@v31
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24  # v31.11.1 (third party: pinned)
       - name: Build
         run: |
           nix build .#default .#layer32 -L
@@ -131,6 +136,7 @@ jobs:
           for a in dist/bdex-framegen-linux-*.tar.gz; do tools/package-native.sh "$a" dist "$version"; done
           # The Steam Deck's quick access menu (Decky Loader plugin).
           tools/ci/decky-check.sh dist
+          (cd dist && sha256sum *.tar.gz *.deb *.rpm *.zip | tee SHA256SUMS-linux.txt)
       - uses: actions/upload-artifact@v4
         with:
           name: bdex-framegen-linux
@@ -139,6 +145,7 @@ jobs:
             dist/*.deb
             dist/*.rpm
             dist/*.zip
+            dist/SHA256SUMS-linux.txt
           if-no-files-found: error
       # Mesa's software Vulkan and Xvfb in each container (arm64: Debian arm64
       # under qemu-user): the layer loads with that glibc and loader, and
@@ -153,12 +160,13 @@ jobs:
           tools/ci/archive-check.sh dist/bdex-framegen-*.x86_64.rpm fedora:latest opensuse/tumbleweed
       - name: Attach to the release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2.6.2 (third party, with write access: pinned)
         with:
           files: |
             dist/*.tar.gz
             dist/*.deb
             dist/*.rpm
             dist/*.zip
+            dist/SHA256SUMS-linux.txt
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true

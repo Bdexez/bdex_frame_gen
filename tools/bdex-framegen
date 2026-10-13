@@ -250,6 +250,16 @@ quick_read() {
   fi
 }
 
+# The report goes to a public issue: the home's path (it names the user)
+# becomes ~, as in issue_url. Literal match (awk's index), not a pattern.
+hide_home() {
+  if [ -n "${HOME:-}" ] && [ "$HOME" != / ]; then
+    awk -v h="${HOME%/}" '{ out = ""; while ((i = index($0, h)) > 0) { out = out substr($0, 1, i - 1) "~"; $0 = substr($0, i + length(h)) } print out $0 }'
+  else
+    cat
+  fi
+}
+
 # Everything a bug report needs, in one file to attach to an issue.
 report() {
   out="${1:-bdex-framegen-report.txt}"
@@ -283,10 +293,10 @@ report() {
     echo; echo "== installed manifests"
     for d in /usr/share/vulkan/implicit_layer.d /etc/vulkan/implicit_layer.d \
              "${XDG_DATA_HOME:-$HOME/.local/share}/vulkan/implicit_layer.d"; do
-      ls -l "$d"/*BDEX* 2>/dev/null || true
+      ls -ln "$d"/*BDEX* 2>/dev/null || true
     done
     for d in $(flatpak_dirs); do
-      echo "Flatpak $(basename "$d"):"; ls -l "$d"/data/vulkan/implicit_layer.d/*BDEX* 2>/dev/null || true
+      echo "Flatpak $(basename "$d"):"; ls -ln "$d"/data/vulkan/implicit_layer.d/*BDEX* 2>/dev/null || true
     done
     for app in com.valvesoftware.Steam com.heroicgameslauncher.hgl net.lutris.Lutris com.usebottles.bottles; do
       if [ -f "$HOME/.var/app/$app/data/bdex-framegen/extension" ]; then
@@ -296,7 +306,7 @@ report() {
       fi
     done
     if [ -d "$HOME/snap/steam" ]; then
-      echo "Snap steam:"; ls -l "$HOME"/snap/steam/current/.local/share/vulkan/implicit_layer.d/*BDEX* 2>/dev/null ||
+      echo "Snap steam:"; ls -ln "$HOME"/snap/steam/current/.local/share/vulkan/implicit_layer.d/*BDEX* 2>/dev/null ||
         echo "  layer NOT installed there (bdex-framegen --sandboxes)"
     fi
     stale="$(stale_sandboxes)"
@@ -367,7 +377,7 @@ report() {
       echo; echo "== last 200 lines of $log"
       tail -n 200 "$log" 2>/dev/null || echo "(unreadable)"
     fi
-  } > "$out"
+  } | hide_home > "$out"
   echo "report written to $out — attach it to the issue (check it for anything private first)"
   echo
   echo "Signaler le problème (formulaire pré-rempli avec le résumé ; joindre le rapport) :"
