@@ -6,6 +6,17 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Control panel: detection after a reinstall, narrow window (2026-10-13)
+
+- A game still running a layer that was reinstalled since is detected again:
+  its mapped library is a deleted file, which the Steam container shows as
+  `/ (deleted)`, so the panel also takes a game whose layer wrote its status
+  file in the last 10 seconds. Its row says to restart the game (the new
+  layer, recording included, loads at its next start).
+- « Jeux détectés » in a narrow window: only « Actualiser la liste » stays
+  in the header (three buttons there squeezed the title and description into
+  one letter per line); the capture buttons get their own row below the games.
+
 ### Security and licensing review (2026-10-13)
 
 The usual web-application checklist, applied where a local program has an

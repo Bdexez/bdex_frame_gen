@@ -1325,3 +1325,16 @@ un vrai écran.
 - **FIFO par défaut** : non, l'utilisateur la rejette pour la latence.
 - **Fiabilité des compteurs** : le compteur d'i/s de Steam est fiable
   (vérifié sur 4 machines), ne pas le remettre en cause.
+
+### 13/10 (suite) — panneau : jeu non détecté après une réinstallation
+
+Vécu : réinstallation (`install.sh`) pendant que PRAGMATA tournait → le
+panneau affichait « Aucun jeu en cours ». Le jeu garde l'ancienne couche
+(fichier supprimé) et, dans le conteneur Steam, `/proc/<pid>/maps` la nomme
+`/ (deleted)` : la recherche de `libVkLayer_bdex_framegen` échouait. Le
+panneau prend aussi un processus dont le `<pid>.status` a moins de 10 s
+(`fresh_status_pids`) et, si sa couche a été remplacée (`layer_replaced`),
+affiche « Lancé avant l'installation de cette version — relance le jeu ».
+Fenêtre étroite : trois boutons en en-tête du groupe « Jeux détectés »
+réduisaient titre et description à une lettre par ligne ; seul
+« Actualiser » reste en en-tête, les boutons de capture ont leur ligne.

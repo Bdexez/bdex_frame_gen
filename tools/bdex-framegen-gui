@@ -92,6 +92,7 @@ _EN = {
  'Capture terminée (journal : ~/.cache/bdex-framegen/capture.log)': 'Capture ended (log: ~/.cache/bdex-framegen/capture.log)',
  'Capturer une autre fenêtre…': 'Capture another window…',
  'Un jeu absent de la liste (OpenGL, anti-triche…) : clique ensuite sur sa fenêtre': 'A game missing from the list (OpenGL, anti-cheat…): then click its window',
+ 'Un jeu absent de la liste (OpenGL, anti-triche…) : génération par capture de sa fenêtre': 'A game missing from the list (OpenGL, anti-cheat…): frame generation by capturing its window',
  'fenêtre choisie': 'window picked',
  'Clique sur la fenêtre du jeu': "Click the game's window",
  'Méthode': 'Method',
@@ -1925,18 +1926,49 @@ def layer_name(arg):
     return base.split(".", 1)[0]
 
 
+def fresh_status_pids():
+    """The pids whose layer wrote its status file in the last seconds. A game
+    still running a layer that was reinstalled since maps a deleted file, and
+    in the Steam container its path reads "/ (deleted)": only the status
+    file still names it."""
+    d, now, out = status_dir(), time.time(), set()
+    try:
+        names = os.listdir(d) if d else []
+    except OSError:
+        return out
+    for n in names:
+        if n.endswith(".status") and n[:-7].isdigit():
+            try:
+                if now - os.stat(os.path.join(d, n)).st_mtime < 10:
+                    out.add(int(n[:-7]))
+            except OSError:
+                pass
+    return out
+
+
+def layer_replaced(pid):
+    """The game runs a layer whose file was replaced since it loaded it (an
+    install or update while it ran): the new one loads at its next start."""
+    try:
+        with open(f"/proc/{pid}/maps", "rb") as f:
+            lines = [ln for ln in f.read().splitlines() if b"libVkLayer_bdex_framegen" in ln]
+    except OSError:
+        return False
+    return not lines or all(ln.endswith(b"(deleted)") for ln in lines)
+
+
 def detect_games():
     """Running programs the layer is loaded into — every Vulkan program, native or
     through Proton (DXVK / VKD3D) — minus known non-games and GTK 4 applications
     (drawn with Vulkan; platformIsDesktopApp): [(pid, name)]."""
-    out, me = [], os.getpid()
+    out, me, fresh = [], os.getpid(), fresh_status_pids()
     for p in os.listdir("/proc"):
         if not p.isdigit() or int(p) == me:
             continue
         try:
             with open(f"/proc/{p}/maps", "rb") as f:
                 maps = f.read()
-            if b"libVkLayer_bdex_framegen" not in maps or b"libgtk-4.so" in maps:
+            if b"libgtk-4.so" in maps or not (b"libVkLayer_bdex_framegen" in maps or int(p) in fresh):
                 continue
             with open(f"/proc/{p}/cmdline", "rb") as f:
                 args = [a.decode(errors="replace") for a in f.read().split(b"\0") if a.strip()]
@@ -2344,21 +2376,32 @@ class Window(Adw.ApplicationWindow):
                           tooltip_text=tr("Un jeu absent de la liste (OpenGL, anti-triche…) : clique ensuite sur sa fenêtre"))
         pick.connect("clicked", self.on_capture_window)
         pick.set_sensitive(capture_binary() is not None)
-        buttons = Gtk.Box(spacing=6)
+        # Only « Actualiser » in the header: three buttons there squeezed the
+        # group's title and description into a column of single letters. The
+        # capture buttons get a row of their own, last, wrapping when narrow.
+        self.running_group.set_header_suffix(refresh)
+        buttons = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, column_spacing=6, row_spacing=6,
+                              max_children_per_line=2, homogeneous=False, halign=Gtk.Align.START)
         buttons.append(pick)
         if capture_wayland_available():
             way = Gtk.Button(label=tr("Fenêtre Wayland (portail)…"), valign=Gtk.Align.CENTER,
                              tooltip_text=tr("Un jeu en fenêtre Wayland native : le bureau demande laquelle partager"))
             way.connect("clicked", self.on_capture_wayland)
             buttons.append(way)
-        buttons.append(refresh)
-        self.running_group.set_header_suffix(buttons)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                      margin_start=12, margin_end=12, margin_top=8, margin_bottom=8)
+        hint = Gtk.Label(label=tr("Un jeu absent de la liste (OpenGL, anti-triche…) : génération par capture de sa fenêtre"),
+                         xalign=0, wrap=True)
+        hint.add_css_class("dim-label")
+        box.append(hint)
+        box.append(buttons)
+        self.capture_row = Gtk.ListBoxRow(activatable=False, child=box)
         self.running_rows = []
 
     def _refresh_running(self):
         for row in self.running_rows:
             self.running_group.remove(row)
-        self.running_rows = []
+        self.running_rows = [self.capture_row]   # (added last, below the games)
         detected = detect_games()
         read_running(keep={inner_pid(pid) for pid, _ in detected})   # drops what crashed games left
         games, seen = [], set()
@@ -2379,6 +2422,7 @@ class Window(Adw.ApplicationWindow):
                                 subtitle=tr("Lance un jeu Vulkan (natif ou via Proton), puis « Actualiser la liste »"))
             self.running_group.add(row)
             self.running_rows.append(row)
+            self.running_group.add(self.capture_row)
             return
         group = None
         for pid, name, entries in games:
@@ -2386,6 +2430,8 @@ class Window(Adw.ApplicationWindow):
             armed = any(e.get("kind") == "swapchain" for e in entries)
             how = plan(entries, self.opt, capture_binary() is not None)
             lines.append("→ " + how[1])
+            if layer_replaced(pid):
+                lines.insert(0, "⚠ " + tr("Lancé avant l'installation de cette version — relance le jeu"))
             row = Adw.ActionRow(title=name, subtitle="\n".join(lines))
             radio = Gtk.CheckButton(valign=Gtk.Align.CENTER, sensitive=armed or how[0] == "capture")
             if group is None:
@@ -2405,6 +2451,7 @@ class Window(Adw.ApplicationWindow):
                 row.add_suffix(rec)
             self.running_group.add(row)
             self.running_rows.append(row)
+        self.running_group.add(self.capture_row)
 
     def on_record(self, _btn, game):
         try:
@@ -2854,6 +2901,8 @@ def text_main():
                 entries = read_status(pid)
                 lines = [d for d in (describe_entry(e) for e in entries) if d]
                 lines.append("→ " + plan(entries, opt, capture_binary() is not None)[1])
+                if layer_replaced(pid):
+                    lines.insert(0, "⚠ " + tr("Lancé avant l'installation de cette version — relance le jeu"))
                 print(f"  {i}) {name} (pid {pid}){mark}")
                 for d in lines:
                     for ln in d.splitlines():
