@@ -167,8 +167,22 @@ void VirtualSwapchain::runJob(const Job& job) {
         // went out when ready, the real one half a frame after the call.
         clock::time_point origin = clock::now();
         // (Split: from when the first generated frame is ready, FrameSlot::cmd2.)
-        if (paced && n > 0)
-            waitGpu(job.firstReady ? job.firstReady : job.slot >= 0 ? slots_[size_t(job.slot)].fence : out[0].fence, false, origin);
+        if (paced && n > 0) {
+            const VkFence first = job.firstReady ? job.firstReady : job.slot >= 0 ? slots_[size_t(job.slot)].fence : out[0].fence;
+            // pace_plan's estimate of when a job's first frame is ready, quick
+            // to rise, slow to fall — measured only when the worker got there
+            // first: a fence already signalled says only "before now" (the
+            // worker still presenting the job before), and counting that
+            // pushed the plan later and later (measured: 9 ms for 4.6).
+            const bool early = dev_.vt.GetFenceStatus(dev_.device, first) == VK_NOT_READY;
+            waitGpu(first, false, origin);
+            if (job.plan) {
+                const double lag = std::chrono::duration<double, std::milli>(origin - job.start).count();
+                const double est = readyLagMs_.load(std::memory_order_relaxed);
+                if (lag >= 0.0 && lag < 200.0 && (early || lag < est))
+                    readyLagMs_.store(est + (lag > est ? 0.5 : 0.05) * (lag - est), std::memory_order_relaxed);
+            }
+        }
         // The job's first frame went out a refresh or more after the first
         // one it could make once ready (paceTarget aims 0.3 refresh ahead):
         // the jobs before still held the refreshes — a lag that producing at
@@ -410,9 +424,9 @@ bool VirtualSwapchain::waitGpu(VkFence fence, bool cancellable, clock::time_poin
 // slip a whole period) and on a refresh of its own.
 VirtualSwapchain::clock::time_point VirtualSwapchain::paceTarget(const Job& job, clock::time_point origin, int k) {
     pacing::Grid g;
-    g.valid = feedback_ && displayGrid(g.lastMs, g.periodMs);
+    g.valid = displayGrid(g.lastMs, g.periodMs);
     const double t = pacing::presentTargetMs(msOf(origin), job.intervalMs, job.frames, job.order, k, lastPresentMs_,
-                                             lastLandMs_, g);
+                                             lastLandMs_, g, job.plan && k < 8 ? job.planned[k] : 0.0);
     return clock::time_point(std::chrono::duration_cast<clock::duration>(std::chrono::duration<double, std::milli>(t)));
 }
 
@@ -423,7 +437,7 @@ VirtualSwapchain::clock::time_point VirtualSwapchain::paceTarget(const Job& job,
 namespace {
 // latency_log: one line per displayed frame, from every swapchain of the
 // process into one file (opened once, appended under a lock).
-void latencyLogLine(const std::string& path, double presentMs, double displayMs, bool real) {
+void latencyLogLine(const std::string& path, double presentMs, double displayMs, bool real, double plannedMs) {
     static std::mutex mutex;
     static FILE* file = nullptr;
     static bool failed = false;
@@ -434,7 +448,7 @@ void latencyLogLine(const std::string& path, double presentMs, double displayMs,
         if (failed) BDEX_WARN("latency_log: cannot write %s", path.c_str());
     }
     if (!file) return;
-    fprintf(file, "%.3f %.3f %d\n", presentMs, displayMs, real ? 1 : 0);
+    fprintf(file, "%.3f %.3f %d %.3f\n", presentMs, displayMs, real ? 1 : 0, plannedMs);
     fflush(file);
 }
 } // namespace
@@ -476,7 +490,7 @@ void VirtualSwapchain::feedbackLoop() {
                 // Latency the player sees: the game's present call to the
                 // moment its real frame is on screen (all queueing, the
                 // layer's hold and the compositor included).
-                if (!cfg_.latencyLog.empty()) latencyLogLine(cfg_.latencyLog, entry.presentMs, now, entry.real);
+                if (!cfg_.latencyLog.empty()) latencyLogLine(cfg_.latencyLog, entry.presentMs, now, entry.real, entry.plannedMs);
                 const double latency = now - entry.presentMs;
                 if (entry.real && latency >= 0.0 && latency < 1000.0) {
                     fbLatencyMs_ = fbLatencyMs_ < 0.0 ? latency : fbLatencyMs_ * 0.9 + latency * 0.1;
@@ -592,9 +606,14 @@ void VirtualSwapchain::pollGamescope() {
 
 bool VirtualSwapchain::displayGrid(double& lastMs, double& periodMs) {
     std::lock_guard<std::mutex> lock(fbMutex_);
-    if (!displayClock_.valid()) return false;
-    lastMs = displayClock_.lastMs();
-    periodMs = displayClock_.periodMs();
+    if (feedback_ && displayClock_.valid()) {
+        lastMs = displayClock_.lastMs();
+        periodMs = displayClock_.periodMs();
+        return true;
+    }
+    if (vgPeriodMs_ <= 0.0) return false;
+    lastMs = vgAnchorMs_;
+    periodMs = vgPeriodMs_;
     return true;
 }
 
@@ -649,6 +668,7 @@ VkResult VirtualSwapchain::submitDeferredSynthesis(const Job& job) {
 VkResult VirtualSwapchain::submitCopy(const Job& job, int index, Copied& out, int staged) {
     const bool real = index == job.realIndex;
     const uint32_t output = static_cast<uint32_t>(index < job.realIndex ? index : index - 1);
+    out.index = index;
 
     FrameSlot& slot = nextSlot(workerSlots_, workerCursor_);
     uint32_t ri = 0;
@@ -774,7 +794,7 @@ VkResult VirtualSwapchain::submitStage(const Job& job, int index, uint32_t stage
 // extrapolation stage their predicted frames too (all but the real one).
 void VirtualSwapchain::prepareStaging() {
     if (!fg_) return;
-    const int frames = generating_ ? std::max(1, cfg_.multiplier) : 1;
+    const int frames = generating_ ? std::max(1, cfg_.frameCeiling()) : 1;
     const bool predicted = cfg_.extrapolate || cfg_.hybrid;
     fg_->ensureStaging(static_cast<uint32_t>(std::max(0, predicted ? frames - 1 : frames - acquireAhead_)));
 }
@@ -860,13 +880,15 @@ VkResult VirtualSwapchain::presentCopied(const Job& job, const Copied& c) {
     // out, and the refresh it was due to show on.
     lastPresentMs_ = msOf(now);
     double lastMs, periodMs;
-    lastLandMs_ = feedback_ && displayGrid(lastMs, periodMs)
+    lastLandMs_ = displayGrid(lastMs, periodMs)
                       ? lastMs + std::ceil((lastPresentMs_ - lastMs) / periodMs) * periodMs
                       : 0.0;
     if (feedbackId && r >= 0) {
         {
             std::lock_guard<std::mutex> lock(fbMutex_);
-            if (!fbPaused_) fbPending_.push_back({feedbackId, msOf(job.start), job.frameStartMs, c.real});
+            if (!fbPaused_)
+                fbPending_.push_back({feedbackId, msOf(job.start), job.frameStartMs, c.real,
+                                      c.index >= 0 && c.index < 8 ? job.planned[c.index] : 0.0});
         }
         fbCv_.notify_one();
     }

@@ -301,3 +301,91 @@ TEST(pacing_vrr_auto_hold) {
     CHECK(a.replaced == 0 && b.replaced == 0);
     CHECK(realA / n - realB / n >= 3.0);
 }
+
+namespace {
+// A 30 fps game on a 144 Hz mailbox screen, the frames of each present given
+// their content for the refresh the layer predicts (frame_timing) and
+// presented as the worker does, the GPU work done 3 +- 1 ms after the present
+// call. Returns the rms of (content step - display step) between displayed
+// frames — the motion's judder — and counts the frames shown and repeated.
+struct Cadence { double judderMs; double shownPerS; double repeatsPerS; };
+Cadence runCadence(bool adaptive, bool plan, double gridPhase, bool screenGridKnown) {
+    const double P = 1000.0 / 143.912, I = 1000.0 / 30;
+    const pacing::Grid screen{true, 0.0, P};
+    const pacing::Grid seen{true, screenGridKnown ? 0.0 : gridPhase * P, P};  // measured, or virtual_grid's
+    pacing::AdaptivePacer ap;
+    Config c;
+    struct F { double display, content; };
+    std::vector<F> fr;
+    double lastPresent = 0, lastLand = 0, lastPlanned = 0, lag = 1.0;
+    uint32_t rng = 12345;
+    auto uniform = [&] { rng = rng * 1664525u + 1013904223u; return (rng >> 8) / double(1 << 24); };
+    for (int f = 1; f <= 600; ++f) {
+        const double content = f * I, now = content + 2.0 + (uniform() - 0.5), gpu = 2.0 + 2.0 * uniform();
+        double period = P;
+        const int n = adaptive ? ap.next(I, period, 5) : 4;
+        const FrameOrder o = FrameOrder::of(c, n, !adaptive);
+        const double interval = adaptive ? period * n : I, slot = interval / n;
+        double base[8] = {}, planned[8] = {}, at[8] = {};
+        for (int k = 1; k < n; ++k) base[k] = slot * k;
+        if (plan) {
+            pacing::planLands(now, lag, base, n, seen, lastPlanned, planned);
+            for (int k = 0; k < n; ++k) at[k] = planned[k];
+        } else {  // (the layer before pace_plan)
+            for (int k = 0; k < n; ++k) at[k] = seen.land(now + (k == 0 ? 1.0 : base[k] + (adaptive ? 1.0 : 0.0)));
+        }
+        for (int k = 0; k < n; ++k) {
+            double t = pacing::presentTargetMs(now + gpu, interval, n, o, k, lastPresent, lastLand, seen, planned[k]);
+            t = std::max({t, now + gpu, lastPresent + 0.01});
+            const double d = screen.land(t);
+            if (!fr.empty() && fr.back().display == d) fr.back().display = -1.0;  // replaced
+            fr.push_back({d, content + at[k] - at[o.real]});
+            lastPresent = t;
+            lastLand = seen.land(t);
+        }
+        lag += (gpu > lag ? 0.5 : 0.05) * (gpu - lag);
+    }
+    std::vector<F> v;
+    for (const F& x : fr)
+        if (x.display > 2000.0) v.push_back(x);
+    double e2 = 0;
+    int shown = 0, repeats = 0;
+    const F* prev = nullptr;
+    for (const F& x : v) {
+        if (x.display < 0.0) continue;
+        if (prev) {
+            const double e = (x.content - prev->content) - (x.display - prev->display);
+            e2 += e * e;
+            repeats += std::round((x.display - prev->display) / P) > 1;
+        }
+        prev = &x;
+        ++shown;
+    }
+    const double secs = (prev->display - 2000.0) / 1000.0;
+    return {std::sqrt(e2 / std::max(1, shown - 1)), shown / secs, repeats / secs};
+}
+} // namespace
+
+// pace_plan, 30 fps x4 on 144 Hz with the grid known: the content of each
+// frame is that of the refresh it shows on. Predicted from the present call
+// (the GPU still working then), a frame showed a refresh later than its
+// content's in about half the presents.
+TEST(pacing_plan_matches_content_to_display) {
+    const Cadence before = runCadence(false, false, 0.0, true), after = runCadence(false, true, 0.0, true);
+    CHECK(before.judderMs > 3.0);
+    CHECK(after.judderMs < 2.0);
+    CHECK(after.shownPerS > 119.0);
+}
+
+// virtual_grid: adaptive x4-x5 at 30 fps on 144 Hz, refresh grid unknown —
+// a grid of our own at most phases of the screen's gives every refresh a
+// frame (the phase where our presents meet the screen's latch gets frames
+// replaced, which the layer moves away from).
+TEST(pacing_virtual_grid_fills_every_refresh) {
+    int good = 0;
+    for (int i = 0; i < 10; ++i) {
+        const Cadence c = runCadence(true, true, i / 10.0, false);
+        good += c.shownPerS > 143.0 && c.repeatsPerS < 0.5 && c.judderMs < 1.6;
+    }
+    CHECK(good >= 8);
+}

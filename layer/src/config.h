@@ -60,6 +60,9 @@ struct Config {
     bool  pipelineCache = true;   // the passes' compiled shaders kept on disk (~/.cache/bdex-framegen/pipelines-*.bin): faster starts
     bool  threadPriority = true;  // the presentation thread at a higher scheduling priority: real-time round-robin where permitted, else nice -10 from rtkit (as PipeWire's audio threads), else unchanged
     bool  preciseWake   = true;   // the presentation thread drops the kernel's timer slack (50 us by default on Linux): its sleeps until each present's moment end closer to it
+    int   refreshFill   = 1;      // fixed multiplier m whose output falls short of a fixed refresh rate by under a game frame (30 fps x4 on 144 Hz: 120 for 144): m or m+1 frames a game frame, one a refresh (the adaptive pacing), instead of a frame held every fifth refresh; 0 off, 1 from x3 (x2 at 60 fps on 144 Hz would hold its real frame ~7 ms more), 2 from x2
+    bool  pacePlan      = true;   // on a refresh grid, interpolated frames are planned for their refresh when the game presents (from the usual GPU delay) and presented for it: the content each shows is that refresh's
+    bool  virtualGrid   = true;   // adaptive pacing without a measured refresh grid: a grid of the output period at a phase of our own (moved when frames get replaced), so every refresh gets one frame
     bool  vrrHold       = true;   // on a variable-refresh screen (present feedback, no refresh grid), interp_hold 1 counts as auto: frames show when presented, so the real one may go sooner
     float interpHold    = 1.0f;   // interpolation: the real frame's hold as a fraction of the usual one ((m-1)/m of an interval at xm): the generated frames go out closer together before it, showing the content of their own display time (motion stays right, spacing uneven); 1 = evenly spaced, 0.5 = half the added latency; -1 (any negative) = auto: as close as the screen allows (one refresh apart), only where it saves at least 2 ms
     bool  syncPresent   = false;  // block the game's present call until the worker has presented this frame (D3D12/VKD3D compat test)
@@ -98,7 +101,7 @@ struct Config {
     std::string gpu;
     int method = 0;
     std::string hotkey;
-    std::string latencyLog;      // latency_log: every displayed frame as "<game's present ms> <display ms> <real 0/1>" (steady clock, present feedback), for tools/latency_report.py
+    std::string latencyLog;      // latency_log: every displayed frame as "<game's present ms> <display ms> <real 0/1> <planned ms, 0 none>" (steady clock, present feedback), for tools/latency_report.py
     float sceneCutLow   = 0.05f;  // mean matching cost above which we start fading to the real frame
     float sceneCutHigh  = 0.09f;  // ... and above which the generated frame is a plain duplicate
     bool  sceneCutLocal = false;  // scene-cut test per region (8x8 grid) instead of on the frame mean (opt-in)
@@ -202,6 +205,12 @@ struct Config {
     Config keepingCreationSettings(Config fresh) const;
     // Whether the options that size the output stage are equal.
     bool sameOutputSettings(const Config& o) const;
+    // refresh_fill may give a game frame one frame more than `multiplier`
+    // (interpolation, fixed multiplier): the most frames a present can have.
+    int frameCeiling() const {
+        const bool fill = refreshFill > 0 && multiplier >= (refreshFill >= 2 ? 2 : 3) && multiplier < 8 && !extrapolate && !hybrid && !adaptive && targetFps == 0.f;
+        return multiplier + (fill ? 1 : 0);
+    }
     // Same, starting from product defaults instead of Config{} (the capture
     // app defaults to extrapolation, still overridable by the file and env).
     static Config loadWithDefaults(Config defaults, const std::string& extraProcess = "");

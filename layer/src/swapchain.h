@@ -114,6 +114,8 @@ private:
         clock::time_point queuedAt{};  // when present() handed it to the worker
         double frameStartMs = 0.0;   // when the application's previous present returned (it began this frame then)
         double intervalMs = 16.6;    // frame interval estimate for pacing
+        double planned[8] = {};      // the refresh (steady ms) each frame was given its content for, 0 = none
+        bool plan = false;           // ... and presented for it (pace_plan, pacing::planLands)
         int presentMode = -1;        // VkSwapchainPresentModeInfoEXT (-1 = none), applied to every present
         uint64_t presentId = 0;      // VkPresentIdKHR (0 = none), forwarded on the real frame
         VkFence presentFence = VK_NULL_HANDLE;  // VkSwapchainPresentFenceInfoEXT, idem
@@ -176,6 +178,7 @@ private:
         uint32_t image = 0;              // real swapchain image
         bool real = false;               // the application's frame (else a generated one)
         VkFence fence = VK_NULL_HANDLE;  // the copy's submission: signalled once the frame is ready
+        int index = -1;                  // its frame in the job
     };
     // Acquires a real image and submits the copy of frame `index` of the job
     // (from staging image `staged` when >= 0, see submitStage).
@@ -206,6 +209,18 @@ private:
     // acquired (CI, fullscreen toggles: VUID-vkAcquireNextImageKHR-surface-07783).
     VkSwapchainKHR realOutOfDate_ = VK_NULL_HANDLE;
     double lastLandMs_ = 0.0;      // worker: refresh the last present was due to show on (known grid only)
+    // pace_plan: how long after the present call a job's first frame is
+    // ready (worker, a running estimate quick to rise), and the last refresh
+    // planned (present thread) — pacing::planLands.
+    std::atomic<double> readyLagMs_{1.0};
+    double lastPlannedMs_ = 0.0;
+    // virtual_grid (fbMutex_): with the adaptive pacing and no measured
+    // refresh grid, a grid of the output period at a phase of our own
+    // (0 = none), moved half a period when frames get replaced.
+    double vgPeriodMs_ = 0.0;
+    double vgAnchorMs_ = 0.0;
+    uint64_t vgReplacedSeen_ = 0;   // present thread
+    double vgCheckMs_ = 0.0;
     // workerMutex_: the application thread needs the synthesis outputs a
     // deferred extrapolation job still reads (lazyOutputs_) — its next
     // synthesis is not deferred: the job drops its predicted frames.
@@ -246,6 +261,7 @@ private:
         double presentMs;     // the game's present call (msOf(job.start))
         double frameStartMs;  // when the game began that frame (its previous present returned), 0 unknown
         bool real;            // the real frame of that present (latency is measured on it)
+        double plannedMs;     // the refresh its content is for (Job::planned), 0 none
     };
     std::deque<FbEntry> fbPending_;
     double fbLatencyMs_ = -1.0;         // fbMutex_: smoothed present-to-screen latency of real frames
