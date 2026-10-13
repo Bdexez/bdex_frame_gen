@@ -176,6 +176,14 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
     // (with the quality preset's half-resolution flow there: -23 to -29 %,
     // +0.5 to +1.0); everything else within +-0.04 dB; ~0.05 ms.
     if (strong && !(autoOptionsSet & kAutoGlobalMotion)) globalMotion = true;
+    // Pixels that stayed unchanged for 8 game frames while the camera moved
+    // (a HUD: icons, text, crosshair) are kept as they are instead of being
+    // dragged along by the motion of the blocks they share with the scene
+    // (13/10, x4 on 30 fps game-like turns: their HUD icons came out smeared
+    // and doubled — interpolation +0.21 to +0.47 dB, +0.9 to +2.0 on edges;
+    // extrapolation +0.67 / +1.06; nothing lost on the recorded games, the
+    // corpus or the game-like scenes without a HUD). One pass a game frame.
+    if (strong && !(autoOptionsSet & kAutoHudMask) && hudMask == 0) hudMask = 8;  // (enhanced: its own 24)
     // No bonus for the zero-motion candidate (03/10, on top of everything
     // above, 960x540 corpus + demo): the free bonus won on soft content in
     // fast motion — a ghostly blend instead of the moving picture. The HUD
@@ -459,6 +467,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "temporal_prediction") autoOptionsSet |= kAutoTemporalPrediction;
     if (key == "zero_bias") autoOptionsSet |= kAutoZeroBias;
     if (key == "global_motion") autoOptionsSet |= kAutoGlobalMotion;
+    if (key == "hud_mask") autoOptionsSet |= kAutoHudMask;
     if (const OptionDef* d = findOption(key)) {
         switch (d->kind) {
         case Kind::Bool:  return parseBool(value, this->*(d->b));
