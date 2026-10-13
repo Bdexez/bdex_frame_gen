@@ -893,8 +893,9 @@ bool VirtualSwapchain::fastGame(double hz) {
     return idle;
 }
 
-// Frame-rate limiter (fps_limit), like DXVK_FRAME_RATE: the application's
-// present blocks until its next slot, which paces the game itself. Frame
+// Frame-rate limiter (fps_limit), like a game's own limiter: after the frame
+// is handed on, the application's present returns only at its next slot,
+// which paces the game itself without making a finished frame wait. Frame
 // generation works best from an even base rate at a divisor of the refresh
 // rate (60 -> 120, 72 -> 144). Sleeps until ~1.5 ms before the deadline, then
 // spins briefly for precision; after a late frame the schedule restarts from
@@ -1002,7 +1003,6 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         }
     }
     recording_ = recorder_ && recorder_->wantsFrame();
-    if (cfg_.fpsLimit != 0.f) limitFrameRate();  // before mutex_: never block acquire while sleeping
     std::unique_lock<std::mutex> lock(mutex_);
     const auto t0 = clock::now();
     const VkSemaphore* appWaits = consumeWaitSemaphores ? info.pWaitSemaphores : nullptr;
@@ -1554,6 +1554,12 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     } else {
         limiter_.delayMs = 0.0;
     }
+    // fps_limit: the frame is already on its way; the game is held here,
+    // before it begins the next one and reads its input — what a game's own
+    // limiter does. (Holding the present itself, as until 13/10, made each
+    // finished frame wait for its slot: +23 ms input to screen at a 40 fps
+    // cap, x1 and x2 alike, against the game's own limiter.)
+    if (cfg_.fpsLimit != 0.f) limitFrameRate();  // (without mutex_: never block acquire while sleeping)
     lastReturnMs_ = msOf(clock::now());
     return pending;  // VK_SUCCESS or VK_SUBOPTIMAL_KHR from an earlier real present
 }

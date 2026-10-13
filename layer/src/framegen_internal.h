@@ -19,7 +19,7 @@ namespace fg {
 constexpr int kMaxFrames = 8;
 
 struct DownsamplePC { int32_t size[2]; int32_t fromColor; int32_t transfer; };
-struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; float gradWeight; float censusWeight; float censusMargin; float rotWeight; int32_t temporal; float zeroBiasContrast; float chromaWeight; int32_t chromaHistory; float zeroBiasCap; };
+struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; float gradWeight; float censusWeight; float censusMargin; float rotWeight; int32_t temporal; float zeroBiasContrast; float chromaWeight; int32_t chromaHistory; float zeroBiasCap; int32_t global; };
 struct SizePC { int32_t size[2]; };
 struct HistPC { int32_t size[2]; int32_t tiles; };
 struct ReducePC { int32_t size[2]; int32_t tiles; float cutHist; float cutLow; };
@@ -34,6 +34,7 @@ enum : uint32_t {
     SYNTH_STATIC_GUARD = 1024u, SYNTH_STATIC_MASK = 2048u, SYNTH_DEBUG_CONF = 4096u,
 };
 struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; float occlusionStrength; float staticGuard; int32_t splat; int32_t pixelVectors; int32_t transfer; int32_t timing; int32_t localCut; float accel; int32_t bicubic; float staticFrames; int32_t revealFill; };
+struct GlobalPC { int32_t size[2]; int32_t radius; int32_t mode; };
 struct UpscalePC { int32_t outSize[2]; int32_t srcSize[2]; uint32_t encoding; int32_t filter; };
 struct FrameStatePC { int32_t size[2]; int32_t mode; int32_t multiplier; float sinceLastMs; float intervalMs; int32_t flags; int32_t gateCount; uint32_t dupMaxPixels; float displayMs[kMaxFrames]; int32_t realPos; };
 struct CasPC { int32_t size[2]; uint32_t encoding; float sharpness; };

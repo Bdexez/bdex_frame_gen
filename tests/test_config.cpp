@@ -292,7 +292,9 @@ TEST(config_section_matching) {
 TEST(config_presets) {
     Config c;
     CHECK(c.apply("preset", "performance") && c.flowScale == 4 && !c.refineAll);
-    CHECK(c.apply("preset", "quality") && c.flowScale == 1 && c.flowIterations == 2);
+    CHECK(c.apply("preset", "quality") && c.flowScale == -1 && c.flowIterations == 2);
+    // quality: full-resolution flow up to ~1080p, half above (the pyramid's reach at 1440p)
+    CHECK(c.flowScaleFor(1920, 1080) == 1 && c.flowScaleFor(2560, 1440) == 2 && c.flowScaleFor(3840, 2160) == 2);
     CHECK(!c.apply("preset", "ultra"));
     // A preset in the environment is applied before the individual variables.
     setenv("BDEX_FG_FLOW_SCALE", "2", 1);

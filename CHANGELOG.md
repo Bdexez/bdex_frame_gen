@@ -6,6 +6,31 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Frame-rate cap without added latency; fast camera turns followed (2026-10-13)
+
+- **`fps_limit` no longer delays the frame.** The layer held the game's
+  present until the next slot, so every finished frame waited for it:
+  +23 ms from input to screen at a 40 fps cap, x1 and x2 alike, against the
+  game's own limiter. It now hands the frame on at once and holds the game
+  before its next frame (where it reads its input), like a game's own
+  limiter: demo uncapped and capped at 40 fps by the layer, input to screen
+  30.2 → 4.5 ms at x1 (the game's own cap: 6.7), real frame at x2 43.3 →
+  19.9 ms (20.2); 40.0 fps held. `latency_probe` checks it.
+- **Fast camera turns** (recorded games: 150–190 px a frame at 853×480, a
+  mouse flick) went past the motion search's reach and the picture broke
+  up. New `global_motion` (on by default on a discrete GPU): the frame's
+  dominant shift, by exhaustive search at the coarsest pyramid level, is a
+  second search centre for each coarsest block. And the `quality` preset
+  computes the motion at full resolution only up to ~1080p, at half
+  resolution above (at 1440p the full-resolution pyramid reached a third as
+  far). Recorded games (PRAGMATA, Oblivion Remastered) at 1440p, fast
+  turns: grossly wrong pixels −23 % and −29 %, +1.0 / +0.5 dB; at 853×480
+  −1 to −13 %; synthetic scenes within ±0.04 dB; the flow's GPU time at
+  1440p 6.9 → ~2 ms a game frame.
+- `tools/latency_report.py`: `BDEX_LATENCY_JOIN_MS` widens the join of the
+  demo's and the layer's present stamps (to see a limiter that makes the
+  call wait).
+
 ### x3 / x4: the presets keep the discrete-GPU quality options; screen timing shown (2026-10-13)
 
 - **A preset picked by hand no longer drops the quality options of a

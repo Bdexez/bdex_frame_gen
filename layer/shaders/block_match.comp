@@ -124,7 +124,7 @@ const int kCand1 = kOptIns ? MAXCAND + 1 : 1;
 
 layout(binding = 0, LUMA_FMT) uniform readonly image2D refImg;
 layout(binding = 1, LUMA_FMT) uniform readonly image2D tgtImg;
-layout(binding = 2) uniform sampler2D coarseFlow;
+layout(binding = 2) uniform sampler2D coarseFlow;   // (coarsest level: global_motion's 1x1 vector instead)
 layout(binding = 3, rg32f) uniform writeonly image2D flowOut;
 layout(binding = 4, r32f) uniform writeonly image2D costOut;
 layout(binding = 5) uniform sampler2D prevFlow;   // previous pair's final backward flow at this level (temporal prediction)
@@ -147,6 +147,7 @@ layout(push_constant) uniform PC {
     float chromaWeight;     // weight of the chroma SAD in the chroma re-ranking (0 = off)
     int chromaHistory;      // previous pair's flow in prevFlow for the chroma check: 0 none, 1 forward, 2 backward pass
     float zeroBiasCap;      // the zero bias stops growing at this cost (0 = uncapped, the historical path)
+    int global;             // coarsest level: global_motion's vector as a second search centre (1 forward, 2 backward; 0 off)
 } pc;
 
 #define CHROMA_GATE 0.01   // luma SAD (mean per pixel) within which candidates are re-ranked on chroma
@@ -214,6 +215,25 @@ void main() {
             vec2 p = (vec2(blk) + 0.5) * float(BS);  // block centre, level pixels
             vec2 b = texture(prevFlow, p / vec2(pc.size)).xy;
             pred = pc.temporal == 1 ? -b : texture(prevFlow, (p + b) / vec2(pc.size)).xy;
+        }
+        if (pc.global != 0 && pc.hasCoarse == 0) {
+            // global_motion: the frame's dominant shift as the other search
+            // centre (the camera, past the pyramid's reach); the block keeps
+            // whichever centre its own pixels match better, so an object
+            // moving on its own stays with its prediction.
+            vec2 g = texelFetch(coarseFlow, ivec2(0), 0).xy * (pc.global == 1 ? 1.0 : -1.0);
+            ivec2 gi = ivec2(round(g)), pi = ivec2(round(pred));
+            if (gi != pi) {
+                float sp = 0.0, sg = 0.0;
+                for (int y = 0; y < BS; ++y)
+                    for (int x = 0; x < BS; ++x) {
+                        ivec2 q = origin + ivec2(x, y);
+                        float r = loadRef(q);
+                        sp += abs(r - loadTgt(q + pi));
+                        sg += abs(r - loadTgt(q + gi));
+                    }
+                if (sg < sp) pred = g;
+            }
         }
         sBase = ivec2(round(pred));
     }
