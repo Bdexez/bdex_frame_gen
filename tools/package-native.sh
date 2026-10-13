@@ -76,7 +76,7 @@ Architecture: $deb_arch
 Maintainer: Bdexez <https://github.com/Bdexez/bdex_frame_gen>
 Installed-Size: $(du -sk "$deb/usr" | cut -f1)
 Depends: libc6 (>= $glibc), libvulkan1
-Recommends: python3-gi, gir1.2-gtk-4.0
+Recommends: python3-gi, gir1.2-gtk-4.0, libx11-6, libxcomposite1, libxdamage1, libxext6, libxfixes3
 Suggests: gir1.2-adw-1, vulkan-tools
 Section: games
 Priority: optional
@@ -120,6 +120,8 @@ AutoReqProv:    no
 Requires:       (vulkan-loader or libvulkan1)
 Recommends:     python3-gobject
 Recommends:     (gtk4 or typelib-1_0-Gtk-4_0)
+Recommends:     (libXcomposite or libXcomposite1)
+Recommends:     (libXdamage or libXdamage1)
 Suggests:       vulkan-tools
 %global debug_package %{nil}
 %global __os_install_post %{nil}
