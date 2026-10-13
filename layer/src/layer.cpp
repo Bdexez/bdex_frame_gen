@@ -100,6 +100,8 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateInstance(const VkInstanceCreateInfo* pCreat
     data->config = Config::load();
     if (pCreateInfo->pApplicationInfo && pCreateInfo->pApplicationInfo->apiVersion)
         data->apiVersion = pCreateInfo->pApplicationInfo->apiVersion;
+    if (pCreateInfo->pApplicationInfo && pCreateInfo->pApplicationInfo->pEngineName)
+        data->engine = pCreateInfo->pApplicationInfo->pEngineName;
     for (uint32_t i = 0; i < pCreateInfo->enabledExtensionCount; ++i)
         data->surfaceCaps2 |= strcmp(pCreateInfo->ppEnabledExtensionNames[i], "VK_KHR_get_surface_capabilities2") == 0;
     {
@@ -912,7 +914,13 @@ VKAPI_ATTR VkResult VKAPI_CALL SetLatencySleepModeNV(VkDevice device, VkSwapchai
 
 VKAPI_ATTR VkResult VKAPI_CALL LatencySleepNV(VkDevice device, VkSwapchainKHR swapchain, const VkLatencySleepInfoNV* pInfo) {
     DeviceData* dev = getDevice(dispatchKey(device));
-    if (dev->appLowLatencyMode.load(std::memory_order_relaxed)) dev->appPacedAtMs.store(steadyMs(), std::memory_order_relaxed);
+    if (dev->appLowLatencyMode.load(std::memory_order_relaxed)) {
+        dev->appPacedAtMs.store(steadyMs(), std::memory_order_relaxed);
+        dev->appLatencyApi.store(1, std::memory_order_relaxed);
+        dev->capAtSleep();  // fps_limit here: before the game reads its input
+        if (dev->capFps.load(std::memory_order_relaxed) > 0.0 && !dev->capAtSleepLogged.exchange(true))
+            BDEX_INFO("fps_limit: the game is held at its Reflex sleep, before it reads its input");
+    }
     return dev->vt.LatencySleepNV(device, currentReal(dev, swapchain), pInfo);
 }
 
@@ -932,7 +940,16 @@ VKAPI_ATTR void VKAPI_CALL GetLatencyTimingsNV(VkDevice device, VkSwapchainKHR s
 #ifdef VK_AMD_anti_lag
 VKAPI_ATTR void VKAPI_CALL AntiLagUpdateAMD(VkDevice device, const VkAntiLagDataAMD* pData) {
     DeviceData* dev = getDevice(dispatchKey(device));
-    if (pData && pData->mode == VK_ANTI_LAG_MODE_ON_AMD) dev->appPacedAtMs.store(steadyMs(), std::memory_order_relaxed);
+    if (pData && pData->mode == VK_ANTI_LAG_MODE_ON_AMD) {
+        dev->appPacedAtMs.store(steadyMs(), std::memory_order_relaxed);
+        dev->appLatencyApi.store(2, std::memory_order_relaxed);
+        // fps_limit at the input stage: before the game reads its input.
+        if (pData->pPresentationInfo && pData->pPresentationInfo->stage == VK_ANTI_LAG_STAGE_INPUT_AMD) {
+            dev->capAtSleep();
+            if (dev->capFps.load(std::memory_order_relaxed) > 0.0 && !dev->capAtSleepLogged.exchange(true))
+                BDEX_INFO("fps_limit: the game is held at Anti-Lag's input stage, before it reads its input");
+        }
+    }
     dev->vt.AntiLagUpdateAMD(device, pData);
 }
 #endif

@@ -100,7 +100,9 @@ std::string statusFormat(const std::string& process, long pid, long long unixTim
         if (e.fpsLimit != 0.0) {
             fixed1(buf, sizeof buf, e.fpsLimit);
             o << "fps_limit=" << (e.fpsLimit < 0.0 ? std::string("auto") : std::string(buf)) << "\n";
+            if (!e.capPoint.empty()) o << "cap_point=" << e.capPoint << "\n";
         }
+        if (!e.engine.empty()) o << "engine=" << e.engine << "\n";
         fixed1(buf, sizeof buf, e.latencyMs);
         o << "latency_ms=" << buf << "\n";
         o << "gpu_budget_level=" << e.budgetLevel << "\n";
@@ -224,6 +226,21 @@ std::vector<std::string> statusDescribe(const StatusFile& file, bool english) {
                             "   screen timing not measured: without VRR, at x3 and above frames fall between "
                             "refreshes — set « Game frame rate cap » to Auto, or the screen to an exact multiple "
                             "of the game (30 fps x4 -> 120 Hz)"));
+        // fps_limit holding the present of a Direct3D game under Proton:
+        // DXVK and VKD3D-Proton present from a thread of their own and let the
+        // game queue frames ahead (its maximum frame latency, 1 to 3), so
+        // holding that thread fills the queue and the game reads its input a
+        // frame or two before the screen needs it. Its own limiter, Reflex or
+        // Anti-Lag (the layer then holds the game there) do not queue.
+        {
+            std::string eng = get(v, "engine");
+            for (char& c : eng) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (get(v, "cap_point") == "present" && (eng.find("dxvk") != std::string::npos || eng.find("vkd3d") != std::string::npos))
+                out.push_back(T("   limite d'images sur un jeu Direct3D (DXVK / VKD3D) : le jeu garde une à deux images d'avance — "
+                                "la limite d'images du jeu (ou Reflex / Anti-Lag activé dans le jeu) est plus réactive",
+                                "   frame rate cap on a Direct3D game (DXVK / VKD3D): the game keeps one or two frames ahead — "
+                                "the game's own frame cap (or Reflex / Anti-Lag on in the game) responds faster"));
+        }
         if (!get(v, "passes").empty()) {
             std::string p = get(v, "passes");
             for (size_t i = 0; (i = p.find(',', i)) != std::string::npos; i += 2) p.replace(i, 1, ", ");

@@ -132,6 +132,17 @@ TEST(status_screen_timing_hint) {
     CHECK(lines().size() == 1);
     m[1].displayGrid = -1;  // not known: no line at all in the file
     CHECK(statusFormat("game", 1, 1, m).find("display_grid") == std::string::npos);
+    // fps_limit holding the present of a DXVK / VKD3D game: the queue hint;
+    // not when the game's Reflex / Anti-Lag sleep holds it.
+    m[1].fpsLimit = 40.0;
+    m[1].capPoint = "present";
+    m[1].engine = "vkd3d";
+    CHECK(lines().size() == 2 && lines()[1].find("Direct3D") != std::string::npos);
+    m[1].capPoint = "input";
+    CHECK(lines().size() == 1);
+    m[1].capPoint = "present";
+    m[1].engine = "Unreal Engine";
+    CHECK(lines().size() == 1);
 }
 
 TEST(status_anticheat_warning) {

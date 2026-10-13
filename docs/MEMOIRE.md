@@ -1447,3 +1447,32 @@ avec la limite du jeu) ; nouveaux enregistrements des deux jeux.
 - **Reste** : une rotation de ~500 px entre deux images reste détruite
   (même vue à 15 i/s équivalents) ; la grille d'affichage sous Wayland ;
   contours d'objets animés.
+
+### 13/10 (fin) — latence de l'interpolation, limite au point d'entrée
+
+Retour : « le framecap a toujours de la latence » ; demande : améliorer
+l'interpolation en latence et en qualité.
+
+- **Le limiteur et les jeux Direct3D sous Proton** : DXVK et VKD3D-Proton
+  appellent `vkQueuePresentKHR` depuis un fil à eux, et le jeu peut mettre
+  1 à 3 images en file (latence maximale DXGI). Retenir ce present remplit
+  la file : le jeu garde 1–2 images d'avance (30–55 ms à 36 i/s). Une
+  limite dans le jeu dort avant la lecture des entrées et ne file rien. Les
+  seuls points vus par la couche sur le fil du jeu : le sommeil Reflex
+  (`vkLatencySleepNV`) et l'étape « input » d'Anti-Lag → la limite y dort
+  (`DeviceData::capAtSleep`), le limiteur de present s'efface. Mesuré
+  (démo `--anti-lag`, couche Mesa) : ×1 6,6 ms (limite du jeu 6,7).
+- **Reflex bloqué par la couche** : `hide_present_ext` cache
+  `VK_KHR_present_id`, dont dépend `VK_NV_low_latency2` → DXVK / VKD3D
+  n'activent pas Reflex quand la couche est active. Piste : virtualiser
+  present_id / present_wait (identifiants du jeu ↔ présents réels de la
+  couche, attente sur l'affichage de l'image réelle, marqueurs traduits).
+- **Latence de l'interpolation, mesurée (démo 30 i/s, 144 Hz)** : ×1 5,1 ms ;
+  ×4 première image 11,7, image réelle 33,9 (la retenue 3/4 d'image du jeu =
+  25 ms) ; `interp_hold=auto` sans effet à ×4 sur 144 Hz (images déjà à
+  < 1,25 rafraîchissement) ; hybride 16,5 ms mais −0,6 à −1,1 dB et +15 à
+  +30 % de pixels faux sur les jeux enregistrés (extrapolation −2 à −3,5).
+- **Gain fait : la première image générée n'attend plus les autres**
+  (`FrameSlot::cmd2` / `firstFence`, ×3+ avec deux files) : 1440p
+  `quality`, réelle ×4 ~36 → ~32 ms, ×3 ~34 → ~30 ms. Validation de
+  synchronisation (×8, hybride) et Docker lavapipe verts.

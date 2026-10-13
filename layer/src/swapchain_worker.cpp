@@ -166,7 +166,9 @@ void VirtualSwapchain::runJob(const Job& job) {
         // shown. Evenly spaced too when the GPU keeps up: the generated frame
         // went out when ready, the real one half a frame after the call.
         clock::time_point origin = clock::now();
-        if (paced && n > 0) waitGpu(job.slot >= 0 ? slots_[size_t(job.slot)].fence : out[0].fence, false, origin);
+        // (Split: from when the first generated frame is ready, FrameSlot::cmd2.)
+        if (paced && n > 0)
+            waitGpu(job.firstReady ? job.firstReady : job.slot >= 0 ? slots_[size_t(job.slot)].fence : out[0].fence, false, origin);
         // The job's first frame went out a refresh or more after the first
         // one it could make once ready (paceTarget aims 0.3 refresh ahead):
         // the jobs before still held the refreshes — a lag that producing at

@@ -27,6 +27,8 @@ struct StatusEntry {
     // -1 not known (no feedback yet, or none).
     int displayGrid = -1;
     double fpsLimit = 0.0;   // fps_limit in force: the cap, -1 auto (screen / multiplier), 0 none
+    std::string capPoint;    // where fps_limit holds the game: "input" (Reflex / Anti-Lag), "present"
+    std::string engine;      // the application's engine name (VkApplicationInfo): DXVK, vkd3d...
     double latencyMs = -1.0; // present-to-screen, -1 unknown
     int budgetLevel = 0;     // gpu_budget quality level
     double uncertainPct = -1.0;  // flow_confidence: share of the flow not trusted, -1 not measured

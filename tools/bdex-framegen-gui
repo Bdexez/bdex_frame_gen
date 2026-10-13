@@ -96,6 +96,8 @@ _EN = {
  'fenêtre choisie': 'window picked',
  'Clique sur la fenêtre du jeu': "Click the game's window",
  'Méthode': 'Method',
+ "Limite d'images sur un jeu Direct3D (DXVK / VKD3D) : le jeu garde une à deux images d'avance — la limite d'images du jeu (ou Reflex / Anti-Lag activé dans le jeu) est plus réactive":
+     "Frame rate cap on a Direct3D game (DXVK / VKD3D): the game keeps one or two frames ahead — the game's own frame cap (or Reflex / Anti-Lag on in the game) responds faster",
  "Cadence de l'écran non mesurée : hors VRR, en ×3 et plus les images tombent entre deux rafraîchissements — « Limite d'images du jeu » sur Auto, ou un écran à un multiple exact du jeu (30 i/s ×4 → 120 Hz)":
      'Screen timing not measured: without VRR, at x3 and above frames fall between refreshes — set « Game frame rate cap » to Auto, or the screen to an exact multiple of the game (30 fps x4 -> 120 Hz)',
  "Limite d'images du jeu :": 'Game frame rate cap:',
@@ -2082,6 +2084,11 @@ def describe_entry(e):
         pass
     prefix = tr("En pause — ") if state == "paused" else ""
     lines = [prefix + " · ".join(parts)]
+    eng = e.get("engine", "").lower()
+    if e.get("cap_point") == "present" and ("dxvk" in eng or "vkd3d" in eng):
+        # (as statusDescribe in status.cpp: DXVK / VKD3D queue frames ahead of a held present)
+        lines.append(tr("Limite d'images sur un jeu Direct3D (DXVK / VKD3D) : le jeu garde une à deux images "
+                        "d'avance — la limite d'images du jeu (ou Reflex / Anti-Lag activé dans le jeu) est plus réactive"))
     if hint_grid:
         # (as statusDescribe in status.cpp: frames paced off the refresh grid)
         lines.append(tr("Cadence de l'écran non mesurée : hors VRR, en ×3 et plus les images tombent entre deux "
