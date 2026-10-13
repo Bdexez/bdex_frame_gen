@@ -1566,7 +1566,7 @@ def mirror_config():
 NOT_GAMES = {"steam", "steamwebhelper", "gamescope", "gamescopereaper", "gamescope-wl", "mangoapp",
              "steam-runtime-check-requirements", "chrome", "chromium",
              "firefox", "librewolf", "brave", "zen", "electron", "discord", "vesktop", "code",
-             "obs", "vulkaninfo", "vkcube", "bdex-framegen-gui"}
+             "obs", "vulkaninfo", "vkcube", "bdex-framegen-gui", "bdex-capture"}
 
 
 def layer_name(arg):
