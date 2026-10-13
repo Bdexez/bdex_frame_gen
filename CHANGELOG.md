@@ -6,6 +6,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Game frame-rate cap in the panel (2026-10-13)
+
+- « Limite d'images du jeu » moves from the advanced settings to the main
+  « Génération d'images » group: none, Auto (screen refresh ÷ multiplier) or
+  30–120 fps, applied live to the running game (`fps_limit`, the layer's
+  limiter, before generation). The row shows the caps that fill the screen
+  exactly (144 Hz: ×2 → 72, ×3 → 48, ×4 → 36). Text mode: `l`.
+
 ### Control panel: detection after a reinstall, narrow window (2026-10-13)
 
 - A game still running a layer that was reinstalled since is detected again:

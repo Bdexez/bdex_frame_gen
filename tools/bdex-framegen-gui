@@ -96,6 +96,17 @@ _EN = {
  'fenêtre choisie': 'window picked',
  'Clique sur la fenêtre du jeu': "Click the game's window",
  'Méthode': 'Method',
+ "Limite d'images du jeu :": 'Game frame rate cap:',
+ ' · jeu limité à {} i/s': ' · game capped at {} fps',
+ " · jeu limité à l'écran ÷ multiplicateur": ' · game capped at screen ÷ multiplier',
+ "l limite d'images du jeu (avant la génération)": 'l game frame rate cap (before generation)',
+ 'Aucune': 'None',
+ '{} i/s': '{} fps',
+ 'Écran {} Hz : ': '{} Hz screen: ',
+ ' i/s': ' fps',
+ "Limite d'images du jeu": "Game frame rate cap",
+ 'Avant la génération : une base régulière donne une image fluide. Auto = écran ÷ multiplicateur':
+     'Before generation: an even base rate gives smooth motion. Auto = screen ÷ multiplier',
  'Injection : dans la présentation du jeu, la latence la plus basse (jeux Vulkan, Proton). Capture : tout jeu, une image de latence en plus, sur le GPU de son choix': "Injection: inside the game's presentation, the lowest latency (Vulkan games, Proton). Capture: any game, a frame more latency, on the GPU of your choice",
  'GPU de génération': 'Generation GPU',
  'Un autre GPU que celui du jeu : capture sur ce GPU (le jeu rend sur le sien)': "Another GPU than the game's: capture on that GPU (the game renders on its own)",
@@ -967,6 +978,43 @@ def _combo_index(table, value, default=0):
         if v == value:
             return i
     return default
+
+
+# Options with a control of their own in the main groups, not repeated in
+# « Réglages avancés » (their value still lives in Options.values).
+PROMOTED = {"fps_limit"}
+LIMIT_STEPS = (30, 36, 40, 45, 48, 50, 60, 72, 90, 120)
+
+
+def limit_choices(current="0"):
+    """[(label, value)] of the « Limite d'images du jeu » row: none, auto, the
+    usual caps, and the current value if it is another one (set by hand)."""
+    table = [(tr("Aucune"), "0"), ("Auto", "auto")]
+    table += [(tr(f"{n} i/s"), str(n)) for n in LIMIT_STEPS]
+    cur = limit_value(current)
+    if cur not in [v for _, v in table]:
+        table.append((tr(f"{cur} i/s"), cur))
+    return table
+
+
+def limit_value(raw):
+    """fps_limit as the row stores it: "0", "auto" or a whole number."""
+    raw = (raw or "0").strip().lower()
+    if raw in ("auto", "-1"):
+        return "auto"
+    try:
+        v = float(raw)
+    except ValueError:
+        return "0"
+    return "auto" if v < 0 else _fmt_num(v, 0) if v == int(v) else _fmt_num(v, 1)
+
+
+def limit_hint(hz):
+    """The caps that fill a fixed-refresh screen exactly, per multiplier."""
+    if hz <= 0:
+        return ""
+    caps = [f"×{m} → {hz / m:.0f}" for m in (2, 3, 4) if hz / m >= 25]
+    return tr(f"Écran {hz:.0f} Hz : ") + ", ".join(caps) + tr(" i/s")
 
 
 # ---------------------------------------------------------------------------
@@ -2521,6 +2569,18 @@ class Window(Adw.ApplicationWindow):
                                    else max(2, min(8, self.opt.multiplier)))
         self.mult_row.connect("notify::selected", self.on_change)
         g.add(self.mult_row)
+        # The game's own rate, capped before generation: an even base gives
+        # evenly spaced generated frames (fps_limit, applied live).
+        self.limit_choices = limit_choices(self.opt.values.get("fps_limit", "0"))
+        hint = limit_hint(display_hz())
+        self.limit_row = Adw.ComboRow(
+            title=tr("Limite d'images du jeu"),
+            subtitle=tr("Avant la génération : une base régulière donne une image fluide. "
+                        "Auto = écran ÷ multiplicateur") + ("\n" + hint if hint else ""),
+            model=Gtk.StringList.new([c[0] for c in self.limit_choices]))
+        self.limit_row.set_selected(_combo_index(self.limit_choices, limit_value(self.opt.values.get("fps_limit"))))
+        self.limit_row.connect("notify::selected", self.on_change)
+        g.add(self.limit_row)
         self.mode_row = Adw.ComboRow(title="Mode",
                                      subtitle=tr("L'extrapolation supprime la latence ajoutée"),
                                      model=Gtk.StringList.new([m[0] for m in MODES]))
@@ -2617,6 +2677,8 @@ class Window(Adw.ApplicationWindow):
             g.add(exp)
             self.section_rows[sid] = (exp, needs_gen)
             for o in opts:
+                if o["key"] in PROMOTED:
+                    continue
                 value = self.opt.values[o["key"]]
                 if o["kind"] == "spin":
                     adj = Gtk.Adjustment(lower=o["lower"], upper=o["upper"], step_increment=o["step"],
@@ -2661,6 +2723,8 @@ class Window(Adw.ApplicationWindow):
         o.method = METHODS[self.method_row.get_selected()][1]
         i = self.gpu_row.get_selected()
         o.gpu = self.gpus[i - 1] if 0 < i <= len(self.gpus) else ""
+        if "fps_limit" in o.values:
+            o.values["fps_limit"] = self.limit_choices[self.limit_row.get_selected()][1]
         for key, (spec, row) in self.opt_rows.items():
             if spec["kind"] == "spin":
                 v = row.get_value()
@@ -2779,7 +2843,10 @@ def _text_options(opt):
         if opt.generate else tr("désactivé")
     mode = {m: lab.split(" —")[0].split(" (")[0] for lab, m in MODES}.get(opt.mode, opt.mode)
     hud = dict((v, lab) for lab, v in HUD_MODES).get(opt.hud, str(opt.hud))
+    limit = limit_value(opt.values.get("fps_limit"))
     return (tr(f"multiplicateur {mult} · mode {mode} · préréglage {opt.preset} · compteur {hud}")
+            + ("" if limit == "0" else tr(f" · jeu limité à {limit} i/s") if limit != "auto"
+               else tr(" · jeu limité à l'écran ÷ multiplicateur"))
             + (tr(" · mode Jeu : tous les jeux sans le panneau") if opt.without_panel else ""))
 
 
@@ -2915,6 +2982,7 @@ def text_main():
             print(tr("[numéro] démarrer dans ce jeu · a arrêter · r actualiser · m multiplicateur · "
                   "o mode · p préréglage · h compteur · j mode Jeu · s options Steam · b signaler un problème · q quitter"))
             print(tr("w capturer une autre fenêtre · c méthode · g GPU de génération · e enregistrer (corpus)"))
+            print(tr("l limite d'images du jeu (avant la génération)"))
             print(tr("k calibrer le GPU") + (tr(" · y fenêtre Wayland (portail)") if capture_wayland_available() else ""))
             try:
                 cmd = input("> ").strip().lower()
@@ -2996,6 +3064,13 @@ def text_main():
                 opt.auto_mult = v == "auto"
                 if v.isdigit() and v != "1":
                     opt.multiplier = int(v)
+                save()
+            elif cmd == "l" and "fps_limit" in opt.values:
+                hint = limit_hint(display_hz())
+                if hint:
+                    print(hint)
+                cur = limit_value(opt.values["fps_limit"])
+                opt.values["fps_limit"] = _text_pick(tr("Limite d'images du jeu :"), limit_choices(cur), cur)
                 save()
             elif cmd == "o":
                 opt.mode = _text_pick(tr("Mode :"), MODES, opt.mode)
