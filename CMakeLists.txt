@@ -135,6 +135,22 @@ if(WIN32 AND MSVC AND BDEX_BUILD_CAPTURE AND NOT BDEX_32BIT AND CMAKE_SIZEOF_VOI
   add_subdirectory(capture)
 endif()
 
+# bdex-capture on Linux (capture/linux): X11 / Xwayland capture.
+if(BDEX_BUILD_CAPTURE AND NOT BDEX_32BIT AND NOT WIN32 AND NOT APPLE)
+  find_package(PkgConfig QUIET)
+  find_package(Threads)
+  if(PkgConfig_FOUND)
+    pkg_check_modules(BDEX_X11 IMPORTED_TARGET x11 xcomposite xdamage xext xfixes)
+  endif()
+  if(BDEX_X11_FOUND AND TARGET Vulkan::Vulkan)
+    add_subdirectory(capture/linux)
+  elseif(BDEX_X11_FOUND)
+    message(STATUS "Vulkan loader (libvulkan) not found: bdex-capture not built")
+  else()
+    message(STATUS "X11 capture libraries (x11 xcomposite xdamage xext xfixes) not found: bdex-capture not built")
+  endif()
+endif()
+
 if(BDEX_BUILD_OFFLINE AND NOT BDEX_32BIT AND NOT WIN32)
   add_subdirectory(tools/offline)
 endif()
