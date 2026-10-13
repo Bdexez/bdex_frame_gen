@@ -549,6 +549,36 @@ lancé sur un vrai Deck** : à valider (Decky « Installer depuis un ZIP »).
   installer l'archive x86_64 à côté ne marche pas non plus (même nom de
   manifeste, `library_arch` ne distingue que 32/64). Non couvert.
 
+### 4.5 bis Linux, génération par capture (`bdex-capture`)
+
+Depuis le 03/10 (`capture/linux`). Pour les jeux où la couche se retire
+(anti-triche), les programmes qui ne présentent pas en Vulkan, et **deux
+GPU** : `--gpu` fait générer sur le GPU de l'écran pendant que le jeu rend
+sur l'autre (le mode deux GPU de Lossless Scaling).
+
+**Chaîne** : fenêtre du jeu redirigée hors écran (XComposite, automatique :
+l'overlay ne se capture pas lui-même), une image = un événement XDamage,
+lue par XShm dans un anneau de 3 segments alignés page, importés tels quels
+en mémoire hôte (`VK_EXT_external_memory_host`, NVIDIA et lavapipe
+acceptent ; sinon copie) → historique → `FrameGen` inchangé → swapchain
+Xlib d'une fenêtre override-redirect **sans région d'entrée** (clics et
+touches vont au jeu), relevée toutes les 250 ms, qui suit la fenêtre.
+Cadencement repris de la capture Windows (images prédites abandonnées dès
+qu'une nouvelle image du jeu arrive). Réglages : fichier de config avec la
+section du jeu (processus de la fenêtre, `.exe` sous Proton), `BDEX_FG_*`,
+puis `-m/--mode/--preset/--hud`. Ctrl+Alt+G / Ctrl+Alt+Q.
+
+**Mesures** (RTX 3060 Ti, gamescope headless sans sa couche WSI, jeu à
+60 i/s, 144 Hz) : ×2 120 i/s, 10,4 ms de l'arrivée de l'image à l'écran en
+interpolation, 0,6 ms en extrapolation ; hybride ×3 178 i/s, 7,8 ms. Piège
+corrigé : une image du jeu repérée pendant l'attente d'une prédite faisait
+encore attendre 20 ms dans `pump()` (l'hybride tombait à 30 i/s).
+
+**Limites** : pas sous gamescope (mode Jeu du Deck : les jeux y présentent
+par la couche WSI de gamescope, la fenêtre X reste vide), pas de fenêtre
+Wayland native (portail PipeWire à faire), lavapipe trop lent pour les
+prédites (normal : elles arrivent après l'image suivante du jeu).
+
 ### 4.6 Windows, mode 1 — la couche Vulkan
 
 **Installation et configuration**

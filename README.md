@@ -98,6 +98,7 @@ covers more than native Vulkan games:
 | Windows games outside Steam (Wine, Lutris, Heroic, Bottles) | Enable DXVK in the runner and set `BDEX_FG=1` in the environment | Same as above |
 | Native Linux **OpenGL** | `bdex-framegen --gl -- game`: Mesa's Zink runs OpenGL on Vulkan (`MESA_LOADER_DRIVER_OVERRIDE=zink`, plus `__GLX_VENDOR_LIBRARY_NAME=mesa` and the Mesa EGL vendor — without them the NVIDIA driver keeps the game on its own GL, silently out of reach) | Works (`glxgears` 900 → 1800 fps on NVIDIA, an SDL3 game); Zink itself can be slower than the native GL driver on some games and iGPUs |
 | Emulators, 2D engines, anything else | Run it inside [gamescope](https://github.com/ValveSoftware/gamescope) with its SDL backend: `BDEX_FG=1 gamescope --backend sdl -- game` — the compositor presents the whole game through its own Vulkan swapchain. The shipped `[gamescope]` profile exposes `VK_KHR_present_id`/`present_wait`, which gamescope requires. Put `enabled = 1` in a `[gamescope]` section (rather than `BDEX_FG=1`) to avoid generating twice for a Vulkan game inside it. The default Wayland backend presents without a swapchain: no generation there | Works (`glxgears` 337 → 675 fps) |
+| Games with anti-cheat (the layer stays out), non-Vulkan programs | `bdex-capture` (capture, see [Capture mode](#capture-mode-bdex-capture-anti-cheat-games-a-second-gpu)) — X11 / Xwayland windows | Works (x2 at 0.6–10 ms on a GPU, plus the X server's round trip) |
 | Software rendering / no GPU presentation | — | Not possible |
 
 The layer never sees game logic or input: it only interpolates what reaches
@@ -384,6 +385,40 @@ gamescope's own refresh rate (and the limit) comes from its WSI layer, so
 through, metadata included. On the Deck's integrated GPU the automatic preset
 is *performance*. The same holds in any gamescope session (Bazzite,
 ChimeraOS...).
+
+### Capture mode: `bdex-capture` (anti-cheat games, a second GPU)
+
+`bdex-capture` generates frames for a game **window** by capture, like
+Lossless Scaling, instead of inside the game: nothing is loaded into the
+game. Use it for the games the layer stays out of (anti-cheat), for programs
+that do not present through Vulkan, and to generate on **another GPU** than
+the game's — the one driving the screen (`--gpu`), Lossless Scaling's
+two-GPU setup.
+
+```sh
+bdex-capture --list                       # the windows it can capture
+bdex-capture --name "Game title" -m 2     # or --pid PID, --window 0xID; nothing: click the window
+bdex-capture --list-gpus                  # then --gpu 1 (or a part of its name: --gpu radeon)
+```
+
+X11 sessions and Xwayland windows (most Proton games on a Wayland desktop):
+the game window is redirected off-screen (XComposite), each new frame comes
+as an XDamage event and is read with MIT-SHM straight into GPU-visible memory
+(host-memory import, no copy where the driver allows it); an
+override-redirect overlay without input region shows the real and generated
+frames above the game and follows it, clicks and keys going through to it.
+The settings are the layer's (configuration file with the game's `[section]`,
+`BDEX_FG_*`), then `-m`, `--mode`, `--preset`, `--hud`. Ctrl+Alt+G toggles
+the generation, Ctrl+Alt+Q quits (`--hotkey` rebinds the toggle).
+
+Measured on an RTX 3060 Ti (a 60 fps game, 144 Hz): x2 120 fps with 10 ms
+from the game's frame to the screen in interpolation, 0.6 ms in
+extrapolation; hybrid x3 178 fps, 8 ms (from the frame's arrival at the X
+server: the game's own presentation to it and the compositing of the overlay
+come on top). The layer, inside the game's presentation, stays the first
+choice when it can load. Not available: inside gamescope (Steam Deck Game Mode), where games
+present through gamescope's own WSI layer, not to the X window; native
+Wayland windows (the PipeWire screen-cast portal is not implemented yet).
 
 ### Turning it on by hand
 

@@ -231,6 +231,19 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Linux distributions
 
+- **`bdex-capture` on Linux** (`capture/linux`): frame generation for a game
+  window by capture, as the Windows capture app does — nothing loaded into
+  the game: the games the layer stays out of (anti-cheat), non-Vulkan
+  programs, and **two GPUs** (`--gpu`: the generation on the GPU driving the
+  screen, the game on another one, Lossless Scaling's setup). X11 and
+  Xwayland windows: XComposite + XDamage + MIT-SHM, the segments imported
+  as host memory (no copy) where the driver allows it, an override-redirect
+  overlay without input region following the game. Measured on an RTX 3060
+  Ti, a 60 fps game: x2 at 10 ms from the frame's arrival to the screen
+  (interpolation), 0.6 ms (extrapolation), hybrid x3 178 fps at 8 ms. Test
+  `capture_linux` (Xvfb + lavapipe in CI): the ratio, and the overlay's
+  pixels against the game window's. Not inside gamescope (games present
+  through its WSI layer), nor native Wayland windows yet.
 - **The control panel and the Windows launcher in English** when the
   system language is not French (`LANGUAGE`, `LC_ALL`, `LC_MESSAGES`,
   `LANG`; on Windows the display language), French otherwise;
