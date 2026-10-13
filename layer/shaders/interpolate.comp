@@ -323,7 +323,7 @@ void main() {
             }
         }
         if (kSplat && pc.splat != 0) {
-            uint key = splatMap.key[p.y * 2 * pc.size.x + p.x];
+            uint key = splatMap.key[p.y * pc.size.x + p.x];
             if (key != 0xFFFFFFFFu) {
                 // A pixel of cur landed here: sample it, shifted by the
                 // sub-pixel offset between where it lands and q.

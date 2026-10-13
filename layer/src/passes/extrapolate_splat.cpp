@@ -2,6 +2,7 @@
 // position before an extrapolated synthesis (see shaders/splat.comp); the
 // synthesis takes each pixel's source from the splat map where one landed
 // and backward-warps only the uncovered areas.
+#include <algorithm>
 #include "fg_pass.h"
 #include "framegen_internal.h"
 #include "shaders.h"
@@ -21,10 +22,12 @@ public:
     void create(FgContext& ctx) override {
         const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SB = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         pipe_ = ctx.makePipeline(splat_comp, splat_comp_size, {CIS, CIS, SB, SB, CIS});
-        // Twice the display's width: extrapolation uses the left half;
-        // interp_splat prev's projection there and cur's on the right.
+        // Extrapolation: a key per display pixel; interp_splat: prev's and
+        // cur's half-resolution grids side by side (see splat.comp).
         const VkExtent2D d = ctx.displayExtent();
-        map_ = ctx.device().createBuffer(4 * VkDeviceSize(2 * d.width) * d.height,
+        const VkDeviceSize keys = std::max<VkDeviceSize>(VkDeviceSize(d.width) * d.height,
+                                                         2 * VkDeviceSize((d.width + 1) / 2) * ((d.height + 1) / 2));
+        map_ = ctx.device().createBuffer(4 * keys,
                                          VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         const FgFineLevel l0 = ctx.fineLevel();
         set_ = ctx.allocSet(pipe_.setLayout);
@@ -50,7 +53,8 @@ public:
         const float sx = float(d.width) / r.width, sy = float(d.height) / r.height, fs = ctx.flowToRender();
         // (no key: nothing landed) — interp_splat's half-resolution map is a quarter of it
         const uint32_t hw = (d.width + 1) / 2, hh = (d.height + 1) / 2;
-        vt.CmdFillBuffer(cmd, map_.buffer, 0, extrap ? VK_WHOLE_SIZE : 4 * VkDeviceSize(2 * hw) * hh, 0xFFFFFFFFu);
+        vt.CmdFillBuffer(cmd, map_.buffer, 0, extrap ? 4 * VkDeviceSize(d.width) * d.height : 4 * VkDeviceSize(2 * hw) * hh,
+                          0xFFFFFFFFu);
         ctx.barrier(cmd);
         vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe_.pipeline);
         SplatPC pc{{(int32_t)d.width, (int32_t)d.height}, t - 1.f, fs * sx,
