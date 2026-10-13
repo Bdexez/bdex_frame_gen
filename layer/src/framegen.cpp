@@ -209,9 +209,9 @@ void FrameGen::createPipelines() {
         reduce_ = makePass(reduce_cost_comp, reduce_cost_comp_size, {SI, SB});
         // With sharpening, the interpolation writes a linear rgba16f image that
         // the CAS pass then sharpens and packs; otherwise it packs directly.
-        if (sharpen_)       interp_ = makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS, CIS, SB, SB}, true);
-        else if (enc_.is64) interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS, CIS, SB, SB}, true);
-        else                interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS, CIS, SB, SB}, true);
+        if (sharpen_)       interp_ = makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SB, CIS, CIS, CIS, SB, SB}, true);
+        else if (enc_.is64) interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB, SB, CIS, CIS, CIS, SB, SB}, true);
+        else                interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB, SB, CIS, CIS, CIS, SB, SB}, true);
         frameState_ = makePass(frame_state_comp, frame_state_comp_size, {CIS, CIS, SB});
         sceneHist_ = makePass(scene_hist_comp, scene_hist_comp_size, {CIS, CIS, SB});
         if (chroma_) downChroma_ = makePass(downsample_chroma_comp, downsample_chroma_comp_size, {CIS, SI});
@@ -306,8 +306,8 @@ void FrameGen::createResources() {
         gateDupReal_ = gate(divUp(displayExtent_.width, 16), divUp(displayExtent_.height, 16), true);
         if (gateFull_.size() / 4 > kGateEntries) throw VkError(VK_ERROR_INITIALIZATION_FAILED, "too many gated dispatches");
         // Bound as the synthesis's splat map until extrapolate_splat provides one.
-        splatDummy_ = dev_.createImage(VK_FORMAT_R32_UINT, {1, 1}, VK_IMAGE_USAGE_STORAGE_BIT, true);
-        splatMap_ = splatDummy_.view;
+        splatDummy_ = dev_.createBuffer(16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        splatMap_ = splatDummy_.buffer;
         // Small (finest flow resolution); created in either mode so that
         // extrapolate_accel can be toggled live.
         // alt_vectors: the finest level's second hypotheses (block resolution).
@@ -356,7 +356,6 @@ void FrameGen::createResources() {
             for (auto& i : lv.cost) add(i);
         }
         for (auto& o : out_) add(o);
-        if (splatDummy_.image) add(splatDummy_);
         if (prevBwd_.image) add(prevBwd_);
         if (chromaDummy_.image) add(chromaDummy_);
         if (maskDummy_.image) add(maskDummy_);
@@ -551,7 +550,7 @@ void FrameGen::createDescriptors() {
                 writeImage(s, 3, CIS, levels_v_[0].flowFine[1].view);
                 writeImage(s, 4, SI, (sharpen_ ? sharp_[o] : out_[o]).view);
                 writeBuffer(s, 5, stateBuf_.buffer);
-                writeImage(s, 6, SI, splatMap_);
+                writeBuffer(s, 6, splatMap_);
                 writeImage(s, 7, CIS, prevBwd_.view);
                 writeImage(s, 8, CIS, staticMask_);
                 writeImage(s, 9, CIS, confMap_);
@@ -568,7 +567,7 @@ void FrameGen::createDescriptors() {
                 writeImage(s, 3, CIS, levels_v_[0].flowFine[1].view);
                 writeImage(s, 4, SI, (sharpen_ ? sharpReal_ : outReal_).view);
                 writeBuffer(s, 5, stateBuf_.buffer);
-                writeImage(s, 6, SI, splatMap_);
+                writeBuffer(s, 6, splatMap_);
                 writeImage(s, 7, CIS, prevBwd_.view);
                 writeImage(s, 8, CIS, staticMask_);
                 writeImage(s, 9, CIS, confMap_);
@@ -627,7 +626,7 @@ VkDescriptorSet FrameGen::synthesisSet(VkImageView prev, VkImageView cur, uint32
 FgPipeline FrameGen::makeLinearSynthesisPipeline() {
     const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
                            SB = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    return makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SI, CIS, CIS, CIS, SB, SB});
+    return makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SB, CIS, CIS, CIS, SB, SB});
 }
 
 VkDescriptorSet FrameGen::synthesisSetFor(VkDescriptorSetLayout layout, VkImageView prev, VkImageView cur,
@@ -640,7 +639,7 @@ VkDescriptorSet FrameGen::synthesisSetFor(VkDescriptorSetLayout layout, VkImageV
     writeImage(s, 3, CIS, bwd);
     writeImage(s, 4, SI, out);
     writeBuffer(s, 5, stateBuf_.buffer);
-    writeImage(s, 6, SI, splatMap_);
+    writeBuffer(s, 6, splatMap_);
     writeImage(s, 7, CIS, prevBwd_.view);
     writeImage(s, 8, CIS, staticMask_);
     writeImage(s, 9, CIS, confMap_);
@@ -650,9 +649,9 @@ VkDescriptorSet FrameGen::synthesisSetFor(VkDescriptorSetLayout layout, VkImageV
     return s;
 }
 
-void FrameGen::setSplatMap(VkImageView view) {
-    splatMap_ = view;
-    for (VkDescriptorSet s : synthSets_) writeImage(s, 6, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, view);
+void FrameGen::setSplatMap(VkBuffer map) {
+    splatMap_ = map;
+    for (VkDescriptorSet s : synthSets_) writeBuffer(s, 6, map);
 }
 
 void FrameGen::dispatchSynthesisSize(VkCommandBuffer cmd, bool gated) {
@@ -712,7 +711,7 @@ void FrameGen::destroyAll() {
     levels_v_.clear();
     for (auto& o : out_) dev_.destroyImage(o);
     out_.clear();
-    if (splatDummy_.image) dev_.destroyImage(splatDummy_);
+    if (splatDummy_.buffer) dev_.destroyBuffer(splatDummy_);
     splatMap_ = VK_NULL_HANDLE;
     if (prevBwd_.image) dev_.destroyImage(prevBwd_);
     if (chromaDummy_.image) dev_.destroyImage(chromaDummy_);

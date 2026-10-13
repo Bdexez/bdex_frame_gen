@@ -45,7 +45,7 @@ layout(std430, binding = 5) readonly buffer Cost {
     float t[8];       // [timing - 1]; [7] = the real frame's slot
     float tileCost[64];  // scene_cut_local grid (reduce_cost.comp)
 } cost;
-layout(binding = 6, r32ui) uniform readonly uimage2D splatMap;  // forward-splat sources (extrapolation, see splat.comp)
+layout(std430, binding = 6) readonly buffer SplatMap { uint key[]; } splatMap;  // forward-splat sources (extrapolation, see splat.comp)
 layout(binding = 7) uniform sampler2D prevBwdTex;  // previous pair's backward flow (extrapolate_accel)
 layout(binding = 8) uniform sampler2D staticMask;  // hud_mask: frames each render pixel stayed unchanged (1x1 zero when off)
 layout(binding = 9) uniform sampler2D confMap;     // flow_confidence: trust in the finest flow, 0..1 (1x1 one when off)
@@ -304,7 +304,7 @@ void main() {
             }
         }
         if (kOptIns && pc.splat != 0) {
-            uint key = imageLoad(splatMap, p).r;
+            uint key = splatMap.key[p.y * 2 * pc.size.x + p.x];
             if (key != 0xFFFFFFFFu) {
                 // A pixel of cur landed here: sample it, shifted by the
                 // sub-pixel offset between where it lands and q.
@@ -347,7 +347,9 @@ void main() {
         // and only where the trajectory found is imperfect (error > 0.02: a
         // still HUD pixel the moving background lands on keeps its own
         // trajectory — without it HUD -0.12 dB on top of pixel_vectors).
-        uint kp = imageLoad(splatMap, p).r;
+        // (The error test first: the candidates, 4 samples, are only
+        // evaluated where they can be kept — same output, a third less work.)
+        uint kp = ef > 0.02 ? splatMap.key[p.y * 2 * pc.size.x + p.x] : 0xFFFFFFFFu;
         if (kp != 0xFFFFFFFFu) {
             uint index = kp & 0x7FFFFFu;
             vec2 src = vec2(float(index % uint(pc.size.x)), float(index / uint(pc.size.x))) + 0.5;
@@ -355,9 +357,9 @@ void main() {
             vec2 ps = q - t * Fs;
             vec4 a = sampleC(prevTex, ps / fsize), b = sampleC(curTex, (ps + Fs) / fsize);
             float e = colourError(a, b);
-            if (ef > 0.02 && e < 0.9 * ef) { ef = e; F = Fs; pf = ps; cf = a; cf2 = b; }
+            if (e < 0.9 * ef) { ef = e; F = Fs; pf = ps; cf = a; cf2 = b; }
         }
-        uint kc = imageLoad(splatMap, p + ivec2(pc.size.x, 0)).r;
+        uint kc = eb > 0.02 ? splatMap.key[p.y * 2 * pc.size.x + p.x + pc.size.x] : 0xFFFFFFFFu;
         if (kc != 0xFFFFFFFFu) {
             uint index = kc & 0x7FFFFFu;
             vec2 src = vec2(float(index % uint(pc.size.x)), float(index / uint(pc.size.x))) + 0.5;
@@ -365,7 +367,7 @@ void main() {
             vec2 ps = q - (1.0 - t) * Bs;
             vec4 a = sampleC(curTex, ps / fsize), b = sampleC(prevTex, (ps + Bs) / fsize);
             float e = colourError(a, b);
-            if (eb > 0.02 && e < 0.9 * eb) { eb = e; B = Bs; pb = ps; cb = a; cb2 = b; }
+            if (e < 0.9 * eb) { eb = e; B = Bs; pb = ps; cb = a; cb2 = b; }
         }
     }
 

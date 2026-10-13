@@ -19,25 +19,24 @@ public:
     }
 
     void create(FgContext& ctx) override {
-        const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                               SB = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        pipe_ = ctx.makePipeline(splat_comp, splat_comp_size, {CIS, CIS, SI, SB, CIS});
+        const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SB = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        pipe_ = ctx.makePipeline(splat_comp, splat_comp_size, {CIS, CIS, SB, SB, CIS});
         // Twice the display's width: extrapolation uses the left half;
         // interp_splat prev's projection there and cur's on the right.
         const VkExtent2D d = ctx.displayExtent();
-        map_ = ctx.createImage(VK_FORMAT_R32_UINT, {2 * d.width, d.height},
-                               VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+        map_ = ctx.device().createBuffer(4 * VkDeviceSize(2 * d.width) * d.height,
+                                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         const FgFineLevel l0 = ctx.fineLevel();
         set_ = ctx.allocSet(pipe_.setLayout);
         ctx.writeImage(set_, 0, CIS, l0.flow[0]);
         ctx.writeImage(set_, 1, CIS, l0.flow[1]);
-        ctx.writeImage(set_, 2, SI, map_.view);
+        ctx.writeBuffer(set_, 2, map_.buffer);
         ctx.writeBuffer(set_, 3, ctx.stateBuffer());
         ctx.writeImage(set_, 4, CIS, ctx.previousBackwardFlow());
-        ctx.setSplatMap(map_.view);
+        ctx.setSplatMap(map_.buffer);
     }
     void destroy(FgContext& ctx) override {
-        if (map_.image) ctx.device().destroyImage(map_);
+        if (map_.buffer) ctx.device().destroyBuffer(map_);
         ctx.destroyPipeline(pipe_);
     }
 
@@ -49,10 +48,7 @@ public:
         const FgFineLevel l0 = ctx.fineLevel();
         const VkExtent2D d = ctx.displayExtent(), r = ctx.renderExtent();
         const float sx = float(d.width) / r.width, sy = float(d.height) / r.height, fs = ctx.flowToRender();
-        VkClearColorValue none{};
-        none.uint32[0] = 0xFFFFFFFFu;
-        VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        vt.CmdClearColorImage(cmd, map_.image, VK_IMAGE_LAYOUT_GENERAL, &none, 1, &range);
+        vt.CmdFillBuffer(cmd, map_.buffer, 0, VK_WHOLE_SIZE, 0xFFFFFFFFu);  // (no key: nothing landed)
         ctx.barrier(cmd);
         vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe_.pipeline);
         SplatPC pc{{(int32_t)d.width, (int32_t)d.height}, t - 1.f, fs * sx,
@@ -71,7 +67,7 @@ public:
 
 private:
     FgPipeline pipe_;
-    AllocatedImage map_;  // forward-splat targets (display size)
+    AllocatedBuffer map_;  // forward-splat targets (2 x display size, see splat.comp)
     VkDescriptorSet set_ = VK_NULL_HANDLE;
 };
 

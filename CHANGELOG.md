@@ -6,6 +6,17 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Performance
+
+- **Synthesis 20 % cheaper on discrete GPUs** (1440p x2, RTX 3060 Ti:
+  1.20 → 0.95 ms; the whole generation 1.63 → 1.38 ms), same frames bit for
+  bit: the splat map of `interp_splat` / `extrapolate_splat` is a storage
+  buffer (cleared by `vkCmdFillBuffer`, buffer atomics) instead of an r32ui
+  image (its clear alone took 0.18 ms, its image atomics as much), and the
+  synthesis tests the error that decides whether a splatted candidate can be
+  kept before evaluating it (4 samples a pixel saved where the trajectory
+  found is already good — most of a frame).
+
 ### Quality
 
 - **`rot_weight` on by default on discrete GPUs, in a matcher variant of its
