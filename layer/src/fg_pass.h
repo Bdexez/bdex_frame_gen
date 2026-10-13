@@ -132,6 +132,10 @@ public:
     // pass provides it), and its counts: uncertain / all flow texels of a frame.
     virtual void setConfidenceMap(VkImageView view) = 0;
     virtual void reportConfidence(uint32_t uncertain, uint32_t total) = 0;
+    // interp_accel's map (rg32f, finest flow size: the acceleration of the
+    // content at each flow texel of cur, display pixels per frame squared)
+    // every synthesis reads (a 1x1 zero one until a pass provides it).
+    virtual void setAccelMap(VkImageView view) = 0;
     // A dispatch over the display in 16x16 groups — or, `gated`, through the
     // frame state's "only on repeated frames" entry (dedup's replacement).
     virtual void dispatchSynthesisSize(VkCommandBuffer cmd, bool gated) = 0;

@@ -24,6 +24,7 @@ bdex_add_shaders(bdex_layer_shaders
     shaders/flow_lk.comp
     shaders/hud_mask.comp
     shaders/flow_confidence.comp
+    shaders/accel_map.comp
     shaders/learned_correction.comp
     shaders/learned_flow.comp
     shaders/luma_match.comp:f32
