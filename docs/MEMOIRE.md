@@ -839,6 +839,16 @@ Le détail de toutes les mesures est dans AGENTS.md §10 et le CHANGELOG.
 
 ## 9. Problèmes connus et pistes
 
+**Essais écartés (03/10, coût GPU)** : splat d'extrapolation à demi-résolution
+(un pixel par bloc 2×2) — la carte y est la source même des pixels, pas un
+candidat : rotation −13 dB, popup −1,6, occlusion −1,1. (Celui de
+`interp_splat`, un candidat, est à demi-résolution sans perte.) Constat à
+creuser : à 960×540, `extrapolate_splat` n'est pas net (pan −0,26 dB,
+HUD −0,19, rotation +0,14) — les +0,9 à +1,2 dB d'origine étaient mesurés
+avec `reveal_fill`, à ×3. Tranché le 03/10 sur des enregistrements de la
+démo (960×540) : +0,41 dB en extrapolation ×2 (rapide +0,05, hybride +0,05)
+→ gardé par défaut ; `reveal_fill`, lui, est net partout (pan −1,8 dB sans).
+
 **Création du device, nouvel essai** (corrigé le 02/10) : chaque couche
 du dessous avance la même chaîne de liens en appelant plus bas ; un second
 `vkCreateDevice` (repli sans retour d'affichage, sans priorité) repartait
