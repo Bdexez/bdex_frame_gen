@@ -8,7 +8,7 @@
 namespace bdex {
 namespace {
 
-struct HudMaskPC { int32_t size[2]; int32_t slot; uint32_t moving; };
+struct HudMaskPC { int32_t size[2]; int32_t slot; uint32_t moving; float flowInv[2]; float flowScale; };
 
 class HudMaskPass : public FgPass {
 public:
@@ -18,8 +18,9 @@ public:
         const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
                                SB = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         DeviceData& dev = ctx.device();
-        pipe_ = ctx.makePipeline(hud_mask_comp, hud_mask_comp_size, {CIS, CIS, SI, SB});
-        mask_ = ctx.createImage(VK_FORMAT_R32_SFLOAT, ctx.renderExtent(),
+        pipe_ = ctx.makePipeline(hud_mask_comp, hud_mask_comp_size, {CIS, CIS, SI, SB, CIS});
+        // (r: frames unchanged; g: static_soft's evidence)
+        mask_ = ctx.createImage(VK_FORMAT_R32G32_SFLOAT, ctx.renderExtent(),
                                 VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
         counts_ = dev.createBuffer(8, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, false);
         dev.immediate([&](VkCommandBuffer cmd) {
@@ -36,6 +37,7 @@ public:
                 ctx.writeImage(s, 1, CIS, ctx.sourceView(cur));
                 ctx.writeImage(s, 2, SI, mask_.view);
                 ctx.writeBuffer(s, 3, counts_.buffer);
+                ctx.writeImage(s, 4, CIS, ctx.fineLevel().flow[1]);  // this frame's backward flow (static_soft)
                 sets_.push_back(s);
             }
         ctx.setStaticMask(mask_.view);
@@ -57,7 +59,10 @@ public:
         slot_ ^= 1;
         vt.CmdFillBuffer(cmd, counts_.buffer, 4 * VkDeviceSize(slot_), 4, 0);
         ctx.barrier(cmd);
-        HudMaskPC pc{{(int32_t)e.width, (int32_t)e.height}, (int32_t)slot_, (e.width * e.height) / 4};
+        const FgFineLevel l0 = ctx.fineLevel();
+        const float f2r = ctx.flowToRender();
+        HudMaskPC pc{{(int32_t)e.width, (int32_t)e.height}, (int32_t)slot_, (e.width * e.height) / 4,
+                     {1.f / (l0.fine.width * l0.block * f2r), 1.f / (l0.fine.height * l0.block * f2r)}, f2r};
         vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe_.pipeline);
         vt.CmdPushConstants(cmd, pipe_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
         vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe_.layout, 0, 1,

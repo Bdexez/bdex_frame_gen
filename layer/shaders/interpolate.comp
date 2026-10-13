@@ -101,6 +101,7 @@ layout(push_constant) uniform PC {
     int bicubic;             // synth_bicubic: Catmull-Rom sampling along the trajectories (0 = bilinear, historical)
     float staticFrames;      // hud_mask: pixels unchanged for at least this many frames stay as in cur (0 = off)
     int revealFill;          // extrapolation: a revealed pixel takes the slower-moving (background) of the last two sources
+    float staticSoft;        // static_soft: strength of hud_mask's "holds still" evidence (interpolation, 0 = off)
 } pc;
 
 // flow_confidence's trust at display pixel p (the map covers the flow's area).
@@ -517,7 +518,14 @@ void main() {
     // hud_mask: a learned static overlay pixel is not moved with the flow.
     if (kStaticMask && pc.staticFrames > 0.0) {
         ivec2 ms = textureSize(staticMask, 0);
-        if (texelFetch(staticMask, min(ivec2(uv * vec2(ms)), ms - 1), 0).r >= pc.staticFrames) c = cur;
+        ivec2 mp = min(ivec2(uv * vec2(ms)), ms - 1);
+        const vec2 sm = texelFetch(staticMask, mp, 0).rg;
+        if (sm.r >= pc.staticFrames) c = cur;
+        else if (pc.staticSoft > 0.0 && pc.t <= 1.0 && sm.g > 0.3) {
+            // static_soft: hud_mask's evidence that the pixel holds still
+            // while the scene moves (anti-aliased HUD text) — leans in place.
+            c = mix(c, mix(texture(prevTex, uv), cur, t), smoothstep(0.3, 0.7, sm.g) * pc.staticSoft);
+        }
     }
     c = mix(c, cur, cut);
 
