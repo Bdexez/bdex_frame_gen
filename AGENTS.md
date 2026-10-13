@@ -401,7 +401,11 @@ avec `pixel_vectors`), `balanced` (défaut),
 refine_all 0, iterations 0), `latency` (extrapolation + x2), `auto`
 (iGPU→performance, dGPU avec ≥2 Gio de VRAM→balanced). Les knobs flow
 avisés (`levels`, `search*`, `refine*`, `flow_scale`, `flow_iterations`)
-désactivent l'auto-tune. Voir `Config` dans `layer/src/config.h` pour la liste
+désactivent l'auto-tune du *préréglage* ; les options de synthèse du GPU
+dédié (`pixel_vectors`, `interp_splat`, `rot_weight`, `temporal_prediction`,
+`zero_bias=0`, `scene_cut_local`, splat d'extrapolation) s'appliquent avec
+tout préréglage sauf `performance` (depuis le 13/10 : « Qualité » les
+perdait, 17–20 % de pixels grossièrement faux en plus sur un vrai jeu). Voir `Config` dans `layer/src/config.h` pour la liste
 complète (multiplier 1-8, render_scale, upscale_filter, sharpness, scene cut
 0.05/0.09, overlay, debug=flow|split|passthrough, dump PPM…).
 
@@ -486,6 +490,12 @@ réintroduire) :
   scripts les suivent. Vécu le 2026-10-02 : `uninstall.sh --purge` testé
   avec `HOME` seul a supprimé le vrai `~/.cache/bdex-framegen`
   (`tests/linux_scripts.sh` les isole tous désormais).
+- **Tests et outils hors ligne : jamais la config de l'utilisateur**
+  (`BDEX_FG_CONFIG=/dev/null`) ; `eval_sequence.py` fixe `balanced`, qui sur
+  un GPU dédié inclut les options automatiques (références du corpus =
+  lavapipe : le test les coupe). `bdex_offline --refresh` : le jeu tourne
+  **toujours à 60 i/s**, `--spacing` = images d'entrée par image du jeu
+  (30 i/s sur 144 Hz = `--spacing 8 --refresh 288`).
 - Les tests d'intégration nécessitent un display (skip propre sinon) ; le test
   e2e exerce la génération sur GPU — le faire tourner après toute modif de
   shader.

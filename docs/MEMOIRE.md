@@ -1338,3 +1338,69 @@ affiche « Lancé avant l'installation de cette version — relance le jeu ».
 Fenêtre étroite : trois boutons en en-tête du groupe « Jeux détectés »
 réduisaient titre et description à une lettre par ligne ; seul
 « Actualiser » reste en en-tête, les boutons de capture ont leur ligne.
+
+### 13/10 (suite) — artefacts en ×3/×4, limite d'images dans le panneau
+
+Retour utilisateur (PRAGMATA, RTX 3060 Ti, 1440p 144 Hz sans VRR, Hyprland,
+jeu à 30 i/s) : ×2 quasi propre, ×3/×4 « beaucoup d'artefacts », latence
+très faible. Demande : plus de précision en ×3/×4 (+5 ms de latence
+acceptés) et la limite d'images du jeu dans le panneau.
+
+- **Panneau** : « Limite d'images du jeu » (`fps_limit`) passe dans le
+  groupe « Génération d'images » (aucune, Auto = écran ÷ multiplicateur,
+  30 à 120 i/s), avec les plafonds qui remplissent l'écran (144 Hz :
+  ×2 → 72, ×3 → 48, ×4 → 36) ; mode texte : `l`.
+- **Le moteur n'est pas en cause en ×4** : à t = 0,5 l'image ×4 est
+  identique au bit près à celle de ×2 (147 paires) ; à 30 i/s réels la
+  caméra bouge de 9 px (médiane) à 54 px par image à 853×480, dans la
+  portée de la recherche (~±94 px). Les mêmes défauts restent juste à
+  l'écran ¾ du temps au lieu de ½.
+- **Gain mesuré n° 1 : les préréglages gardent les options du GPU dédié.**
+  `autoConfigure` ne faisait rien dès qu'un préréglage était choisi : la
+  config de l'utilisateur (`preset = quality`) tournait sans
+  `pixel_vectors`, `interp_splat`, `rot_weight`, `temporal_prediction`,
+  `zero_bias=0`, `scene_cut_local`. Avec elles, sur PRAGMATA : pixels
+  grossièrement faux (aucun pixel vrai à ±2 px ne correspond, écart > 40)
+  3,95 → 3,26 % en ×2, 7,78 → 6,22 % en ×3 ; PSNR +0,06 / +0,29 ;
+  séquences `edge_bench` en ×4 +0,4 à +1,1 dB ; ~+1 ms de synthèse par
+  image du jeu en 1440p ×4. Désormais : tout préréglage sauf `performance`
+  (`Config::presetName`).
+- **Gain n° 2 : la cadence de l'écran.** `bdex_offline --refresh` (piège :
+  le jeu y tourne **toujours à 60 i/s**, `--spacing` = images d'entrée par
+  image du jeu ; 30 i/s sur 144 Hz = `--spacing 8 --refresh 288`) :
+  grille inconnue → connue, ×2 40,6 → 43,2 dB, ×3 36,3 → 38,5, ×4 33,0 →
+  35,6, scintillement ÷2. Écran = m × jeu et grille connue : ×4 quasi
+  parfait (scintillement 0,8). Sous Hyprland la grille n'est probablement
+  pas mesurée : statut `display_grid` (1 mesurée, 0 pas de grille, absent
+  inconnu) et `fps_limit`, message dans le panneau / le lanceur en ×3+ sans
+  grille ni limite.
+- **Essais écartés (mesurés, ne pas refaire)** :
+  - `edge_flow` : vecteur par pixel aux frontières de mouvement choisi
+    parmi les 3×3 blocs voisins par agrégation à poids adaptatifs
+    (Yoon & Kweon, fenêtre 7×7 sur la luma) : edge_bench fixe +0,68 dB,
+    rapide +0,18 sans `pixel_vectors`, mais neutre sur PRAGMATA
+    (décisions bruitées : flou de mouvement, membres animés, transparences)
+    et −0,23 par-dessus `pixel_vectors`. Seuil d'écart (2–4 px), marge :
+    rien n'y fait.
+  - `pixel_vectors` jugé sur fenêtre 3×3 (au lieu d'un pixel) : 0,00 sur
+    le jeu, −0,06 à −0,12 sur edge_bench.
+  - Prototype `wip/occlusion-layers` (05/10) sur le vrai jeu : 1,5 → −0,10
+    dB, 1,8 → −0,68.
+  - `despeckle` (pixel isolé → moyenne des voisins) : 0,03 % des pixels
+    touchés — les « grains » noirs au bord de l'arme sont des fragments de
+    rainures (lignes contrastées), pas des pixels isolés.
+  - Par-dessus la nouvelle base : `levels=6`, `flow_temporal`,
+    `flow_iterations=3`, `occlusion_strength=1`, `static_guard`,
+    `smoothness=0.008` neutres ou négatifs ; `subpixel_lk=2` +
+    `synth_bicubic` +0,14 sur le jeu mais −0,01 à −0,02 ailleurs ;
+    `learned_correction` +0,16 sur le jeu, −0,6 à −2,3 ailleurs.
+- **Pièges de banc** : `tests/test_corpus.py` et `test_offline.py` lisaient
+  la config de l'utilisateur (corrigé : `BDEX_FG_CONFIG=/dev/null`) ;
+  `eval_sequence.py` fixe `balanced`, qui sur un GPU dédié inclut
+  désormais les options automatiques (les références du corpus restent
+  celles de lavapipe : le test les coupe sur un GPU dédié). Mesure par
+  pixel grossier : `gross.py`-like (min sur ±2 px, écart > 40).
+- **Reste** : l'erreur restante est aux contours d'objets animés / flous de
+  mouvement (non rigide) — hors de portée d'un flux à deux images ; la
+  piste suivante est la cadence (obtenir la grille sous Wayland :
+  `present_timing` / retour d'affichage du compositeur).

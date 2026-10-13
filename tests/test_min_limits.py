@@ -42,7 +42,9 @@ def main():
     if not tool.exists():
         print("bdex_offline not built, skipping")
         return 77
-    env = dict(os.environ, BDEX_FG_CONFIG="/dev/null", BDEX_FG_PRESET="balanced")
+    # rot_weight off: a discrete GPU turns it on with any preset but
+    # performance, and the minimum limits leave only the lean matcher.
+    env = dict(os.environ, BDEX_FG_CONFIG="/dev/null", BDEX_FG_PRESET="balanced", BDEX_FG_ROT_WEIGHT="0")
     failures = 0
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)

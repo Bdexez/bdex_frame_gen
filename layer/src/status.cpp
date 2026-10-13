@@ -96,6 +96,11 @@ std::string statusFormat(const std::string& process, long pid, long long unixTim
             fixed1(buf, sizeof buf, e.limitHz);
             o << "limit_hz=" << buf << "\n";
         }
+        if (e.displayGrid >= 0) o << "display_grid=" << e.displayGrid << "\n";
+        if (e.fpsLimit != 0.0) {
+            fixed1(buf, sizeof buf, e.fpsLimit);
+            o << "fps_limit=" << (e.fpsLimit < 0.0 ? std::string("auto") : std::string(buf)) << "\n";
+        }
         fixed1(buf, sizeof buf, e.latencyMs);
         o << "latency_ms=" << buf << "\n";
         o << "gpu_budget_level=" << e.budgetLevel << "\n";
@@ -205,6 +210,20 @@ std::vector<std::string> statusDescribe(const StatusFile& file, bool english) {
             line += buf;
         }
         out.push_back(line);
+        // x3 and up on a screen whose refresh grid the layer cannot see: the
+        // generated frames are paced on the game's interval, not on the
+        // refreshes, and land up to a refresh off the moment they depict
+        // (simulated, 30 fps on 144 Hz: -2.5 dB and twice the flicker at
+        // every multiplier). Capping the game at screen / multiplier puts one
+        // frame on each refresh.
+        if (state == "generating" && num(v, "multiplier", 0) >= 3 && v.count("display_grid") &&
+            num(v, "display_grid", 1) < 1 && num(v, "limit_hz", 0) <= 0 && !v.count("fps_limit"))
+            out.push_back(T("   cadence de l'écran non mesurée : hors VRR, en ×3 et plus les images tombent entre deux "
+                            "rafraîchissements — « Limite d'images du jeu » sur Auto, ou un écran à un multiple exact "
+                            "du jeu (30 i/s ×4 → 120 Hz)",
+                            "   screen timing not measured: without VRR, at x3 and above frames fall between "
+                            "refreshes — set « Game frame rate cap » to Auto, or the screen to an exact multiple "
+                            "of the game (30 fps x4 -> 120 Hz)"));
         if (!get(v, "passes").empty()) {
             std::string p = get(v, "passes");
             for (size_t i = 0; (i = p.find(',', i)) != std::string::npos; i += 2) p.replace(i, 1, ", ");

@@ -70,14 +70,16 @@ const char* presentModeName(int mode) {
 
 bool Config::applyPreset(const std::string& name) {
     const std::string v = lower(trim(name));
-    if (v == "auto") { autoTune = true; return true; }  // resolved later by autoConfigure()
+    if (v == "auto") { autoTune = true; presetName.clear(); return true; }  // resolved later by autoConfigure()
     // An explicit preset pins the quality settings; stop auto-tuning from the GPU.
     autoTune = false;
+    presetName = v;
     if (v == "balanced" || v == "default") {
         flowScale = 0; refineAll = true; flowIterations = 1; levels = 4; searchRadius = 4; searchFine = 2;
     } else if (v == "quality") {
         flowScale = 1; refineAll = true; flowIterations = 2; levels = 5; searchRadius = 4; searchFine = 2;
     } else if (v == "performance" || v == "perf" || v == "fast") {
+        presetName = "performance";
         flowScale = 4; refineAll = false; flowIterations = 0; levels = 4; searchRadius = 4; searchFine = 2;
     } else if (v == "enhanced") {
         // Balanced flow plus the opt-ins measured positive together on the
@@ -105,7 +107,6 @@ bool Config::applyPreset(const std::string& name) {
 }
 
 void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhysicalDeviceMemoryProperties& mem) {
-    if (!autoTune) return;  // the user pinned a preset or a flow option
     uint64_t vram = 0;
     for (uint32_t i = 0; i < mem.memoryHeapCount; ++i)
         if (mem.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
@@ -116,10 +117,21 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
     // On battery (battery_saver): the performance flow, as for a small GPU —
     // the flow is most of the generation's GPU time, so its power too.
     const bool strong = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && vram >= (2ull << 30) && !onBattery;
-    const std::string preset = strong ? "balanced" : "performance";
-    applyPreset(preset);   // clears autoTune
-    autoTune = true;       // keep the marker: this was auto-tuned, not user-pinned
-    autoTunedTo = preset;
+    if (autoTune) {  // no preset or flow option pinned by the user
+        const std::string preset = strong ? "balanced" : "performance";
+        applyPreset(preset);   // clears autoTune
+        autoTune = true;       // keep the marker: this was auto-tuned, not user-pinned
+        autoTunedTo = preset;
+    }
+    // The options below are synthesis features of a strong GPU, not flow
+    // settings: a preset the user picked keeps them (until 13/10 any explicit
+    // preset dropped them — « Qualité » in the panel ran without
+    // pixel_vectors, interp_splat, rot_weight or temporal_prediction; on a
+    // real game, PRAGMATA at 1440p, adding them to quality cut the grossly
+    // wrong pixels by 17 % at x2 and 20 % at x3, +0.06 / +0.29 dB, and
+    // +0.4 to +1.1 dB on the game-like edge sequences at x4). Not with
+    // « performance », picked to spend less.
+    if (!strong || presetName == "performance") return;
     // Per-pixel vectors at motion boundaries (measured: demo +0.3 dB, very
     // fast +0.6, HUD +0.7, occlusions +2.9 dB and their edges +6.6) cost a
     // discrete GPU ~0.3-0.6 ms at 1440p, 1-2 ms at 4K per generated frame:

@@ -106,6 +106,34 @@ TEST(status_describe_in_english) {
     CHECK(!fr.empty() && fr[0].find("En pause — 40 → 120 i/s (×3, hybride)") == 0);
 }
 
+TEST(status_screen_timing_hint) {
+    // x3 and up without a measured refresh grid: the hint to cap the game,
+    // gone once a cap is set, at x2, or with the grid known.
+    std::map<uint64_t, StatusEntry> m;
+    StatusEntry c;
+    c.kind = "swapchain";
+    c.state = "generating";
+    c.mode = "interpolate";
+    c.multiplier = 4;
+    c.gameFps = 30;
+    c.outFps = 120;
+    c.refreshHz = 144;
+    c.displayGrid = 0;
+    m[1] = c;
+    auto lines = [&]() { return statusDescribe(statusParse(statusFormat("game", 1, 1, m))); };
+    CHECK(lines().size() == 2 && lines()[1].find("cadence de l'écran non mesurée") != std::string::npos);
+    m[1].fpsLimit = -1.0;
+    CHECK(statusFormat("game", 1, 1, m).find("fps_limit=auto") != std::string::npos && lines().size() == 1);
+    m[1].fpsLimit = 0.0;
+    m[1].displayGrid = 1;
+    CHECK(lines().size() == 1);
+    m[1].displayGrid = 0;
+    m[1].multiplier = 2;
+    CHECK(lines().size() == 1);
+    m[1].displayGrid = -1;  // not known: no line at all in the file
+    CHECK(statusFormat("game", 1, 1, m).find("display_grid") == std::string::npos);
+}
+
 TEST(status_anticheat_warning) {
     // The layer kept on beside an anti-cheat (ignore_anticheat, Rocket
     // League on Windows): the warning travels with the device entry.

@@ -105,6 +105,11 @@ void VirtualSwapchain::publishStatus(int multiplier) {
     e.outFps = e.gameFps * e.multiplier;
     e.refreshHz = displayHz();
     e.limitHz = gsLimited_.load() ? gsHz_.load() : 0.0;
+    e.fpsLimit = cfg_.fpsLimit;
+    if (feedback_) {
+        std::lock_guard<std::mutex> lock(fbMutex_);
+        e.displayGrid = displayClock_.valid() ? 1 : fbDisplayed_ >= 120 ? 0 : -1;
+    }
     e.latencyMs = displayLatencyMs();
     e.budgetLevel = budget_.level();
     e.uncertainPct = uncertainPct_;
