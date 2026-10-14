@@ -206,6 +206,14 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
     // at constant speed within -0.02, one upscaled recording -0.09; +0.1 ms a
     // game frame at 1440p x4, accel_map.comp).
     if (strong && !(autoOptionsSet & kAutoInterpAccel)) interpAccel = 1.f;
+    // The generated frames' own fine detail — edges between neighbouring
+    // blocks that took different vectors, a mosaic over motion-blurred or
+    // low-contrast content — leans to its local average where neither input
+    // has such detail within 16 pixels (14/10: 1440p recordings +0.07 /
+    // +0.14 dB, flicker -0.18 / -0.39, grossly wrong pixels down; x4 game-like
+    // scenes +0.03 to +0.21; nothing lower anywhere; ~0.7 ms a generated
+    // frame at 1440p).
+    if (strong && !(autoOptionsSet & kAutoFalseDetail)) falseDetail = 1.f;
     // No bonus for the zero-motion candidate (03/10, on top of everything
     // above, 960x540 corpus + demo): the free bonus won on soft content in
     // fast motion — a ghostly blend instead of the moving picture. The HUD
@@ -299,6 +307,7 @@ const std::vector<OptionDef>& registry() {
     B("pipeline_cache", nullptr, &Config::pipelineCache),
     B("crash_log", nullptr, &Config::crashLog),
     B("flow_confidence", nullptr, &Config::flowConfidence),
+    F("false_detail", nullptr, &Config::falseDetail, 0.f, 1.f, kLive),
     F("learned_correction", nullptr, &Config::learnedCorrection, 0.f, 1.f, kLive),
     F("luma_match", nullptr, &Config::lumaMatch, 0.f, 0.5f, kLive),
     F("learned_flow", nullptr, &Config::learnedFlow, 0.f, 1.f, kLive),
@@ -498,6 +507,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "hud_mask") autoOptionsSet |= kAutoHudMask;
     if (key == "static_soft") autoOptionsSet |= kAutoStaticSoft;
     if (key == "interp_accel") autoOptionsSet |= kAutoInterpAccel;
+    if (key == "false_detail") autoOptionsSet |= kAutoFalseDetail;
     if (const OptionDef* d = findOption(key)) {
         switch (d->kind) {
         case Kind::Bool:  return parseBool(value, this->*(d->b));
@@ -862,6 +872,7 @@ std::string Config::describe() const {
     if (subpixelLk > 0) o << " subpixel_lk=" << subpixelLk;
     if (synthBicubic) o << " synth_bicubic=1";
     if (hudMask > 0) o << " hud_mask=" << hudMask;
+    if (falseDetail > 0.f) o << " false_detail=" << falseDetail;
     if (revealFill) o << " reveal_fill=1";
     if (onlineTune) o << " online_tune=1";
     if (upscaleTemporal > 0.f) o << " upscale_temporal=" << upscaleTemporal;

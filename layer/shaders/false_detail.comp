@@ -1,0 +1,179 @@
+#version 450
+// false_detail: a generated frame's fine detail that neither input has
+// anywhere near is the synthesis's own — the edges between neighbouring
+// blocks that took different vectors (a mosaic over motion-blurred or
+// low-contrast content, where block matching guesses), not the picture.
+// Where the generated frame's local detail (mean |Laplacian| of the luma over
+// 5x5) clearly exceeds the most detailed 4x4 cell of either input within 16
+// pixels (the window covers the motion: an object crossing a flat
+// background brings its real edges along), the pixel leans to its 5x5
+// average. Detail present at the pixel itself in both inputs (a still HUD's
+// edges, unmoving scenery) is left alone. Four modes over the finished output
+// (packed 8- or 10-bit formats, perceptual encoding, no upscaling), all
+// values in 8-bit units:
+//   1  the inputs' detail per 4x4 cell (the larger of the two)  } once a
+//   2  that, dilated: the maximum over +-4 cells                } frame
+//      (1 runs a thread per pixel, 2 a thread per cell)
+//   0  the filtered output into the scratch image (a 16x16 tile and its
+//      3-pixel border read once into shared memory)
+//   3  the scratch image back into the output, in the tiles where
+//      anything changed (most have nothing to do)
+#extension GL_GOOGLE_include_directive : require  // #include with glslangValidator too
+#include "common.glsl"
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0, r32ui) uniform uimage2D outImg;   // the output (swapchain storage encoding)
+layout(binding = 1, r32ui) uniform uimage2D scratch;  // its copy
+layout(binding = 2, r32f) uniform image2D cells;      // the inputs' detail per cell
+layout(binding = 3, r32f) uniform image2D cellsMax;   // ... dilated
+layout(binding = 4) uniform sampler2D prevTex;
+layout(binding = 5) uniform sampler2D curTex;
+layout(binding = 6, std430) buffer Tiles { uint changed[]; } tiles;  // per 16x16 tile: anything filtered
+
+#define ENC_BGRA8       1u
+#define ENC_A2B10G10R10 2u
+#define ENC_A2R10G10B10 3u
+#define ENC_SRGB_FLAG   0x100u
+
+const int kCell = 4;
+const int kReach = 4;  // cells: 16 pixels
+
+layout(push_constant) uniform PC {
+    ivec2 size;
+    uint encoding;
+    int mode;
+    float strength;  // 0..1
+    float ratio;     // the generated detail must exceed ratio x the inputs'
+    float guard;     // detail at the pixel in both inputs above which it is left alone (0: no test)
+} pc;
+
+vec4 unpackOut(uint v) {
+    uint enc = pc.encoding & 0xffu;
+    if (enc == ENC_A2B10G10R10)
+        return vec4(uvec4(v & 1023u, (v >> 10) & 1023u, (v >> 20) & 1023u, v >> 30)) / vec4(1023.0, 1023.0, 1023.0, 3.0);
+    if (enc == ENC_A2R10G10B10)
+        return vec4(uvec4((v >> 20) & 1023u, (v >> 10) & 1023u, v & 1023u, v >> 30)) / vec4(1023.0, 1023.0, 1023.0, 3.0);
+    vec4 c = unpackUnorm4x8(v);
+    return enc == ENC_BGRA8 ? c.bgra : c;
+}
+uint packOut(vec4 c) {
+    uint enc = pc.encoding & 0xffu;
+    c = clamp(c, 0.0, 1.0);
+    if (enc == ENC_A2B10G10R10 || enc == ENC_A2R10G10B10) {
+        uvec4 q = uvec4(round(c * vec4(1023.0, 1023.0, 1023.0, 3.0)));
+        return enc == ENC_A2B10G10R10 ? q.r | (q.g << 10) | (q.b << 20) | (q.a << 30)
+                                      : q.b | (q.g << 10) | (q.r << 20) | (q.a << 30);
+    }
+    return enc == ENC_BGRA8 ? packUnorm4x8(c.bgra) : packUnorm4x8(c);
+}
+float luma255(vec3 c) { return (c.r + c.g + c.b) * (255.0 / 3.0); }
+float srcLuma(sampler2D tex, ivec2 p) {
+    vec3 c = texelFetch(tex, clamp(p, ivec2(0), pc.size - 1), 0).rgb;
+    // (an sRGB view samples decoded light: back to the stored values)
+    if ((pc.encoding & ENC_SRGB_FLAG) != 0u) c = linearToSrgb(c);
+    return luma255(c);
+}
+
+const int kTile = 16, kBorder = 3, kSide = kTile + 2 * kBorder;  // 22
+shared uint sPix[kSide * kSide];      // the output, packed
+shared float sLum[kSide * kSide];     // its luma
+shared float sLap[kSide * kSide];     // |Laplacian| (valid one pixel in from the edge)
+shared uint sChanged;
+
+float srcLap(sampler2D tex, ivec2 q) {
+    return abs(4.0 * srcLuma(tex, q) - srcLuma(tex, q + ivec2(-1, 0)) - srcLuma(tex, q + ivec2(1, 0)) -
+               srcLuma(tex, q + ivec2(0, -1)) - srcLuma(tex, q + ivec2(0, 1)));
+}
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    const ivec2 cellsSize = (pc.size + kCell - 1) / kCell;
+    if (pc.mode == 2) {
+        if (any(greaterThanEqual(p, cellsSize))) return;
+        float m = 0.0;
+        for (int y = -kReach; y <= kReach; ++y)
+            for (int x = -kReach; x <= kReach; ++x)
+                m = max(m, imageLoad(cells, clamp(p + ivec2(x, y), ivec2(0), cellsSize - 1)).r);
+        imageStore(cellsMax, p, vec4(m));
+        return;
+    }
+    if (pc.mode == 1) {
+        // A thread a pixel (neighbouring threads read neighbouring texels),
+        // summed per 4x4 cell in shared memory.
+        const ivec2 q = min(p, pc.size - 1);
+        const int li = int(gl_LocalInvocationIndex);
+        sLap[li] = srcLap(prevTex, q);
+        sLum[li] = srcLap(curTex, q);
+        barrier();
+        const ivec2 l = ivec2(gl_LocalInvocationID.xy);
+        if (all(equal(l % kCell, ivec2(0)))) {
+            float sa = 0.0, sb = 0.0;
+            for (int y = 0; y < kCell; ++y)
+                for (int x = 0; x < kCell; ++x) {
+                    const int i = (l.y + y) * kTile + l.x + x;
+                    sa += sLap[i];
+                    sb += sLum[i];
+                }
+            const ivec2 c = p / kCell;
+            if (all(lessThan(c, cellsSize))) imageStore(cells, c, vec4(max(sa, sb) / float(kCell * kCell)));
+        }
+        return;
+    }
+    const uint tile = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    if (pc.mode == 3) {
+        if (tiles.changed[tile] != 0u && all(lessThan(p, pc.size))) imageStore(outImg, p, imageLoad(scratch, p));
+        return;
+    }
+    // mode 0: the tile and its border.
+    const ivec2 origin = ivec2(gl_WorkGroupID.xy) * kTile - kBorder;
+    const int li = int(gl_LocalInvocationIndex);
+    if (li == 0) sChanged = 0u;
+    for (int i = li; i < kSide * kSide; i += kTile * kTile) {
+        ivec2 q = clamp(origin + ivec2(i % kSide, i / kSide), ivec2(0), pc.size - 1);
+        uint v = imageLoad(outImg, q).r;
+        sPix[i] = v;
+        sLum[i] = luma255(unpackOut(v).rgb);
+    }
+    barrier();
+    for (int i = li; i < kSide * kSide; i += kTile * kTile) {
+        int x = i % kSide, y = i / kSide;
+        // (zero at the image's edge, as the measurement's)
+        ivec2 q = origin + ivec2(x, y);
+        bool inside = x > 0 && y > 0 && x < kSide - 1 && y < kSide - 1 && all(greaterThan(q, ivec2(0))) &&
+                      all(lessThan(q, pc.size - 1));
+        sLap[i] = inside ? abs(4.0 * sLum[i] - sLum[i - 1] - sLum[i + 1] - sLum[i - kSide] - sLum[i + kSide]) : 0.0;
+    }
+    barrier();
+    const bool inImage = all(lessThan(p, pc.size));
+    const ivec2 l = ivec2(gl_LocalInvocationID.xy) + kBorder;
+    const int c0 = l.y * kSide + l.x;
+    float hs = imageLoad(cellsMax, min(p / kCell, cellsSize - 1)).r;
+    float hg = 0.0;  // (outside the image: the clamped border's, unused)
+    for (int y = -2; y <= 2; ++y)
+        for (int x = -2; x <= 2; ++x) hg += sLap[c0 + y * kSide + x];
+    hg /= 25.0;
+    float w = clamp((hg - pc.ratio * hs - 2.0) / 4.0, 0.0, 1.0) * pc.strength;
+    if (w > 0.0 && pc.guard > 0.0) {
+        // (only here: a few percent of the pixels)
+        float q = 0.0;
+        for (int y = -1; y <= 1; ++y)
+            for (int x = -1; x <= 1; ++x) q += min(srcLap(prevTex, p + ivec2(x, y)), srcLap(curTex, p + ivec2(x, y)));
+        w *= clamp(2.0 - q / (9.0 * pc.guard), 0.0, 1.0);
+    }
+    uint centre = sPix[c0];
+    if (inImage && w > 0.0) {
+        vec4 sum = vec4(0.0);
+        for (int y = -2; y <= 2; ++y)
+            for (int x = -2; x <= 2; ++x) sum += unpackOut(sPix[c0 + y * kSide + x]);
+        vec4 g = unpackOut(centre);
+        vec4 c = mix(g, sum / 25.0, w);
+        c.a = g.a;
+        centre = packOut(c);
+        atomicOr(sChanged, 1u);
+    }
+    barrier();
+    // The whole tile, when anything in it changed (mode 3 copies tiles).
+    if (sChanged != 0u && inImage) imageStore(scratch, p, uvec4(centre, 0u, 0u, 0u));
+    if (li == 0) tiles.changed[tile] = sChanged;
+}

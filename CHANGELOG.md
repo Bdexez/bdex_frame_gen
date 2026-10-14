@@ -37,6 +37,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   dB, flicker −0.04 to −0.51, fewer grossly wrong pixels on every one;
   constant-speed scenes within −0.02 dB; +0.1 ms a game frame at 1440p x4.
 - `latency_log` gains a 4th column: the refresh each frame was planned for.
+- **`false_detail`** (on on a discrete GPU): fine detail in a generated
+  frame that neither input has within 16 pixels — the edges between
+  neighbouring blocks that took different vectors, a mosaic over
+  motion-blurred or low-contrast content — leans to its 5×5 average
+  (a pass over the finished frame; a still HUD's detail, present at the
+  pixel in both inputs, is left alone). 1440p recordings +0.14 / +0.07 dB,
+  flicker −0.39 / −0.18, grossly wrong pixels down; x4 game-like scenes
+  +0.03 to +0.21 dB; nothing lower on any sequence. ~0.7 ms a generated
+  frame at 1440p. Packed 8- and 10-bit SDR formats, without upscaling.
 - **The panel shows the cadence on screen**: frames shown per second and
   those held a refresh more (status `shown_fps`, `held_per_s`, from the
   present feedback) — whether every refresh gets a new frame, at a glance in

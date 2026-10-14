@@ -72,7 +72,7 @@ for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hy
   elif [ "${run#*:}" = x8 ]; then
     # Eight frames a present: more than most surfaces let the worker hold
     # acquired at once, so part of them go through the staging images.
-    state=""; mult=8; demo_args="--frames 40 --duration 40"
+    state="BDEX_FG_FALSE_DETAIL=1"; mult=8; demo_args="--frames 40 --duration 40"
   elif [ "${run#*:}" = adaptive ]; then
     # 30 fps into 75: 2, 3, 2, 3... frames a game frame, one output period apart.
     state="BDEX_FG_ADAPTIVE=1 BDEX_FG_TARGET_FPS=75"; demo_args="--frames 60 --duration 40"
@@ -85,7 +85,7 @@ for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hy
     state="BDEX_FG_INTERP_HOLD=0.3 BDEX_FG_FRAME_TIMING=1"; mult=4; demo_args="--frames 60 --duration 40 --size 640x360"
     output="BDEX_FG_HUD=6"  # (the pacing graph)
     state="$state BDEX_FG_FLOW_CONFIDENCE=1 BDEX_FG_DEBUG=confidence"
-    state="$state BDEX_FG_LEARNED_CORRECTION=1"
+    state="$state BDEX_FG_LEARNED_CORRECTION=1 BDEX_FG_FALSE_DETAIL=1"  # (two passes over the finished output)
     state="$state BDEX_FG_INTERP_SPLAT=1 BDEX_FG_PIXEL_VECTORS=1"
     state="$state BDEX_FG_ROT_WEIGHT=1"  # (the matcher's rotation-only variant)
   elif [ "${run#*:}" = async ]; then

@@ -54,6 +54,7 @@ struct Config {
     bool  interpSplat   = false;  // interpolation: both frames forward-splatted to t (the extrapolation's splat map, twice as wide); each output pixel also tries the trajectories of the prev and cur pixels that landed on it (the right layer at an object's edge)
     float learnedFlow   = 0.f;    // the finest flow corrected by tools/train_flow.py's network (share of its correction, 0 = off)
     float lumaMatch     = 0.01f;  // the previous frame's luma brought to the current one's mean and contrast before the flow when the whole picture's mean moved by at least this much (0..1 luma; 0 = off): fades, lighting changes
+    float falseDetail = 0.0f;       // interpolation: generated detail neither input has within 16 px leans to its 5x5 average (false_detail.comp), 0 = off .. 1; packed 8/10-bit SDR without upscaling
     float learnedCorrection = 0.0f; // interpolation: the trained correction network (tools/train_correction.py) over each generated frame, 0 = off .. 1 = as trained; 8-bit formats without upscaling
     bool  crashLog      = true;   // Linux: a crash in the layer writes ~/.cache/bdex-framegen/crash-<game>-<pid>.txt (signal, offsets in the layer, settings); other faults go untouched to the game's handlers
     bool  skipFast      = true;   // fixed multiplier: no generation while the game already runs at 85 % of the screen's refresh rate or more (back under 75 %): it would add almost no frame to the screen, only GPU work and the interpolation's hold (refresh rate known only)
@@ -143,7 +144,8 @@ struct Config {
     // set them (autoConfigure leaves those alone): bits of kAuto*.
     enum : uint32_t { kAutoPixelVectors = 1, kAutoSplat = 2, kAutoRevealFill = 4, kAutoLocalCut = 8, kAutoInterpSplat = 16, kAutoRot = 32,
                        kAutoTemporalPrediction = 64, kAutoZeroBias = 128, kAutoGlobalMotion = 256,
-                       kAutoHudMask = 512, kAutoStaticSoft = 1024, kAutoInterpAccel = 2048 };
+                       kAutoHudMask = 512, kAutoStaticSoft = 1024, kAutoInterpAccel = 2048,
+                       kAutoFalseDetail = 4096 };
     uint32_t autoOptionsSet = 0;
     bool  pixelVectorsAuto = false; // runtime: pixel_vectors turned on by autoConfigure; FrameGen drops it where the synthesis would cost too much (display pixels x generated frames above 4K x2)
     bool  interpSplatAuto = false;  // runtime: interp_splat turned on by autoConfigure; dropped with pixelVectorsAuto
