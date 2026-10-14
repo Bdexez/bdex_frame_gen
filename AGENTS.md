@@ -231,6 +231,18 @@ donne alors les temps d'affichage nominaux (k·P, sur la grille si connue)
 faux) et `job.intervalMs = n·P` (le pacing espace de P). 50 i/s → 144 Hz :
 144,0 i/s affichées. Même logique dans `VkCtx::synthesize` (capture), avec
 la fréquence du moniteur de l'overlay (`monitorHz`).
+**×m qui ne remplit pas l'écran** (14/10) : `refresh_fill` (1 = dès ×3)
+passe en adaptatif vers la fréquence de l'écran avec un plafond m+1
+(`Config::frameCeiling`, sorties dimensionnées pour m+1) quand
+m < I·Hz ≤ m+1 ; `virtual_grid` donne à l'adaptatif une grille à nous sans
+grille mesurée (`displayGrid` la rend ; phase déplacée sur images écrasées
+ou à < ⅓ de période, `fbClose_`) ; `pace_plan` prévoit le rafraîchissement
+de chaque image dès `present()` (`pacing::planLands`, `Job::planned`,
+`readyLagMs_` mesuré seulement si la fence n'était pas déjà signalée) et
+le worker présente pour lui. `latency_log` : 4e colonne = rafraîchissement
+prévu. Statut `display_grid=2` = grille virtuelle. Mesurer la cadence :
+démo dans gamescope sans fenêtre + `BDEX_FG_LATENCY_LOG`, trois essais
+(le banc varie d'un lancement à l'autre).
 `max_frame_latency` (1 par défaut, seulement en génération) : `present()`
 attend, hors `mutex_`, la fence du slot de l'image N−1. Puis
 **`latency_limiter`** (défaut 1, `syncFrameStart`) : la durée de cette
@@ -297,6 +309,8 @@ lente quand le point fixe oscille ET que la trajectoire est incohérente —
 sans ce second test, la rotation de la démo perdait 0,4 dB ; en
 interpolation, un test de visibilité par trajectoire a perdu 1 dB dans les
 zones d'occultation, `pixel_vectors` y gagne +1,3 : ne pas y revenir),
+`interp_accel` (14/10, auto GPU dédié : `accel_map.comp` dans la passe
+`extrapolate_accel`, carte au binding 10 de la synthèse, `setAccelMap`),
 `hud_mask` (mesuré 2026-09-25 : le masque dans l'accumulation
 d'`upscale_temporal` — historique sans mouvement sur le HUD — ne change
 rien, HUD opaque ou transparent : le test aller-retour du flux rejette déjà

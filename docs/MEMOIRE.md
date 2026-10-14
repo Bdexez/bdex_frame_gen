@@ -1045,6 +1045,8 @@ dépendances…), appliquée seulement là où un logiciel local a un équivalen
 | `latency_limiter`, 4K lourd | image → écran 26,8 → 18,3 ms, 97 → 101 i/s |
 | Hybride ×3, jeu limité par le GPU | 116 → 283 images affichées/s, jeu 58 → 94 i/s |
 | Adaptatif | 50 i/s → 144 affichées sur 144 Hz |
+| 30 i/s ×4 sur 144 Hz, `refresh_fill` + `pace_plan` (14/10, trois essais) | 120 → 142–143 affichées/s, répétitions 30 → 5/s, image réelle 33 → 40 ms |
+| `interp_accel` (14/10) | jeux enregistrés +0,03 à +0,17 dB, scintillement jusqu'à −0,5 ; +0,1 ms en 1440p ×4 |
 | Limite Steam 30 i/s (démo 30 i/s ×2), avant | jeu 15 i/s, 233 ms présentation → écran |
 | Limite Steam 30 i/s, après | jeu 30 i/s, 19 à 66 ms ; ×2 retrouvé après la levée |
 | glibc demandée par l'archive | 2.36 → 2.29 |
@@ -1057,6 +1059,8 @@ Mesures refusées, à ne pas refaire :
 - Échelle PQ en HDR : −3 à −10 dB.
 - Attendre l'affichage de tout un job sous la limite Steam : le jeu tombe de
   40 à 31 i/s.
+- Autour du HUD (14/10) : `hud_match` −0,2 dB, `hud_global` jusqu'à −0,9.
+- Estimation du délai GPU de `pace_plan` symétrique : 52 % d'images hors plan.
 
 Le détail de toutes les mesures est dans AGENTS.md §10 et le CHANGELOG.
 
@@ -1476,3 +1480,75 @@ l'interpolation en latence et en qualité.
   (`FrameSlot::cmd2` / `firstFence`, ×3+ avec deux files) : 1440p
   `quality`, réelle ×4 ~36 → ~32 ms, ×3 ~34 → ~30 ms. Validation de
   synchronisation (×8, hybride) et Docker lavapipe verts.
+
+### 14/10 — ×4 sur un jeu à 30 i/s : cadence d'abord, puis l'image
+
+Retour : Cyberpunk limité à 30 i/s dans le jeu (le limiteur de la couche
+« ajoute toujours de la latence »), ×4, « encore pas mal d'artefacts ».
+Demande : le maximum contre les artefacts en ×4 à 30 i/s, une idée après
+l'autre, sans dépasser +10 ms de latence. Écran de l'utilisateur :
+2560×1440 à 143,912 Hz, sans VRR (Hyprland 0.56, `allow_tearing = 0`),
+RTX 3060 Ti, pilote 615.
+
+- **La cadence était le gros défaut.** 30 i/s ×4 = 120 images pour 144
+  rafraîchissements : une image tenue deux rafraîchissements sur cinq (24
+  fois par seconde), et le contenu des images décalé de leur affichage
+  jusqu'à un demi-rafraîchissement. Sans grille mesurée (`display_grid=0`
+  sous Hyprland), chaque présentation espaçait ses images depuis sa propre
+  fin GPU. Trois changements (commit e31b79a) :
+  - `refresh_fill` (défaut 1 = dès ×3) : ×m qui ne remplit pas l'écran à
+    moins d'une image près → m ou m+1 images par image du jeu, une par
+    rafraîchissement (le cadencement adaptatif), étage de sortie dimensionné
+    pour m+1 ;
+  - `virtual_grid` : sans grille mesurée, une grille à la période de sortie
+    et à une phase à nous, déplacée d'une demi-période quand des images
+    sont écrasées (ou, 47423df, affichées à moins d'un tiers de période de
+    la précédente : retours d'affichage bruités d'une surface X11) ;
+  - `pace_plan` : sur une grille, chaque image est prévue pour son
+    rafraîchissement dès l'appel du jeu (délai GPU estimé, prudent :
+    +0,5 à la hausse, 0,05 à la baisse, mesuré seulement quand le worker a
+    vraiment attendu la fence — sinon il comptait son propre retard : 9 ms
+    pour 4,6) et présentée pour lui. Avant : prévision depuis l'appel du
+    jeu, GPU encore au travail → 35 à 67 % des images affichées un
+    rafraîchissement après leur contenu.
+  Mesuré (gamescope sans fenêtre 144 Hz, démo 30 i/s ×4, trois essais) :
+  120 → 142–143 images affichées/s, répétitions 30 → 5/s, hors plan 67 →
+  10 %, image réelle 33 → 40 ms (+7 ms). 40 i/s ×3 : +5 ms. ×2 à 60 i/s :
+  +7 ms pour une latence de 14 ms → pas par défaut (`refresh_fill = 2`).
+  Le banc varie beaucoup d'un lancement à l'autre (0,4 à 5 répétitions/s
+  à réglages égaux) : toujours trois essais.
+- **Xwayland + NVIDIA** : une surface X11 (jeux Proton) n'a pas `mailbox`
+  (FIFO, IMMEDIATE, FIFO_LATEST_READY — sans l'extension de device qu'il
+  exige) → `present_mode=auto` prend IMMEDIATE, sans déchirure sous
+  Hyprland (tearing interdit). Hypothèse probable pour `display_grid=0` :
+  les retours d'affichage d'Xwayland y sont trop bruités pour la tolérance
+  de 0,5 ms.
+- **`interp_accel`** (auto GPU dédié, commit 36f136a) : la trajectoire
+  courbe quand le mouvement a changé depuis la paire précédente (écart
+  `a·t(1−t)/2`). Accélération calculée une fois par image à la résolution
+  du flux (`accel_map.comp`, binding 10 de la synthèse), sur 5×5 blocs, et
+  gardée seulement si les voisins concordent (cohérence 0,85–0,98 ; sans
+  ce test, objets à vitesse constante −0,4 dB). Jeux enregistrés +0,03 à
+  +0,17 dB, scintillement jusqu'à −0,5 ; synthétique ≤ −0,02 ; +0,1 ms en
+  1440p ×4 (par pixel : +3,8 ms).
+- **`global_motion`** : rayon d'un tiers du niveau grossier jusqu'à 24
+  (au lieu d'un quart jusqu'à 16) : pixels faux −1 à −5 % sur les jeux.
+- **Écartés (mesurés)** :
+  - `hud_match` (pixels de HUD remplis par la scène dans l'analyse) :
+    −0,2 dB ;
+  - `hud_global` (vecteur caméra essayé près du HUD dans la synthèse) :
+    jusqu'à −0,9 dB, le masque apprend aussi des pixels unis du décor, et
+    les piliers flous du premier plan y prennent le vecteur caméra ;
+  - `synth_bicubic` par défaut : +0,004 dB, scintillement en hausse ;
+  - phase de la grille virtuelle par moyenne circulaire des heures
+    d'affichage : plus de répétitions dans gamescope ;
+  - pas d'effet domino sur un raté du plan : l'image écrasée fausserait le
+    réglage de phase ;
+  - rayon global 32 : moins bon que 24.
+- **Piste non faite** : remplir le rafraîchissement manquant *après*
+  l'image réelle (extrapolation t ≈ 1,2) → image réelle ~7 ms plus tôt
+  qu'avec le remplissage, mais une extrapolation à t = 1,25 vaut une
+  interpolation à t = 0,5 (−1,5 à −2,9 dB par rapport à t = 0,25).
+- **Constat** : les images générées des jeux enregistrés n'ont que 85–88 %
+  du détail fin de la vérité (pompage de netteté possible) ; le bicubique
+  n'y change rien de mesurable.
