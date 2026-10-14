@@ -499,6 +499,11 @@ statut). Le backend `main.py` édite la configuration comme le panneau
 gardées) ; construit par `tools/ci/decky-check.sh` (Docker Node 20, pnpm,
 `tsc`), zip joint aux releases, testé sans Decky (`decky_backend`). **Jamais
 lancé sur un vrai Deck** : à valider (Decky « Installer depuis un ZIP »).
+Réglages « pour ce jeu seulement » (section du jeu en cours, nom tiré du
+fichier de statut). Depuis le 03/10, sans le panneau (`require_app = 0`),
+un multiplicateur / mode / réglage de flux changé dans le fichier reconstruit
+l'étage de sortie du jeu en cours (avant : seules les options « live »), et
+`require_app` basculé met en pause / relance (test `live_config`).
 
 ### 4.5 Distributions, musl et ARM64
 

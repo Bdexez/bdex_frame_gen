@@ -13,6 +13,8 @@ type State = {
   mode: string;        // "interpolate" | "hybrid" | "extrapolate"
   paused: boolean;
   hud: boolean;
+  game?: string;       // the running game (its [section] name)
+  per_game?: boolean;  // its own settings (its section), else the global ones
   installed?: boolean;
   status?: Status;
 };
@@ -54,10 +56,20 @@ function Content() {
           <div>The layer is not installed (install.sh, or the package): nothing will happen.</div>
         </PanelSectionRow>
       )}
+      {state.game ? (
+        <PanelSectionRow>
+          <ToggleField
+            label={`Settings for ${state.game} only`}
+            description="Its own section of the configuration; off: the settings of every game"
+            checked={!!state.per_game}
+            onChange={(v) => change({ per_game: v })}
+          />
+        </PanelSectionRow>
+      ) : null}
       <PanelSectionRow>
         <ToggleField
-          label="Every game"
-          description="Vulkan and Proton games generate frames from their start"
+          label={state.per_game ? "Frame generation in this game" : "Every game"}
+          description={state.per_game ? "From its start, panel closed" : "Vulkan and Proton games generate frames from their start"}
           checked={state.generate}
           onChange={(v) => change({ generate: v })}
         />

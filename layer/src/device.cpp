@@ -277,9 +277,13 @@ void DeviceData::pollConfig() {
     fresh.autoConfigure(props, memProps);
     const bool wasPaused = config.paused;
     Config next = config.keepingCreationSettings(fresh);
-    if (config.requireApp && !next.sameOutputSettings(config)) {
+    if (config.enabled && !next.sameOutputSettings(config)) {
         // Multiplier, mode, flow, HUD...: the swapchains rebuild their output
-        // stage (VirtualSwapchain::present), as the panel applies them live.
+        // stage (VirtualSwapchain::present), as the panel applies them live —
+        // and, since 03/10, without the panel too (require_app = 0: Steam's
+        // Game Mode, where the Steam Deck menu changes them in the file; a
+        // multiplier above the one the swapchain was made for goes through
+        // the transit images).
         ++next.rebuildGen;
         config = next;
     } else {

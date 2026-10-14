@@ -413,6 +413,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### SteamOS / Steam Deck (gamescope)
 
+- **Settings applied to the running game without the panel** (require_app
+  = 0, Game Mode): a multiplier, mode or flow setting changed in the file
+  rebuilds the output stage as under the panel (it only took the "live"
+  options before — the Steam Deck menu's multiplier and mode waited for the
+  next start); `require_app` switched in the file pauses or resumes the
+  game. Test `live_config` (x2 → x3 → extrapolation → paused → resumed).
+- **Decky menu: settings for the running game only** — its own `[section]`
+  (from the status file's process name), started from the effective
+  values; off returns it to the global settings.
 - **Decky Loader plugin** (`packaging/decky`, `tools/ci/decky-check.sh`,
   zip attached to releases): the Steam Deck's quick access menu in Game
   Mode — frame generation in every game, multiplier (Auto, Adaptive, ×2–×4),

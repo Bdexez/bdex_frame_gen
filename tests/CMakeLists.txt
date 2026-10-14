@@ -108,6 +108,11 @@ if(TARGET bdex_demo)
              COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/capture_linux.sh" "$<TARGET_FILE:bdex-capture>" "$<TARGET_FILE:bdex_demo>")
     set_tests_properties(capture_linux PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 240)
   endif()
+  # Settings edited in the file while a game runs without the panel (Game
+  # Mode, the Steam Deck menu): rebuilt and applied live.
+  add_test(NAME live_config
+           COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/live_config.sh" "$<TARGET_FILE:bdex_demo>" "${CMAKE_BINARY_DIR}/layer")
+  set_tests_properties(live_config PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
   add_test(NAME validation
            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/validation.sh" "$<TARGET_FILE:bdex_demo>" "${CMAKE_BINARY_DIR}/layer")
   set_tests_properties(validation PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)

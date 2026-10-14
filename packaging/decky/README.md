@@ -10,6 +10,8 @@ stay open beside the game:
   Adaptive (every refresh, fractional ratios), ×2, ×3, ×4;
 - **Mode**: interpolation, hybrid, extrapolation;
 - **Paused**, **FPS counter**;
+- **Settings for this game only**: the running game's own section of the
+  configuration (off: back to the settings of every game);
 - the running game's frame rates, as the layer reports them.
 
 The plugin only edits `~/.config/bdex-framegen.conf` (the same lines as the
