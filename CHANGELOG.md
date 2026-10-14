@@ -6,6 +6,48 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### x4 on 30 fps: every refresh a new frame; frames on curved trajectories (2026-10-14)
+
+- **`refresh_fill`** (on from x3): a fixed multiplier whose output falls
+  short of a fixed refresh rate by less than a frame per game frame — 30 fps
+  x4 on 144 Hz gives 120 frames for 144 refreshes, a frame held two
+  refreshes every fifth, 24 times a second — now gives each game frame `m`
+  or `m+1` frames, one per refresh. Headless gamescope at 144 Hz, the demo
+  at 30 fps x4: 144.0 frames a second shown instead of 120, repeats 26/s →
+  0.4/s; the real frame on screen ~6 ms later (31 → 38 ms present to
+  screen; 40 fps x3 +5 ms). `refresh_fill = 2` also at x2 (60 fps x2 on
+  144 Hz: +7 ms), `0` off; « Remplir chaque rafraîchissement » in the panel
+  and the Windows launcher.
+- **`virtual_grid`**: where the screen's refresh grid is not measured
+  (Wayland compositors such as Hyprland, KDE with NVIDIA), the adaptive
+  pacing puts its frames on a grid of the output period at a phase of its
+  own, moved half a period when frames get replaced. Same demo with the grid
+  hidden: repeats 29/s → 2/s. Status `display_grid=2`.
+- **`pace_plan`**: on a refresh grid, each frame of a present is planned for
+  its refresh when the game presents (from a cautious estimate of when its
+  first frame is ready) and presented for it, so its content is that
+  refresh's. The layer used to predict from the present call, the GPU still
+  working: at 30 fps x4 on 144 Hz, 35 % of the frames showed a refresh later
+  than their content's, irregularly — 5 % now (+1.4 ms).
+- **`interp_accel`** (on on a discrete GPU): where the motion changed since
+  the previous pair (a mouse turn speeding up or slowing down), the
+  generated frames follow the curved trajectory (`a·t(1−t)/2` off the
+  straight line), from the previous pair's flow, averaged over ~80 pixels
+  and kept only where the neighbours agree. Recorded games +0.03 to +0.17
+  dB, flicker −0.04 to −0.51, fewer grossly wrong pixels on every one;
+  constant-speed scenes within −0.02 dB; +0.1 ms a game frame at 1440p x4.
+- `latency_log` gains a 4th column: the refresh each frame was planned for.
+- `global_motion` searches a third of the coarsest level, up to 24 pixels
+  (was a quarter, up to 16): fast turns in the recorded games, grossly wrong
+  pixels −1 to −5 %, flicker down on every one; free in GPU time.
+- **A static HUD over a camera turn** came out smeared and doubled at x4 on
+  30 fps: `hud_mask = 8` (on on a discrete GPU, any preset but
+  `performance`) keeps pixels unchanged for 8 frames as they are —
+  game-like scenes (`tools/edge_bench/make_game.py`: a 30 fps game seen at
+  120 Hz, parallax, motion blur, HUD) +0.21 to +0.47 dB, edges +0.9 to
+  +2.0; and **`static_soft`** (also on) leans the anti-aliased HUD text the
+  hard mask misses toward its place: +0.05 to +0.25 dB, edges +0.5 to +4.5.
+
 ### Interpolation latency; the frame cap at the game's input point (2026-10-13)
 
 - **The first generated frame no longer waits for the others.** At x3 and

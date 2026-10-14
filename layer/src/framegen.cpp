@@ -385,7 +385,10 @@ void FrameGen::createResources() {
         globalVec_ = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, {1, 1}, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, true);
         {
             const VkExtent2D c = levels_v_.back().size;
-            globalRadius_ = std::clamp(int(std::min(c.width, c.height)) / 4, 1, 16);
+            // (A third of the level, up to 24 — was a quarter, up to 16: 14/10,
+            // recorded games grossly wrong pixels -1 to -5 %, flicker down on
+            // every one, synthetic turns -0.02 dB; 2/5 up to 32 gained less.)
+            globalRadius_ = std::clamp(int(std::min(c.width, c.height)) / 3, 1, 24);
             const VkDeviceSize n = VkDeviceSize(2 * globalRadius_ + 1) * (2 * globalRadius_ + 1);
             globalCosts_ = dev_.createBuffer(n * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         }
