@@ -75,13 +75,18 @@ bool Config::applyPreset(const std::string& name) {
     autoTune = false;
     presetName = v;
     if (v == "balanced" || v == "default") {
-        flowScale = 0; refineAll = true; flowIterations = 1; levels = 4; searchRadius = 4; searchFine = 2;
+        // (search_fine 3 since 14/10, as quality: recorded games +0.02 to
+        // +0.06 dB and less flicker, edge scenes up to +1.0, worst -0.02.)
+        flowScale = 0; refineAll = true; flowIterations = 1; levels = 4; searchRadius = 4; searchFine = 3;
     } else if (v == "quality") {
         // Full-resolution flow up to ~1080p, half above (flowScaleFor): at
         // 1440p the full-resolution pyramid followed a third of the camera
         // motion the half-resolution one does — recorded games, fast turns:
-        // +0.3 to +0.5 dB at half the flow's GPU time (13/10).
-        flowScale = -1; refineAll = true; flowIterations = 2; levels = 5; searchRadius = 4; searchFine = 2;
+        // +0.3 to +0.5 dB at half the flow's GPU time (13/10). A search
+        // radius of 3 at the finer levels (14/10): recorded games +0.02 to
+        // +0.08 dB, flicker and grossly wrong pixels down on every one, edge
+        // scenes up to +1.2, worst -0.05; +0.1 to +0.2 ms of flow at 1440p.
+        flowScale = -1; refineAll = true; flowIterations = 2; levels = 5; searchRadius = 4; searchFine = 3;
     } else if (v == "performance" || v == "perf" || v == "fast") {
         presetName = "performance";
         flowScale = 4; refineAll = false; flowIterations = 0; levels = 4; searchRadius = 4; searchFine = 2;
@@ -94,7 +99,7 @@ bool Config::applyPreset(const std::string& name) {
         // demo together with pixel_vectors. Costs ~2x the synthesis
         // (pixel_vectors). frame_timing, extrapolate_accel and reveal_fill
         // lose on some content: left out.
-        flowScale = 0; refineAll = true; flowIterations = 1; levels = 4; searchRadius = 4; searchFine = 2;
+        flowScale = 0; refineAll = true; flowIterations = 1; levels = 4; searchRadius = 4; searchFine = 3;
         zeroBiasContrast = 0.02f; pixelVectors = true; flowTemporal = 1.f; hudMask = 24; sceneCutLocal = true;
         dedup = true; extrapolateSplat = true;
     } else if (v == "latency" || v == "lowlatency" || v == "low_latency") {

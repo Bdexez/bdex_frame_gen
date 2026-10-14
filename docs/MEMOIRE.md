@@ -1585,6 +1585,11 @@ RTX 3060 Ti, pilote 615.
   - conseils de réglage du jeu : couper le grain de film (bruit nouveau à
     chaque image, imprévisible, il pulse entre réelles et générées) et
     réduire le flou de mouvement (virages très flous : blocs).
+- **`search_fine` 3** (rayon des niveaux fins, préréglages `balanced`,
+  `enhanced`, `quality`) : jeux enregistrés +0,02 à +0,08 dB, scintillement
+  et pixels faux en baisse partout, scènes à arêtes jusqu'à +1,2, pire
+  −0,05 ; +0,1 à +0,2 ms de flux en 1440p ; démo CI 29,50 → 29,58 dB.
+  `search_radius` 6 sans effet (plafond `MAXR` = 4 du shader).
 - **Piste non faite** : remplir le rafraîchissement manquant *après*
   l'image réelle (extrapolation t ≈ 1,2) → image réelle ~7 ms plus tôt
   qu'avec le remplissage, mais une extrapolation à t = 1,25 vaut une

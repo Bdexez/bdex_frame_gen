@@ -37,6 +37,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   dB, flicker −0.04 to −0.51, fewer grossly wrong pixels on every one;
   constant-speed scenes within −0.02 dB; +0.1 ms a game frame at 1440p x4.
 - `latency_log` gains a 4th column: the refresh each frame was planned for.
+- **A wider motion search at the finer levels** (`search_fine` 3 instead
+  of 2 in the `balanced` — the automatic preset of discrete GPUs —,
+  `enhanced` and `quality` presets): recorded games +0.02 to +0.08 dB,
+  flicker and grossly wrong pixels down on every one, edge scenes up to
+  +1.2 dB, worst −0.05; +0.1 to +0.2 ms of flow at 1440p. The CI's demo
+  gate 29.50 → 29.58 dB (fast 23.65 → 23.70).
 - `hud_mask` (discrete GPUs) holds a pixel after 4 still frames instead of
   8 — a HUD element that appears (a quest update) is kept in place after
   0.13 s at 30 fps: HUD scenes +0.01 to +0.16 dB, extrapolation +0.13,

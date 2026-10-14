@@ -412,7 +412,7 @@ mode…) restent ceux du lancement — render_scale seulement si le panneau
 x4 (2 + 4) pour permettre x4 à chaud. Hors `require_app`, chemin inchangé. `BDEX_FG=1` contourne. Presets : `enhanced` (balanced + opt-ins mesurés positifs ensemble, dont
 `zero_bias_contrast=0.02` — à 0,1 il perd 1,2 dB sur le replay de la démo
 avec `pixel_vectors`), `balanced` (défaut),
-`quality` (flow_scale 1, levels 5, iterations 2), `performance` (flow_scale 4,
+`quality` (flow_scale −1 : pleine résolution jusqu'à ~1080p, levels 5, iterations 2, search_fine 3 depuis le 14/10), `performance` (flow_scale 4,
 refine_all 0, iterations 0), `latency` (extrapolation + x2), `auto`
 (iGPU→performance, dGPU avec ≥2 Gio de VRAM→balanced). Les knobs flow
 avisés (`levels`, `search*`, `refine*`, `flow_scale`, `flow_iterations`)
