@@ -616,6 +616,11 @@ syntaxe Linux n'y vaut pas).
   (MMCSS « Games », sinon `THREAD_PRIORITY_HIGHEST` — elle ne faisait
   rien) et minuterie à 1 ms pendant que le fil tourne (`precise_wake` :
   sinon les attentes cadencées durent jusqu'à 15,6 ms).
+  Non vérifiable sous Wine : un jeu Direct3D rendu Vulkan par DXVK sous
+  Windows passerait par la couche (DXVK charge `vulkan-1.dll` quand
+  `winevulkan.dll` n'existe pas), mais sous Wine DXVK + le chargeur officiel
+  plantent même sans la couche (03/10, appel à l'adresse 0 juste après
+  `vkGetInstanceProcAddr`) : à essayer sur un vrai Windows.
 
 ### 4.7 Windows, mode 2 — `bdex_capture.exe`
 
