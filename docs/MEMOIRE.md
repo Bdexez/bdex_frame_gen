@@ -1597,6 +1597,13 @@ RTX 3060 Ti, pilote 615.
   gagnait plus (+0,17 sur Cyberpunk) mais le corpus `scroll` (motif quasi
   périodique) y perdait 1,5 dB — le corpus de ctest l'a attrapé, ma suite
   ne l'avait pas. Démo CI 29,58 → 29,53 / rapide 23,70 → 23,72.
+- **Seuils re-mesurés sans changement** (suite + corpus ctest) : repli en
+  fondu de la synthèse (0,12–0,25 ; 0,18–0,35 neutre, 0,08–0,18 −0,04 dB) ;
+  mélange des deux extrémités d'une trajectoire (0,04–0,12 ; 0,06–0,18
+  +0,02 seulement, et une constante de la synthèse casse l'invariant bit à
+  bit) ; `refine_bias` (0,5 ; 0,25 et 0,375 : jeux réels un peu mieux,
+  arêtes des scènes de synthèse −0,1 à −0,3 ; 1,0 : corpus `occlude`
+  −4 dB). `flow_iterations` 3 neutre, `smoothness` 0,008 −0,23.
 - **Piste non faite** : remplir le rafraîchissement manquant *après*
   l'image réelle (extrapolation t ≈ 1,2) → image réelle ~7 ms plus tôt
   qu'avec le remplissage, mais une extrapolation à t = 1,25 vaut une
