@@ -1615,6 +1615,17 @@ RTX 3060 Ti, pilote 615.
   près du HUD ×2, paire précédente, mouvement nul) ont tous perdu — une
   concordance de couleur trouvée en plus est surtout un faux appariement.
   Ne plus ajouter de candidat jugé sur ce seul critère.
+- **Synthèse par couches du 05/10 (`wip/occlusion-layers`, (a)) reprise sur
+  la base actuelle** : trajectoire choisie parmi les vecteurs des 3×3 texels
+  des deux champs, fenêtre décalable 2×2, gardée si chaque extrémité est
+  mieux expliquée par elle. Elle gagnait +0,1 à +0,4 dB le 05/10, sans
+  `pixel_vectors` ni `interp_splat` ; aujourd'hui partout en contour :
+  −0,10 dB en moyenne, marche avant −0,57 (le zoom fait différer tous les
+  vecteurs voisins, le modèle par couches ne tient pas) ; seulement où le
+  moteur échoue (min(ef, eb) > 0,04 / 0,08, erreur de fenêtre < 0,7×) :
+  −0,02 à −0,04, marche −0,22 à −0,36 ; seules les scènes `edge_bench`
+  gagnent (+0,05 à +0,13). Là où les deux trajectoires échouent, le mélange
+  prudent bat une trajectoire nette mais incertaine. Abandonné.
 - **Délai GPU du plan au 90ᵉ centile** (32 derniers) au lieu de la moyenne
   « vite à la hausse, lente à la baisse » : 3 essais semblaient donner
   −2,5 ms et moins de ratés ; l'A/B à 5 essais alternés dit l'inverse
