@@ -25,6 +25,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   full-resolution splat on the corpus at 960x540, `PRESET=auto`).
   With the two items above, the whole generation on a discrete GPU's
   defaults (RTX 3060 Ti, x2): **1440p 1.63 → 0.92 ms, 4K 2.96 → 1.84 ms**.
+- **`synth_bicubic` 16 % cheaper** (1440p: 1.36 → 1.14 ms a synthesis): the
+  trajectories are chosen on bilinear samples and only the four colours
+  blended are read with Catmull-Rom. Same quality on the corpus (±0.05 dB;
+  with `subpixel_lk`, sub-pixel motion +1.4 dB as before). Still opt-in: it
+  gains next to nothing elsewhere for +0.65 ms at 1440p.
 - **The automatic quality options up to 4K ×3** (`pixel_vectors`,
   `interp_splat`, the local scene cut on a discrete GPU; 1440p ×5, 1080p ×8):
   they stopped at 4K ×2, whose cost (2.9 ms a game frame) is now 4K ×3's.
