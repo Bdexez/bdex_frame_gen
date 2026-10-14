@@ -44,12 +44,14 @@ struct AllocatedImage {
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkFormat format = VK_FORMAT_UNDEFINED;
     VkExtent2D extent{};
+    VkDeviceSize allocated = 0;  // bytes of memory (DeviceData::memoryInUse)
 };
 
 struct AllocatedBuffer {
     VkBuffer buffer = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkDeviceSize size = 0;
+    VkDeviceSize allocated = 0;  // bytes of memory (DeviceData::memoryInUse)
 };
 
 // Steady-clock milliseconds (the swapchains' msOf(clock::now())).
@@ -143,6 +145,9 @@ struct DeviceData {
                                VkImageCreateFlags flags = 0, const void* pNext = nullptr,
                                const std::vector<uint32_t>* sharingFamilies = nullptr);
     void destroyImage(AllocatedImage& img);
+    // GPU memory the layer's images and buffers hold on this device (the
+    // engines of all its swapchains), for the logs and the status.
+    std::atomic<int64_t> memoryInUse{0};
 
     // pipeline_cache: the compiled shaders of the layer's passes kept on disk
     // (~/.cache/bdex-framegen/pipelines-<vendor>-<device>-<cache UUID>.bin:

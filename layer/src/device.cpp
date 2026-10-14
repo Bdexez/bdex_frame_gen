@@ -112,6 +112,8 @@ AllocatedImage DeviceData::createImage(VkFormat format, VkExtent2D extent, VkIma
         ai.allocationSize = req.size;
         ai.memoryTypeIndex = findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         VK_CHECK(vt.AllocateMemory(device, &ai, nullptr, &img.memory));
+        img.allocated = req.size;
+        memoryInUse += int64_t(req.size);
         VK_CHECK(vt.BindImageMemory(device, img.image, img.memory, 0));
 
         if (withView) {
@@ -133,6 +135,7 @@ void DeviceData::destroyImage(AllocatedImage& img) {
     if (img.view) vt.DestroyImageView(device, img.view, nullptr);
     if (img.image) vt.DestroyImage(device, img.image, nullptr);
     if (img.memory) vt.FreeMemory(device, img.memory, nullptr);
+    memoryInUse -= int64_t(img.allocated);
     img = AllocatedImage{};
 }
 
@@ -223,6 +226,8 @@ AllocatedBuffer DeviceData::createBuffer(VkDeviceSize size, VkBufferUsageFlags u
                                                 ? VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
                                                 : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         VK_CHECK(vt.AllocateMemory(device, &ai, nullptr, &buf.memory));
+        buf.allocated = req.size;
+        memoryInUse += int64_t(req.size);
         VK_CHECK(vt.BindBufferMemory(device, buf.buffer, buf.memory, 0));
     } catch (...) {
         destroyBuffer(buf);
@@ -234,6 +239,7 @@ AllocatedBuffer DeviceData::createBuffer(VkDeviceSize size, VkBufferUsageFlags u
 void DeviceData::destroyBuffer(AllocatedBuffer& buf) {
     if (buf.buffer) vt.DestroyBuffer(device, buf.buffer, nullptr);
     if (buf.memory) vt.FreeMemory(device, buf.memory, nullptr);
+    memoryInUse -= int64_t(buf.allocated);
     buf = AllocatedBuffer{};
 }
 

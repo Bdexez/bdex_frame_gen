@@ -122,6 +122,9 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Diagnostics
 
+- **GPU memory held by the layer** in the "frame generation ready" log line
+  (every image and buffer of its engines on the device). Measured (dGPU
+  defaults): 1440p x2 75 MiB, x4 105 MiB; 4K x2 165 MiB, x4 229 MiB.
 - **Parser fuzzing** (`tests/fuzz/fuzz.cpp`, `tools/ci/fuzz.sh`, CI job
   `fuzz`): libFuzzer with ASan and UBSan on what the layer reads from files —
   the configuration and the shipped profiles, the status files, the panel's
