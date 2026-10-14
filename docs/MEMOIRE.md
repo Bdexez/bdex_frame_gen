@@ -1555,6 +1555,13 @@ RTX 3060 Ti, pilote 615.
   ±1 ms d'un lancement à l'autre au début (fréquence du GPU) : comparer les
   2e et 3e lancements. `test_offline.py` coupe `false_detail` pour juger
   `scene_cut_local` seul (il relève les deux côtés).
+  Rayon de la moyenne à l'échelle des blocs du flux (2 à pleine
+  résolution, 4 à la moitié : 1440p « qualité ») : enregistrements 1440p
+  +0,03 / +0,01 dB, scintillement −0,10 / −0,04 de plus ; rien ailleurs.
+- **Repli de la synthèse** (pixels qu'aucune trajectoire n'explique, fondu
+  non déplacé à t) : fondu « adouci » (plus près de l'image proche) neutre ;
+  image la plus proche seule −0,07 dB en moyenne, `edge_bench` −0,24. Le
+  fondu linéaire reste.
 - **`global_motion` anisotrope** (14/10, rayon x = largeur/3 au lieu de
   min(largeur, hauteur)/3, plafond 24 ou 32 ; essayé pour le pire virage de
   l'enregistrement 1440p PRAGMATA, ~700 px par paire) : neutre (−0,005 à

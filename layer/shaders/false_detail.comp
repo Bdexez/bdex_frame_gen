@@ -6,8 +6,9 @@
 // Where the generated frame's local detail (mean |Laplacian| of the luma over
 // 5x5) clearly exceeds the most detailed 4x4 cell of either input within 16
 // pixels (the window covers the motion: an object crossing a flat
-// background brings its real edges along), the pixel leans to its 5x5
-// average. Detail present at the pixel itself in both inputs (a still HUD's
+// background brings its real edges along), the pixel leans to its local
+// average (5x5; 9x9 when the flow is at half the display's resolution —
+// its blocks, and the mosaic, are twice the size). Detail present at the pixel itself in both inputs (a still HUD's
 // edges, unmoving scenery) is left alone. Four modes over the finished output
 // (packed 8- or 10-bit formats, perceptual encoding, no upscaling), all
 // values in 8-bit units:
@@ -46,6 +47,7 @@ layout(push_constant) uniform PC {
     float strength;  // 0..1
     float ratio;     // the generated detail must exceed ratio x the inputs'
     float guard;     // detail at the pixel in both inputs above which it is left alone (0: no test)
+    int blur;        // radius of the average (2..4)
 } pc;
 
 vec4 unpackOut(uint v) {
@@ -75,7 +77,7 @@ float srcLuma(sampler2D tex, ivec2 p) {
     return luma255(c);
 }
 
-const int kTile = 16, kBorder = 3, kSide = kTile + 2 * kBorder;  // 22
+const int kTile = 16, kBorder = 4, kSide = kTile + 2 * kBorder;  // 24 (the average's largest radius)
 shared uint sPix[kSide * kSide];      // the output, packed
 shared float sLum[kSide * kSide];     // its luma
 shared float sLap[kSide * kSide];     // |Laplacian| (valid one pixel in from the edge)
@@ -164,10 +166,11 @@ void main() {
     uint centre = sPix[c0];
     if (inImage && w > 0.0) {
         vec4 sum = vec4(0.0);
-        for (int y = -2; y <= 2; ++y)
-            for (int x = -2; x <= 2; ++x) sum += unpackOut(sPix[c0 + y * kSide + x]);
+        const int r = clamp(pc.blur, 2, kBorder);
+        for (int y = -r; y <= r; ++y)
+            for (int x = -r; x <= r; ++x) sum += unpackOut(sPix[c0 + y * kSide + x]);
         vec4 g = unpackOut(centre);
-        vec4 c = mix(g, sum / 25.0, w);
+        vec4 c = mix(g, sum / float((2 * r + 1) * (2 * r + 1)), w);
         c.a = g.a;
         centre = packOut(c);
         atomicOr(sChanged, 1u);
