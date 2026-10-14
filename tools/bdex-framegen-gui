@@ -147,6 +147,7 @@ _EN = {
  "limite Steam {} i/s (rien au-delà ne s'affiche)": 'Steam limit {} fps (nothing above it is shown)',
  'écran {} Hz': 'screen {} Hz',
  'latence {} ms': 'latency {} ms',
+ 'affichées {}/s, tenues {}/s': 'shown {}/s, held {}/s',
  'budget GPU : niveau {}': 'GPU budget: level {}',
  "flux incertain sur {} % de l'image": 'flow uncertain on {} % of the picture',
  "génération inutile : le jeu tient déjà la fréquence de l'écran": 'generation not needed: the game already '
@@ -2066,6 +2067,9 @@ def describe_entry(e):
         lat = float(e.get("latency_ms", -1))
         if lat >= 0:
             parts.append(tr(f"latence {lat:.0f} ms"))
+        shown = float(e.get("shown_fps", -1))
+        if shown >= 0:   # the cadence on screen (present feedback): frames shown, and those held a refresh more
+            parts.append(tr(f"affichées {shown:.0f}/s, tenues {float(e.get('held_per_s', 0)):.0f}/s"))
         lvl = int(e.get("gpu_budget_level", 0))
         if lvl > 0:
             parts.append(tr(f"budget GPU : niveau {lvl}"))

@@ -115,6 +115,22 @@ void VirtualSwapchain::publishStatus(int multiplier) {
         else if (vgPeriodMs_ > 0.0) e.displayGrid = 2;
     }
     e.latencyMs = displayLatencyMs();
+    {
+        const double hz = e.limitHz > 0.0 ? e.limitHz : e.refreshHz;
+        fbPeriodHintMs_.store(hz > 0.0 ? 1000.0 / hz : 0.0, std::memory_order_relaxed);
+        const double nowMs = msOf(clock::now());
+        std::lock_guard<std::mutex> lock(fbMutex_);
+        if (feedback_ && statusRateAtMs_ > 0.0 && nowMs - statusRateAtMs_ >= 500.0 && hz > 0.0) {
+            const double secs = (nowMs - statusRateAtMs_) / 1000.0;
+            e.shownFps = double(fbDisplayed_ - statusShownSeen_) / secs;
+            e.heldPerS = double(fbHeld_ - statusHeldSeen_) / secs;
+        }
+        if (statusRateAtMs_ <= 0.0 || nowMs - statusRateAtMs_ >= 500.0) {
+            statusShownSeen_ = fbDisplayed_;
+            statusHeldSeen_ = fbHeld_;
+            statusRateAtMs_ = nowMs;
+        }
+    }
     e.budgetLevel = budget_.level();
     e.uncertainPct = uncertainPct_;
     e.width = displayExtent_.width;

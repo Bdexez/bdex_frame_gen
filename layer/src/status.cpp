@@ -105,6 +105,12 @@ std::string statusFormat(const std::string& process, long pid, long long unixTim
         if (!e.engine.empty()) o << "engine=" << e.engine << "\n";
         fixed1(buf, sizeof buf, e.latencyMs);
         o << "latency_ms=" << buf << "\n";
+        if (e.shownFps >= 0.0) {
+            fixed1(buf, sizeof buf, e.shownFps);
+            o << "shown_fps=" << buf << "\n";
+            fixed1(buf, sizeof buf, e.heldPerS);
+            o << "held_per_s=" << buf << "\n";
+        }
         o << "gpu_budget_level=" << e.budgetLevel << "\n";
         if (e.uncertainPct >= 0.0) {
             fixed1(buf, sizeof buf, e.uncertainPct);
@@ -196,6 +202,11 @@ std::vector<std::string> statusDescribe(const StatusFile& file, bool english) {
         }
         if (num(v, "latency_ms", -1) >= 0) {
             snprintf(buf, sizeof buf, T(" · latence %.0f ms", " · latency %.0f ms"), num(v, "latency_ms", -1));
+            line += buf;
+        }
+        if (num(v, "shown_fps", -1) >= 0) {
+            snprintf(buf, sizeof buf, T(" · affichées %.0f/s, tenues %.0f/s", " · shown %.0f/s, held %.0f/s"),
+                     num(v, "shown_fps", -1), num(v, "held_per_s", 0));
             line += buf;
         }
         if (num(v, "gpu_budget_level", 0) > 0) {
