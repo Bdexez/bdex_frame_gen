@@ -37,6 +37,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   dB, flicker −0.04 to −0.51, fewer grossly wrong pixels on every one;
   constant-speed scenes within −0.02 dB; +0.1 ms a game frame at 1440p x4.
 - `latency_log` gains a 4th column: the refresh each frame was planned for.
+- `hud_mask` (discrete GPUs) holds a pixel after 4 still frames instead of
+  8 — a HUD element that appears (a quest update) is kept in place after
+  0.13 s at 30 fps: HUD scenes +0.01 to +0.16 dB, extrapolation +0.13,
+  worst −0.01.
 - `refresh_fill` also with « Auto » (`target_fps`), which picked the largest
   whole multiplier under the refresh rate and so left the same hole: 30 fps
   on 144 Hz 120 → 142 frames shown, held 28.5/s → 4/s (+7.8 ms); 40 fps

@@ -183,7 +183,11 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
     // and doubled — interpolation +0.21 to +0.47 dB, +0.9 to +2.0 on edges;
     // extrapolation +0.67 / +1.06; nothing lost on the recorded games, the
     // corpus or the game-like scenes without a HUD). One pass a game frame.
-    if (strong && !(autoOptionsSet & kAutoHudMask) && hudMask == 0) hudMask = 8;  // (enhanced: its own 24)
+    // (4 frames since 14/10 — a HUD element that appears, a quest update,
+    // is held after 0.13 s at 30 fps instead of 0.27: HUD scenes +0.01 to
+    // +0.16 dB, extrapolation +0.13, worst -0.01; 2 caught still-looking
+    // scenery: low contrast -0.72; 16 -0.14.)
+    if (strong && !(autoOptionsSet & kAutoHudMask) && hudMask == 0) hudMask = 4;  // (enhanced: its own 24)
     // ... and its "holds still" evidence for the HUD pixels never quite
     // unchanged — anti-aliased text, whose 1-2 pixel strokes mix the moving
     // scene (13/10, x4 game-like scenes with anti-aliased HUD text: +0.05 to
