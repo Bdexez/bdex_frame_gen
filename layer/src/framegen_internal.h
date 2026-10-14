@@ -19,7 +19,7 @@ namespace fg {
 constexpr int kMaxFrames = 8;
 
 struct DownsamplePC { int32_t size[2]; int32_t fromColor; int32_t transfer; };
-struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; float gradWeight; float censusWeight; float censusMargin; float rotWeight; int32_t temporal; float zeroBiasContrast; float chromaWeight; int32_t chromaHistory; float zeroBiasCap; int32_t global; };
+struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t hasCoarse; float smoothness; float zeroBias; float gradWeight; float censusWeight; float censusMargin; float rotWeight; int32_t temporal; float zeroBiasContrast; float chromaWeight; int32_t chromaHistory; float zeroBiasCap; int32_t global; int32_t borderPredict; };
 struct SizePC { int32_t size[2]; };
 struct HistPC { int32_t size[2]; int32_t tiles; };
 struct ReducePC { int32_t size[2]; int32_t tiles; float cutHist; float cutLow; };

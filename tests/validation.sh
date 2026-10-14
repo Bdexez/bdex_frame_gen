@@ -93,7 +93,7 @@ for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hy
   elif [ "$run" != "$mode" ]; then
     # A tiny gpu_budget walks the whole quality ladder within the run,
     # output-stage rebuild included (level 3) unless the flow is at 1/4.
-    state="BDEX_FG_FRAME_TIMING=1 BDEX_FG_DEDUP=1 BDEX_FG_SCENE_CUT_LOCAL=1 BDEX_FG_EXTRAPOLATE_ACCEL=1 BDEX_FG_CHROMA_WEIGHT=1 BDEX_FG_FLOW_TEMPORAL=1 BDEX_FG_ONLINE_TUNE=1 BDEX_FG_CACHE_DIR= BDEX_FG_UPSCALE_TEMPORAL=0.1 BDEX_FG_SUBPIXEL_LK=2 BDEX_FG_SYNTH_BICUBIC=1 BDEX_FG_HUD_MASK=24 BDEX_FG_REVEAL_FILL=1 BDEX_FG_GPU_BUDGET=0.001"
+    state="BDEX_FG_FRAME_TIMING=1 BDEX_FG_DEDUP=1 BDEX_FG_SCENE_CUT_LOCAL=1 BDEX_FG_EXTRAPOLATE_ACCEL=1 BDEX_FG_CHROMA_WEIGHT=1 BDEX_FG_FLOW_TEMPORAL=1 BDEX_FG_ONLINE_TUNE=1 BDEX_FG_CACHE_DIR= BDEX_FG_UPSCALE_TEMPORAL=0.1 BDEX_FG_SUBPIXEL_LK=2 BDEX_FG_SYNTH_BICUBIC=1 BDEX_FG_HUD_MASK=24 BDEX_FG_REVEAL_FILL=1 BDEX_FG_BORDER_PREDICT=1 BDEX_FG_GPU_BUDGET=0.001"
     demo_args="--repeat 2 --frames 300 --duration 40"
   else
     state=""; demo_args="--frames 45 --duration 40"

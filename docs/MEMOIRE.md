@@ -1047,6 +1047,7 @@ dépendances…), appliquée seulement là où un logiciel local a un équivalen
 | Adaptatif | 50 i/s → 144 affichées sur 144 Hz |
 | 30 i/s ×4 sur 144 Hz, `refresh_fill` + `pace_plan` (14/10, trois essais) | 120 → 142–143 affichées/s, répétitions 30 → 5/s, image réelle 33 → 40 ms |
 | `interp_accel` (14/10) | jeux enregistrés +0,03 à +0,17 dB, scintillement jusqu'à −0,5 ; +0,1 ms en 1440p ×4 |
+| `border_predict` (15/10) | virages ×4 +0,15 à +0,19 dB (720p et 1440p) ; PRAGMATA scintillement −0,25 / −0,32 ; gratuit |
 | `false_detail` (14/10) | enregistrements 1440p +0,14 / +0,07 dB, scintillement −0,39 / −0,18 ; scènes ×4 +0,03 à +0,21 ; aucune perte ; ~0,7 ms par image générée en 1440p |
 | Limite Steam 30 i/s (démo 30 i/s ×2), avant | jeu 15 i/s, 233 ms présentation → écran |
 | Limite Steam 30 i/s, après | jeu 30 i/s, 19 à 66 ms ; ×2 retrouvé après la levée |
@@ -1579,6 +1580,31 @@ RTX 3060 Ti, pilote 615.
   correspondance tombe hors de l'image ; le matcher compare au pixel de bord
   répété) — la correction irait dans le matcher (SAD sur la partie dans
   l'image), pas dans la synthèse.
+- **`border_predict`** (15/10, auto GPU dédié, `block_match.comp`) :
+  diagnostic — sur les virages ×4, 37 % de l'erreur dans les 2 × 6 % de
+  colonnes du bord ; la synthèse n'y peut rien (essai ci-dessus) : le flux
+  des blocs du bord est faux, leur correspondance est hors de l'image et
+  le matcher compare au pixel de bord répété (cible lue avec `clamp`). Règle :
+  correspondance prédite à plus de moitié hors de l'image → la prédiction
+  (niveau grossier ; caméra au plus grossier), recherche sautée. Suite :
+  +0,05 dB en moyenne, virages +0,15 à +0,19, PRAGMATA scintillement −0,25 /
+  −0,32, pire −0,06 (`edge_bench`) ; corpus : `pan` +0,13 / +0,38
+  (extrapolation), mais `popup` −0,33 et `hud` −0,15 (fond de bruit : au
+  surgissement du menu, de grands vecteurs faux « sortent » aussi de
+  l'image). Variantes : seuil ¼ / ¾ / tout hors image moins bons que ½ ;
+  sans le niveau le plus grossier : virage +0,11 au lieu de +0,19 ; exiger
+  l'accord des voisins (≤ 1–4 px) : `popup` −0,12 mais virage +0,12 —
+  gardée la règle simple. Avec la règle de bord dans la synthèse en plus :
+  pire. `test_offline.py` la coupe pour juger `scene_cut_local`.
+  Complément essayé : SAD des candidats sur la seule partie de la cible
+  dans l'image (normalisé par quadrant) : virage −0,10, le reste ±0,03 —
+  pas retenu.
+- **Banc 1440p ×4** (14/10, scratchpad `hd4/` : scènes `make_game.py`
+  agrandies ×2 en Lanczos — la vérité ×4 exacte, flux à demi-résolution
+  comme en jeu chez l'utilisateur) : `false_detail` +0,18 / +0,19 / +0,10 dB,
+  pixels faux −4 %. `pending_decisions.py` sur les enregistrements (base
+  actuelle) : `chroma_weight` 0,00, `static_guard` −0,01, `learned_flow`
+  −0,27 (−1,25 en extrapolation) : rien à adopter.
 - **`global_motion` anisotrope** (14/10, rayon x = largeur/3 au lieu de
   min(largeur, hauteur)/3, plafond 24 ou 32 ; essayé pour le pire virage de
   l'enregistrement 1440p PRAGMATA, ~700 px par paire) : neutre (−0,005 à
