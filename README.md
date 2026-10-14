@@ -618,8 +618,18 @@ fullscreen at 1920×1080, x2:
 | `quality` | 1.1 ms | 8.8 ms | 1.7 ms | 1.6 ms | ≈ 13 ms |
 
 The copies are the two 8 MB transfers into the real swapchain (generated +
-real frame); on this iGPU they are memory-bound. On a discrete GPU the whole
-budget is well under a millisecond. The game thread spends ≈ 0.1 ms in
+real frame); on this iGPU they are memory-bound. On a discrete GPU, with
+the automatic preset's quality options (per-pixel vectors, both-frame
+splatting, rotation-aware matching, local scene cuts) — RTX 3060 Ti,
+`bdex_offline` + `BDEX_FG_PROFILE=1`, x2, per generated frame:
+
+| Resolution | Analysis | Flow | Synthesis | Total |
+|---|:---:|:---:|:---:|:---:|
+| 2560×1440 | 0.09 ms | 0.34 ms | 0.49 ms | **0.92 ms** |
+| 3840×2160 | 0.15 ms | 0.65 ms | 1.04 ms | **1.84 ms** |
+
+(1.63 and 2.96 ms before 03/10: the synthesis is now compiled for the
+options in use, and the splat runs at half resolution.) The game thread spends ≈ 0.1 ms in
 `vkQueuePresentKHR`; the layer adds one image to the game's swapchain and
 allocates `multiplier - 1` full-resolution output images plus the flow
 pyramids (a few megabytes).
