@@ -1609,6 +1609,12 @@ RTX 3060 Ti, pilote 615.
   Candidat temporel dans la synthèse (flux de la paire précédente essayé
   comme trajectoire là où celle-ci concorde mal, gardé à 0,8× l'erreur) :
   Cyberpunk −0,31 / −0,25 dB, corpus `scroll` −1,1 — il concorde par hasard.
+  Candidat « mouvement nul » aux contours (avec `pixel_vectors`) : Cyberpunk
+  −0,30 / −0,35, `scroll` −1,3. **Leçon** : quatre candidats de trajectoire
+  ajoutés et retenus parce que leurs extrémités concordent mieux (caméra
+  près du HUD ×2, paire précédente, mouvement nul) ont tous perdu — une
+  concordance de couleur trouvée en plus est surtout un faux appariement.
+  Ne plus ajouter de candidat jugé sur ce seul critère.
 - **Piste non faite** : remplir le rafraîchissement manquant *après*
   l'image réelle (extrapolation t ≈ 1,2) → image réelle ~7 ms plus tôt
   qu'avec le remplissage, mais une extrapolation à t = 1,25 vaut une
