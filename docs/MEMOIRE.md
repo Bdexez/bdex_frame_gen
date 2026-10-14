@@ -1590,6 +1590,8 @@ RTX 3060 Ti, pilote 615.
   et pixels faux en baisse partout, scènes à arêtes jusqu'à +1,2, pire
   −0,05 ; +0,1 à +0,2 ms de flux en 1440p ; démo CI 29,50 → 29,58 dB.
   `search_radius` 6 sans effet (plafond `MAXR` = 4 du shader).
+  `search_fine` 4 : +0,04 de plus en moyenne mais scènes de type jeu −0,01 à
+  −0,07 et 81 candidats au lieu de 49 → 3 gardé.
 - **Piste non faite** : remplir le rafraîchissement manquant *après*
   l'image réelle (extrapolation t ≈ 1,2) → image réelle ~7 ms plus tôt
   qu'avec le remplissage, mais une extrapolation à t = 1,25 vaut une
