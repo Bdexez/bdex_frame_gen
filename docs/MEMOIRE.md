@@ -806,6 +806,20 @@ d'affichage tournent dans `gamescope --backend headless` ou dans Docker
   - panneau en mode texte sans GTK 4 ;
   - Steam en Snap ; `--sandboxes` ; `--mangohud`.
 
+**03/10 (local, pas encore poussé)**
+
+- **Tests** : chemin Proton complet en CI (D3D11/DXVK, D3D12/VKD3D-Proton
+  sous Wine, et pilote Wayland de Wine 11), tempêtes de swapchain sous
+  validation, fuzzing des analyseurs (deux bogues trouvés et corrigés :
+  `FIFO_LATEST_READY`, `debug = confidence`), couche 32 bits exécutée.
+- **Produit** : panneau, mode texte et lanceur Windows en anglais hors
+  locale française ; plugin Decky (Steam Deck) ; `bdex-capture` Linux
+  (capture X11/Xwayland, deux GPU, jeux anti-triche).
+- **Coût GPU** : génération 1440p ×2 1,63 → 0,92 ms, 4K ×2 2,96 → 1,84 ms
+  (défauts dGPU) — carte de splat en tampon, synthèse compilée par jeu
+  d'options, `interp_splat` à demi-résolution ; options qualité auto
+  jusqu'à 4K ×3 ; `synth_bicubic` −16 % ; mémoire GPU affichée.
+
 ---
 
 ## 8. Chiffres à retenir
