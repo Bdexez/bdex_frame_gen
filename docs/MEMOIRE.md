@@ -1562,6 +1562,12 @@ RTX 3060 Ti, pilote 615.
   non déplacé à t) : fondu « adouci » (plus près de l'image proche) neutre ;
   image la plus proche seule −0,07 dB en moyenne, `edge_bench` −0,24. Le
   fondu linéaire reste.
+- **Re-mesurés sur la base du 14/10 au soir** : `flow_temporal` neutre
+  (−0,001 dB, ne vaut pas ses 0,28 ms) ; `subpixel_lk=2` + `synth_bicubic`
+  +0,02 en moyenne (enregistrements 853×480 jusqu'à +0,18) mais 1440p −0,02
+  / −0,05 et scintillement en hausse : pas par défaut (le sous-pixel ne paie
+  pas avec le flux à demi-résolution) ; flux pleine résolution en 1440p
+  (`flow_scale=1`) −0,05 dB, scintillement +0,3.
 - **`global_motion` anisotrope** (14/10, rayon x = largeur/3 au lieu de
   min(largeur, hauteur)/3, plafond 24 ou 32 ; essayé pour le pire virage de
   l'enregistrement 1440p PRAGMATA, ~700 px par paire) : neutre (−0,005 à
