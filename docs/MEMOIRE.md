@@ -1565,6 +1565,26 @@ RTX 3060 Ti, pilote 615.
   scène sombre (×2 +0,2, ×4 −0,5) ; préréglages `balanced` / `enhanced`
   au lieu de `quality` (−0,06 / −0,12 ; mais scène sombre +0,4, et
   `levels=4` y gagne +0,8 en perdant sur les virages rapides de PRAGMATA).
+- **Suite (matin du 14/10)** :
+  - `refresh_fill` aussi avec « Auto » (`target_fps`, 8ea2671) : l'entier
+    choisi sous la fréquence laissait le même trou (30 i/s : 120 → 142
+    affichées, tenues 28,5 → 4/s, +7,8 ms ; 40 i/s : +5,6 ms) ;
+  - `hud_mask` à 4 images au lieu de 8 sur GPU dédié (5f85c14) : HUD
+    +0,01 à +0,16 dB, extrapolation +0,13, pire −0,01 (2 : −0,72 en faible
+    contraste ; 16 : −0,14) ;
+  - plancher du banc gamescope : la démo à 144 i/s sans génération a déjà
+    8–9 images tenues/s → les ~4/s du ×4 rempli y sont au plancher ;
+  - écartés : renforcer la netteté des images générées (−0,12 à −0,34 dB
+    dès 0,05) ; `hud_global` même strict (erreur > 0,06, divisée par 2 :
+    −0,45) — trois échecs sur les trous du HUD, ne plus y revenir ; lissage
+    3×3 de la luminance d'analyse contre le grain (−0,3) ; marge fixe sur
+    le délai GPU du plan (+1 à 2,5 ms, pas moins de répétitions) ;
+    `static_soft` plus rapide (0,6 : synthétique +, Cyberpunk −0,05) ;
+  - scène « fps » ajoutée à `make_game.py` : le contour de l'arme sort
+    propre ;
+  - conseils de réglage du jeu : couper le grain de film (bruit nouveau à
+    chaque image, imprévisible, il pulse entre réelles et générées) et
+    réduire le flou de mouvement (virages très flous : blocs).
 - **Piste non faite** : remplir le rafraîchissement manquant *après*
   l'image réelle (extrapolation t ≈ 1,2) → image réelle ~7 ms plus tôt
   qu'avec le remplissage, mais une extrapolation à t = 1,25 vaut une
