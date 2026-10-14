@@ -26,7 +26,7 @@ embarqués au build. Auteur : Bdexez.
 |---|---|---|
 | Binaire | `libVkLayer_bdex_framegen.so` / `.dll` | `bdex_capture.exe` |
 | Principe | layer implicite qui virtualise les swapchains du jeu | capture WGC de la fenêtre jeu, traitement, re-présentation en overlay |
-| Plateforme | Linux (shipping), Windows (compilé CI, jamais validé sur hardware) | Windows x64 |
+| Plateforme | Linux (shipping), Windows (compilé CI, exécuté sous Wine en CI, jamais validé sur hardware) | Windows x64 |
 | Latence | ~0 ms (dans le present path) | +~1 frame (inherent à la capture) |
 | Anti-cheat | se rétracte si EAC/BattlEye/GameGuard/XIGNCODE3/miHoYo détecté, ou dans un jeu compétitif listé par nom d'exécutable (VAC : CS2, Dota 2… ; `platformIsCompetitiveGame`) | sûr (pas d'injection) |
 | Couverture | jeux Vulkan natifs (et Proton via DXVK/VKD3D) | tous les APIs (D3D9/10/11/12, GL, Vulkan) |
@@ -113,6 +113,7 @@ tools/ci/archive-check.sh ARCHIVE [image|suite...]     # installe une archive ai
 tools/ci/distro-check.sh [image...]                    # build + tests + démo dans d'autres distributions (job CI `distros`)
 tools/ci/proton-check.sh                               # D3D11 (DXVK) et D3D12 (VKD3D-Proton) sous Wine à travers la couche (lavapipe, Xorg dummy 60 Hz : Xvfb = 0 Hz, DXVK divise par 0)
 tools/ci/proton-wayland-check.sh                       # le même sous le pilote Wayland de Wine 11 (WineHQ), weston headless, sans X
+tools/ci/wine-layer-check.sh                           # la couche Windows (DLL MinGW) chargée par le chargeur officiel Windows sous Wine : x2
 tools/ci/lib32-check.sh                                # couche 32 bits exécutée (vkcube i386)
 bdex-capture --list | --pid PID [--gpu N] [-m N]        # génération par capture (X11/Xwayland), autre GPU possible
 tools/ci/decky-check.sh [outdir]                       # plugin Decky (packaging/decky) : tsc + rollup (Docker Node), zip

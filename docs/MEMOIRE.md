@@ -604,6 +604,18 @@ syntaxe Linux n'y vaut pas).
   fenêtré sans bordure.
 - **Jamais lancée sur un Windows réel** : construite et testée
   (tests unitaires) par la CI MSVC, syntaxe vérifiée localement par MinGW.
+- **Exécutée sous Wine depuis le 03/10** (`tools/ci/wine-layer-check.sh`,
+  job `source-packages`) : DLL construite par MinGW
+  (`tools/ci/mingw/x86_64-w64-mingw32.cmake`, runtime lié statiquement,
+  printf de MinGW pour `%zu`), enregistrée comme couche implicite
+  (`HKLM\SOFTWARE\Khronos\Vulkan\ImplicitLayers`, manifeste à côté de la
+  DLL), chargée par le chargeur officiel Windows 1.4.357 (`vulkan-1.dll` du
+  runtime LunarG) dans un programme Win32 Vulkan
+  (`tests/proton/vulkan_probe.cpp`), Wine + winevulkan + lavapipe : ×2,00.
+  Corrigés au passage : priorité du fil de présentation sous Windows
+  (MMCSS « Games », sinon `THREAD_PRIORITY_HIGHEST` — elle ne faisait
+  rien) et minuterie à 1 ms pendant que le fil tourne (`precise_wake` :
+  sinon les attentes cadencées durent jusqu'à 15,6 ms).
 
 ### 4.7 Windows, mode 2 — `bdex_capture.exe`
 

@@ -13,11 +13,26 @@ DEMO="$2"
 if [ -z "${DISPLAY:-}" ]; then echo "no X display, skipping"; exit 77; fi
 LOG="$(mktemp)" DLOG="$(mktemp)"
 trap 'kill $demo 2>/dev/null; rm -f "$LOG" "$DLOG"' EXIT
-BDEX_FG=0 BDEX_FG_CONFIG=/dev/null timeout 60 "$DEMO" --fps 30 --size 640x400 --duration 30 >"$DLOG" 2>&1 &
+BDEX_FG=0 BDEX_FG_CONFIG=/dev/null timeout 120 "$DEMO" --fps 30 --size 640x400 --duration 90 >"$DLOG" 2>&1 &
 demo=$!
 sleep 2
 dpid=$(pgrep -n -P $demo || echo $demo)   # (the demo, child of timeout; its title changes every 2 s)
 status=0
+# BDEX_TEST_COMPOSITOR=1 (CI, on its own virtual display — it replaces the
+# window manager): a second pass under openbox and picom, the situation of
+# an X11 desktop, whose compositor already redirects every window.
+passes="plain"
+if [ "${BDEX_TEST_COMPOSITOR:-0}" = 1 ] && command -v openbox >/dev/null && command -v picom >/dev/null; then
+  passes="plain compositor"
+fi
+for pass in $passes; do
+if [ "$pass" = compositor ]; then
+  openbox >/dev/null 2>&1 & wm=$!
+  sleep 1
+  picom --backend xrender >/dev/null 2>&1 & comp=$!
+  sleep 2
+  echo "-- under openbox + picom"
+fi
 for args in "-m 2" "-m 3 --mode hybrid" "-m 2 --mode extrapolate"; do
   # (The capture's own config only: the user's file and environment stay out.)
   BDEX_FG_CONFIG=/dev/null BDEX_FG_LOG=2 timeout 40 "$CAP" --pid "$dpid" --duration 7 $args \
@@ -42,5 +57,8 @@ for args in "-m 2" "-m 3 --mode hybrid" "-m 2 --mode extrapolate"; do
   fi
   case "$cmp" in "same scene"*) ;; *) echo "  the overlay does not show the game"; status=1 ;; esac
 done
+[ "$pass" = compositor ] && kill $comp $wm 2>/dev/null
+done
+kill $demo 2>/dev/null   # (it would run for the rest of its 90 s)
 grep -q "demo:" "$DLOG" || { echo "demo did not run:"; cat "$DLOG"; status=1; }
 exit $status

@@ -292,6 +292,17 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   (`statusDescribe(…, english)`, which also names the hybrid mode now).
   Checked in both languages by `panel-check` (GTK 4 with and without
   libadwaita, text mode).
+- **The Windows layer run for the first time** (`tools/ci/wine-layer-check.sh`):
+  built with MinGW-w64, registered as an implicit layer like
+  `register-layer.ps1`, loaded by Khronos' Windows loader (1.4.357) into a
+  Win32 Vulkan program under Wine (winevulkan, lavapipe): generation on,
+  x2.00. Its Windows code paths ran before only on paper. Two fixes on the
+  way: the presentation thread's priority on Windows (the MMCSS "Games"
+  task, else `THREAD_PRIORITY_HIGHEST`: it did nothing), and the 1 ms timer
+  while the worker runs (`precise_wake`: paced waits otherwise last up to
+  the default 15.6 ms on Windows).
+- **`bdex-capture` under a window manager and a compositor** (openbox +
+  picom, CI): x2 / x3 / x2 and the overlay showing the game, as without.
 - **Proton on Wine's Wayland driver in CI** (`tools/ci/proton-wayland-check.sh`):
   the Direct3D 11 program under Wine 11 (WineHQ) on its Wayland driver — no
   X server, a headless weston — with DXVK: the layer's native Wayland path,

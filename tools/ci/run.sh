@@ -33,7 +33,7 @@ if [ "$1" = build ]; then
   cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBDEX_WERROR=ON >/dev/null && cmake --build build -j"$(nproc)" >/dev/null || exit 1
   cmake -S /work/baseline -B /work/baseline/build -DCMAKE_BUILD_TYPE=Release >/dev/null
   cmake --build /work/baseline/build -j"$(nproc)" >/dev/null || exit 1
-  BDEX_REQUIRE_DISPLAY=1 xvfb-run -a ctest --test-dir build --output-on-failure --repeat until-pass:2 || exit 1
+  BDEX_REQUIRE_DISPLAY=1 BDEX_TEST_COMPOSITOR=1 xvfb-run -a ctest --test-dir build --output-on-failure --repeat until-pass:2 || exit 1
   BDEX_INVARIANT_SEQUENTIAL=1 xvfb-run -a -s '-screen 0 1280x800x24' \
     python3 tests/check_matcher_invariant.py build /work/baseline/build || exit 1
   for a in "" "--speed 2"; do

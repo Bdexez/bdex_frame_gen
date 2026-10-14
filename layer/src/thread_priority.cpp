@@ -1,6 +1,8 @@
 #include "thread_priority.h"
 
-#if defined(__linux__)
+#if defined(_WIN32)
+#include <windows.h>
+#elif defined(__linux__)
 #include <cstdint>
 #include <dlfcn.h>
 #include <pthread.h>
@@ -79,6 +81,24 @@ std::string raiseThreadPriority(int niceLevel) {
     if (pthread_setschedparam(pthread_self(), SCHED_RR, &sp) == 0) return "SCHED_RR";
     const uint64_t tid = static_cast<uint64_t>(syscall(SYS_gettid));
     if (rtkitHighPriority(tid, niceLevel)) return "rtkit nice " + std::to_string(niceLevel);
+    return {};
+}
+
+#elif defined(_WIN32)
+
+std::string raiseThreadPriority(int) {
+    // The multimedia class scheduler's "Games" task (what games' own render
+    // threads and audio use: boosted while it runs, without starving the
+    // system), avrt.dll loaded at run time; else the highest priority of the
+    // process's class, which any process may give its threads.
+    if (HMODULE avrt = LoadLibraryW(L"avrt.dll")) {
+        using SetChar = HANDLE(WINAPI*)(LPCWSTR, LPDWORD);
+        auto set = reinterpret_cast<SetChar>(reinterpret_cast<void*>(GetProcAddress(avrt, "AvSetMmThreadCharacteristicsW")));
+        DWORD task = 0;
+        if (set && set(L"Games", &task)) return "MMCSS Games";  // (avrt.dll stays loaded: the task lives with the thread)
+        FreeLibrary(avrt);
+    }
+    if (SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST)) return "THREAD_PRIORITY_HIGHEST";
     return {};
 }
 
