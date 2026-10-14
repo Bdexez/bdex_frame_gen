@@ -130,6 +130,7 @@ struct Config {
     std::string tuneName;         // the game's name for the online_tune cache (set by load: the extra process, else this process)
     float interpAccel   = 0.0f;   // interpolation: weight of the same second-order term — frames between prev and cur on the curved trajectory (0 = straight line, bit-for-bit)
     float extrapolateAccel = 0.0f; // extrapolation: weight of a second-order (acceleration) term from the previous pair's motion (0 = constant velocity, bit-for-bit)
+    bool  contentClock  = true;   // with display-timed frames (a refresh grid, measured or virtual; adaptive), t within the actual interval between the two real frames, as frame_timing
     bool  frameTiming   = false;  // t of each generated frame from the real content times (frame-time spikes) instead of the fixed i/multiplier (opt-in)
     bool  dedup         = false;  // detect frames the game presents twice: keep the previous motion, time the output on first appearances (opt-in)
     bool  paused        = false;  // live toggle: present only the real frames (reloaded while running; see tools/bdex-framegen --toggle)
