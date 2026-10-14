@@ -1592,6 +1592,11 @@ RTX 3060 Ti, pilote 615.
   `search_radius` 6 sans effet (plafond `MAXR` = 4 du shader).
   `search_fine` 4 : +0,04 de plus en moyenne mais scènes de type jeu −0,01 à
   −0,07 et 81 candidats au lieu de 49 → 3 gardé.
+- **`smoothness` 0,003** (au lieu de 0,004) : jeux enregistrés jusqu'à
+  +0,08 dB (Cyberpunk +0,08 / +0,06), moins de scintillement ; 0,002
+  gagnait plus (+0,17 sur Cyberpunk) mais le corpus `scroll` (motif quasi
+  périodique) y perdait 1,5 dB — le corpus de ctest l'a attrapé, ma suite
+  ne l'avait pas. Démo CI 29,58 → 29,53 / rapide 23,70 → 23,72.
 - **Piste non faite** : remplir le rafraîchissement manquant *après*
   l'image réelle (extrapolation t ≈ 1,2) → image réelle ~7 ms plus tôt
   qu'avec le remplissage, mais une extrapolation à t = 1,25 vaut une

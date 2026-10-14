@@ -389,7 +389,7 @@ TEST(config_option_info) {
     for (const auto& i : Config::optionInfo()) {
         if (i.key == "smoothness") {
             seenSmooth = true;
-            CHECK(i.kind == "float" && i.def == "0.004" && i.live && i.hi == 1.0);
+            CHECK(i.kind == "float" && i.def == "0.003" && i.live && i.hi == 1.0);
         }
         if (i.key == "refine") {
             seenRefine = true;

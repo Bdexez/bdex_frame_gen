@@ -106,7 +106,7 @@ struct Config {
     float sceneCutHigh  = 0.09f;  // ... and above which the generated frame is a plain duplicate
     bool  sceneCutLocal = false;  // scene-cut test per region (8x8 grid) instead of on the frame mean (opt-in)
     float sceneCutHist  = 0.05f;  // a scene cut also needs the brightness distribution to move this far (luma histogram earth mover's distance; cuts measure 0.18+, grain and fast motion under 0.02): noise and motion raise the flow cost, not this (0 = off: the cost alone decides)
-    float smoothness    = 0.004f; // penalty per pixel of deviation from the coarse prediction
+    float smoothness    = 0.003f; // penalty per pixel of deviation from the coarse prediction (0.004 before 14/10: recorded games up to +0.08 dB, Cyberpunk +0.08, less flicker; 0.002 gained more but lost 1.5 dB on the corpus scroll, a near-periodic pattern; 0.008 -0.9)
     float zeroBias      = 0.002f; // bias toward zero motion (helps static HUDs)
     float zeroBiasContrast = 0.02f; // mean luma gradient at which zero_bias fully applies; lower-contrast blocks get proportionally less (0 = absolute bias, the pre-0.4 path)
     float zeroBiasCap   = 0.006f; // zero_bias stops growing at this cost (3 px at 0.002/px): a fast true motion pays no more than a small one (0 = uncapped, the pre-0.6 path)
