@@ -374,6 +374,10 @@ programme Vulkan et reste **transparente** tant qu'elle n'est pas activée
   premier `Present` ; d'où Xorg + pilote `dummy` avec un mode à 60 Hz
   (`tests/proton/xorg-dummy.conf`). DXVK 3.x refuse le lavapipe de Mesa 25.2
   (`VK_KHR_load_store_op_none`).
+- **Pilote Wayland de Wine** (`PROTON_ENABLE_WAYLAND`, 03/10,
+  `tools/ci/proton-wayland-check.sh`) : Wine 11 de WineHQ, sans serveur X
+  (weston headless), DXVK : chemin Wayland natif de la couche, ×2,00. Le
+  Wine 9 d'Ubuntu n'a pas de Vulkan dans son pilote Wayland.
 
 **Points propres au runtime Steam**
 - Dossier de session et de statut dans `~/.cache/bdex-framegen/run`, pas

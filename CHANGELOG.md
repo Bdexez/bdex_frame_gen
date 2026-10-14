@@ -284,6 +284,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   (`statusDescribe(…, english)`, which also names the hybrid mode now).
   Checked in both languages by `panel-check` (GTK 4 with and without
   libadwaita, text mode).
+- **Proton on Wine's Wayland driver in CI** (`tools/ci/proton-wayland-check.sh`):
+  the Direct3D 11 program under Wine 11 (WineHQ) on its Wayland driver — no
+  X server, a headless weston — with DXVK: the layer's native Wayland path,
+  x2.00. (The Wayland driver of the distribution's Wine 9 has no Vulkan.)
 - **The Proton path in CI** (`tools/ci/proton-check.sh`, CI job
   `source-packages`): a Direct3D 11 program cross-compiled with MinGW
   (`tests/proton/d3d11_probe.cpp`) runs under Wine 9 with DXVK 2.5.3, and

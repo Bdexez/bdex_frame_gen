@@ -112,6 +112,7 @@ tools/ci/package-release.sh [outdir] [version]         # archives de release x86
 tools/ci/archive-check.sh ARCHIVE [image|suite...]     # installe une archive ailleurs : charge + génère x2 (vkcube, Xvfb)
 tools/ci/distro-check.sh [image...]                    # build + tests + démo dans d'autres distributions (job CI `distros`)
 tools/ci/proton-check.sh                               # D3D11 (DXVK) et D3D12 (VKD3D-Proton) sous Wine à travers la couche (lavapipe, Xorg dummy 60 Hz : Xvfb = 0 Hz, DXVK divise par 0)
+tools/ci/proton-wayland-check.sh                       # le même sous le pilote Wayland de Wine 11 (WineHQ), weston headless, sans X
 tools/ci/lib32-check.sh                                # couche 32 bits exécutée (vkcube i386)
 bdex-capture --list | --pid PID [--gpu N] [-m N]        # génération par capture (X11/Xwayland), autre GPU possible
 tools/ci/decky-check.sh [outdir]                       # plugin Decky (packaging/decky) : tsc + rollup (Docker Node), zip
