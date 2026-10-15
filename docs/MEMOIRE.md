@@ -1580,6 +1580,15 @@ RTX 3060 Ti, pilote 615.
   correspondance tombe hors de l'image ; le matcher compare au pixel de bord
   répété) — la correction irait dans le matcher (SAD sur la partie dans
   l'image), pas dans la synthèse.
+- **Pires images de l'enregistrement PRAGMATA 1440p** (15/10) : la n° 9 est
+  une coupure de caméra (le personnage et le HUD sautent de ~650 px entre la
+  vérité et l'image suivante) ; cohérence avant/arrière du flux : 94 %
+  d'incohérents (> 8 px), mais les virages éclairs (~300 px par paire) en
+  ont 75–92 % — pas un critère de coupure ; et même là, la synthèse bat la
+  répétition et le fondu (14,5 / 12,0 / 13,3 dB). Plusieurs paires (n° 1,
+  3, 5, 7) ont une vérité quasi identique à une extrémité (35 dB contre
+  l'image d'avant pour la n° 7) : le jeu a répété une image ; l'éval hors
+  ligne suppose une cadence régulière (en jeu : horodatages, `dedup`).
 - **`smoothness` en 1440p** (flux à demi-résolution : vecteurs deux fois plus
   courts, pénalité relative double) : 0,002 +0,005 dB, 0,004 −0,007 sur les
   séquences 1440p — 0,003 reste.
