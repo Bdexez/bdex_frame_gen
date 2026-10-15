@@ -87,6 +87,14 @@ def main():
         if not accel > base + 0.5:
             print(f"swing: extrapolate_accel {accel:.2f} dB does not beat constant velocity {base:.2f} dB")
             return 1
+        # border_predict: the pan's entering / leaving content keeps the
+        # camera's motion instead of a match against the clamped edge
+        # (off explicitly in the base: a discrete GPU turns it on).
+        base, border = evaluate(build, d / "pan", {"BDEX_FG_MODE": "extrapolate", "BDEX_FG_BORDER_PREDICT": "0"},
+                                ["--variant", "BORDER_PREDICT=1"])
+        if not border > base + 0.2:
+            print(f"pan: border_predict {border:.2f} dB does not beat matching against the edge {base:.2f} dB")
+            return 1
         base, chroma = evaluate(build, d / "chroma", {"BDEX_FG_MODE": "interpolate"}, ["--variant", "CHROMA_WEIGHT=1"])
         if not chroma > base + 3.0:
             print(f"chroma: chroma_weight {chroma:.2f} dB does not beat luma-only matching {base:.2f} dB")
