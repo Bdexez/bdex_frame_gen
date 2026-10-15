@@ -1592,6 +1592,11 @@ RTX 3060 Ti, pilote 615.
   démarrages / arrêts brusques — écarts successifs 1,1 puis 14,6 : le
   mouvement commence après la vérité, et la vitesse constante place le
   contenu à mi-chemin trop tôt (paires de 2 images : effet doublé).
+- **Options auto revérifiées sur la base du 15/10** : sans `rot_weight`
+  −0,021 dB (Oblivion −0,10, scintillement +0,13) ; sans
+  `temporal_prediction` −0,040 (virages −0,32, scintillement des jeux +0,1 à
+  +0,5) — sauf la scène synthétique sombre (+0,31, arêtes +1,6 sans elle) ;
+  Cyberpunk, sombre aussi, perd sans elle (−0,04 / −0,09). Gardées.
 - **Plafond de l'accélération d'`interp_accel`** (`accel_map.comp`, 0,5·|B| + 1 :
   un démarrage depuis l'arrêt n'est corrigé qu'à moitié, un arrêt pas du
   tout — |B| ≈ 0) : 1,0·|B| + 1 → +0,002 dB, scintillement des jeux −0,07 à
