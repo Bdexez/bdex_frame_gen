@@ -120,7 +120,7 @@ private:
     // over 1.5) and a flow at half the display's resolution (1440p quality:
     // +0.016), every sequence up in both.
     static constexpr float kRatio = 1.5f, kRatioCoarse = 1.25f;
-    static constexpr float kGuard = 8.f;  // (mean |Laplacian| over 3x3 in both inputs, 8-bit units)
+    static constexpr float kGuard = 12.f;  // (mean |Laplacian| over 3x3 in both inputs, 8-bit units; 8 -> 12 on 15/10: edges up to +0.09, nothing lower)
     struct Pending { uint32_t prev = 0, cur = 0; float strength = 0.f; bool on = false; bool predicted = false; };
     bool usable_ = false;
     FgPipeline pipe_;
