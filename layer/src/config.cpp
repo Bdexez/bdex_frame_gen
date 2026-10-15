@@ -211,8 +211,8 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
     // low-contrast content — leans to its local average where neither input
     // has such detail within 16 pixels (14/10: 1440p recordings +0.07 /
     // +0.14 dB, flicker -0.18 / -0.39, grossly wrong pixels down; x4 game-like
-    // scenes +0.03 to +0.21; nothing lower anywhere; ~0.7 ms a generated
-    // frame at 1440p).
+    // scenes +0.03 to +0.21; nothing lower anywhere; ~1 ms a generated
+    // frame at 1440p, ~0.8 ms more a game frame for the inputs' map).
     if (strong && !(autoOptionsSet & kAutoFalseDetail)) falseDetail = 1.f;
     // Blocks whose match is off-screen (content entering or leaving the
     // picture in a camera move) keep the predicted motion instead of a
