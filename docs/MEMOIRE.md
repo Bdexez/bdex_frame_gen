@@ -1641,6 +1641,11 @@ RTX 3060 Ti, pilote 615.
   scènes synthétiques et coup de poignet ±0,00. Départ depuis l'arrêt (paire
   précédente immobile : a doublé, x = v·t²) : 38,61 — rien ; pendant le coup
   de poignet l'erreur est le flou et l'ampleur, pas la courbe.
+- **`false_detail` : recomposer plutôt que flouter** (15/10) — les pixels
+  en mosaïque relus dans les deux images le long du flux moyen des 5×5
+  texels voisins : virages −0,12 / −0,39 dB (1440p) ; moitié flou, moitié
+  recomposition −0,01 / −0,06. Le flou reste (dans la mosaïque, le flux
+  moyen est lui-même un mélange de vecteurs faux).
 - **Seuil de frontière de `pixel_vectors`** (0,5 px ; 0,25 et 1,0) : ±0,001 dB,
   inchangé.
 - **`hud_mask` 3** (15/10, au lieu de 4) : virages +0,04 / +0,05, mais faible
