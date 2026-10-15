@@ -28,6 +28,10 @@ std::string narrow(const std::wstring& w);
 
 std::wstring wideLower(std::wstring s);
 
+// The interfaces' language: French when Windows' display language is
+// (GetUserDefaultUILanguage), English otherwise; BDEX_LANG=fr|en chooses.
+bool launcherFrench();
+
 // Base name of a process image (…\DarkSoulsIII.exe -> DarkSoulsIII.exe).
 std::wstring processName(DWORD pid);
 
@@ -78,6 +82,10 @@ std::vector<std::string> vulkanGpuNames();
 // layer (register-layer.ps1): Vulkan games load it, and the launcher can
 // generate in them by injection.
 bool layerRegistered();
+// With the layer registered: Vulkan games armed (enabled = 1, require_app =
+// 1 in [*], unless the file already sets them) — they pass their frames
+// through until the launcher targets one.
+void armLayer();
 
 // Value of a key in the config file's global ([*] / preamble) section, or ""
 // when unset. Lets the launcher prefill from a hand-written config.

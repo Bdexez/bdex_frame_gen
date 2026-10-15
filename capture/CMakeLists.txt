@@ -11,6 +11,7 @@ add_executable(bdex_capture
   src/capture.cpp
   src/vkctx.cpp
   src/tray.cpp
+  src/injection.cpp
   # The layer's engine and device helpers, shared as source: they only
   # depend on bdex_core and the generated shaders.h. platform.cpp joins for
   # platformConfigPath() (the launcher's config-file save).
@@ -27,7 +28,7 @@ target_include_directories(bdex_capture PRIVATE
   src)
 # windowsapp: C++/WinRT activation (RoGetActivationFactory & co.);
 # dwmapi: extended frame bounds / cloaked state of the target window.
-target_link_libraries(bdex_capture PRIVATE bdex_core Vulkan::Vulkan d3d11 dxgi dwmapi winmm windowsapp shell32)
+target_link_libraries(bdex_capture PRIVATE bdex_core Vulkan::Vulkan d3d11 dxgi dwmapi winmm windowsapp shell32 psapi)
 target_compile_definitions(bdex_capture PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 bdex_strict(bdex_capture)
 # Only our own sources see the Win32 Vulkan platform header (windows.h in
