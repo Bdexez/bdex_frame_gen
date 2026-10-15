@@ -1668,6 +1668,11 @@ RTX 3060 Ti, pilote 615.
   gamescope sans fenêtre (sans `CAP_SYS_NICE`) rate lui-même des
   rafraîchissements à 2560×1440 : pas jugeable sur ce banc ; à vérifier
   sur l'écran de l'utilisateur (`cadence_report.py`, colonne « off plan »).
+  Suite (15/10) : démo rendue en 2560×1440 mais gamescope composant en
+  1280×720 (sa charge réduite) : toujours bimodal (24–91 %) ; marge de
+  présentation 0,5 période avant le rafraîchissement au lieu de 0,3 :
+  8–51 % contre 14–73 % — la variation d'un essai à l'autre domine (phase de
+  la grille estimée sur les horodatages de gamescope ?). Rien changé.
 - **Banc 1440p ×4** (14/10, scratchpad `hd4/` : scènes `make_game.py`
   agrandies ×2 en Lanczos — la vérité ×4 exacte, flux à demi-résolution
   comme en jeu chez l'utilisateur) : `false_detail` +0,18 / +0,19 / +0,10 dB,
