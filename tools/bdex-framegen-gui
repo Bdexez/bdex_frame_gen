@@ -48,7 +48,30 @@ FRENCH = _french()
 # The English texts: the French one -> its translation; "{}" stands for a
 # value interpolated into the text (an f-string's field), so that tr() takes
 # the finished French text and gives it back in English.
-_EN = {'Appliquer': 'Apply',
+_EN = {
+ 'injection (couche Vulkan)': 'injection (Vulkan layer)',
+ 'capture (choisie)': 'capture (chosen)',
+ 'capture sur {} (le jeu rend sur {})': 'capture on {} (the game renders on {})',
+ 'capture (anti-triche : la couche reste hors du jeu)': 'capture (anti-cheat: the layer stays out of the game)',
+ "capture (la couche n'a pas la fenêtre du jeu)": "capture (the layer does not have the game's window)",
+ 'bdex-capture introuvable': 'bdex-capture not found',
+ 'capture (fenêtre choisie)': 'capture (window picked)',
+ 'Capture terminée (journal : ~/.cache/bdex-framegen/capture.log)': 'Capture ended (log: ~/.cache/bdex-framegen/capture.log)',
+ 'Capturer une autre fenêtre…': 'Capture another window…',
+ 'Un jeu absent de la liste (OpenGL, anti-triche…) : clique ensuite sur sa fenêtre': 'A game missing from the list (OpenGL, anti-cheat…): then click its window',
+ 'fenêtre choisie': 'window picked',
+ 'Clique sur la fenêtre du jeu': "Click the game's window",
+ 'Méthode': 'Method',
+ 'Injection : dans la présentation du jeu, la latence la plus basse (jeux Vulkan, Proton). Capture : tout jeu, une image de latence en plus, sur le GPU de son choix': "Injection: inside the game's presentation, the lowest latency (Vulkan games, Proton). Capture: any game, a frame more latency, on the GPU of your choice",
+ 'GPU de génération': 'Generation GPU',
+ 'Un autre GPU que celui du jeu : capture sur ce GPU (le jeu rend sur le sien)': "Another GPU than the game's: capture on that GPU (the game renders on its own)",
+ 'Automatique — celui du jeu': "Automatic — the game's",
+ 'Automatique — injection si possible, sinon capture': 'Automatic — injection where possible, else capture',
+ 'Injection (couche Vulkan) seulement': 'Injection (Vulkan layer) only',
+ 'Capture seulement': 'Capture only',
+ 'w capturer une autre fenêtre · c méthode · g GPU de génération': 'w capture another window · c method · g generation GPU',
+ 'Méthode :': 'Method:',
+ 'GPU de génération :': 'Generation GPU:','Appliquer': 'Apply',
  'Interpolation (défaut)': 'Interpolation (default)',
  'Hybride — ×3/×4 : latence divisée par 2 à 3': 'Hybrid — ×3/×4: latency divided by 2 to 3',
  'Extrapolation — latence minimale': 'Extrapolation — lowest latency',
@@ -752,6 +775,9 @@ PRESETS = [(tr("Auto — adapté au GPU"), "auto"), (tr("Qualité"), "quality"),
            (tr("Équilibré"), "balanced"), (tr("Amélioré — options de qualité mesurées"), "enhanced"),
            ("Performance", "performance")]
 FILTERS = [(tr("Lanczos (le plus net)"), "lanczos"), (tr("Bicubique"), "bicubic"), (tr("Bilinéaire"), "bilinear")]
+METHODS = [(tr("Automatique — injection si possible, sinon capture"), "auto"),
+           (tr("Injection (couche Vulkan) seulement"), "layer"),
+           (tr("Capture seulement"), "capture")]
 PRESENT = [(tr("Auto (recommandé)"), "auto"), (tr("Mode du jeu"), "app"), ("FIFO (vsync)", "fifo"),
            ("Mailbox", "mailbox"), (tr("Immediate (sans vsync)"), "immediate")]
 # On-screen fps counter detail levels (index == the layer's HUD level).
@@ -899,7 +925,7 @@ def _combo_index(table, value, default=0):
 # Keys the UI owns in the global section; anything else found there is kept.
 GLOBAL_KEYS = ("enabled", "require_app", "preset", "multiplier", "adaptive", "mode", "present_mode",
                "low_latency", "render_scale", "upscale_filter", "sharpness",
-               "overlay", "hud", "paused") + tuple(o["key"] for o in OPTIONS)
+               "overlay", "hud", "paused", "gpu", "method") + tuple(o["key"] for o in OPTIONS)
 
 
 class ConfigFile:
@@ -1013,6 +1039,8 @@ class Options:
         self.hud = 0                 # on-screen fps counter level, 0..4
         self.paused = False          # live pause (the layer reloads it while games run)
         self.without_panel = False   # every game generates from its start, panel or not (require_app = 0)
+        self.gpu = ""                # the GPU that generates ("" = the game's), a part of its name
+        self.method = "auto"         # auto (injection where possible, else capture) | layer | capture
         self.values = {o["key"]: o["default"] for o in OPTIONS}   # canonical strings
 
     def load_from(self, glob):
@@ -1057,6 +1085,12 @@ class Options:
                 self.hud = 0
         self.paused = flag("paused")
         self.without_panel = g.get("require_app", "1") == "0"
+        gpu = g.get("gpu", "").strip()
+        self.gpu = "" if gpu.lower() in ("", "auto", "game") else gpu
+        meth = g.get("method", "auto").strip().lower()
+        self.method = {"injection": "layer", "inject": "layer", "1": "layer", "2": "capture"}.get(meth, meth)
+        if self.method not in ("auto", "layer", "capture"):
+            self.method = "auto"
         for o in OPTIONS:
             self.values[o["key"]] = _parse_option(o, g.get(o["key"]))
 
@@ -1070,6 +1104,10 @@ class Options:
         # open beside a game), every game from its start.
         glob["require_app"] = "0" if self.without_panel else "1"
         glob["preset"] = self.preset
+        if self.gpu:
+            glob["gpu"] = self.gpu
+        if self.method != "auto":
+            glob["method"] = self.method
         glob["multiplier"] = str((auto_ceiling() if self.auto_mult or self.adaptive else self.multiplier) if self.generate else 1)
         if self.adaptive and self.generate:
             glob["adaptive"] = "1"
@@ -1159,6 +1197,76 @@ def detect_gpus():
             if name and name not in names:
                 names.append(name)
     return names
+
+
+def generation_gpus():
+    """The GPUs one may choose to generate on (software renderers left out)."""
+    return [g for g in detect_gpus() if "llvmpipe" not in g.lower() and "software" not in g.lower()]
+
+
+def capture_binary():
+    """bdex-capture: beside this panel (installed), in the build tree, or on PATH."""
+    here = os.path.dirname(os.path.realpath(__file__))
+    for p in (os.path.join(here, "bdex-capture"), os.path.join(here, "..", "build", "capture", "linux", "bdex-capture"),
+              shutil.which("bdex-capture")):
+        if p and os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return None
+
+
+def plan(entries, opt, capture_available=True):
+    """How to generate for a detected game, from its status entries: ("layer",
+    why) — injection, inside the game's presentation: the lowest latency —
+    where the layer has the game's swapchain on the GPU chosen; else
+    ("capture", why): bdex-capture on the chosen GPU (a game the layer stays
+    out of, another GPU than the game's, or capture chosen)."""
+    dev = next((e for e in entries if e.get("kind") == "device"), {})
+    armed = any(e.get("kind") == "swapchain" and e.get("state") in ("ready", "generating", "paused") for e in entries)
+    gpu_name = dev.get("device", "")
+    other_gpu = bool(opt.gpu) and bool(gpu_name) and opt.gpu.lower() not in gpu_name.lower()
+    if opt.method == "layer" or not capture_available:
+        return "layer", tr("injection (couche Vulkan)")
+    if opt.method == "capture":
+        return "capture", tr("capture (choisie)")
+    if other_gpu:
+        return "capture", tr(f"capture sur {opt.gpu} (le jeu rend sur {gpu_name})")
+    if dev.get("state") == "anti-cheat":
+        return "capture", tr("capture (anti-triche : la couche reste hors du jeu)")
+    if not armed:
+        return "capture", tr("capture (la couche n'a pas la fenêtre du jeu)")
+    return "layer", tr("injection (couche Vulkan)")
+
+
+def capture_log_path():
+    cache = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    return os.path.join(cache, "bdex-framegen", "capture.log")
+
+
+def start_capture(pid, gpu):
+    """bdex-capture on a game window (by its pid; pid 0: the next window
+    clicked), on `gpu` ("" = the best): the Popen, its output in capture.log."""
+    binary = capture_binary()
+    if not binary:
+        raise OSError(tr("bdex-capture introuvable"))
+    cmd = [binary] + (["--pid", str(pid)] if pid else []) + (["--gpu", gpu] if gpu else [])
+    os.makedirs(os.path.dirname(capture_log_path()), exist_ok=True)
+    log = open(capture_log_path(), "w")
+    try:
+        env = dict(os.environ)
+        env.setdefault("BDEX_FG_LOG", "2")   # (its statistics, in capture.log)
+        return subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env)
+    finally:
+        log.close()
+
+
+def stop_capture(proc):
+    if proc is None or proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        proc.kill()
 
 
 def status_dir():
@@ -1706,6 +1814,8 @@ class Window(Adw.ApplicationWindow):
         if self.cfg.glob.get("require_app") != "1" or self.cfg.glob.get("enabled") != "1":
             self.save()
         self.target = None     # (pid, name) where « Démarrer » started the generation
+        self.target_how = None  # ("layer" | "capture", why) for the target
+        self.capture_proc = None  # bdex-capture, when the target is captured
         self.selected = None   # (pid, name) chosen in « Jeux détectés »
         try:
             write_session(0)   # open: upscaling applies to games started from now
@@ -1723,13 +1833,21 @@ class Window(Adw.ApplicationWindow):
         return False
 
     def _beat(self):
+        if self.capture_proc is not None and self.capture_proc.poll() is not None:
+            # the capture ended: the game closed, or it failed (capture.log)
+            self.capture_proc = None
+            self.target, self.target_how = None, None
+            self.toast(tr("Capture terminée (journal : ~/.cache/bdex-framegen/capture.log)"))
+            self._refresh_session()
         try:
-            write_session(self.target[0] if self.target else 0)
+            layer = self.target and self.target_how and self.target_how[0] == "layer"
+            write_session(self.target[0] if layer else 0)
         except OSError:
             pass
         return True
 
     def _on_close(self, *_):
+        stop_capture(self.capture_proc)
         remove_session()       # the targeted game stops generating
         return False
 
@@ -1824,7 +1942,8 @@ class Window(Adw.ApplicationWindow):
         if hasattr(self, "always_row"):
             self._refresh_always()
         if on:
-            self.session_row.set_title(tr(f"Génération en cours : {self.target[1]}"))
+            self.session_row.set_title(tr(f"Génération en cours : {self.target[1]}") +
+                                       (f" — {self.target_how[1]}" if self.target_how else ""))
             self.session_row.set_subtitle(tr("Les réglages s'appliquent en direct. « Arrêter » ou fermer "
                                           "cette fenêtre coupe la génération."))
         else:
@@ -1840,15 +1959,27 @@ class Window(Adw.ApplicationWindow):
             self.session_btn.remove_css_class(c)
         self.session_btn.add_css_class("destructive-action" if on else "suggested-action")
 
-    def _set_target(self, target):
+    def _set_target(self, target, pick=False):
+        """Generation for `target` (pid, name), or none: injection through the
+        layer's session where plan() says so, else bdex-capture on the game's
+        window (`pick`: on the next window clicked, any program)."""
+        stop_capture(self.capture_proc)
+        self.capture_proc = None
+        how = None
+        if target:
+            how = ("capture", tr("capture (fenêtre choisie)")) if pick else \
+                plan(read_status(target[0]), self.opt, capture_binary() is not None)
         try:
             if target:
                 self.save()   # the game reads the options shown here
-            write_session(target[0] if target else 0)
+            write_session(target[0] if target and how[0] == "layer" else 0)
+            if how and how[0] == "capture":
+                self.capture_proc = start_capture(0 if pick else inner_pid(target[0]), self.opt.gpu)
         except OSError as e:
             self.toast(tr(f"Échec : {e}"))
-            return
+            target, how = None, None
         self.target = target
+        self.target_how = how
         self._refresh_session()
 
     def on_session(self, _btn):
@@ -1917,7 +2048,14 @@ class Window(Adw.ApplicationWindow):
         page.add(self.running_group)
         refresh = Gtk.Button(label=tr("Actualiser la liste"), valign=Gtk.Align.CENTER)
         refresh.connect("clicked", lambda *_: self._refresh_running())
-        self.running_group.set_header_suffix(refresh)
+        pick = Gtk.Button(label=tr("Capturer une autre fenêtre…"), valign=Gtk.Align.CENTER,
+                          tooltip_text=tr("Un jeu absent de la liste (OpenGL, anti-triche…) : clique ensuite sur sa fenêtre"))
+        pick.connect("clicked", self.on_capture_window)
+        pick.set_sensitive(capture_binary() is not None)
+        buttons = Gtk.Box(spacing=6)
+        buttons.append(pick)
+        buttons.append(refresh)
+        self.running_group.set_header_suffix(buttons)
         self.running_rows = []
 
     def _refresh_running(self):
@@ -1932,8 +2070,8 @@ class Window(Adw.ApplicationWindow):
                 seen.add(name)
                 games.append((pid, name, read_status(pid)))
         pids = {g[0] for g in games}
-        if self.target and self.target[0] not in pids:   # the game has exited
-            self._set_target(None)
+        if self.target and self.target[0] and self.target[0] not in pids:   # the game has exited
+            self._set_target(None)   # (a window picked for capture: its own end, see _beat)
         if self.selected and self.selected[0] not in pids:
             self.selected = None
         if not self.selected and len(games) == 1:
@@ -1949,9 +2087,10 @@ class Window(Adw.ApplicationWindow):
         for pid, name, entries in games:
             lines = [d for d in (describe_entry(e) for e in entries) if d]
             armed = any(e.get("kind") == "swapchain" for e in entries)
-            row = Adw.ActionRow(title=name, subtitle="\n".join(lines) if lines else
-                                tr("Lancé avant l'installation de cette version — relance le jeu"))
-            radio = Gtk.CheckButton(valign=Gtk.Align.CENTER, sensitive=armed)
+            how = plan(entries, self.opt, capture_binary() is not None)
+            lines.append("→ " + how[1])
+            row = Adw.ActionRow(title=name, subtitle="\n".join(lines))
+            radio = Gtk.CheckButton(valign=Gtk.Align.CENTER, sensitive=armed or how[0] == "capture")
             if group is None:
                 group = radio
             else:
@@ -1962,6 +2101,11 @@ class Window(Adw.ApplicationWindow):
             row.set_activatable_widget(radio)
             self.running_group.add(row)
             self.running_rows.append(row)
+
+    def on_capture_window(self, _btn):
+        self._set_target((0, tr("fenêtre choisie")), pick=True)
+        if self.capture_proc is not None:
+            self.toast(tr("Clique sur la fenêtre du jeu"))
 
     def on_pick(self, radio, game):
         if not radio.get_active():
@@ -2008,6 +2152,25 @@ class Window(Adw.ApplicationWindow):
             active=self.opt.paused)
         self.pause_row.connect("notify::active", self.on_change)
         g.add(self.pause_row)
+        self.method_row = Adw.ComboRow(
+            title=tr("Méthode"),
+            subtitle=tr("Injection : dans la présentation du jeu, la latence la plus basse (jeux Vulkan, Proton). "
+                        "Capture : tout jeu, une image de latence en plus, sur le GPU de son choix"),
+            model=Gtk.StringList.new([m[0] for m in METHODS]))
+        self.method_row.set_selected(_combo_index(METHODS, self.opt.method))
+        self.method_row.connect("notify::selected", self.on_change)
+        g.add(self.method_row)
+        self.gpus = generation_gpus()
+        if self.opt.gpu and not any(self.opt.gpu.lower() in n.lower() for n in self.gpus):
+            self.gpus.append(self.opt.gpu)   # (chosen before, not seen now)
+        self.gpu_row = Adw.ComboRow(
+            title=tr("GPU de génération"),
+            subtitle=tr("Un autre GPU que celui du jeu : capture sur ce GPU (le jeu rend sur le sien)"),
+            model=Gtk.StringList.new([tr("Automatique — celui du jeu")] + self.gpus))
+        sel = next((i + 1 for i, n in enumerate(self.gpus) if self.opt.gpu and self.opt.gpu.lower() in n.lower()), 0)
+        self.gpu_row.set_selected(sel)
+        self.gpu_row.connect("notify::selected", self.on_change)
+        g.add(self.gpu_row)
 
     def _build_hud(self, page):
         g = Adw.PreferencesGroup(
@@ -2113,6 +2276,9 @@ class Window(Adw.ApplicationWindow):
         o.hud = HUD_MODES[self.hud_row.get_selected()][1]
         o.paused = self.pause_row.get_active()
         o.without_panel = self.always_all_row.get_active()
+        o.method = METHODS[self.method_row.get_selected()][1]
+        i = self.gpu_row.get_selected()
+        o.gpu = self.gpus[i - 1] if 0 < i <= len(self.gpus) else ""
         for key, (spec, row) in self.opt_rows.items():
             if spec["kind"] == "spin":
                 v = row.get_value()
@@ -2137,7 +2303,10 @@ class Window(Adw.ApplicationWindow):
     def on_change(self, *_):
         if self._loading:
             return
+        before = (self.opt.method, self.opt.gpu)
         self.sync()
+        if self.target and (self.opt.method, self.opt.gpu) != before and self.target[0]:
+            GLib.idle_add(lambda: self._set_target(self.target) and False)  # (again, by the new choice)
         self.refresh_sensitivity()
         self.save()
         self._refresh_session()   # « Tous les jeux » (sans le panneau) changes what « Démarrer » means
@@ -2271,7 +2440,7 @@ def text_main():
     cfg = ConfigFile.load()
     opt = Options()
     opt.load_from(cfg.glob)
-    state = {"target": None}
+    state = {"target": None, "how": None, "proc": None}
     stop = threading.Event()
 
     def save():
@@ -2282,9 +2451,27 @@ def text_main():
     def beat():
         while not stop.wait(1.0):
             try:
-                write_session(state["target"][0] if state["target"] else 0)
+                layer = state["target"] and state["how"] and state["how"][0] == "layer"
+                write_session(state["target"][0] if layer else 0)
             except OSError:
                 pass
+
+    def start(target, pick=False):
+        """Injection or capture for `target` (plan()), as the window's « Démarrer »."""
+        stop_capture(state["proc"])
+        state["proc"] = None
+        how = ("capture", tr("capture (fenêtre choisie)")) if pick else \
+            plan(read_status(target[0]), opt, capture_binary() is not None)
+        try:
+            write_session(target[0] if how[0] == "layer" else 0)
+            if how[0] == "capture":
+                state["proc"] = start_capture(0 if pick else inner_pid(target[0]), opt.gpu)
+        except OSError as e:
+            print(tr(f"Échec : {e}"))
+            state["target"], state["how"] = None, None
+            return
+        state["target"], state["how"] = target, how
+        print(tr(f"Génération démarrée dans {target[1]}.") + f" ({how[1]})")
 
     if cfg.glob.get("require_app") != "1" or cfg.glob.get("enabled") != "1":
         save()
@@ -2305,13 +2492,19 @@ def text_main():
     try:
         while True:
             games = detect_games()
-            if state["target"] and state["target"][0] not in [pid for pid, _ in games]:
-                state["target"] = None
+            if state["proc"] is not None and state["proc"].poll() is not None:
+                state["proc"], state["target"], state["how"] = None, None, None
+                print(tr("Capture terminée (journal : ~/.cache/bdex-framegen/capture.log)"))
+            if state["target"] and state["target"][0] and state["target"][0] not in [pid for pid, _ in games]:
+                stop_capture(state["proc"])
+                state["proc"], state["target"], state["how"] = None, None, None
             print()
             print(tr("Jeux détectés :") if games else tr("Jeux détectés : aucun (lance un jeu Vulkan, puis r)"))
             for i, (pid, name) in enumerate(games, 1):
                 mark = tr("  ▶ génère") if state["target"] and state["target"][0] == pid else ""
-                lines = [d for d in (describe_entry(e) for e in read_status(pid)) if d]
+                entries = read_status(pid)
+                lines = [d for d in (describe_entry(e) for e in entries) if d]
+                lines.append("→ " + plan(entries, opt, capture_binary() is not None)[1])
                 print(f"  {i}) {name} (pid {pid}){mark}")
                 for d in lines:
                     for ln in d.splitlines():
@@ -2319,6 +2512,7 @@ def text_main():
             print(tr("Options : ") + _text_options(opt))
             print(tr("[numéro] démarrer dans ce jeu · a arrêter · r actualiser · m multiplicateur · "
                   "o mode · p préréglage · h compteur · j mode Jeu · s options Steam · b signaler un problème · q quitter"))
+            print(tr("w capturer une autre fenêtre · c méthode · g GPU de génération"))
             try:
                 cmd = input("> ").strip().lower()
             except EOFError:
@@ -2326,11 +2520,24 @@ def text_main():
             if cmd == "q":
                 break
             if cmd.isdigit() and 1 <= int(cmd) <= len(games):
-                state["target"] = games[int(cmd) - 1]
-                write_session(state["target"][0])
-                print(tr(f"Génération démarrée dans {state['target'][1]}."))
+                save()
+                start(games[int(cmd) - 1])
+            elif cmd == "w":
+                save()
+                start((0, tr("fenêtre choisie")), pick=True)
+                print(tr("Clique sur la fenêtre du jeu"))
+            elif cmd == "c":
+                opt.method = _text_pick(tr("Méthode :"), METHODS, opt.method)
+                save()
+            elif cmd == "g":
+                gpus = generation_gpus()
+                cur = next((n for n in gpus if opt.gpu and opt.gpu.lower() in n.lower()), "")
+                opt.gpu = _text_pick(tr("GPU de génération :"), [(tr("Automatique — celui du jeu"), "")] +
+                                     [(n, n) for n in gpus], cur)
+                save()
             elif cmd == "a":
-                state["target"] = None
+                stop_capture(state["proc"])
+                state["proc"], state["target"], state["how"] = None, None, None
                 write_session(0)
             elif cmd == "m":
                 table = [(tr("Désactivé (×1)"), "1"), (tr("Auto — jusqu'à la fréquence de l'écran"), "auto"),
@@ -2373,6 +2580,7 @@ def text_main():
         print()
     finally:
         stop.set()
+        stop_capture(state["proc"])
         remove_session()
     return 0
 

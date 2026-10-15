@@ -80,3 +80,33 @@ assert panel.flatpak_extension_branch("a.Old", (root,)) is None
 assert panel.flatpak_extension_branch("a.Gnome", (root,)) is None
 assert panel.flatpak_extension_branch("a.Missing", (root,)) is None
 print("panel Flatpak extension detection OK")
+
+# Injection where the layer has the game, capture otherwise (or on another GPU).
+opt = panel.Options()
+armed = [{"kind": "device", "state": "active", "device": "NVIDIA GeForce RTX 3060 Ti"},
+         {"kind": "swapchain", "state": "ready"}]
+assert panel.plan(armed, opt)[0] == "layer"
+opt.gpu = "Radeon"
+assert panel.plan(armed, opt)[0] == "capture"          # another GPU than the game's
+opt.gpu = "3060"
+assert panel.plan(armed, opt)[0] == "layer"            # the game's own GPU
+assert panel.plan([{"kind": "device", "state": "anti-cheat"}], panel.Options())[0] == "capture"
+assert panel.plan([], panel.Options())[0] == "capture"  # no swapchain of the layer
+assert panel.plan([], panel.Options(), capture_available=False)[0] == "layer"
+opt = panel.Options()
+opt.method = "capture"
+assert panel.plan(armed, opt)[0] == "capture"
+opt.method = "layer"
+assert panel.plan([{"kind": "device", "state": "anti-cheat"}], opt)[0] == "layer"
+# The choice round-trips through the configuration's global lines.
+glob = {}
+opt = panel.Options()
+opt.gpu, opt.method = "Radeon RX 6600", "capture"
+opt.write_into(glob)
+back = panel.Options()
+back.load_from(glob)
+assert (back.gpu, back.method) == ("Radeon RX 6600", "capture"), glob
+default = {}
+panel.Options().write_into(default)
+assert "gpu" not in default and "method" not in default
+print("panel injection / capture choice OK")
