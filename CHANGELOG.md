@@ -37,6 +37,9 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   dB, flicker −0.04 to −0.51, fewer grossly wrong pixels on every one;
   constant-speed scenes within −0.02 dB; +0.1 ms a game frame at 1440p x4.
 - `latency_log` gains a 4th column: the refresh each frame was planned for.
+- **`static_soft` on predicted frames too** (toward the current frame):
+  extrapolation, game-like HUD scenes +0.05 to +0.42 dB, edges +0.6 to +6,
+  nothing lower; interpolation unchanged.
 - **`false_detail` on predicted frames too** (extrapolation, the hybrid's
   predicted frames): every sequence up, +0.15 dB on average, 1440p +0.13 /
   +0.26 dB with flicker −0.5 / −1.1.

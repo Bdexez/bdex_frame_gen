@@ -1404,7 +1404,7 @@ void FrameGen::recordSynthesisImpl(VkCommandBuffer cmd, const Pass& pipe, VkDesc
                 timing, cfg.sceneCutLocal ? (int32_t)kCutTiles : 0, in.accel,
                 cfg.synthBicubic ? 1 : 0, hasStaticMask_ ? float(cfg.hudMask) : 0.f, cfg.revealFill && t > 1.f ? 1 : 0,
                 // (static_soft's thresholds are on perceptual values: not linear / HDR ones)
-                t <= 1.f && enc_.transfer == TRANSFER_PERCEPTUAL ? cfg.staticSoft : 0.f};
+                enc_.transfer == TRANSFER_PERCEPTUAL ? cfg.staticSoft : 0.f};
     // The variant with exactly the opt-ins in use compiled in: the lean one
     // when none is (same results as the full one), else one per set.
     const uint32_t features = (pc.bicubic ? SYNTH_BICUBIC : 0u) | (pc.timing ? SYNTH_TIMING : 0u) |
