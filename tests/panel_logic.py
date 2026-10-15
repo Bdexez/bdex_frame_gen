@@ -110,3 +110,11 @@ default = {}
 panel.Options().write_into(default)
 assert "gpu" not in default and "method" not in default
 print("panel injection / capture choice OK")
+
+# Anti-cheat prevention (03/10): the layer's report first, the warning wording by method.
+assert panel.game_anticheat(0, [{"kind": "device", "state": "active", "anticheat": "easyanticheat"}]) == "easyanticheat"
+assert panel.game_anticheat(0, [{"kind": "device", "state": "anti-cheat"}]) in ("anti-triche", "anti-cheat")
+assert panel.game_anticheat(999999999, []) == ""
+assert "injectée" in panel.anticheat_warning("rl", "EAC", "layer") or "injected" in panel.anticheat_warning("rl", "EAC", "layer")
+assert "Capture" in panel.anticheat_warning("g", "EAC", "capture") or "captured" in panel.anticheat_warning("g", "EAC", "capture")
+print("anticheat warning ok")

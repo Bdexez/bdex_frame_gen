@@ -56,6 +56,12 @@ _EN = {
  "capture (la couche n'a pas la fenêtre du jeu)": "capture (the layer does not have the game's window)",
  'bdex-capture introuvable': 'bdex-capture not found',
  'capture (fenêtre choisie)': 'capture (window picked)',
+ 'anti-triche': 'anti-cheat',
+ 'Attention': 'Warning',
+ '⚠ {} : anti-triche détecté ({}). La génération est injectée dans le jeu : un bannissement est possible, à tes risques. Le lancement continue.':
+     '⚠ {}: anti-cheat detected ({}). Frame generation is injected into the game: a ban is possible, at your own risk. The launch goes ahead.',
+ '⚠ {} : anti-triche détecté ({}). Capture de la fenêtre (rien n\'est chargé dans le jeu), mais certains éditeurs interdisent tout logiciel tiers : à tes risques. Le lancement continue.':
+     '⚠ {}: anti-cheat detected ({}). The window is captured (nothing is loaded into the game), but some publishers forbid any third-party software: at your own risk. The launch goes ahead.',
  'Capture terminée (journal : ~/.cache/bdex-framegen/capture.log)': 'Capture ended (log: ~/.cache/bdex-framegen/capture.log)',
  'Capturer une autre fenêtre…': 'Capture another window…',
  'Un jeu absent de la liste (OpenGL, anti-triche…) : clique ensuite sur sa fenêtre': 'A game missing from the list (OpenGL, anti-cheat…): then click its window',
@@ -1237,6 +1243,48 @@ def plan(entries, opt, capture_available=True):
     return "layer", tr("injection (couche Vulkan)")
 
 
+def game_anticheat(pid, entries):
+    """The anti-cheat found with a game ("" none): the layer's report (it
+    stayed out, or ignore_anticheat kept it on), else an anti-cheat's files
+    beside its executable — Easy Anti-Cheat, BattlEye (a Proton game: the
+    Windows .exe on its command line)."""
+    dev = next((e for e in entries if e.get("kind") == "device"), {})
+    if dev.get("anticheat"):
+        return dev["anticheat"]
+    if dev.get("state") == "anti-cheat":
+        return tr("anti-triche")
+    try:
+        args = open(f"/proc/{pid}/cmdline", "rb").read().split(b"\0")
+    except OSError:
+        return ""
+    for a in args:
+        a = a.decode(errors="replace").replace("\\", "/")
+        if not a.lower().endswith(".exe") or "/" not in a:
+            continue
+        d = os.path.dirname(a)
+        if d.startswith("Z:") or d.startswith("z:"):
+            d = d[2:]
+        for _ in range(4):
+            if not d or d == "/":
+                break
+            for name, ac in (("EasyAntiCheat", "Easy Anti-Cheat"), ("EasyAntiCheat_EOS", "Easy Anti-Cheat"),
+                             ("start_protected_game.exe", "Easy Anti-Cheat"), ("BattlEye", "BattlEye")):
+                if os.path.exists(os.path.join(d, name)):
+                    return ac
+            d = os.path.dirname(d)
+    return ""
+
+
+def anticheat_warning(game, anticheat, how):
+    """Prevention before generating in a game with an anti-cheat — the start
+    goes ahead (the user's choice, 03/10)."""
+    if how == "layer":
+        return tr(f"⚠ {game} : anti-triche détecté ({anticheat}). La génération est injectée dans le jeu : "
+                  "un bannissement est possible, à tes risques. Le lancement continue.")
+    return tr(f"⚠ {game} : anti-triche détecté ({anticheat}). Capture de la fenêtre (rien n'est chargé dans le jeu), "
+              "mais certains éditeurs interdisent tout logiciel tiers : à tes risques. Le lancement continue.")
+
+
 def capture_log_path():
     cache = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
     return os.path.join(cache, "bdex-framegen", "capture.log")
@@ -1969,6 +2017,10 @@ class Window(Adw.ApplicationWindow):
         if target:
             how = ("capture", tr("capture (fenêtre choisie)")) if pick else \
                 plan(read_status(target[0]), self.opt, capture_binary() is not None)
+        if target and not pick:
+            ac = game_anticheat(target[0], read_status(target[0]))
+            if ac:
+                self.warn(anticheat_warning(target[1], ac, how[0]))
         try:
             if target:
                 self.save()   # the game reads the options shown here
@@ -2326,6 +2378,20 @@ class Window(Adw.ApplicationWindow):
     def toast(self, text):
         self.toasts.add_toast(Adw.Toast.new(text))
 
+    def warn(self, text):
+        """A warning that stays until read (a dialog where GTK has one), the
+        action going ahead behind it."""
+        try:
+            d = Gtk.AlertDialog(message=tr("Attention"), detail=text)
+            d.show(self)
+        except (AttributeError, TypeError):
+            t = Adw.Toast.new(text)
+            try:
+                t.set_timeout(0)
+            except AttributeError:
+                pass
+            self.toasts.add_toast(t)
+
     # -- header actions ----------------------------------------------------
 
     def on_copy(self, _btn):
@@ -2462,6 +2528,10 @@ def text_main():
         state["proc"] = None
         how = ("capture", tr("capture (fenêtre choisie)")) if pick else \
             plan(read_status(target[0]), opt, capture_binary() is not None)
+        if not pick:
+            ac = game_anticheat(target[0], read_status(target[0]))
+            if ac:
+                print(anticheat_warning(target[1], ac, how[0]))
         try:
             write_session(target[0] if how[0] == "layer" else 0)
             if how[0] == "capture":

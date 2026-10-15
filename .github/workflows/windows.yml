@@ -105,7 +105,14 @@ jobs:
           Copy-Item layer/profiles.conf $out   # per-game profiles, read next to the DLL / exe
           Copy-Item docs/windows-port.md, docs/windows-capture.md, docs/windows-README.md $out
           Copy-Item LICENSE, THIRD_PARTY_NOTICES.md $out
-          Get-ChildItem $out
+          if ('${{ matrix.arch }}' -eq 'x64') {
+            # DXVK / VKD3D-Proton: the launcher's injection into Direct3D
+            # games (capture/src/injection.h), pinned and checked.
+            python -m pip install --quiet zstandard
+            python tools/fetch_translation_layers.py $out
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          Get-ChildItem -Recurse $out
 
       - uses: actions/upload-artifact@v4
         with:
@@ -113,9 +120,32 @@ jobs:
           path: dist/bdex-framegen-windows-${{ matrix.arch }}
           if-no-files-found: error
 
+  # The package to give users: the x64 one with the 32-bit layer in x86\
+  # (the launcher registers both: 32-bit games inject too).
+  bundle:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Bundle
+        run: |
+          set -e
+          out=dist/bdex-framegen-windows-complete
+          cp -r dist/bdex-framegen-windows-x64 "$out"
+          mkdir -p "$out/x86"
+          cp dist/bdex-framegen-windows-Win32/VkLayer_bdex_framegen.dll "$out/x86/"
+          ls -R "$out"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bdex-framegen-windows-complete
+          path: dist/bdex-framegen-windows-complete
+          if-no-files-found: error
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, bundle]
     runs-on: ubuntu-latest
     permissions:
       contents: write
