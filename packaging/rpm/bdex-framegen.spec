@@ -12,7 +12,7 @@ Name:           bdex-framegen
 Version:        0.5.5
 Release:        1%{?dist}
 Summary:        Frame generation and upscaling Vulkan layer for games
-License:        MIT
+License:        LicenseRef-proprietary
 URL:            https://github.com/Bdexez/bdex_frame_gen
 Source0:        %{url}/archive/v%{version}/bdex_frame_gen-%{version}.tar.gz
 

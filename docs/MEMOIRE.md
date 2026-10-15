@@ -1057,9 +1057,8 @@ flou qu'un warp approximatif).
 - Repli Desktop Duplication (mode 2).
 - Mesure complète de la latence de capture.
 
-**Steam Deck** : un **plugin Decky Loader** (menu rapide : activer,
-multiplicateur, pause en jeu). Le mode Jeu n'a aujourd'hui que « sans le
-panneau » et les options de lancement.
+**Steam Deck** : le plugin Decky existe (`packaging/decky`, 03/10, cf. §4.4)
+mais n'a jamais tourné sur un vrai Deck — reste la validation.
 
 **CI GitHub** (dépôt privé, résultats rapportés par l'utilisateur) : verte
 le 01/10 après `96b2f91`, jobs `distros`, `package` (archives, `.deb`,
@@ -1086,6 +1085,14 @@ un vrai écran.
 ---
 
 ## 10. Conventions de travail
+
+- **Licence** (03/10, demande de l'utilisateur) : logiciel **propriétaire**,
+  tous droits réservés (`LICENSE`) ; les versions jusqu'à 0.5.5 incluse
+  étaient MIT et le restent pour ceux qui les ont. Composants tiers :
+  `THIRD_PARTY_NOTICES.md` (CAS d'AMD, en-têtes Khronos, DXVK livré sous
+  Windows, GLFW de la démo) — à tenir à jour à chaque ajout. Métadonnées
+  des paquets : `LicenseRef-proprietary` (Nix : `unfree`, autorisé par le
+  flake pour lui seul ; Gentoo : `all-rights-reserved`).
 
 - **Commits** sur `main`, au nom de Bdexez, sans ligne d'attribution à
   Claude. **Pousser seulement sur demande.**

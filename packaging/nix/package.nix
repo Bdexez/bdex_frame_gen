@@ -70,7 +70,7 @@ stdenv.mkDerivation {
   meta = {
     description = "Frame generation for Vulkan games (optical flow, x2 to x8) as an implicit Vulkan layer";
     homepage = "https://github.com/Bdexez/bdex_frame_gen";
-    license = lib.licenses.mit;
+    license = lib.licenses.unfree;  # proprietary (LICENSE); the flake allows it for itself
     platforms = [ "x86_64-linux" "aarch64-linux" "i686-linux" ];
     mainProgram = "bdex-framegen";
   };

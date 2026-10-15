@@ -1,5 +1,5 @@
 # Copyright 2026 Bdexez
-# Distributed under the terms of the MIT License
+# Proprietary software, all rights reserved (see LICENSE)
 
 EAPI=8
 
@@ -20,7 +20,8 @@ else
 	KEYWORDS="~amd64 ~arm64"
 fi
 
-LICENSE="MIT"
+LICENSE="all-rights-reserved"
+RESTRICT="bindist mirror"
 SLOT="0"
 IUSE="gui"
 

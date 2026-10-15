@@ -104,6 +104,7 @@ jobs:
           Copy-Item tools/register-layer.ps1, tools/unregister-layer.ps1, tools/validate-windows.ps1 $out
           Copy-Item layer/profiles.conf $out   # per-game profiles, read next to the DLL / exe
           Copy-Item docs/windows-port.md, docs/windows-capture.md, docs/windows-README.md $out
+          Copy-Item LICENSE, THIRD_PARTY_NOTICES.md $out
           Get-ChildItem $out
 
       - uses: actions/upload-artifact@v4

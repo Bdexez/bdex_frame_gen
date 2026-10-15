@@ -112,7 +112,7 @@ Name:           bdex-framegen
 Version:        $(echo "$VERSION" | tr '-' '~')
 Release:        1
 Summary:        $SUMMARY
-License:        MIT
+License:        LicenseRef-proprietary
 URL:            https://github.com/Bdexez/bdex_frame_gen
 # Prebuilt: the 32-bit layer must not pull a 32-bit glibc (32-bit games bring
 # theirs), and the panel's Python dependencies are only recommended.

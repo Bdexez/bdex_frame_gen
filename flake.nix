@@ -6,7 +6,12 @@
   outputs = { self, nixpkgs }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" ];
-      forAll = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
+      # The package is proprietary (meta.license = unfree): allowed here for
+      # itself only, so `nix build` works without NIXPKGS_ALLOW_UNFREE.
+      forAll = f: nixpkgs.lib.genAttrs systems (system: f (import nixpkgs {
+        inherit system;
+        config.allowUnfreePredicate = pkg: nixpkgs.lib.getName pkg == "bdex-framegen";
+      }));
     in {
       packages = forAll (pkgs: {
         default = pkgs.callPackage ./packaging/nix/package.nix { };

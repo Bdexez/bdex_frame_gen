@@ -9,7 +9,7 @@ pkgrel=1
 pkgdesc="Frame generation for Vulkan games (optical flow, x2 to x8) as a Vulkan layer, with a GTK control panel"
 arch=('x86_64' 'aarch64')
 url="https://github.com/Bdexez/bdex_frame_gen"
-license=('MIT')
+license=('LicenseRef-proprietary')
 # The C++ runtime is linked in (like the release archives): inside the Steam
 # runtime a game may bring an older libstdc++, and the 32-bit layer needs no
 # lib32-gcc-libs.

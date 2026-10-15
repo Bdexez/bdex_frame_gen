@@ -8,7 +8,7 @@ pkgrel=1
 pkgdesc="Frame generation for Vulkan games (optical flow, x2 to x8) as a Vulkan layer, with a GTK control panel (prebuilt)"
 arch=('x86_64' 'aarch64')
 url="https://github.com/Bdexez/bdex_frame_gen"
-license=('MIT')
+license=('LicenseRef-proprietary')
 depends=('glibc' 'vulkan-icd-loader')
 optdepends=('python-gobject: control panel (bdex-framegen-gui)'
             'gtk4: control panel (bdex-framegen-gui)'

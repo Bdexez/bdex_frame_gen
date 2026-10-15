@@ -49,7 +49,7 @@ fi
 mkdir -p "$STAGE"
 mv "$WORK/root/prefix" "$STAGE/files"
 cp "$ROOT/packaging/linux/install.sh" "$ROOT/packaging/linux/flatpak.sh" "$ROOT/tools/uninstall.sh" \
-   "$ROOT/packaging/linux/README.txt" "$ROOT/LICENSE" "$STAGE/"
+   "$ROOT/packaging/linux/README.txt" "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_NOTICES.md" "$STAGE/"
 chmod +x "$STAGE/install.sh" "$STAGE/flatpak.sh" "$STAGE/uninstall.sh"
 echo "$ARCH" > "$STAGE/files/share/bdex-framegen/ARCH"
 # The runtime must not leak: only glibc (libc, libm, libdl, libpthread), and
