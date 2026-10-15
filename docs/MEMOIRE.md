@@ -1547,6 +1547,9 @@ RTX 3060 Ti, pilote 615.
   −0,06 (`edge_bench` rapide). Adoptés : `false_detail` (et en
   extrapolation : +0,15 dB), `border_predict`, plafond d'`interp_accel` 0,75 ;
   opt-in : `parallax_search`.
+  Latence (banc de cadence 720p, 5 essais alternés `54dc548` / fin de nuit) :
+  image réelle présentation → écran médiane ~42,0 → ~42,4 ms (+0,4, dans le
+  bruit), affichées ~143/s des deux côtés, hors plan 7–34 % → 5–11 %.
 - **`false_detail`** (auto GPU dédié, passe `passes/false_detail.cpp`,
   `false_detail.comp`, après la synthèse et avant `learned_correction` /
   le HUD) : diagnostic — sur les scènes ×4 de type jeu, les images générées
