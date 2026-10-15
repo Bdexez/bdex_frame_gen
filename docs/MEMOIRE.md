@@ -1592,6 +1592,17 @@ RTX 3060 Ti, pilote 615.
   démarrages / arrêts brusques — écarts successifs 1,1 puis 14,6 : le
   mouvement commence après la vérité, et la vitesse constante place le
   contenu à mi-chemin trop tôt (paires de 2 images : effet doublé).
+- **Plafond de l'accélération d'`interp_accel`** (`accel_map.comp`, 0,5·|B| + 1 :
+  un démarrage depuis l'arrêt n'est corrigé qu'à moitié, un arrêt pas du
+  tout — |B| ≈ 0) : 1,0·|B| + 1 → +0,002 dB, scintillement des jeux −0,07 à
+  −0,24, pixels faux −1 %, mais Cyberpunk −0,05 ; 2,0·|B| −0,006 ;
+  0,5·max(|B|, |a|) (arrêts compris) −0,026 (PRAGMATA −0,17). Pas changé
+  (paires de 2 images des enregistrements : accélérations doublées). Sur la
+  nouvelle scène `make_game.py flick` (×4 exact : immobile, puis 600 px en
+  133 ms avec départ et arrêt en douceur) : base 38,60 dB, 1,0·|B| et
+  2,0·|B| 38,61, max(|B|,|a|) 37,59, sans plafond 37,33 — et
+  `interp_accel=0` 38,68 : le modèle à accélération constante ne décrit pas
+  un coup de poignet ; le plafond le protège.
 - **`smoothness` en 1440p** (flux à demi-résolution : vecteurs deux fois plus
   courts, pénalité relative double) : 0,002 +0,005 dB, 0,004 −0,007 sur les
   séquences 1440p — 0,003 reste.

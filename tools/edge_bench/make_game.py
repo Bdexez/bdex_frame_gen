@@ -3,7 +3,7 @@
 presents, the three between are the exact pictures of the moments the
 generated frames show (score with eval_sequence.py --multiplier 4).
 
-    make_game.py DIR turn|walk|dark|strafe|fps|fence [N=97]
+    make_game.py DIR turn|walk|dark|strafe|fps|fence|flick [N=97]
 
 1280x720: a textured world scrolled by the camera, a near layer moving
 faster (parallax), a character moving on its own, a static HUD (a
@@ -18,7 +18,10 @@ sway, not motion-blurred), the world turning fast behind it; `fence` a
 sideways move past a railing: the near layer is thin bars (3-8 px, a
 fence, poles, cables' supports) 20-60 px apart, moving 2.5x the background
 — fine structure in parallax, which 8x8 blocks straddle (motion blur off,
-the setting the README advises)."""
+the setting the README advises); `flick` mouse flicks — still, then a
+600 px turn in 133 ms (16 frames at 120 Hz, easing in and out: motion
+starting and stopping inside a game frame), then still again, every 48
+frames."""
 import sys
 from pathlib import Path
 
@@ -66,11 +69,11 @@ def shift(img, x, y):
 
 def main():
     out = Path(sys.argv[1]); kind = sys.argv[2]; n = int(sys.argv[3]) if len(sys.argv) > 3 else 97
-    rng = np.random.default_rng({"turn": 11, "walk": 12, "dark": 13, "strafe": 14, "fps": 15, "fence": 16}[kind])
+    rng = np.random.default_rng({"turn": 11, "walk": 12, "dark": 13, "strafe": 14, "fps": 15, "fence": 16, "flick": 17}[kind])
     out.mkdir(parents=True, exist_ok=True)
     # Camera speed in px per 120 Hz frame (x4 on a 30 fps game: 4 of them per game frame).
     cam = {"turn": (30.0, 3.0), "walk": (6.0, 1.5), "dark": (30.0, 3.0), "strafe": (12.0, 0.0), "fps": (30.0, 2.0),
-           "fence": (8.0, 0.0)}[kind]
+           "fence": (8.0, 0.0), "flick": (13.0, 1.0)}[kind]
     near_k = 2.5 if kind in ("strafe", "fence") else 1.6  # the near layer's speed relative to the background
     span = int(abs(cam[0]) * (n + 2) * near_k) + W + 400
     tall = int(abs(cam[1]) * (n + 2) * near_k) + H + 400
@@ -127,17 +130,27 @@ def main():
     sub = 8  # sub-steps over the exposure (half a 30 fps frame = 2 frames at 120 Hz)
     if kind == "fence":
         sub = 1  # (motion blur off, as advised: the bars stay sharp)
+    def campos(tf):
+        if kind != "flick":
+            return cam[0] * tf, cam[1] * tf
+        # (a flick every 48 frames: 600 px over 16 frames, smootherstep;
+        # cam[] is only used for the textures' extent above)
+        k, u = divmod(tf - 12.0, 48.0)
+        s = min(max(u / 16.0, 0.0), 1.0)
+        e = s * s * s * (s * (s * 6 - 15) + 10)
+        return 600.0 * (k + e), 30.0 * (k + e)
     for f in range(n):
         acc = np.zeros((H, W, 3), np.float32)
         for s in range(sub):
             tf = f - 1.0 + 2.0 * (s + 0.5) / sub  # exposure centred on the frame's time
-            cx, cy = 200 + cam[0] * tf, 200 + cam[1] * tf
+            ox, oy = campos(tf)
+            cx, cy = 200 + ox, 200 + oy
             img = shift(far, cx, cy)
-            nx, ny = 200 + cam[0] * near_k * tf, 200 + cam[1] * near_k * tf
+            nx, ny = 200 + ox * near_k, 200 + oy * near_k
             na = shift(near_a[..., None], nx, ny)
             img = img * (1 - na) + shift(near, nx, ny) * na
             # the character walks across, against the camera
-            px = 900 - 7.0 * tf - (cam[0] * 0.2) * tf; py = 300 + 1.5 * tf
+            px = 900 - 7.0 * tf - 0.2 * ox; py = 300 + 1.5 * tf
             x0, y0 = int(np.floor(px)), int(np.floor(py))
             if -120 < x0 < W and -260 < y0 < H:
                 sx0, sy0 = max(0, -x0), max(0, -y0)
