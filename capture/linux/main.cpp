@@ -219,6 +219,10 @@ int main(int argc, char** argv) {
 
     // Settings: the configuration file with the game's section, then the
     // environment (Config::load), then the command line.
+    // Read as explicitly enabled (BDEX_FG=1): generating is this program's
+    // purpose, and require_app (the panel's arming of games for the layer)
+    // would otherwise pause it and turn its HUD off.
+    setenv("BDEX_FG", "1", 1);
     Config cfg = Config::load(target.process);
     log_set_level(cfg.logLevel);
     cfg.enabled = true;

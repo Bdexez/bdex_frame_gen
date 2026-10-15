@@ -21,6 +21,7 @@
 #include "config.h"
 #include "launcher.h"
 #include "log.h"
+#include "platform.h"
 #include "tray.h"
 #include "vkctx.h"
 
@@ -37,6 +38,8 @@
 #include <cstring>
 #include <cwchar>
 #include <cwctype>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -81,6 +84,8 @@ struct Options {
     float scale = 1.0f;
     bool fit = false;
     int gpu = -1;
+    std::string gpuName;    // --gpu <part of a name> (else the config key gpu)
+    int method = -1;        // --method: 0 auto, 1 layer (injection), 2 capture; -1 = the config's
     bool fifo = false;
     bool list = false;
     // Frame-generation overrides (-1 / empty = keep the config file's value).
@@ -111,7 +116,10 @@ void usage() {
         "  --filter <0|1|2>   upscale filter: bilinear | bicubic | Lanczos-2 (default)\n"
         "  --sharpness <f>    sharpening after upscaling, 0..1 (default 0)\n"
         "  --hud <0..4>       fps HUD: off | output fps | capture > output | +1%% low | +0.1%% low\n"
-        "  --gpu <n>          use the n-th usable GPU (default: the discrete one)\n"
+        "  --gpu <n|name>     generate on the n-th usable GPU, or the one whose name contains <name>\n"
+        "                     (default: the config key gpu, else the discrete one)\n"
+        "  --method <m>       auto (default: injection where the Vulkan layer has the game, else capture)\n"
+        "                     | layer (injection only) | capture\n"
         "  --fifo             vsync (FIFO) presentation instead of mailbox / immediate\n"
         "  --list             list capturable windows and exit\n"
         "\n"
@@ -193,7 +201,19 @@ bool parse(int argc, char** argv, Options& o) {
         } else if (a == "--gpu") {
             const char* v = next("--gpu");
             if (!v) return false;
-            o.gpu = std::max(0, std::atoi(v));
+            if (*v && std::all_of(v, v + std::strlen(v), [](char c) { return c >= '0' && c <= '9'; }))
+                o.gpu = std::atoi(v);
+            else
+                o.gpuName = v;
+        } else if (a == "--method") {
+            const char* v = next("--method");
+            if (!v) return false;
+            const std::string m = v;
+            o.method = m == "auto" ? 0 : (m == "layer" || m == "injection") ? 1 : m == "capture" ? 2 : -2;
+            if (o.method == -2) {
+                std::fprintf(stderr, "--method: auto, layer or capture\n");
+                return false;
+            }
         } else if (a == "--fifo") {
             o.fifo = true;
         } else if (a == "--list") {
@@ -401,6 +421,140 @@ void setDpiAware() {
 
 } // namespace
 
+// The layer's view of a game (its live status file, status.h): the GPU its
+// device runs on, and whether a swapchain of it is armed — the layer
+// virtualises it and generates frames as soon as a session targets the game.
+struct LayerView {
+    bool armed = false;
+    bool antiCheat = false;
+    std::string device;
+};
+
+LayerView layerView(DWORD pid) {
+    LayerView v;
+    const std::string dir = bdex::platformStatusDir();
+    if (dir.empty() || !pid) return v;
+    std::ifstream in(dir + "\\" + std::to_string(pid) + ".status");
+    std::string line, kind;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.size() > 2 && line.front() == '[') {
+            kind = line.substr(1, line.find(']') - 1);
+            continue;
+        }
+        const size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        const std::string k = line.substr(0, eq), val = line.substr(eq + 1);
+        if (kind == "device" && k == "device") v.device = val;
+        if (kind == "device" && k == "state" && val == "anti-cheat") v.antiCheat = true;
+        if (kind == "swapchain" && k == "state" && (val == "ready" || val == "generating" || val == "paused"))
+            v.armed = true;
+    }
+    return v;
+}
+
+std::wstring utf16(const std::string& s) {
+    const int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+    std::wstring w(static_cast<size_t>(std::max(n - 1, 0)), L'\0');
+    if (n > 1) MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, w.data(), n);
+    return w;
+}
+
+std::string lowerAscii(std::string s) {
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+// Injection or capture, as the Linux control panel decides (plan()): the
+// layer inside the game's own presentation adds no frame of latency, so it
+// wins wherever it has the game's swapchain on the GPU chosen; capture
+// otherwise (a D3D / OpenGL game, an anti-cheat the layer stays out of,
+// another GPU than the game's). `why` for the log.
+bool chooseInjection(int method, const std::string& gpu, DWORD pid, std::string& why) {
+    const LayerView v = layerView(pid);
+    if (method == 2) { why = "capture chosen"; return false; }
+    if (method == 1) { why = "injection chosen"; return true; }
+    if (!gpu.empty() && !v.device.empty() && lowerAscii(v.device).find(lowerAscii(gpu)) == std::string::npos) {
+        why = "capture on " + gpu + " (the game renders on " + v.device + ")";
+        return false;
+    }
+    if (v.antiCheat) { why = "capture (anti-cheat: the layer stays out of the game)"; return false; }
+    if (!v.armed) { why = "capture (the Vulkan layer does not have the game's window)"; return false; }
+    why = "injection (the Vulkan layer, on " + v.device + ")";
+    return true;
+}
+
+// Injection: the layer generates inside the game, armed by require_app; this
+// process only holds its session — <status dir>\app.session = "<our pid>
+// <game pid> <Hz>", rewritten every second (the heartbeat the layer checks)
+// — until the game's window closes or Ctrl+Alt+Q. The toggle hotkey targets
+// no game (0): the layer passes the frames through until toggled back.
+int runInjection(HWND target) {
+    DWORD pid = 0;
+    GetWindowThreadProcessId(target, &pid);
+    const std::string dir = bdex::platformStatusDir();
+    if (dir.empty()) {
+        LOGE("no status directory (TEMP unset): injection impossible");
+        return 1;
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    const std::string session = dir + "\\app.session";
+    g_running = true;
+    enum { HK_QUIT = 1, HK_TOGGLE = 2 };
+    if (!RegisterHotKey(nullptr, HK_QUIT, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'Q'))
+        LOGW("Ctrl+Alt+Q hotkey unavailable; close the game or Ctrl+C to stop");
+    Hotkey toggle{MOD_CONTROL | MOD_ALT, 'G'};
+    const std::string toggleSpec = bdex::globalConfigValue("hotkey");
+    if (!toggleSpec.empty() && !parseHotkey(toggleSpec, toggle))
+        LOGW("could not parse hotkey '%s'; using Ctrl+Alt+G", toggleSpec.c_str());
+    const bool toggleOk = RegisterHotKey(nullptr, HK_TOGGLE, toggle.mods | MOD_NOREPEAT, toggle.vk) != 0;
+    bdex::Tray tray;
+    if (!tray.create()) LOGW("notification-area icon unavailable");
+    bool on = true;
+    tray.setGeneration(on);
+    LOGI("injection: the Vulkan layer generates in pid %lu — Ctrl+Alt+Q to stop",
+         static_cast<unsigned long>(pid));
+    ULONGLONG last = 0;
+    while (g_running && IsWindow(target)) {
+        MSG msg;
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_QUIT || (msg.message == WM_HOTKEY && msg.wParam == HK_QUIT) ||
+                msg.message == bdex::Tray::kMsgQuit) {
+                g_running = false;
+            } else if ((msg.message == WM_HOTKEY && msg.wParam == HK_TOGGLE) || msg.message == bdex::Tray::kMsgToggle) {
+                on = !on;
+                tray.setGeneration(on);
+                last = 0;  // (written at once)
+                LOGI("frame generation %s", on ? "on" : "off");
+            }
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        const ULONGLONG now = GetTickCount64();
+        if (now - last >= 1000) {
+            last = now;
+            const std::string tmp = session + ".tmp";
+            {
+                std::ofstream out(tmp, std::ios::trunc);
+                out << GetCurrentProcessId() << ' ' << (on ? pid : 0) << ' ' << monitorHz(target) << '\n';
+            }
+            std::filesystem::rename(tmp, session, ec);
+            if (ec) LOGW("could not write %s", session.c_str());
+            const LayerView v = layerView(pid);
+            tray.setStatus(on ? L"bdex framegen — injection" : L"bdex framegen — injection (off)",
+                           std::wstring(L"Vulkan layer: ") + (v.armed ? L"armed" : L"not armed") +
+                               L"\nGPU: " + utf16(v.device));
+        }
+        Sleep(50);
+    }
+    std::filesystem::remove(session, ec);
+    tray.destroy();
+    UnregisterHotKey(nullptr, HK_QUIT);
+    if (toggleOk) UnregisterHotKey(nullptr, HK_TOGGLE);
+    return 0;
+}
+
 // One capture session: overlay + engine + presentation loop. `choice` (the
 // launcher) overrides the config file and the command line; nullptr = CLI.
 int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) {
@@ -469,7 +623,10 @@ int runCapture(const Options& o, HWND target, const bdex::LaunchChoice* choice) 
     }
     bdex::VkCtx vk;
     bdex::Capture cap;
-    if (!vk.init(overlay, o.gpu, fifo, cfg)) return 1;
+    // The GPU that generates: --gpu, else the launcher's choice, else the
+    // config key gpu (a part of its name; "" = the best, the discrete one).
+    std::string gpuName = !o.gpuName.empty() ? o.gpuName : choice ? choice->gpu : cfg.gpu;
+    if (!vk.init(overlay, o.gpu, fifo, cfg, o.gpu >= 0 ? std::string() : gpuName)) return 1;
     // HDR when the game's display is in HDR mode (capture_hdr = auto) or when
     // forced, and the GPU / overlay surface can carry scRGB end to end.
     const bool wantHdr = cfg.captureHdr == 1 || (cfg.captureHdr < 0 && bdex::Capture::displayIsHdr(target));
@@ -705,6 +862,11 @@ int main(int argc, char** argv) {
     // Never load the implicit layer into this process, even when a global
     // enabled=1 profile is active for games.
     SetEnvironmentVariableA("BDEX_FG_DISABLE", "1");
+    // Generating is this program's purpose: its config is read as explicitly
+    // enabled, so that require_app (the layer's arming, for injection) does
+    // not pause it nor turn its HUD off. The CRT's copy of the environment,
+    // which getenv reads (SetEnvironmentVariable does not update it).
+    _putenv_s("BDEX_FG", "1");
     SetConsoleOutputCP(CP_UTF8);
     setDpiAware();
     // 1 ms timer resolution for the pacing waits (see sleepUntil); per
@@ -745,6 +907,8 @@ int main(int argc, char** argv) {
         choice.flowIterations = d.flowIterations;
         choice.sceneCutLow = d.sceneCutLow;
         choice.sceneCutHigh = d.sceneCutHigh;
+        choice.gpu = d.gpu;
+        choice.method = d.method;
         if (!bdex::runLauncher(choice)) return 0;
         target = choice.target;
         if (!target) return 1;
@@ -756,7 +920,26 @@ int main(int argc, char** argv) {
     }
 
     for (;;) {
-        const int rc = runCapture(o, target, useLauncher ? &choice : nullptr);
+        DWORD pid = 0;
+        GetWindowThreadProcessId(target, &pid);
+        const bdex::Config d = bdex::Config::load(bdex::narrow(bdex::processName(pid)));
+        const int method = useLauncher ? choice.method : o.method >= 0 ? o.method : d.method;
+        const std::string gpu = useLauncher ? choice.gpu : !o.gpuName.empty() ? o.gpuName : d.gpu;
+        std::string why;
+        const bool inject = o.gpu < 0 && chooseInjection(method, gpu, pid, why);
+        LOGI("%s", why.c_str());
+        if (inject && method == 1 && !layerView(pid).armed) {
+            const wchar_t* msg = bdex::layerRegistered()
+                ? L"La couche Vulkan n'a pas ce jeu (jeu non Vulkan, ou lancé avant la couche) : relance le jeu, ou choisis Auto / Capture."
+                : L"La couche Vulkan n'est pas enregistrée (register-layer.ps1) : choisis Auto ou Capture.";
+            if (useLauncher) MessageBoxW(nullptr, msg, L"bdex framegen", MB_OK | MB_ICONINFORMATION);
+            else LOGE("%s", bdex::narrow(msg).c_str());
+            if (!useLauncher) return 1;
+            if (!bdex::runLauncher(choice)) return 0;
+            target = choice.target;
+            continue;
+        }
+        const int rc = inject ? runInjection(target) : runCapture(o, target, useLauncher ? &choice : nullptr);
         if (!useLauncher || rc != 0) return rc;
         if (!bdex::runLauncher(choice)) return 0;
         target = choice.target;

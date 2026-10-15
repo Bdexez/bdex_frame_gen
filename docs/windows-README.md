@@ -26,7 +26,16 @@ checklist in `windows-port.md` §3. Please report what happens.
    and in the right-hand **Options avancées** column every other engine
    option: motion quality — contrast-relative stability (0.1 recommended),
    object edges, sub-pixel motion, splatted extrapolation — the experimental
-   ones, the flow structure and the debug view) and press **Démarrer**. The choices are saved to
+   ones, the flow structure and the debug view) and press **Démarrer**.
+   **Méthode** (top of the right-hand column): *Auto* uses the Vulkan
+   layer (mode 1, no added latency) when it already has the game — a
+   Vulkan game started after `register-layer.ps1` — and the capture
+   otherwise (D3D / OpenGL games); *Injection* / *Capture* force one.
+   **GPU de génération**: *Auto* is the game's (the discrete one); another
+   GPU makes the capture generate on it while the game renders on its own
+   (two-GPU setup). With the layer registered, the launcher arms Vulkan
+   games (`enabled = 1`, `require_app = 1`): they pass their frames
+   through until **Démarrer** targets one. The choices are saved to
    `%APPDATA%\bdex-framegen\bdex-framegen.conf` (the same keys as the Linux
    control panel); when the capture stops (Ctrl+Alt+Q, game closed) the
    launcher reopens. Its **En cours** frame lists, refreshed every second,

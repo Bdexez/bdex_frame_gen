@@ -37,9 +37,17 @@ if [ "$pass" = compositor ]; then
   sleep 2
   echo "-- under openbox + picom"
 fi
-for args in "-m 2" "-m 3 --mode hybrid" "-m 2 --mode extrapolate"; do
+# The last case: a configuration of the panel's arming (require_app = 1, for
+# the layer's injection) — the capture app generates all the same (it reads
+# its settings as explicitly enabled; else paused, as an armed game).
+ARMED="$(mktemp)"
+printf '[*]\nenabled = 1\nrequire_app = 1\nmultiplier = 2\n' > "$ARMED"
+trap 'kill $demo 2>/dev/null; rm -f "$LOG" "$DLOG" "$ARMED"' EXIT
+for args in "-m 2" "-m 3 --mode hybrid" "-m 2 --mode extrapolate" "armed"; do
   # (The capture's own config only: the user's file and environment stay out.)
-  BDEX_FG_CONFIG=/dev/null BDEX_FG_LOG=2 timeout 40 "$CAP" --pid "$dpid" --duration 7 $args \
+  conf=/dev/null
+  [ "$args" = armed ] && { conf="$ARMED"; args=""; }
+  BDEX_FG_CONFIG="$conf" BDEX_FG_LOG=2 timeout 40 "$CAP" --pid "$dpid" --duration 7 $args \
     >"$LOG" 2>&1 &
   cap=$!
   sleep 5
@@ -54,7 +62,7 @@ for args in "-m 2" "-m 3 --mode hybrid" "-m 2 --mode extrapolate"; do
   if grep -q "(software" "$LOG"; then case "$args" in *hybrid*) want=2 ;; *extrapolate*) want=1 ;; esac; fi
   ratio=$(grep -E "game [0-9.]+ fps -> output" "$LOG" | tail -1 | sed -n 's/.*(x\([0-9.]*\)).*/\1/p')
   game=$(grep -E "game [0-9.]+ fps -> output" "$LOG" | tail -1 | sed -n 's/.*game \([0-9.]*\) fps.*/\1/p')
-  echo "bdex-capture $args: exit $rc, game ${game:-?} fps, x${ratio:-?} (want x$want); $cmp"
+  echo "bdex-capture ${args:-(require_app config)}: exit $rc, game ${game:-?} fps, x${ratio:-?} (want x$want); $cmp"
   if [ $rc -ne 0 ] || ! awk -v r="${ratio:-0}" -v w="$want" -v g="${game:-0}" \
        'BEGIN { exit !(r >= 1 + (w - 1) * 0.7 && g >= 10) }'; then
     grep -E "ERROR|WARN|fps -> output|capturing|gpu|engine" "$LOG" | tail -12; status=1

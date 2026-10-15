@@ -8,6 +8,7 @@
 #include "vk_util.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
@@ -46,7 +47,7 @@ VkCtx::~VkCtx() { shutdown(); }
 
 // ---------------------------------------------------------------- init ----
 
-bool VkCtx::init(HWND overlay, int gpuIndex, bool preferFifo, const Config& cfg) {
+bool VkCtx::init(HWND overlay, int gpuIndex, bool preferFifo, const Config& cfg, const std::string& gpuName) {
     preferFifo_ = preferFifo;
 
     uint32_t loaderVersion = VK_API_VERSION_1_0;
@@ -189,6 +190,20 @@ bool VkCtx::init(HWND overlay, int gpuIndex, bool preferFifo, const Config& cfg)
             return false;
         }
         pick = static_cast<size_t>(gpuIndex);
+    } else if (!gpuName.empty()) {
+        // A part of the GPU's name, case-insensitive (the launcher's
+        // « Generation GPU », the config key gpu).
+        auto lower = [](std::string s) {
+            for (char& ch : s) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            return s;
+        };
+        size_t i = 0;
+        while (i < usable.size() && lower(usable[i].props.deviceName).find(lower(gpuName)) == std::string::npos) ++i;
+        if (i == usable.size()) {
+            LOGE("gpu \"%s\": no usable GPU of that name", gpuName.c_str());
+            return false;
+        }
+        pick = i;
     } else {
         auto score = [](VkPhysicalDeviceType t) {
             return t == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU     ? 3
