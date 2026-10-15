@@ -68,7 +68,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   (a pass over the finished frame; a still HUD's detail, present at the
   pixel in both inputs, is left alone). 1440p recordings +0.14 / +0.07 dB,
   flicker −0.39 / −0.18, grossly wrong pixels down; x4 game-like scenes
-  +0.03 to +0.21 dB; nothing lower on any sequence. ~1 ms (+0.8 ms a game frame) a generated
+  +0.03 to +0.21 dB; nothing lower on any sequence. ~1 ms (+0.3 ms a game frame) a generated
   frame at 1440p. Packed 8- and 10-bit SDR formats, without upscaling.
 - **The panel shows the cadence on screen**: frames shown per second and
   those held a refresh more (status `shown_fps`, `held_per_s`, from the
