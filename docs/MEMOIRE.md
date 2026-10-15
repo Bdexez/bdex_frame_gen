@@ -1640,6 +1640,8 @@ RTX 3060 Ti, pilote 615.
   répétitions) ~1 ms par image du jeu sur PRAGMATA 1440p (9×9 candidats et
   fenêtre pleine : +6 à +11 ms ; damier et 3 décalages par multiple) : sur
   le chemin de la latence, budget de l'objectif presque atteint → opt-in.
+  Puis fenêtre de référence lue une fois pour tous les candidats : ~0,6 ms
+  (pente de 20 répétitions, fréquence stable) ; toujours opt-in.
 - **`border_predict`** (15/10, auto GPU dédié, `block_match.comp`) :
   diagnostic — sur les virages ×4, 37 % de l'erreur dans les 2 × 6 % de
   colonnes du bord ; la synthèse n'y peut rien (essai ci-dessus) : le flux
