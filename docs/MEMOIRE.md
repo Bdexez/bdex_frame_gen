@@ -1541,8 +1541,8 @@ RTX 3060 Ti, pilote 615.
   +0,7) ; seuls PRAGMATA 3 (+0,34) et Oblivion HD (+0,47) gagnent. Reste
   opt-in.
 - **Bilan de la nuit du 14 au 15/10** (suite complète, interpolation, base
-  `54dc548` → `875c9a6`) : +0,095 dB en moyenne, pixels faux −3,1 % ;
-  1440p +0,19 / +0,12, scintillement −0,74 / −0,43 ; PRAGMATA scintillement
+  `54dc548` → `119b609`) : +0,098 dB en moyenne, pixels faux −3,2 % ;
+  1440p +0,21 / +0,13, scintillement −0,79 / −0,46 ; PRAGMATA scintillement
   −0,15 à −0,42 ; virages ×4 +0,18 à +0,27 ; Cyberpunk −0,01 / +0,02 ; pire
   −0,06 (`edge_bench` rapide). Adoptés : `false_detail` (et en
   extrapolation : +0,15 dB), `border_predict`, plafond d'`interp_accel` 0,75 ;
