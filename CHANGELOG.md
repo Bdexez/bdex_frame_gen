@@ -49,7 +49,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   coarse levels average them away): they broke up. Multiples of the
   motion are tried where it explains the picture poorly and kept where
   both directions agree. Railing scene x4 +0.32 dB, flicker −0.21; neutral
-  elsewhere; ~0.6 ms of GPU a game frame at 1440p, on the latency path, hence
+  elsewhere; ~0.3 ms of GPU a game frame at 1440p, on the latency path, hence
   off by default. `tools/edge_bench/make_game.py fence`: the railing scene.
 - **`border_predict`** (on on a discrete GPU): in a camera move, content
   entering or leaving the picture has its match off-screen, where the motion

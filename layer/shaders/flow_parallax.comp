@@ -61,18 +61,26 @@ vec2 search(vec2 v, sampler2D refTex, sampler2D tgtTex, ivec2 origin) {
     loadRef(refTex, origin, ref);
     float sc = sadAt(ref, tgtTex, origin, ivec2(v));
     if (sc < pc.minSad * n) return v;
+    // The exact multiples first, then a pixel either side of the best along
+    // the motion (its rounding): 7 windows instead of 15.
     const float ks[5] = float[5](0.5, 1.5, 2.0, 2.5, 3.0);
-    float best = sc * pc.gain;
+    const ivec2 axis = abs(v.x) >= abs(v.y) ? ivec2(1, 0) : ivec2(0, 1);
+    float best = sc * pc.gain, bestK = 1e9;
     vec2 bv = v;
+    ivec2 bc = ivec2(0);
     for (int k = 0; k < 5; ++k) {
-        ivec2 c = ivec2(round(v * ks[k]));
-        // a pixel either side along the motion (its rounding)
-        ivec2 axis = abs(v.x) >= abs(v.y) ? ivec2(1, 0) : ivec2(0, 1);
+        ivec2 d = ivec2(round(v * ks[k]));
+        ivec2 e = origin + d;  // (the window's match must be on-screen)
+        if (any(lessThan(e, ivec2(0))) || any(greaterThan(e + pc.block, pc.luma))) continue;
+        float s = sadAt(ref, tgtTex, origin, d);
+        if (s < bestK) { bestK = s; bc = d; }
+    }
+    if (bestK < 1e9) {
         for (int i = -1; i <= 1; ++i) {
-            ivec2 d = c + i * axis;
-            ivec2 e = origin + d;  // (the window's match must be on-screen)
+            ivec2 d = bc + i * axis;
+            ivec2 e = origin + d;
             if (any(lessThan(e, ivec2(0))) || any(greaterThan(e + pc.block, pc.luma))) continue;
-            float s = sadAt(ref, tgtTex, origin, d);
+            float s = i == 0 ? bestK : sadAt(ref, tgtTex, origin, d);
             if (s < best) { best = s; bv = vec2(d); }
         }
     }
