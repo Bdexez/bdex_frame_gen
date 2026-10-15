@@ -317,6 +317,7 @@ const std::vector<OptionDef>& registry() {
     B("flow_confidence", nullptr, &Config::flowConfidence),
     F("false_detail", nullptr, &Config::falseDetail, 0.f, 1.f, kLive),
     B("border_predict", nullptr, &Config::borderPredict, kLive),
+    B("parallax_search", nullptr, &Config::parallaxSearch, kLive),
     F("learned_correction", nullptr, &Config::learnedCorrection, 0.f, 1.f, kLive),
     F("luma_match", nullptr, &Config::lumaMatch, 0.f, 0.5f, kLive),
     F("learned_flow", nullptr, &Config::learnedFlow, 0.f, 1.f, kLive),
@@ -884,6 +885,7 @@ std::string Config::describe() const {
     if (hudMask > 0) o << " hud_mask=" << hudMask;
     if (falseDetail > 0.f) o << " false_detail=" << falseDetail;
     if (borderPredict) o << " border_predict=1";
+    if (parallaxSearch) o << " parallax_search=1";
     if (revealFill) o << " reveal_fill=1";
     if (onlineTune) o << " online_tune=1";
     if (upscaleTemporal > 0.f) o << " upscale_temporal=" << upscaleTemporal;

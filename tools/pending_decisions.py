@@ -46,6 +46,7 @@ CANDIDATES = [
     ("learned_correction=1", "i", "trained on the demo: +0.49 dB there, sub-pixel -1.73"),
     ("extrapolate_accel=1", "e", "accelerating camera +2.6 dB, pan -0.78, scroll -1.4"),
     ("hud_mask=4", "ie", "+0.20 dB on a HUD scene at render scale 0.75"),
+    ("parallax_search=1", "ie", "railing scene x4 +0.32 dB, neutral elsewhere; ~1 ms of flow at 1440p"),
 ]
 MODES = {"i": "interpolate", "e": "extrapolate"}
 
