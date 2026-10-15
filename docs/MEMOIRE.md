@@ -1533,6 +1533,13 @@ RTX 3060 Ti, pilote 615.
   ce test, objets à vitesse constante −0,4 dB). Jeux enregistrés +0,03 à
   +0,17 dB, scintillement jusqu'à −0,5 ; synthétique ≤ −0,02 ; +0,1 ms en
   1440p ×4 (par pixel : +3,8 ms).
+- **Bilan de la nuit du 14 au 15/10** (suite complète, interpolation, base
+  `54dc548` → `875c9a6`) : +0,095 dB en moyenne, pixels faux −3,1 % ;
+  1440p +0,19 / +0,12, scintillement −0,74 / −0,43 ; PRAGMATA scintillement
+  −0,15 à −0,42 ; virages ×4 +0,18 à +0,27 ; Cyberpunk −0,01 / +0,02 ; pire
+  −0,06 (`edge_bench` rapide). Adoptés : `false_detail` (et en
+  extrapolation : +0,15 dB), `border_predict`, plafond d'`interp_accel` 0,75 ;
+  opt-in : `parallax_search`.
 - **`false_detail`** (auto GPU dédié, passe `passes/false_detail.cpp`,
   `false_detail.comp`, après la synthèse et avant `learned_correction` /
   le HUD) : diagnostic — sur les scènes ×4 de type jeu, les images générées
