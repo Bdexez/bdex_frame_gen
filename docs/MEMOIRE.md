@@ -1573,7 +1573,8 @@ RTX 3060 Ti, pilote 615.
   l'extrapolation le 15/10 : suite complète en `mode=extrapolate`, toutes les
   séquences en hausse, +0,154 dB en moyenne (pire +0,03), 1440p +0,26 /
   +0,13, scintillement −1,10 / −0,48 ; arêtes des déplacements latéraux
-  −0,33 / −0,39.
+  −0,33 / −0,39. Seuil 1,25 au lieu de 1,5 pour les images prédites (leur
+  mosaïque est plus grossière) : +0,023 de plus, chaque séquence ≥ +0,01.
   Rayon de la moyenne à l'échelle des blocs du flux (2 à pleine
   résolution, 4 à la moitié : 1440p « qualité ») : enregistrements 1440p
   +0,03 / +0,01 dB, scintillement −0,10 / −0,04 de plus ; rien ailleurs.
