@@ -37,6 +37,8 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   dB, flicker −0.04 to −0.51, fewer grossly wrong pixels on every one;
   constant-speed scenes within −0.02 dB; +0.1 ms a game frame at 1440p x4.
 - `latency_log` gains a 4th column: the refresh each frame was planned for.
+- **`false_detail` in HDR10 too** (PQ is a perceptual scale): x4 HDR10 scenes
+  +0.05 to +0.14 dB, nothing lower.
 - **`static_soft` on predicted frames too** (toward the current frame):
   extrapolation, game-like HUD scenes +0.05 to +0.42 dB, edges +0.6 to +6,
   nothing lower; interpolation unchanged.
