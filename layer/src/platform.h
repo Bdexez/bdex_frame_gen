@@ -37,6 +37,14 @@ bool platformAntiCheatPresent(std::string* foundName);
 // lower case, no directory or extension) — games whose anti-cheat has no
 // process to detect (VAC, Vanguard, Ricochet...) or runs inside the game.
 bool platformIsCompetitiveGame(const std::string& name);
+// A game where injection stays on despite its anti-cheat, as if it had
+// ignore_anticheat = 1 (with the same warning): Windows, Rocket League — the
+// user's own decision (03/10): its anti-cheat does not flag the layer yet,
+// a tester uses it there. Remove it from the list once that changes.
+bool platformAntiCheatException(const std::string& name);
+// An anti-cheat process is running (EAC, BattlEye...): its name, else "".
+// (platformAntiCheatPresent also counts this process being a competitive game.)
+std::string platformAntiCheatRunning();
 
 // The control panel's session (require_app), like the Windows launcher: while
 // it is open it keeps <platformStatusDir()>/app.session = "<its pid> <target

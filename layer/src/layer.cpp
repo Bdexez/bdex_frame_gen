@@ -564,6 +564,7 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
         if (data->config.antiCheatDisabled) e.reason = "a multiplayer anti-cheat is running: the layer stays off";
         else if (!data->layerUsable) e.reason = !hasSwapchainExt ? "the device does not use VK_KHR_swapchain" : "no usable queue";
         e.device = data->props.deviceName;
+        e.antiCheat = data->config.antiCheatIgnored;
         statusSet(statusKey(*pDevice), e);
     }
     BDEX_INFO("device '%s': layer %s (queue family %u index %u, %s%s)", data->props.deviceName,
