@@ -1555,7 +1555,11 @@ RTX 3060 Ti, pilote 615.
   seulement des tuiles changées. Le banc `bdex_offline --bench` varie de
   ±1 ms d'un lancement à l'autre au début (fréquence du GPU) : comparer les
   2e et 3e lancements. `test_offline.py` coupe `false_detail` pour juger
-  `scene_cut_local` seul (il relève les deux côtés).
+  `scene_cut_local` seul (il relève les deux côtés). Étendu à
+  l'extrapolation le 15/10 : suite complète en `mode=extrapolate`, toutes les
+  séquences en hausse, +0,154 dB en moyenne (pire +0,03), 1440p +0,26 /
+  +0,13, scintillement −1,10 / −0,48 ; arêtes des déplacements latéraux
+  −0,33 / −0,39.
   Rayon de la moyenne à l'échelle des blocs du flux (2 à pleine
   résolution, 4 à la moitié : 1440p « qualité ») : enregistrements 1440p
   +0,03 / +0,01 dB, scintillement −0,10 / −0,04 de plus ; rien ailleurs.
