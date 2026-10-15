@@ -151,6 +151,17 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
     // menu +5.3. Losses: rotation -0.16, menu -0.18 (x2), swing -0.37
     // (hybrid). Nothing either way with the performance preset's coarse flow.
     if (strong && !(autoOptionsSet & kAutoTemporalPrediction)) temporalPrediction = true;
+    // No bonus for the zero-motion candidate (03/10, on top of everything
+    // above, 960x540 corpus + demo): the free bonus won on soft content in
+    // fast motion — a ghostly blend instead of the moving picture. The HUD
+    // stays still without it (a static HUD matches exactly at zero; the
+    // candidate is still searched). Interpolation x2: zoom +1.57 dB, pan
+    // +0.45, swing +0.31, demo +0.08 / +0.26, fade +0.16; hybrid x3: zoom
+    // +1.71, pan +1.51, rotation +0.82, popup +0.49, flash +0.26;
+    // extrapolation x2: zoom +2.16, pan +1.57, flash +0.50, demo +0.26.
+    // Losses: occlusions -0.11 (x2) / -0.30 (extrapolation), HUD -0.13
+    // (hybrid), sub-pixel -0.06.
+    if (strong && !(autoOptionsSet & kAutoZeroBias)) zeroBias = 0.f;
     if (strong && !(autoOptionsSet & kAutoInterpSplat)) {
         interpSplat = true;
         interpSplatAuto = true;
@@ -421,6 +432,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "interp_splat") autoOptionsSet |= kAutoInterpSplat;
     if (key == "rot_weight") autoOptionsSet |= kAutoRot;
     if (key == "temporal_prediction") autoOptionsSet |= kAutoTemporalPrediction;
+    if (key == "zero_bias") autoOptionsSet |= kAutoZeroBias;
     if (const OptionDef* d = findOption(key)) {
         switch (d->kind) {
         case Kind::Bool:  return parseBool(value, this->*(d->b));

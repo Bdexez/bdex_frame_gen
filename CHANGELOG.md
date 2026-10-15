@@ -68,6 +68,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Quality
 
+- **`zero_bias = 0` by default on discrete GPUs** (automatic preset): the
+  matcher's free bonus for "no motion" made soft content in fast motion
+  blend into a ghost; a static HUD still matches exactly at zero motion.
+  960x540 corpus, on top of the other automatic options: interpolation x2
+  zoom +1.57 dB, pan +0.45, swing +0.31, demo +0.08 / +0.26; hybrid x3 zoom
+  +1.71, pan +1.51, rotation +0.82, popup +0.49; extrapolation zoom +2.16,
+  pan +1.57, flash +0.50, demo +0.26. Losses: occlusions −0.11 (x2) / −0.30
+  (extrapolation), HUD −0.13 (hybrid), sub-pixel −0.06. `zero_bias` set in
+  the configuration is kept as is.
 - **`temporal_prediction` on by default on discrete GPUs** (automatic
   preset): the coarsest matching level searches around the previous pair's
   motion. No GPU cost; on the 960x540 corpus and demo recordings, with the
@@ -599,6 +608,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The worker acquired from a real swapchain already out of date.** A
+  present that met `VK_ERROR_OUT_OF_DATE_KHR` (a fullscreen toggle) failed
+  its job, but the job queued behind it still acquired from the same real
+  swapchain — past the images the surface lets us hold, as the validation
+  layer counts the images of a failed present as still acquired
+  (`VUID-vkAcquireNextImageKHR-surface-07783`, CI's swapchain stress test,
+  fullscreen toggles). The worker no longer acquires from a real swapchain
+  that reported out of date: the jobs behind fail at once and the game
+  re-creates its swapchain.
 - **`debug = confidence` read past a table** in the configuration summary
   logged at start-up (four names for five values). Found by the fuzzer.
 - **`FIFO_LATEST_READY` reached the real swapchain.** A game asking for it
