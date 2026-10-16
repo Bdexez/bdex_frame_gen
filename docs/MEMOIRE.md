@@ -675,6 +675,47 @@ présentation du jeu (0 image de latence), la capture ajoute ~1 image.
   échouée comme tenues → VUID-...-07783. `realOutOfDate_` : plus
   d'acquisition sur elle, le jeu recrée sa swapchain.
 
+### 4.6 ter Windows : injection par défaut (03/10)
+
+Demande utilisateur : « injection par défaut sur tous les jeux, sauf les jeux
+avec anti-triche (capture), sauf Rocket League (l'anti-triche ne détecte pas
+encore, un ami teste) ; message de prévention sur un jeu avec anti-triche,
+mais le lancement continue ».
+
+- **Décision** (`planRun`, `capture/src/main.cpp`) : capture choisie →
+  capture ; autre GPU que celui du jeu → capture ; anti-triche (sauf
+  exception) → capture ; swapchain armée → injection (`runInjection`,
+  `app.session`) ; sinon le jeu est préparé pour son prochain lancement et
+  capturé en attendant : Vulkan → couche enregistrée ; D3D9/10/11 → DXVK à
+  côté de l'exe ; D3D12 → VKD3D-Proton + dxgi de DXVK ; OpenGL → capture.
+  Méthode « injection » forcée : retour au lanceur au lieu de capturer.
+- **`capture/src/injection.{h,cpp}`** : `inspectGame` (chemin de l'exe,
+  modules → API, en-tête PE → 32/64 bits, anti-triche : jeu compétitif,
+  dossiers `EasyAntiCheat*`/`BattlEye` jusqu'à 3 parents, modules
+  `easyanticheat*`/`beclient*`, processus), `installTranslation` (jamais
+  par-dessus un fichier existant ; marqueur `bdex-framegen-injection.txt`,
+  liste `%LOCALAPPDATA%\bdex-framegen\injections.txt`), `removeTranslation`,
+  `registerLayerForUser` (comme `register-layer.ps1` : DLL + profils copiés
+  dans `%LOCALAPPDATA%\bdex-framegen[32]`, manifeste, HKCU ; recopie si le
+  paquet a changé), `antiCheatWarning`. `armLayer` n'écrase plus un
+  `enabled`/`require_app` déjà présent.
+- **Rocket League** : `platformAntiCheatException` (Windows seulement) — la
+  couche reste active comme avec `ignore_anticheat`, `anticheat=` dans le
+  statut. Sous DXVK, l'anti-triche (EAC) voit un `d3d11.dll` dans le
+  dossier du jeu : risque réel, dit dans l'avertissement. À retirer de la
+  liste dès que ça change.
+- **Prévention** : `MessageBox` avant la génération (lanceur ; console en
+  ligne de commande), dialogue/bandeau dans le panneau Linux
+  (`game_anticheat` + `anticheat_warning`, mode texte compris), ligne
+  « ⚠ Anti-triche détecté » dans `statusDescribe` et l'icône.
+- **Paquet** : `tools/fetch_translation_layers.py` (mêmes versions et SHA256
+  que `proton-check.sh`), artefact CI `bdex-framegen-windows-complete`
+  (x64 + couche 32 bits dans `x86\`). VKD3D-Proton est LGPL-2.1 : DLL
+  séparées non modifiées, remplaçables, source indiquée (notices).
+- **Non vérifié sur Windows** (compilé MinGW x64/i686 seulement) : à
+  valider sur une vraie machine — injection DXVK d'un jeu D3D11, D3D12 via
+  VKD3D-Proton (moins éprouvé sous Windows que sous Proton), 32 bits.
+
 ### 4.7 Windows, mode 2 — `bdex_capture.exe`
 
 **Chaîne de traitement**

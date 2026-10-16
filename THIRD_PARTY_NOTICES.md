@@ -60,6 +60,22 @@ freely, subject to the following restrictions:
    misrepresented as being the original software.
 3. This notice may not be removed or altered from any source distribution.
 
+## VKD3D-Proton (Windows package)
+
+The Windows package ships VKD3D-Proton's `d3d12.dll` and `d3d12core.dll`
+(folder `vkd3d-proton/`, version in `vkd3d-proton/VERSION.txt`), unmodified,
+copied next to a game's executable when the launcher injects into a
+Direct3D 12 game.
+
+Copyright (c) the VKD3D-Proton authors (HansKristian-Work/vkd3d-proton, a
+fork of Wine's vkd3d, Copyright (c) the Wine project authors).
+
+Licensed under the GNU Lesser General Public License, version 2.1 or later.
+They are separate, dynamically loaded libraries: you may replace them with
+your own build of VKD3D-Proton. Their full source code is available at
+https://github.com/HansKristian-Work/vkd3d-proton (tag v3.0.1); the license
+text: https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt
+
 ## GLFW (demo program only)
 
 `bdex_demo`, the test program, links against GLFW (zlib/libpng license,
