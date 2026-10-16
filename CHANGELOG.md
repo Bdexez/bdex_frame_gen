@@ -29,6 +29,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   artifact, `bdex-framegen-windows-complete`, adds the 32-bit layer to the
   x64 package.
 
+### Battery
+
+- **`battery_saver`** (default 1): on battery, the automatic preset takes
+  the performance flow whatever the GPU (the flow is most of the
+  generation's GPU time, so of its power); `2` also caps the multiplier at
+  x2. Plugging in or out switches within 5 s. Never on a Steam Deck.
+  Linux `/sys/class/power_supply`, Windows `GetSystemPowerStatus`.
+
 ### License
 
 - **The software is now proprietary**, all rights reserved (`LICENSE`);

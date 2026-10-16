@@ -491,3 +491,40 @@ TEST(config_defaults_in_range) {
     CHECK(c.apply("multiplier", "99"));  // clamped
     CHECK(c.outOfBounds().empty());
 }
+
+TEST(config_battery_saver) {
+    // On battery (BDEX_POWER pretends): the automatic preset takes the
+    // performance flow even on a discrete GPU; battery_saver = 2 caps the
+    // multiplier; on mains nothing changes.
+    const std::string path = test::tmpPath("bdex_test_battery.conf");
+    {
+        std::ofstream f(path);
+        f << "multiplier = 4\n";
+    }
+    setenv("BDEX_FG_CONFIG", path.c_str(), 1);
+    unsetenv("BDEX_FG_MULTIPLIER");
+    VkPhysicalDeviceProperties props{};
+    props.deviceType = VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+    VkPhysicalDeviceMemoryProperties mem{};
+    mem.memoryHeapCount = 1;
+    mem.memoryHeaps[0].size = 8ull << 30;
+    mem.memoryHeaps[0].flags = VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
+    setenv("BDEX_POWER", "mains", 1);
+    Config m = Config::load();
+    m.autoConfigure(props, mem);
+    CHECK(!m.onBattery && m.autoTunedTo == "balanced" && m.multiplier == 4);
+    setenv("BDEX_POWER", "battery", 1);
+    Config b = Config::load();
+    b.autoConfigure(props, mem);
+    CHECK(b.onBattery && b.autoTunedTo == "performance" && b.multiplier == 4 && !b.pixelVectors);
+    setenv("BDEX_FG_BATTERY_SAVER", "2", 1);
+    CHECK(Config::load().multiplier == 2);
+    setenv("BDEX_FG_BATTERY_SAVER", "0", 1);
+    Config off = Config::load();
+    off.autoConfigure(props, mem);
+    CHECK(!off.onBattery && off.autoTunedTo == "balanced");
+    unsetenv("BDEX_FG_BATTERY_SAVER");
+    unsetenv("BDEX_POWER");
+    unsetenv("BDEX_FG_CONFIG");
+    remove(path.c_str());
+}

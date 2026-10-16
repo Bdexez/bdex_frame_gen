@@ -31,6 +31,12 @@ struct Config {
     double panelDisplayHz = 0.0;  // require_app, runtime: the monitor's refresh rate as the panel reads it (0 unknown)
     uint64_t rebuildGen = 0;      // require_app, runtime: bumped when the panel changes settings that size the
                                   // output stage; the swapchains rebuild it (like a resize)
+    // On battery (laptops): 1 = the automatic preset picks the performance
+    // flow (cheaper, less power) whatever the GPU; 2 = and the multiplier is
+    // capped at x2; 0 = off. Never on a Steam Deck (a handheld: the battery
+    // is its normal state). onBattery: runtime, read at load.
+    int   batterySaver = 1;
+    bool  onBattery = false;
     bool  ignoreAntiCheat = false;  // opt-in, at the player's own risk: do not retract when an anti-cheat or a
                                     // competitive game is detected (the layer is visible to the anti-cheat; bans possible)
     std::string antiCheatIgnored;     // an anti-cheat was found but the layer stays on (ignore_anticheat, platformAntiCheatException): its name

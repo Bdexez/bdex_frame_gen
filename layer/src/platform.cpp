@@ -386,6 +386,51 @@ bool platformAntiCheatPresent(std::string* foundName) {
     return !running.empty();
 }
 
+int platformOnBattery() {
+    // (Tests: BDEX_POWER=battery|mains.)
+    if (const char* v = std::getenv("BDEX_POWER"); v && *v) return v[0] == 'b' ? 1 : 0;
+#ifdef _WIN32
+    SYSTEM_POWER_STATUS st;
+    if (!GetSystemPowerStatus(&st)) return -1;
+    if (st.BatteryFlag == 128 /* no system battery */ || st.ACLineStatus == 255) return -1;
+    return st.ACLineStatus == 0 ? 1 : 0;
+#else
+    // On mains when any "Mains" / "USB" supply is online; on battery when a
+    // battery reports Discharging and nothing is online.
+    std::error_code ec;
+    bool battery = false, mains = false, sawMains = false;
+    for (const auto& e : std::filesystem::directory_iterator("/sys/class/power_supply", ec)) {
+        auto read = [&](const char* f) {
+            std::ifstream in(e.path() / f);
+            std::string v;
+            std::getline(in, v);
+            return v;
+        };
+        const std::string type = read("type");
+        if (type == "Mains" || type == "USB") {
+            sawMains = true;
+            if (read("online") == "1") mains = true;
+        } else if (type == "Battery" && read("scope") != "Device") {  // (not a mouse's battery)
+            if (read("status") == "Discharging") battery = true;
+        }
+    }
+    if (mains) return 0;
+    if (battery) return 1;
+    return sawMains ? 0 : -1;
+#endif
+}
+
+bool platformIsSteamDeck() {
+#ifdef _WIN32
+    return false;
+#else
+    std::ifstream in("/sys/class/dmi/id/board_name");
+    std::string v;
+    std::getline(in, v);
+    return v == "Jupiter" || v == "Galileo";
+#endif
+}
+
 std::string platformAntiCheatRunning() {
 #ifdef _WIN32
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);

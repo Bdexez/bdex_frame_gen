@@ -183,6 +183,7 @@ struct DeviceData {
     size_t onlineTuneReported = 0;  // decisions already logged / cached
     std::mutex configMutex;
     std::chrono::steady_clock::time_point configChecked{};
+    std::chrono::steady_clock::time_point batteryChecked{};  // battery_saver: last power-state check
     int64_t configStamp = -1;  // mtime of the file last seen, -1 = none yet, -2 = missing
 
     // Allocates a primary command buffer from `pool` (default cmdPool) with a

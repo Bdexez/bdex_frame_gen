@@ -264,7 +264,18 @@ void DeviceData::pollConfig() {
         targeted = s.target != 0 && s.target == platformPid();
         panelHz = s.displayHz;
     }
-    const bool fileChanged = configStamp != -1 && stamp != configStamp;
+    bool fileChanged = configStamp != -1 && stamp != configStamp;
+    // battery_saver: plugged in or out — the automatic preset follows
+    // (checked every 5 s: a few sysfs reads).
+    if (config.batterySaver > 0 && now - batteryChecked >= std::chrono::seconds(5)) {
+        batteryChecked = now;
+        const bool battery = !platformIsSteamDeck() && platformOnBattery() == 1;
+        if (battery != config.onBattery) {
+            BDEX_INFO("power: %s — %s", battery ? "on battery" : "on mains",
+                      battery ? "the automatic preset takes the performance flow" : "the automatic preset is back");
+            fileChanged = true;
+        }
+    }
     configStamp = stamp;
     if (!fileChanged && targeted == config.appTargeted) {
         if (panelHz != config.panelDisplayHz) {  // the panel read the monitor (again)
