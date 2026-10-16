@@ -19,7 +19,7 @@ common=$(ls layer/src/*.cpp layer/src/passes/*.cpp tests/test_*.cpp | xargs grep
 status=0
 for cxx in x86_64-w64-mingw32-g++-posix i686-w64-mingw32-g++-posix; do
   files=$common
-  [[ $cxx == x86_64* ]] && files="$files capture/src/vkctx.cpp capture/src/launcher.cpp capture/src/main.cpp capture/src/tray.cpp capture/src/injection.cpp capture/src/report.cpp"
+  [[ $cxx == x86_64* ]] && files="$files capture/src/vkctx.cpp capture/src/launcher.cpp capture/src/main.cpp capture/src/tray.cpp capture/src/injection.cpp capture/src/report.cpp tools/calibrate/bdex_calibrate.cpp"
   n=0
   for f in $files; do
     out=$($cxx -std=c++20 -fsyntax-only -DWIN32_LEAN_AND_MEAN -DNOMINMAX \
