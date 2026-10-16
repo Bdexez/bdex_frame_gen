@@ -118,3 +118,37 @@ assert panel.game_anticheat(999999999, []) == ""
 assert "injectée" in panel.anticheat_warning("rl", "EAC", "layer") or "injected" in panel.anticheat_warning("rl", "EAC", "layer")
 assert "Capture" in panel.anticheat_warning("g", "EAC", "capture") or "captured" in panel.anticheat_warning("g", "EAC", "capture")
 print("anticheat warning ok")
+
+# « Enregistrer » (03/10): the request file the layer takes, then the move
+# of a finished recording (too short to pack: kept as a directory). The
+# "game" is a child whose environment (what game_paths reads, from /proc)
+# points every path into a temporary directory — never the user's own.
+import subprocess
+import tempfile
+with tempfile.TemporaryDirectory() as tmp:
+    env = dict(os.environ, HOME=tmp, BDEX_FG_STATUS_DIR=os.path.join(tmp, "run"),
+               XDG_CACHE_HOME=os.path.join(tmp, "cache"), XDG_CONFIG_HOME=os.path.join(tmp, "config"),
+               XDG_DATA_HOME=os.path.join(tmp, "data"))
+    game = subprocess.Popen(["sleep", "30"], env=env)
+    old_cache = os.environ.get("XDG_CACHE_HOME")
+    os.environ["XDG_CACHE_HOME"] = os.path.join(tmp, "cache")
+    try:
+        src = panel.request_recording(game.pid, "My Game!")
+        with open(os.path.join(tmp, "run", f"{game.pid}.record")) as f:
+            frames, rel = f.read().split()
+        assert int(frames) == panel.RECORD_FRAMES and rel.startswith("rec-My_Game_-"), (frames, rel)
+        assert src == f"/proc/{game.pid}/root" + os.path.join(tmp, "run", rel), src
+        os.makedirs(src)
+        open(os.path.join(src, "f0000.ppm"), "wb").write(b"P6\n1 1\n255\n\0\0\0")
+        open(os.path.join(src, "DONE"), "w").write("frames=1\n")
+        out = panel.finish_recording(src)
+        assert os.path.isdir(out) and out.startswith(os.path.join(tmp, "cache", "bdex-framegen", "recordings")), out
+        assert os.path.isfile(os.path.join(out, "f0000.ppm")) and not os.path.exists(src)
+    finally:
+        game.kill()
+        game.wait()
+        if old_cache is None:
+            os.environ.pop("XDG_CACHE_HOME", None)
+        else:
+            os.environ["XDG_CACHE_HOME"] = old_cache
+print("panel recording request OK")

@@ -171,11 +171,19 @@ struct DeviceData {
     // Live configuration: every ~0.5 s the presenting thread checks the config
     // file's modification time and applies Config::applyLive on a change.
     void pollConfig();
+    void pollRecordRequest();
     // A consistent copy of `config` for a thread that must not read it while
     // pollConfig (another presenting thread) rewrites its live settings:
     // copies into `out` when `version` is behind, and updates `version`.
     void snapshotConfig(Config& out, uint64_t& version);
     uint64_t configVersion = 0;  // bumped by each live reload (configMutex)
+    // A recording asked for (the panel's / launcher's « Enregistrer »: the
+    // file <status dir>/<pid>.record = "<frames> <dir>"): the next `frames`
+    // real frames written to `dir` as fNNNN.ppm for the corpus. recordSerial
+    // bumps per request (configMutex).
+    std::string recordDir;
+    int recordFrames = 0;
+    uint64_t recordSerial = 0;
     // online_tune: the per-game option trial, shared by the device's
     // swapchains and kept across their rebuilds (created by the first FrameGen).
     std::shared_ptr<class OnlineTune> onlineTune;

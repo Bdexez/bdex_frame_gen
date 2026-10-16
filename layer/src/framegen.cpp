@@ -869,18 +869,24 @@ static float pqDecodeNits(float e) {  // SMPTE ST 2084 EOTF: code value -> nits
     return 10000.f * std::pow(std::max(p - c1, 0.f) / (c2 - c3 * p), 1.f / m1);
 }
 
-bool FrameGen::writeDump(const std::string& path, uint32_t which) {
+bool FrameGen::writeDump(const std::string& path, uint32_t which, uint32_t downscale) {
     if (!dumpMapped_[which]) return false;
+    downscale = std::max(1u, downscale);
     if (which < outputs_ && costMapped_)
         BDEX_DBG("%s: mean matching cost %.4f, histogram distance %.4f", path.c_str(), static_cast<const float*>(costMapped_)[0],
                  static_cast<const float*>(costMapped_)[7]);
     const uint32_t enc = enc_.encoding & 0xffu;
     FILE* f = fopen(path.c_str(), "wb");
     if (!f) return false;
-    fprintf(f, "P6\n%u %u\n255\n", displayExtent_.width, displayExtent_.height);
+    // downscale: a box filter of `downscale` x `downscale` pixels (recordings
+    // for the corpus, which is scored far below display size).
+    const uint32_t ow = displayExtent_.width / downscale, oh = displayExtent_.height / downscale;
+    fprintf(f, "P6\n%u %u\n255\n", ow, oh);
     std::vector<uint8_t> row(displayExtent_.width * 3);
+    std::vector<uint32_t> acc(downscale > 1 ? size_t(ow) * 3 : 0);
+    std::vector<uint8_t> outRow(downscale > 1 ? size_t(ow) * 3 : 0);
     const uint32_t* px = static_cast<const uint32_t*>(dumpMapped_[which]);
-    for (uint32_t y = 0; y < displayExtent_.height; ++y) {
+    for (uint32_t y = 0; y < (downscale > 1 ? oh * downscale : displayExtent_.height); ++y) {
         for (uint32_t x = 0; x < displayExtent_.width; ++x) {
             uint8_t r, g, b;
             if (enc_.is64) {
@@ -914,7 +920,20 @@ bool FrameGen::writeDump(const std::string& path, uint32_t which) {
             }
             row[x * 3] = r; row[x * 3 + 1] = g; row[x * 3 + 2] = b;
         }
-        fwrite(row.data(), 1, row.size(), f);
+        if (downscale == 1) {
+            fwrite(row.data(), 1, row.size(), f);
+            continue;
+        }
+        for (uint32_t x = 0; x < ow * downscale; ++x)
+            for (int c = 0; c < 3; ++c) acc[(x / downscale) * 3 + c] += row[x * 3 + c];
+        if ((y + 1) % downscale == 0) {
+            const uint32_t n = downscale * downscale;
+            for (size_t i = 0; i < acc.size(); ++i) {
+                outRow[i] = uint8_t((acc[i] + n / 2) / n);
+                acc[i] = 0;
+            }
+            fwrite(outRow.data(), 1, outRow.size(), f);
+        }
     }
     fclose(f);
     return true;

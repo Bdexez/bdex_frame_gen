@@ -10,7 +10,7 @@ namespace {
 
 constexpr UINT kCallback = WM_APP + 1;
 constexpr UINT kIconId = 1;
-enum { kCmdToggle = 100, kCmdDetails, kCmdQuit };
+enum { kCmdToggle = 100, kCmdDetails, kCmdQuit, kCmdRecord };
 
 } // namespace
 
@@ -71,6 +71,7 @@ void Tray::showMenu() {
     AppendMenuW(menu, MF_STRING | (generation_ ? MF_CHECKED : MF_UNCHECKED), kCmdToggle,
                 L"Génération d'images activée\tCtrl+Alt+G");
     AppendMenuW(menu, MF_STRING, kCmdDetails, L"Statut détaillé…");
+    if (recordable_) AppendMenuW(menu, MF_STRING, kCmdRecord, L"Enregistrer quelques secondes (corpus)");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kCmdQuit, L"Quitter\tCtrl+Alt+Q");
     POINT pt;
@@ -80,6 +81,7 @@ void Tray::showMenu() {
     DestroyMenu(menu);
     if (cmd == kCmdToggle) PostThreadMessageW(GetCurrentThreadId(), kMsgToggle, 0, 0);
     if (cmd == kCmdQuit) PostThreadMessageW(GetCurrentThreadId(), kMsgQuit, 0, 0);
+    if (cmd == kCmdRecord) PostThreadMessageW(GetCurrentThreadId(), kMsgRecord, 0, 0);
     if (cmd == kCmdDetails)
         MessageBoxW(nullptr, details_.empty() ? L"(pas encore de mesure)" : details_.c_str(), L"bdex framegen — en cours",
                     MB_OK | MB_ICONINFORMATION | MB_TOPMOST);

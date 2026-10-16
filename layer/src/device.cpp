@@ -243,11 +243,42 @@ void DeviceData::destroyBuffer(AllocatedBuffer& buf) {
     buf = AllocatedBuffer{};
 }
 
+// <status dir>/<pid>.record: "<frames> <dir>" (dir relative to the status
+// directory, which a sandboxed game and the panel both see); taken once, the
+// file removed. (configMutex held.)
+void DeviceData::pollRecordRequest() {
+    const std::string dir = platformStatusDir();
+    if (dir.empty()) return;
+#ifdef _WIN32
+    const std::string path = dir + "\\" + std::to_string(platformPid()) + ".record";
+#else
+    const std::string path = dir + "/" + std::to_string(platformPid()) + ".record";
+#endif
+    std::ifstream in(path);
+    if (!in) return;
+    int frames = 0;
+    std::string rel;
+    in >> frames;
+    std::getline(in >> std::ws, rel);
+    in.close();
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    if (frames <= 0 || rel.empty() || rel.find("..") != std::string::npos) return;
+    const std::filesystem::path out = std::filesystem::path(rel).is_absolute() ? std::filesystem::path(rel)
+                                                                                : std::filesystem::path(dir) / rel;
+    std::filesystem::create_directories(out, ec);
+    recordDir = out.string();
+    recordFrames = std::min(frames, 3600);
+    ++recordSerial;
+    BDEX_INFO("recording %d real frames into %s", recordFrames, recordDir.c_str());
+}
+
 void DeviceData::pollConfig() {
     std::lock_guard<std::mutex> lock(configMutex);
     const auto now = std::chrono::steady_clock::now();
     if (now - configChecked < std::chrono::milliseconds(500)) return;
     configChecked = now;
+    pollRecordRequest();
     int64_t stamp = -2;
     std::error_code ec;
     const std::string path = Config::filePath();

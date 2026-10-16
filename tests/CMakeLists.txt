@@ -113,6 +113,10 @@ if(TARGET bdex_demo)
   add_test(NAME live_config
            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/live_config.sh" "$<TARGET_FILE:bdex_demo>" "${CMAKE_BINARY_DIR}/layer")
   set_tests_properties(live_config PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+  # « Enregistrer pour le corpus » on a running game (<status dir>/<pid>.record).
+  add_test(NAME record_live
+           COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/record_live.sh" "$<TARGET_FILE:bdex_demo>" "${CMAKE_BINARY_DIR}/layer")
+  set_tests_properties(record_live PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
   add_test(NAME validation
            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/validation.sh" "$<TARGET_FILE:bdex_demo>" "${CMAKE_BINARY_DIR}/layer")
   set_tests_properties(validation PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)

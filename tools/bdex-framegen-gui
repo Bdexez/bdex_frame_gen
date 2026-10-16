@@ -29,6 +29,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 
 
 def _french():
@@ -57,6 +58,14 @@ _EN = {
  'bdex-capture introuvable': 'bdex-capture not found',
  'capture (fenêtre choisie)': 'capture (window picked)',
  'anti-triche': 'anti-cheat',
+ 'Enregistrer quelques secondes de ce jeu (corpus d\'évaluation)': 'Record a few seconds of this game (evaluation corpus)',
+ 'Enregistrement impossible : {}': 'Recording impossible: {}',
+ 'Enregistrement de {}… (le jeu peut ralentir quelques secondes)': 'Recording {}… (the game may slow down for a few seconds)',
+ 'Enregistrement prêt : {}': 'Recording ready: {}',
+ 'Aucun jeu armé par la couche à enregistrer.': 'No game armed by the layer to record.',
+ 'Jeu à enregistrer :': 'Game to record:',
+ 'w capturer une autre fenêtre · c méthode · g GPU de génération · e enregistrer (corpus)': 'w capture another window · c method · g generation GPU · e record (corpus)',
+ "L'enregistrement n'a pas abouti (le jeu est-il armé ?)": 'The recording did not finish (is the game armed?)',
  'Attention': 'Warning',
  '⚠ {} : anti-triche détecté ({}). La génération est injectée dans le jeu : un bannissement est possible, à tes risques. Le lancement continue.':
      '⚠ {}: anti-cheat detected ({}). Frame generation is injected into the game: a ban is possible, at your own risk. The launch goes ahead.',
@@ -75,7 +84,6 @@ _EN = {
  'Automatique — injection si possible, sinon capture': 'Automatic — injection where possible, else capture',
  'Injection (couche Vulkan) seulement': 'Injection (Vulkan layer) only',
  'Capture seulement': 'Capture only',
- 'w capturer une autre fenêtre · c méthode · g GPU de génération': 'w capture another window · c method · g generation GPU',
  'Méthode :': 'Method:',
  'GPU de génération :': 'Generation GPU:','Appliquer': 'Apply',
  'Interpolation (défaut)': 'Interpolation (default)',
@@ -1285,6 +1293,49 @@ def anticheat_warning(game, anticheat, how):
               "mais certains éditeurs interdisent tout logiciel tiers : à tes risques. Le lancement continue.")
 
 
+RECORD_FRAMES = 150   # 5 s at 30 fps, 2.5 s at 60: past the 121 frames corpus_pack keeps
+
+
+def recordings_dir():
+    cache = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    return os.path.join(cache, "bdex-framegen", "recordings")
+
+
+def request_recording(pid, name):
+    """Asks the layer in game `pid` for its next RECORD_FRAMES real frames
+    (<its status dir>/<its pid>.record): the directory they land in, as this
+    panel sees it."""
+    rel = "rec-" + re.sub(r"[^A-Za-z0-9_-]", "_", name)[:40] + time.strftime("-%Y%m%d-%H%M%S")
+    sdir = game_paths(pid)[0]
+    os.makedirs(sdir, mode=0o700, exist_ok=True)
+    with open(os.path.join(sdir, f"{inner_pid(pid)}.record"), "w") as f:
+        f.write(f"{RECORD_FRAMES} {rel}\n")
+    return os.path.join(sdir, rel)
+
+
+def finish_recording(src):
+    """A finished recording (DONE in `src`): moved to recordings_dir(), packed
+    for the corpus by tools/corpus_pack.py when it and Pillow are there (the
+    frames removed then). The path kept (archive or directory)."""
+    os.makedirs(recordings_dir(), exist_ok=True)
+    dest = os.path.join(recordings_dir(), os.path.basename(src)[4:])
+    shutil.move(src, dest)
+    here = os.path.dirname(os.path.realpath(__file__))
+    packer = next((p for p in (os.path.join(here, "corpus_pack.py"),
+                               os.path.join(here, "..", "share", "bdex-framegen", "corpus_pack.py")) if os.path.isfile(p)), None)
+    if packer:
+        name = re.sub(r"[^A-Za-z0-9_-]", "-", os.path.basename(dest))
+        out = dest + ".tar.gz"
+        try:
+            r = subprocess.run([sys.executable, packer, dest, out, "--name", name], capture_output=True, timeout=600)
+            if r.returncode == 0 and os.path.isfile(out):
+                shutil.rmtree(dest, ignore_errors=True)
+                return out
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return dest
+
+
 def capture_log_path():
     cache = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
     return os.path.join(cache, "bdex-framegen", "capture.log")
@@ -2151,8 +2202,38 @@ class Window(Adw.ApplicationWindow):
             radio.connect("toggled", self.on_pick, (pid, name))
             row.add_prefix(radio)
             row.set_activatable_widget(radio)
+            if armed:
+                # A few seconds of this game for the evaluation corpus (the
+                # layer writes its real frames; packed when done).
+                rec = Gtk.Button(icon_name="media-record-symbolic", valign=Gtk.Align.CENTER,
+                                 tooltip_text=tr("Enregistrer quelques secondes de ce jeu (corpus d'évaluation)"))
+                rec.add_css_class("flat")
+                rec.connect("clicked", self.on_record, (pid, name))
+                row.add_suffix(rec)
             self.running_group.add(row)
             self.running_rows.append(row)
+
+    def on_record(self, _btn, game):
+        try:
+            src = request_recording(game[0], game[1])
+        except OSError as e:
+            self.toast(tr(f"Enregistrement impossible : {e}"))
+            return
+        self.toast(tr(f"Enregistrement de {game[1]}… (le jeu peut ralentir quelques secondes)"))
+        start = time.monotonic()
+
+        def wait():
+            if os.path.isfile(os.path.join(src, "DONE")):
+                def pack():
+                    out = finish_recording(src)
+                    GLib.idle_add(lambda: self.toast(tr(f"Enregistrement prêt : {out}")) and False)
+                threading.Thread(target=pack, daemon=True).start()
+                return False
+            if time.monotonic() - start > 120:
+                self.toast(tr("L'enregistrement n'a pas abouti (le jeu est-il armé ?)"))
+                return False
+            return True
+        GLib.timeout_add(1000, wait)
 
     def on_capture_window(self, _btn):
         self._set_target((0, tr("fenêtre choisie")), pick=True)
@@ -2582,7 +2663,7 @@ def text_main():
             print(tr("Options : ") + _text_options(opt))
             print(tr("[numéro] démarrer dans ce jeu · a arrêter · r actualiser · m multiplicateur · "
                   "o mode · p préréglage · h compteur · j mode Jeu · s options Steam · b signaler un problème · q quitter"))
-            print(tr("w capturer une autre fenêtre · c méthode · g GPU de génération"))
+            print(tr("w capturer une autre fenêtre · c méthode · g GPU de génération · e enregistrer (corpus)"))
             try:
                 cmd = input("> ").strip().lower()
             except EOFError:
@@ -2596,6 +2677,25 @@ def text_main():
                 save()
                 start((0, tr("fenêtre choisie")), pick=True)
                 print(tr("Clique sur la fenêtre du jeu"))
+            elif cmd == "e":
+                armed = [(n, (p, n)) for p, n in games if any(e.get("kind") == "swapchain" for e in read_status(p))]
+                if not armed:
+                    print(tr("Aucun jeu armé par la couche à enregistrer."))
+                    continue
+                game = _text_pick(tr("Jeu à enregistrer :"), armed, armed[0][1])
+                try:
+                    src = request_recording(*game)
+                except OSError as e:
+                    print(tr(f"Enregistrement impossible : {e}"))
+                    continue
+                print(tr(f"Enregistrement de {game[1]}… (le jeu peut ralentir quelques secondes)"))
+                for _ in range(120):
+                    if os.path.isfile(os.path.join(src, "DONE")):
+                        print(tr(f"Enregistrement prêt : {finish_recording(src)}"))
+                        break
+                    time.sleep(1)
+                else:
+                    print(tr("L'enregistrement n'a pas abouti (le jeu est-il armé ?)"))
             elif cmd == "c":
                 opt.method = _text_pick(tr("Méthode :"), METHODS, opt.method)
                 save()
