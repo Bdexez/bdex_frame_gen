@@ -154,6 +154,9 @@ endif()
 if(BDEX_BUILD_OFFLINE AND NOT BDEX_32BIT AND NOT WIN32)
   add_subdirectory(tools/offline)
 endif()
+if(TARGET Vulkan::Vulkan AND NOT BDEX_32BIT)
+  add_subdirectory(tools/calibrate)
+endif()
 # The GTK panel's option description (Linux; the Windows launcher embeds the
 # same layer/options_ui.conf at compile time).
 if(NOT BDEX_32BIT AND NOT WIN32)
