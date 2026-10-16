@@ -5,6 +5,7 @@
 // (tools/bdex-framegen-gui) writes, so the two panels stay interchangeable.
 #include "launcher.h"
 #include "injection.h"
+#include "report.h"
 
 #include "log.h"
 #include "platform.h"
@@ -15,6 +16,7 @@
 
 #include <windows.h>
 #include <dwmapi.h>
+#include <shellapi.h>
 #include <vulkan/vulkan.h>
 
 #include <algorithm>
@@ -27,6 +29,8 @@
 #include <cstdlib>
 #include <cwchar>
 #include <cwctype>
+#include <cstring>
+#include <iterator>
 #include <string>
 #include <utility>
 #include <vector>
@@ -295,7 +299,7 @@ struct Layout {
     int clientH;
 };
 Layout launcherLayout() {
-    int h = 48 + 56 + 30;  // (the method and GPU rows, the injections button)
+    int h = 48 + 56 + 30 + 30;  // (the method and GPU rows, the injections and report buttons)
     for (const ExtraOpt& o : extraOptions()) h += o.key.empty() ? 20 : 22;
     Layout l;
     l.columnGroupH = std::max(770, h + 4);
@@ -505,6 +509,7 @@ enum {
     ID_METHOD,
     ID_GPU,
     ID_UNINJECT,
+    ID_REPORT,
     ID_TIMER_RUNNING = 1,
 };
 
@@ -981,6 +986,10 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         // the injection (injection.h): this takes them all away again.
         add(L"BUTTON", T(L"Retirer les injections (DXVK) des jeux…", L"Remove the injections (DXVK) from the games..."),
             BS_PUSHBUTTON | WS_TABSTOP, 508, y, 452, 23, ID_UNINJECT);
+        y += 30;
+        // A problem: the diagnostic report (written, copied) and the issue form.
+        add(L"BUTTON", T(L"Signaler un problème… (rapport de diagnostic)", L"Report a problem... (diagnostic report)"),
+            BS_PUSHBUTTON | WS_TABSTOP, 508, y, 452, 23, ID_REPORT);
         y += 32;
         for (size_t i = 0; i < extra.size(); ++i) {
             const ExtraOpt& o = extra[i];
@@ -1060,6 +1069,37 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             persist(*ui->choice);
             armLayer();
             DestroyWindow(hwnd);
+            return 0;
+        }
+        case ID_REPORT: {
+            std::string url;
+            const std::wstring path = writeReport(url);
+            if (path.empty()) {
+                MessageBoxW(hwnd, T(L"Rapport impossible (LOCALAPPDATA ?).", L"Report impossible (LOCALAPPDATA?)."),
+                            L"bdex framegen", MB_OK | MB_ICONWARNING);
+                return 0;
+            }
+            // The report in the clipboard (to paste into the form), its file
+            // shown in Explorer, then the pre-filled form.
+            std::ifstream in(std::filesystem::path(path), std::ios::binary);
+            const std::wstring text = wideUtf8(std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()));
+            if (OpenClipboard(hwnd)) {
+                EmptyClipboard();
+                if (HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, (text.size() + 1) * sizeof(wchar_t))) {
+                    std::memcpy(GlobalLock(mem), text.c_str(), (text.size() + 1) * sizeof(wchar_t));
+                    GlobalUnlock(mem);
+                    if (!SetClipboardData(CF_UNICODETEXT, mem)) GlobalFree(mem);
+                }
+                CloseClipboard();
+            }
+            ShellExecuteW(nullptr, L"open", L"explorer.exe", (L"/select,\"" + path + L"\"").c_str(), nullptr, SW_SHOWNORMAL);
+            MessageBoxW(hwnd,
+                        (std::wstring(T(L"Rapport écrit (et copié dans le presse-papiers) :\n", L"Report written (and copied to the clipboard):\n")) +
+                         path + T(L"\n\nLe formulaire pré-rempli va s'ouvrir : joins-y ce fichier (ou colle le rapport).",
+                                  L"\n\nThe pre-filled form opens next: attach this file (or paste the report)."))
+                            .c_str(),
+                        L"bdex framegen", MB_OK | MB_ICONINFORMATION);
+            ShellExecuteW(nullptr, L"open", wideUtf8(url).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
             return 0;
         }
         case ID_UNINJECT: {
