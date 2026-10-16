@@ -260,6 +260,7 @@ const std::vector<OptionDef>& registry() {
     B("pacing", nullptr, &Config::pacing),
     B("require_app", nullptr, &Config::requireApp),
     B("present_feedback", nullptr, &Config::presentFeedback),
+    B("present_timing", nullptr, &Config::presentTiming),
     B("async_compute", nullptr, &Config::asyncCompute),
     B("present_queue", nullptr, &Config::presentQueue),
     B("synth_priority", nullptr, &Config::synthPriority),
@@ -677,6 +678,7 @@ Config Config::keepingCreationSettings(Config n) const {
     n.asyncCompute = asyncCompute;
     n.synthPriority = synthPriority;
     n.presentFeedback = presentFeedback;
+    n.presentTiming = presentTiming;
     n.syncPresent = syncPresent;
     n.onlineTune = onlineTune;  // DeviceData's OnlineTune, created with the device
     n.tuneName = tuneName;

@@ -39,6 +39,22 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   clipboard and shown in Explorer, then the pre-filled issue form (the same
   fields as `bdex-framegen --issue-url`).
 
+### Display timing
+
+- **`VK_EXT_present_timing`** (`present_timing`, default 1, with
+  `present_feedback`): where the driver has it (with `VK_KHR_present_id2`
+  and `VK_KHR_calibrated_timestamps`; NVIDIA's does), the layer enables it
+  for its own swapchains — hidden from the game like the other present
+  extensions —, creates the real swapchain with it where the surface
+  supports it, takes the swapchain's refresh duration as the display
+  clock's hint and, where the surface reports the first pixel visible (or
+  out), each frame's display time from the driver instead of the moment
+  the present-wait thread woke up. A full timing queue falls back to
+  present waits. Under headless gamescope (X11 surface): accepted, no
+  refresh duration nor display stage — nothing changes there; to be seen
+  on a real screen. The demo enables `VK_KHR_get_surface_capabilities2`
+  (as DXVK / VKD3D-Proton do), which the surface query needs.
+
 ### Online benchmark
 
 - **`bdex_demo --replay DIR [--replay-step N]`**: a recorded sequence

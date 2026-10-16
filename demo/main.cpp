@@ -222,11 +222,20 @@ void Demo::initVulkan() {
     app.pApplicationName = "bdex_demo";
     app.apiVersion = VK_API_VERSION_1_1;
     uint32_t extCount = 0;
-    const char** exts = glfwGetRequiredInstanceExtensions(&extCount);
+    const char** glfwExts = glfwGetRequiredInstanceExtensions(&extCount);
+    std::vector<const char*> exts(glfwExts, glfwExts + extCount);
+    // As DXVK and VKD3D-Proton do (the layer's present timing reads the
+    // surface's capabilities through it): when the loader has it.
+    uint32_t nAvail = 0;
+    vkEnumerateInstanceExtensionProperties(nullptr, &nAvail, nullptr);
+    std::vector<VkExtensionProperties> avail(nAvail);
+    vkEnumerateInstanceExtensionProperties(nullptr, &nAvail, avail.data());
+    for (const auto& e : avail)
+        if (strcmp(e.extensionName, "VK_KHR_get_surface_capabilities2") == 0) exts.push_back("VK_KHR_get_surface_capabilities2");
     VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     ici.pApplicationInfo = &app;
-    ici.enabledExtensionCount = extCount;
-    ici.ppEnabledExtensionNames = exts;
+    ici.enabledExtensionCount = static_cast<uint32_t>(exts.size());
+    ici.ppEnabledExtensionNames = exts.data();
     VK_CHECK(vkCreateInstance(&ici, nullptr, &instance_));
     VK_CHECK(glfwCreateWindowSurface(instance_, window_, nullptr, &surface_));
 

@@ -128,6 +128,20 @@ private:
 
     void createReal(const VkSwapchainCreateInfoKHR& appInfo);
     void createRealImages();
+    // VK_EXT_present_timing on the real swapchain (DeviceData::presentTiming):
+    // the creation flag where the surface reports display times
+    // (presentTimingFlags), then its refresh duration and time domain
+    // (setupPresentTiming, after each creation); the feedback thread reads
+    // each frame's display time (presentTimingMs).
+    uint32_t presentTimingFlags(VkSurfaceKHR surface);
+    void setupPresentTiming();
+    bool presentTimingMs(uint64_t presentId, double& ms);
+    uint32_t ptStage_ = 0;            // the present stage queried (first pixel visible / out), 0 = none on this surface
+    bool ptWanted_ = false;           // the surface supports present timing (the creation flag)
+    std::atomic<bool> ptActive_{false};  // the real swapchain reports display times
+    uint64_t ptDomainId_ = 0;         // its time domain id (the steady clock's)
+    double ptTicksPerMs_ = 1e6;       // that domain's units per millisecond
+    std::atomic<double> ptRefreshHz_{0.0};  // its refresh duration, as a display clock hint (0 unknown, VRR)
     void destroyRealImages(std::vector<RealImage>& images);
     // Re-creates the real swapchain (and the output stage) at the surface's
     // current extent when it no longer matches; application thread, mutex_ held.
