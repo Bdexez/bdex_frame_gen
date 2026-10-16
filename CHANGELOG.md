@@ -39,6 +39,19 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   clipboard and shown in Explorer, then the pre-filled issue form (the same
   fields as `bdex-framegen --issue-url`).
 
+### Online benchmark
+
+- **`bdex_demo --replay DIR [--replay-step N]`**: a recorded sequence
+  played as the game's frames (frame start + k·N on present k, blitted to
+  the window), so the whole online path runs on real content.
+- **`tools/replay_bench.py`**: the replay through the layer, every
+  presented frame dumped and scored against the frames left out, with the
+  repeat and cross-fade references; identical to the offline engine on the
+  corpus (pan 47.29 dB, demo 23.36, occlusions 34.20 at x2; extrapolation
+  pan 43.36; hybrid x3 40.29). `--other-layer NAME` measures another frame
+  generation layer on the same frames (above ours, which only records; its
+  real frames anchor the generated ones). Test `replay_bench`.
+
 ### Calibration
 
 - **`bdex-calibrate`** (Linux and Windows, installed beside the layer / in

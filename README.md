@@ -787,6 +787,18 @@ tools/run_eval.sh build 40                      # PSNR against ground truth
 BDEX_EVAL_ARGS="--speed 2.5" tools/run_eval.sh build 40   # fast-motion scene
 ```
 
+**Online benchmark on recorded content** — `tools/replay_bench.py SEQ
+[--multiplier M] [--env BDEX_FG_MODE=...] [--other-layer NAME]` plays a
+recorded sequence (*Enregistrer* in the panel, `--record`, `make_corpus.py`)
+as a game (`bdex_demo --replay`) through the layer — pacing and swapchain
+included — and scores every frame actually presented against the frames left
+out, next to the repeat and cross-fade references. It gives exactly the
+offline engine's numbers (pan 47.29 dB, demo 23.36, occlusions 34.20 at x2
+on the 960x540 corpus). `--other-layer` measures another frame generation
+layer on the same frames: it goes above ours, which only records what it
+presents (its real frames are the ones identical to a recorded frame). Needs
+a display: Xvfb or headless gamescope.
+
 `tools/run_eval.sh` renders the demo at `30 × MULTIPLIER` fps (reference) and
 then at 30 fps through the layer. Set `BDEX_FG_MULTIPLIER=3` or `4` to evaluate
 every generated position. The report includes quality in changing regions and

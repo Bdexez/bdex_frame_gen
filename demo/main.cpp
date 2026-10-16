@@ -6,6 +6,13 @@
 //             [--deterministic] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]
 //             [--gpu-load N] [--latency-test [auto]] [--latency-log FILE]
 //             [--stress KIND:N[,KIND:N...]] [--stress-until N]
+//             [--replay DIR [--replay-step N] [--replay-start N]]
+//
+// --replay: a recorded sequence (fNNNN.ppm, e.g. from « Enregistrer » or
+// tools/make_corpus.py) played as the game's frames — frame start + k*step
+// on present k, scaled to the window — so the whole online path (layer,
+// pacing, swapchain) runs on real content; tools/replay_bench.py scores the
+// frames shown against the frames left out.
 //
 // Run it with BDEX_FG=1 (and VK_LAYER_PATH pointing at the build tree if the
 // layer is not installed) to see the generated frames.
@@ -17,6 +24,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -60,6 +69,9 @@ struct Options {
     // frame --stress-until, steady afterwards.
     long stressEvery[6] = {};
     long stressUntil = -1;
+    std::string replayDir;  // --replay: the frames (sorted .ppm) shown instead of the scene
+    long replayStep = 1;    // --replay-step: recorded frames per present (the ground truth in between)
+    long replayStart = 0;   // --replay-start
 };
 enum Stress { kResize, kRecreate, kSurface, kWindow, kFullscreen, kMinimize, kStressKinds };
 const char* const kStressNames[kStressKinds] = {"resize", "recreate", "surface", "window", "fullscreen", "minimize"};
@@ -88,6 +100,9 @@ private:
     void makeWindow();
     void stress();
     void recreateSwapchain();
+    void initReplay();
+    void recordReplay(VkCommandBuffer cmd, uint32_t imageIndex, int fi);
+    uint32_t findMemory(uint32_t bits, VkMemoryPropertyFlags flags);
 
     Options opt_;
     GLFWwindow* window_ = nullptr;
@@ -127,7 +142,36 @@ private:
     int minimizedFrames_ = 0;
     bool fullscreen_ = false;
     uint32_t lastStress_ = 0;
+    // --replay: the frames, a staging buffer per frame in flight and the
+    // image they are copied into, then blitted (scaled) to the swapchain's.
+    std::vector<std::filesystem::path> replayFrames_;
+    uint32_t replayW_ = 0, replayH_ = 0;
+    VkBuffer replayBuf_[kInFlight]{};
+    VkDeviceMemory replayBufMem_[kInFlight]{};
+    void* replayMapped_[kInFlight]{};
+    VkImage replayImage_[kInFlight]{};
+    VkDeviceMemory replayImageMem_[kInFlight]{};
 };
+
+// A binary PPM (P6, 8 bits): its size, and its pixels as RGBA when `rgba`.
+bool readPpm(const std::filesystem::path& p, uint32_t& w, uint32_t& h, uint8_t* rgba) {
+    std::ifstream in(p, std::ios::binary);
+    std::string magic;
+    int maxv = 0;
+    in >> magic >> w >> h >> maxv;
+    in.get();
+    if (!in || magic != "P6" || maxv != 255) return false;
+    if (!rgba) return true;
+    std::vector<uint8_t> rgb(size_t(w) * h * 3);
+    if (!in.read(reinterpret_cast<char*>(rgb.data()), std::streamsize(rgb.size()))) return false;
+    for (size_t i = 0; i < size_t(w) * h; ++i) {
+        rgba[i * 4] = rgb[i * 3];
+        rgba[i * 4 + 1] = rgb[i * 3 + 1];
+        rgba[i * 4 + 2] = rgb[i * 3 + 2];
+        rgba[i * 4 + 3] = 255;
+    }
+    return true;
+}
 
 double steadyMs() {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -244,6 +288,7 @@ void Demo::initVulkan() {
 
     createSwapchain();
     createPipeline();
+    if (!opt_.replayDir.empty()) initReplay();
 }
 
 void Demo::createSwapchain() {
@@ -289,7 +334,7 @@ void Demo::createSwapchain() {
     sci.imageColorSpace = chosen.colorSpace;
     sci.imageExtent = extent_;
     sci.imageArrayLayers = 1;
-    sci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    sci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | (opt_.replayDir.empty() ? VkImageUsageFlags(0) : VkImageUsageFlags(VK_IMAGE_USAGE_TRANSFER_DST_BIT));
     sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     sci.preTransform = caps.currentTransform;
     sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
@@ -453,6 +498,12 @@ void Demo::drawFrame() {
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(cmd, &bi);
+    double flashInput = -1.0;
+    if (!opt_.replayDir.empty()) {
+        recordReplay(cmd, imageIndex, fi);
+        goto submit;
+    }
+    {
     VkRenderPassBeginInfo rbi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     rbi.renderPass = renderPass_;
     rbi.framebuffer = framebuffers_[imageIndex];
@@ -472,7 +523,6 @@ void Demo::drawFrame() {
     PushConstants pc{{float(extent_.width), float(extent_.height)}, float(animTime_ * opt_.speed), shown,
                      opt_.cutEvery > 0 ? uint32_t((shown / opt_.cutEvery) & 1) : 0u};
     // --latency-test: this frame is the answer to the pending input — white.
-    double flashInput = -1.0;
     if (opt_.latencyTest == 2 && steadyMs() >= nextAutoMs_) {
         if (nextAutoMs_ > 0.0) inputMs_ = steadyMs();  // (none in the first half second)
         nextAutoMs_ = steadyMs() + 500.0;
@@ -485,9 +535,11 @@ void Demo::drawFrame() {
     vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
     for (long i = 0; i < opt_.gpuLoad; ++i) vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRenderPass(cmd);
+    }
+submit:
     vkEndCommandBuffer(cmd);
 
-    VkPipelineStageFlags wait = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    VkPipelineStageFlags wait = opt_.replayDir.empty() ? VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT : VK_PIPELINE_STAGE_TRANSFER_BIT;
     VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     si.waitSemaphoreCount = 1;
     si.pWaitSemaphores = &acquireSem_[fi];
@@ -519,6 +571,92 @@ void Demo::drawFrame() {
     }
     frameIndex_ = (frameIndex_ + 1) % kInFlight;
     ++frameCount_;
+}
+
+uint32_t Demo::findMemory(uint32_t bits, VkMemoryPropertyFlags flags) {
+    VkPhysicalDeviceMemoryProperties mp;
+    vkGetPhysicalDeviceMemoryProperties(physDev_, &mp);
+    for (uint32_t i = 0; i < mp.memoryTypeCount; ++i)
+        if ((bits & (1u << i)) && (mp.memoryTypes[i].propertyFlags & flags) == flags) return i;
+    throw std::runtime_error("no suitable memory type");
+}
+
+void Demo::initReplay() {
+    for (const auto& e : std::filesystem::directory_iterator(opt_.replayDir))
+        if (e.path().extension() == ".ppm") replayFrames_.push_back(e.path());
+    std::sort(replayFrames_.begin(), replayFrames_.end());
+    if (replayFrames_.empty() || !readPpm(replayFrames_[0], replayW_, replayH_, nullptr))
+        throw std::runtime_error("--replay: no readable .ppm frame in " + opt_.replayDir);
+    printf("demo: replay of %zu frames %ux%u (every %ld from %ld)\n", replayFrames_.size(), replayW_, replayH_,
+           opt_.replayStep, opt_.replayStart);
+    const VkDeviceSize bytes = VkDeviceSize(replayW_) * replayH_ * 4;
+    for (int i = 0; i < kInFlight; ++i) {
+        VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        bci.size = bytes;
+        bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        VK_CHECK(vkCreateBuffer(device_, &bci, nullptr, &replayBuf_[i]));
+        VkMemoryRequirements req;
+        vkGetBufferMemoryRequirements(device_, replayBuf_[i], &req);
+        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        ai.allocationSize = req.size;
+        ai.memoryTypeIndex = findMemory(req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        VK_CHECK(vkAllocateMemory(device_, &ai, nullptr, &replayBufMem_[i]));
+        VK_CHECK(vkBindBufferMemory(device_, replayBuf_[i], replayBufMem_[i], 0));
+        VK_CHECK(vkMapMemory(device_, replayBufMem_[i], 0, VK_WHOLE_SIZE, 0, &replayMapped_[i]));
+        VkImageCreateInfo ici{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        ici.imageType = VK_IMAGE_TYPE_2D;
+        ici.format = VK_FORMAT_R8G8B8A8_UNORM;
+        ici.extent = {replayW_, replayH_, 1};
+        ici.mipLevels = ici.arrayLayers = 1;
+        ici.samples = VK_SAMPLE_COUNT_1_BIT;
+        ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+        ici.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        VK_CHECK(vkCreateImage(device_, &ici, nullptr, &replayImage_[i]));
+        vkGetImageMemoryRequirements(device_, replayImage_[i], &req);
+        ai.allocationSize = req.size;
+        ai.memoryTypeIndex = findMemory(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        VK_CHECK(vkAllocateMemory(device_, &ai, nullptr, &replayImageMem_[i]));
+        VK_CHECK(vkBindImageMemory(device_, replayImage_[i], replayImageMem_[i], 0));
+    }
+}
+
+// Present k shows recorded frame start + k*step (the last one held past the
+// end): loaded into this frame's staging buffer, copied, blitted to the
+// swapchain image at its size.
+void Demo::recordReplay(VkCommandBuffer cmd, uint32_t imageIndex, int fi) {
+    const size_t n = replayFrames_.size();
+    const size_t idx = std::min(n - 1, size_t(opt_.replayStart) + size_t(frameCount_) * size_t(opt_.replayStep));
+    uint32_t w = 0, h = 0;
+    if (!readPpm(replayFrames_[idx], w, h, static_cast<uint8_t*>(replayMapped_[fi])) || w != replayW_ || h != replayH_)
+        throw std::runtime_error("--replay: " + replayFrames_[idx].string() + " unreadable or of another size");
+    auto barrier = [&](VkImage img, VkImageLayout from, VkImageLayout to, VkAccessFlags src, VkAccessFlags dst) {
+        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        b.oldLayout = from;
+        b.newLayout = to;
+        b.srcAccessMask = src;
+        b.dstAccessMask = dst;
+        b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = img;
+        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+    };
+    barrier(replayImage_[fi], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+    VkBufferImageCopy region{};
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.imageExtent = {replayW_, replayH_, 1};
+    vkCmdCopyBufferToImage(cmd, replayBuf_[fi], replayImage_[fi], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    barrier(replayImage_[fi], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    barrier(images_[imageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+    VkImageBlit blit{};
+    blit.srcSubresource = blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    blit.srcOffsets[1] = {int32_t(replayW_), int32_t(replayH_), 1};
+    blit.dstOffsets[1] = {int32_t(extent_.width), int32_t(extent_.height), 1};
+    vkCmdBlitImage(cmd, replayImage_[fi], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, images_[imageIndex],
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+    barrier(images_[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            VK_ACCESS_TRANSFER_WRITE_BIT, 0);
 }
 
 void Demo::recreateSwapchain() {
@@ -635,6 +773,12 @@ void Demo::cleanup() {
             if (fences_[i]) vkDestroyFence(device_, fences_[i], nullptr);
         }
         if (swapchain_) vkDestroySwapchainKHR(device_, swapchain_, nullptr);
+        for (int i = 0; i < kInFlight; ++i) {
+            if (replayBuf_[i]) vkDestroyBuffer(device_, replayBuf_[i], nullptr);
+            if (replayBufMem_[i]) vkFreeMemory(device_, replayBufMem_[i], nullptr);
+            if (replayImage_[i]) vkDestroyImage(device_, replayImage_[i], nullptr);
+            if (replayImageMem_[i]) vkFreeMemory(device_, replayImageMem_[i], nullptr);
+        }
         if (pipeline_) vkDestroyPipeline(device_, pipeline_, nullptr);
         if (layout_) vkDestroyPipelineLayout(device_, layout_, nullptr);
         if (renderPass_) vkDestroyRenderPass(device_, renderPass_, nullptr);
@@ -692,11 +836,15 @@ Options parseArgs(int argc, char** argv) {
                 p = e + 1;
             }
         } else if (a == "--stress-until") o.stressUntil = atol(value().c_str());
+        else if (a == "--replay") o.replayDir = value();
+        else if (a == "--replay-step") o.replayStep = std::max(1L, atol(value().c_str()));
+        else if (a == "--replay-start") o.replayStart = std::max(0L, atol(value().c_str()));
         else if (a == "-h" || a == "--help") {
             printf("usage: bdex_demo [--fps N] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]\n"
                    "                 [--deterministic] [--ignore-resize] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]\n"
                    "                 [--gpu-load N] [--latency-test [auto]] [--latency-log FILE]\n"
-                   "                 [--stress resize|recreate|surface|window|fullscreen|minimize:N[,...]] [--stress-until N]\n");
+                   "                 [--stress resize|recreate|surface|window|fullscreen|minimize:N[,...]] [--stress-until N]\n"
+                   "                 [--replay DIR [--replay-step N] [--replay-start N]]\n");
             exit(0);
         } else {
             throw std::runtime_error("unknown option " + a);
