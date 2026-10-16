@@ -338,6 +338,16 @@ apply live; **Arrêter**, or closing the panel, stops it. Every Vulkan game is
 armed meanwhile (the layer passes its frames through), desktop programs
 excepted (browsers, Steam, gamescope, GTK 4 applications).
 
+**GPU calibration** (*Calibration du GPU*, measured by itself at the first
+start; `bdex-framegen --calibrate [--apply]` from a terminal): `bdex-calibrate`
+runs the engine on synthetic frames at the screen's size and refresh, for the
+automatic preset and each fixed one, and recommends the preset and the highest
+multiplier whose cost stays within a quarter of the GPU's time (no game below
+30 fps: 60 Hz x2, 144 Hz x4, 240 Hz x8). *Appliquer* takes them; *Auto* never
+goes above the calibrated multiplier anyway. **Record** (the button on a
+detected game): its next 150 real frames for the evaluation corpus
+(`~/.cache/bdex-framegen/recordings`, packed by `tools/corpus_pack.py`).
+
 **Without the panel** — *Mode Jeu — sans le panneau*: every game (*Tous les
 jeux*), or the selected one, generates from its start with the panel's
 settings, the panel closed. That is how Steam's Game Mode is used (below),

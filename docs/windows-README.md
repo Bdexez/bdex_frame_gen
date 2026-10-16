@@ -50,6 +50,13 @@ checklist in `windows-port.md` §3. Please report what happens.
      possible, at your own risk.
    - OpenGL games: capture.
 
+   **Calibration du GPU** (measured by itself at the first start,
+   `bdex-calibrate.exe`): the recommended preset and multiplier for this
+   GPU and screen; *Appliquer* sets them. **Signaler un problème…** writes
+   the diagnostic report, copies it and opens the pre-filled issue form.
+   During an injection, the tray icon's menu has *Enregistrer quelques
+   secondes (corpus)*.
+
    *Injection* / *Capture* force one. **GPU de génération**: *Auto* is the
    game's (the discrete one); another GPU makes the capture generate on it
    while the game renders on its own (two-GPU setup). The choices are saved to
