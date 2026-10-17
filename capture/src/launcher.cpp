@@ -1260,12 +1260,12 @@ LRESULT CALLBACK launcherProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if (removeTranslation(exe, why)) done += L"\n  " + exe;
                 else failed += L"\n  " + exe + L" — " + wideUtf8(why);
             }
-            std::wstring msg;
-            if (!done.empty()) msg += std::wstring(T(L"Injection retirée :", L"Injection removed:")) + done;
+            std::wstring text;
+            if (!done.empty()) text += std::wstring(T(L"Injection retirée :", L"Injection removed:")) + done;
             if (!failed.empty())
-                msg += std::wstring(msg.empty() ? L"" : L"\n\n") + T(L"Non retirée (ferme le jeu et réessaie) :",
-                                                                      L"Not removed (close the game and retry):") + failed;
-            MessageBoxW(hwnd, msg.c_str(), L"bdex framegen", MB_OK | (failed.empty() ? MB_ICONINFORMATION : MB_ICONWARNING));
+                text += std::wstring(text.empty() ? L"" : L"\n\n") + T(L"Non retirée (ferme le jeu et réessaie) :",
+                                                                        L"Not removed (close the game and retry):") + failed;
+            MessageBoxW(hwnd, text.c_str(), L"bdex framegen", MB_OK | (failed.empty() ? MB_ICONINFORMATION : MB_ICONWARNING));
             return 0;
         }
         case IDCANCEL:
