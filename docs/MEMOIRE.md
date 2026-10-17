@@ -2516,3 +2516,31 @@ chaque seconde avec le pid de la démo (lancée par `exec`, pas sous
 compteurs de la couche ne valent que si `display_grid` vaut 1 ou 3.
 Scripts dans le scratchpad de la session (`gsrun.sh`, `kwrun.sh`,
 `mscwatch.c`, `mscan.py`).
+
+**Suite du 17/10 — essais écartés (mesurés, à ne pas refaire tels quels) :**
+- **Jeu chargé (`bdex_demo --gpu-load 160`, 70 % du GPU à 30 i/s, 1440p)** :
+  gamescope sans tête n'affiche que ~50 images/s quoi qu'on fasse (son
+  compositeur manque de GPU, déjà noté) ; sous KWin virtuel, les rappels de
+  trame arrivent par paires sous charge et le compte des « tenues » passe de
+  0 à 30/s d'un lancement à l'autre, à réglage égal : **aucun de ces deux
+  bancs ne juge un jeu chargé côté affichage**. Côté couche, la mesure
+  fiable est le retard de nos présentations sur leur heure visée : 1 à 3 %,
+  jamais plus de 2 ms, à ×2 sur 60 Hz chargé.
+- **`synth_first`** (prototype : le prochain envoi GPU du jeu sur sa file de
+  présentation attend un sémaphore signalé par la synthèse, injecté dans
+  `vkQueueSubmit*`) : i/s d'un jeu non plafonné inchangées, mais aucun gain
+  mesurable (retard des présentations identique, différences d'affichage
+  dans le bruit du banc). Retiré : il touche aux envois du jeu sans bénéfice
+  prouvé.
+- **`hud_mask.comp`** : un compteur global par pixel modifié semblait coûteux ;
+  réduction par groupe de travail = mêmes images, aucun gain mesurable
+  (NVIDIA regroupe les atomiques d'un warp). Non retenu.
+- **Coût par option à 1440p** (Cyberpunk agrandi, quality ×4, 3 images,
+  minimum de 5 passes) : interpolation 5,7 ms, dont `false_detail` ~1,8,
+  `pixel_vectors` ~1,6, `hud_mask` ~0,6 (variante du shader), `interp_splat`
+  ~0,4 ; flux ~1,8 ms. Environ 9 ms de GPU par image du jeu en ×4,8.
+- **Artefact ×4 typique** (PRAGMATA, personnage qui pivote pendant une
+  rotation rapide de la caméra) : mosaïque de blocs autour du sac et du
+  bras, identique avec `pixel_vectors`, `interp_splat` ou `false_detail`
+  coupés — échec du flux sur un objet qui change d'aspect (rotation 3D), pas
+  un réglage de la synthèse.
