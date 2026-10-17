@@ -98,7 +98,8 @@ def main():
         # (off explicitly in the base: a discrete GPU turns it on by itself;
         # false_detail and border_predict, which move both sides, too)
         base, local = evaluate(build, d / "popup", {"BDEX_FG_MODE": "interpolate", "BDEX_FG_SCENE_CUT_LOCAL": "0",
-                                                    "BDEX_FG_FALSE_DETAIL": "0", "BDEX_FG_BORDER_PREDICT": "0"},
+                                                    "BDEX_FG_FALSE_DETAIL": "0", "BDEX_FG_BORDER_PREDICT": "0",
+                                                    "BDEX_FG_BORDER_FILL": "0"},
                                ["--variant", "SCENE_CUT_LOCAL=1"])
         if not local > base + 0.5:
             print(f"popup: scene_cut_local {local:.2f} dB does not beat the frame-wide test {base:.2f} dB")

@@ -13,7 +13,12 @@ engine packs for (RGBA8, BGRA8, sRGB, A2B10G10R10, RGBA16F) and with the
     sRGB format: the matching brings HDR values to the same perceptual scale
     (without it scRGB costs are 2.5x too large, PQ mid-tones too flat);
   - upscaled output stays within 3 dB of native and well above frame
-    repetition.
+    repetition;
+  - border_fill (content entering at the edges in a camera move, which
+    this pan has) is no worse against the ground truth in any of them. The
+    checks above run without it: at the edges both the flow (off-screen
+    matching) and its decision depend on each format's values, and its gain
+    (about 2 dB native here, 1 dB upscaled) would move their comparisons.
 Usage: test_formats.py <build dir>. Needs a Vulkan device, no display.
 """
 import os
@@ -43,7 +48,8 @@ def main():
     if not tool.exists():
         print("bdex_offline not built, skipping")
         return 77
-    env = dict(os.environ, BDEX_FG_CONFIG="/dev/null", BDEX_FG_PRESET="balanced")
+    env = dict(os.environ, BDEX_FG_CONFIG="/dev/null", BDEX_FG_PRESET="balanced", BDEX_FG_BORDER_FILL="0")
+    envFill = dict(env, BDEX_FG_BORDER_FILL="1")
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         subprocess.run([sys.executable, str(ROOT / "tools" / "make_corpus.py"), str(tmp / "c")], check=True,
@@ -57,12 +63,16 @@ def main():
         for name, args in runs.items():
             subprocess.run([str(tool), str(seq), str(tmp / name)] + args, check=True, env=env,
                            stderr=subprocess.DEVNULL)
+            subprocess.run([str(tool), str(seq), str(tmp / (name + "-fill"))] + args, check=True, env=envFill,
+                           stderr=subprocess.DEVNULL)
         pairs = [line.split()[:2] for line in (tmp / "rgba8" / "manifest.txt").read_text().splitlines()]
-        vs8, vsgt = {}, {}
+        vs8, vsgt, fill = {}, {}, {}
         for name in runs:
             vs8[name] = np.mean([psnr(load(tmp / name / g), load(tmp / "rgba8" / g)) for g, _ in pairs])
             vsgt[name] = np.mean([psnr(load(tmp / name / g), load(gt)) for g, gt in pairs])
-            print(f"{name:8s} vs rgba8 {vs8[name]:6.2f} dB, vs ground truth {vsgt[name]:6.2f} dB")
+            fill[name] = np.mean([psnr(load(tmp / (name + "-fill") / g), load(gt)) for g, gt in pairs])
+            print(f"{name:8s} vs rgba8 {vs8[name]:6.2f} dB, vs ground truth {vsgt[name]:6.2f} dB, "
+                  f"with border_fill {fill[name]:6.2f} dB")
         dup = np.mean([psnr(load(seq / f"f{2 * int(g.split('_')[1]) - 2:04d}.ppm"), load(gt)) for g, gt in pairs])
         print(f"frame repetition vs ground truth {dup:.2f} dB")
     failures = []
@@ -79,6 +89,9 @@ def main():
     for f in ("up0.75", "up0.5"):
         if vsgt[f] < vsgt["rgba8"] - 3 or vsgt[f] < dup + 6:
             failures.append(f"{f}: {vsgt[f]:.2f} dB (native {vsgt['rgba8']:.2f}, repetition {dup:.2f})")
+    for f in runs:
+        if fill[f] < vsgt[f] - 0.05:
+            failures.append(f"border_fill: {f} {fill[f]:.2f} dB, without {vsgt[f]:.2f} dB")
     if failures:
         print("FAILED:\n  " + "\n  ".join(failures))
         return 1

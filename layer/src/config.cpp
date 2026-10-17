@@ -222,6 +222,14 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
     // scene; the corpus's menu popping up over noise -0.33, HUD -0.15; free —
     // the search is skipped).
     if (strong && !(autoOptionsSet & kAutoBorderPredict)) borderPredict = true;
+    // The content entering (leaving) the picture in a camera turn from cur
+    // (prev) alone, where the forward (backward) flow is still the camera's,
+    // instead of the cross-fade its off-screen trajectories fell to (17/10:
+    // x4 game-like scenes walk +0.47 dB, turn +0.13, first-person turn +0.11,
+    // the others +0.01 to +0.03, flicker down on every one; 14 recorded games
+    // -0.02 to +0.06, PRAGMATA's fast turns up and less flicker; one flow
+    // lookup more, at the edges only).
+    if (strong && !(autoOptionsSet & kAutoBorderFill)) borderFill = true;
     // No bonus for the zero-motion candidate (03/10, on top of everything
     // above, 960x540 corpus + demo): the free bonus won on soft content in
     // fast motion — a ghostly blend instead of the moving picture. The HUD
@@ -366,6 +374,7 @@ const std::vector<OptionDef>& registry() {
     B("synth_bicubic", nullptr, &Config::synthBicubic, kLive, Tune::SynthAlways, "1", 13),
     I("hud_mask", nullptr, &Config::hudMask, 0, 1000, kLive),
     B("reveal_fill", nullptr, &Config::revealFill, kLive, Tune::SynthExtrapolation, "1", 12),
+    B("border_fill", nullptr, &Config::borderFill, kLive),
     B("online_tune", nullptr, &Config::onlineTune),
     F("upscale_temporal", nullptr, &Config::upscaleTemporal, 0.f, 0.95f),
     B("frame_timing", nullptr, &Config::frameTiming, kLive),
@@ -522,6 +531,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "interp_accel") autoOptionsSet |= kAutoInterpAccel;
     if (key == "false_detail") autoOptionsSet |= kAutoFalseDetail;
     if (key == "border_predict") autoOptionsSet |= kAutoBorderPredict;
+    if (key == "border_fill") autoOptionsSet |= kAutoBorderFill;
     if (const OptionDef* d = findOption(key)) {
         switch (d->kind) {
         case Kind::Bool:  return parseBool(value, this->*(d->b));
@@ -890,6 +900,7 @@ std::string Config::describe() const {
     if (borderPredict) o << " border_predict=1";
     if (parallaxSearch) o << " parallax_search=1";
     if (revealFill) o << " reveal_fill=1";
+    if (borderFill) o << " border_fill=1";
     if (onlineTune) o << " online_tune=1";
     if (upscaleTemporal > 0.f) o << " upscale_temporal=" << upscaleTemporal;
     if (targetFps != 0.f) o << " target_fps=" << (targetFps < 0.f ? std::string("auto") : std::to_string(targetFps));
