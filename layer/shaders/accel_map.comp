@@ -12,8 +12,8 @@
 // lands on another object and gives each block an acceleration of its own
 // (objects at constant speed: -0.4 dB without the test; coherence 0.6-0.85:
 // -0.06; 0.85-0.98: -0.01, the recorded games' gains nearly all kept).
-// Limited to half the speed (+1 px) and faded in over one to two flow steps
-// (the block flow's quantisation), in display pixels per frame squared.
+// Limited to 0.75 of the speed (+1 px) and faded in over one to two flow steps
+// (the block flow's quantisation), in display pixels per current interval squared.
 layout(local_size_x = 16, local_size_y = 16) in;
 
 layout(binding = 0) uniform sampler2D flowFwd;     // finest forward flow (prev positions)
@@ -26,6 +26,7 @@ layout(push_constant) uniform PC {
     ivec2 size;        // display pixels
     vec2 flowInvSize;  // 1 / (display pixels the flow covers)
     float flowScale;   // flow units -> display pixels
+    float intervalRatio; // current / previous source interval
 } pc;
 
 vec2 fwdAt(vec2 p) { return texture(flowFwd, p * pc.flowInvSize).xy * pc.flowScale; }
@@ -33,6 +34,7 @@ vec2 bwdAt(vec2 p) { return texture(flowBwd, p * pc.flowInvSize).xy * pc.flowSca
 vec2 prevBwdAt(vec2 p) { return texture(prevBwdTex, p * pc.flowInvSize).xy * pc.flowScale; }
 
 vec3 accelAt(vec2 p) {
+    if (pc.intervalRatio == 0.0) return vec3(0.0);
     vec2 size = vec2(pc.size);
     vec2 B = bwdAt(p);
     vec2 q0 = p + B;
@@ -41,8 +43,20 @@ vec3 accelAt(vec2 p) {
         return vec3(0.0);
     vec2 B0 = prevBwdAt(q0);
     vec2 q1 = q0 + B0, q2 = q0 + B;
+    if (pc.intervalRatio != 1.0) q2 = q0 + B / pc.intervalRatio;
     if (any(lessThan(min(q1, q2), m)) || any(greaterThan(max(q1, q2), size - m))) return vec3(0.0);
     vec2 a = -B + B0;
+    if (pc.intervalRatio != 1.0) {
+        // a_phys * currentInterval^2, sampled at the two pair midpoints.
+        // Equal speed over unequal intervals must give zero acceleration.
+        float r = pc.intervalRatio;
+        vec2 timed = (2.0 * r / (1.0 + r)) * (-B + r * B0);
+        // A fixed-timestep game can present its equally spaced content at
+        // irregular times. Timing alone must not create or reverse motion
+        // curvature: use it only within the acceleration seen in the flow.
+        float scale = min(1.0, sqrt(dot(a, a) / max(dot(timed, timed), 1e-6)));
+        a = dot(a, timed) >= 0.0 ? timed * scale : vec2(0.0);
+    }
     float inc = length(B + fwdAt(q0));
     return vec3(a, 1.0) * (1.0 - smoothstep(0.5 * pc.flowScale, 1.5 * pc.flowScale, inc));
 }
@@ -75,7 +89,15 @@ void main() {
         // lost on Cyberpunk, unbounded 1.3 dB on mouse flicks)
         float lim = 0.75 * length(B) + 1.0, la = length(a);
         if (la > lim) a *= lim / la;
-        a *= smoothstep(pc.flowScale, 2.0 * pc.flowScale, la) * smoothstep(0.85, 0.98, coherence);
+        float noise = pc.flowScale;
+        if (pc.intervalRatio > 1.0) {
+            float r = pc.intervalRatio;
+            // Time normalisation amplifies the previous vector's rounding
+            // error. Propagate both vectors' uncertainty; never lower the
+            // historical noise floor for a shorter current interval.
+            noise *= (2.0 * r / (1.0 + r)) * sqrt(0.5 * (1.0 + r * r));
+        }
+        a *= smoothstep(noise, 2.0 * noise, la) * smoothstep(0.85, 0.98, coherence);
     }
     imageStore(accelOut, i, vec4(a, 0.0, 0.0));
 }

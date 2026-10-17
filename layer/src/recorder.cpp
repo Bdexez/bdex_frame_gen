@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <fstream>
+#include <iomanip>
 
 namespace bdex {
 
@@ -85,12 +86,13 @@ VkBuffer FrameRecorder::next(VkExtent2D extent, const OutputEncoding& encoding, 
     return b.buf.buffer;
 }
 
-void FrameRecorder::queued(uint32_t slot, uint64_t generation, double gameFps) {
+void FrameRecorder::queued(uint32_t slot, uint64_t generation, double gameFps, double presentMs) {
     if (current_ < 0) return;
     pendingFrame_.slot = slot;
     pendingFrame_.generation = generation;
     pendingFrame_.index = copied_++;
     pendingFrame_.gameFps = gameFps;
+    pendingFrame_.presentMs = presentMs;
     inFlight_.push_back(pendingFrame_);
     current_ = -1;
     --left_;
@@ -123,6 +125,9 @@ void FrameRecorder::finish(const SlotDone& done) {
 }
 
 void FrameRecorder::writerLoop() {
+    std::ofstream timestamps(dir_ + "/timestamps.csv");
+    timestamps << "frame,present_ms,interval_ms\n" << std::fixed << std::setprecision(3);
+    double previousMs = 0.0;
     std::unique_lock<std::mutex> lock(mutex_);
     for (;;) {
         cv_.wait(lock, [&] { return stop_ || !toWrite_.empty(); });
@@ -135,11 +140,18 @@ void FrameRecorder::writerLoop() {
         const uint32_t ds = std::max(1u, (f.extent.width + 959) / 960);
         char name[32];
         snprintf(name, sizeof(name), "/f%04d.ppm", f.index);
-        const bool ok = !failed && FrameGen::writePpm(dir_ + name, pixels, f.extent, f.encoding, ds);
+        bool ok = !failed && FrameGen::writePpm(dir_ + name, pixels, f.extent, f.encoding, ds);
+        if (ok) {
+            timestamps << (name + 1) << ',' << f.presentMs << ','
+                       << (f.index == 0 ? 0.0 : f.presentMs - previousMs) << '\n';
+            previousMs = f.presentMs;
+            if (f.index + 1 == total_) timestamps.flush();  // visible before DONE, which may move the directory
+            ok = bool(timestamps);
+        }
         lock.lock();
         buffers_[size_t(f.buffer)].busy = false;
         if (!ok) {
-            if (!failed_) BDEX_WARN("recording: could not write %s%s — stopped", dir_.c_str(), name);
+            if (!failed_) BDEX_WARN("recording: could not write frame/timestamps in %s — stopped", dir_.c_str());
             failed_ = true;
         } else {
             ++written_;

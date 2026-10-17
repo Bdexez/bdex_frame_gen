@@ -69,6 +69,7 @@
 #include "device.h"
 #include "framegen.h"
 #include "frame_order.h"
+#include "pacing.h"
 #include "log.h"
 
 #include <algorithm>
@@ -467,6 +468,7 @@ int main(int argc, char** argv) {
         int prev = -1;
         uint32_t parity = 0;
         double intervalMs = 0.0;  // the layer's smoothed present interval
+        pacing::IntervalFilter intervalFilter;
         Image img;
         for (size_t k = 0; k < sched.size(); ++k) {
             const size_t fi = sched[k].content;
@@ -494,7 +496,8 @@ int main(int argc, char** argv) {
             timing.reset = !generate;
             if (generate) {
                 timing.sinceLastMs = (sched[k].time - sched[k - 1].time) * msPerFrame;
-                intervalMs = intervalMs > 0.0 ? intervalMs * 0.8 + timing.sinceLastMs * 0.2 : timing.sinceLastMs;
+                intervalMs = intervalFilter.update(intervalMs > 0.0 ? intervalMs : timing.sinceLastMs,
+                                                   timing.sinceLastMs);
             }
             timing.intervalMs = intervalMs;
             // --refresh: every frame of this present shows on a fixed refresh

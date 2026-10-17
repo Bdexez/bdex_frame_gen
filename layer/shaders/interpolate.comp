@@ -103,6 +103,7 @@ layout(push_constant) uniform PC {
     float staticFrames;      // hud_mask: pixels unchanged for at least this many frames stay as in cur (0 = off)
     int revealFill;          // extrapolation: a revealed pixel takes the slower-moving (background) of the last two sources
     float staticSoft;        // static_soft: strength of hud_mask's "holds still" evidence (0 = off)
+    float flowIntervalRatio; // current / previous source interval (1 legacy, 0 invalid timed history)
 } pc;
 
 // flow_confidence's trust at display pixel p (the map covers the flow's area).
@@ -179,6 +180,7 @@ vec2 prevBwdAt(vec2 p) { return texture(prevBwdTex, p * pc.flowInvSize).xy * pc.
 // border has no valid motion there; sampling clamps to the edge) and the
 // current motion is trustworthy (its forward flow brings the content back).
 vec3 accelAt(vec2 p) {
+    if (pc.flowIntervalRatio == 0.0) return vec3(0.0);
     vec2 size = vec2(pc.size);
     vec2 B = bwdAt(p);
     vec2 q0 = p + B;
@@ -190,8 +192,15 @@ vec3 accelAt(vec2 p) {
     // current velocity: content that entered the picture since has no real
     // previous motion, and its flow is garbage that need not point outside.
     vec2 q1 = q0 + B0, q2 = q0 + B;
+    if (pc.flowIntervalRatio != 1.0) q2 = q0 + B / pc.flowIntervalRatio;
     if (any(lessThan(min(q1, q2), m)) || any(greaterThan(max(q1, q2), size - m))) return vec3(0.0);
     vec2 a = -B + B0;
+    if (pc.flowIntervalRatio != 1.0) {
+        float r = pc.flowIntervalRatio;
+        vec2 timed = (2.0 * r / (1.0 + r)) * (-B + r * B0);
+        float scale = min(1.0, sqrt(dot(a, a) / max(dot(timed, timed), 1e-6)));
+        a = dot(a, timed) >= 0.0 ? timed * scale : vec2(0.0);
+    }
     float inc = length(B + fwdAt(q0));
     return vec3(a, 1.0) * (1.0 - smoothstep(0.5 * pc.flowScale, 1.5 * pc.flowScale, inc));
 }
@@ -214,7 +223,12 @@ vec2 extrapDisp(vec2 p, float s, vec2 B) {
     vec2 a = acc.z > 0.5 ? acc.xy / acc.z : vec2(0.0);
     float lim = 0.5 * length(v) + 1.0, la = length(a);
     if (la > lim) a *= lim / la;
-    a *= smoothstep(pc.flowScale, 2.0 * pc.flowScale, la);
+    float noise = pc.flowScale;
+    if (pc.flowIntervalRatio > 1.0) {
+        float r = pc.flowIntervalRatio;
+        noise *= (2.0 * r / (1.0 + r)) * sqrt(0.5 * (1.0 + r * r));
+    }
+    a *= smoothstep(noise, 2.0 * noise, la);
     return s * v + pc.accel * 0.5 * s * (s + 1.0) * a;
 }
 
@@ -295,7 +309,16 @@ void main() {
         vec2 pb;
         if (kAccel && pc.accel > 0.0) {  // uniform branch; the constant-velocity path below is the historical one
             pb = q - extrapDisp(q, s, B);
-            for (int i = 0; i < pc.iterations; ++i) { B = bwdAt(pb); pb = q - extrapDisp(pb, s, B); }
+            vec2 pbPrev = q, Bprev = B;
+            for (int i = 0; i < pc.iterations; ++i) { pbPrev = pb; Bprev = B; B = bwdAt(pb); pb = q - extrapDisp(pb, s, B); }
+            // Occluded sources can oscillate with either motion model. Keep
+            // reveal_fill active when acceleration is enabled, including a
+            // locally zero acceleration on an otherwise constant-speed pan.
+            if (kReveal && pc.revealFill != 0 && pc.iterations > 0 && distance(pb, pbPrev) > 1.0 &&
+                length(B + fwdAt(pb + B)) > 2.0) {
+                vec2 Bpb = bwdAt(pb), BpbPrev = bwdAt(pbPrev);
+                if (length(BpbPrev) < length(Bpb)) { pb = pbPrev; B = Bprev; }
+            }
         } else {
             pb = q + s * B;
             vec2 pbPrev = q, Bprev = B;

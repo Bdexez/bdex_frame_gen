@@ -116,6 +116,7 @@ private:
         double intervalMs = 16.6;    // frame interval estimate for pacing
         double planned[8] = {};      // the refresh (steady ms) each frame was given its content for, 0 = none
         bool plan = false;           // ... and presented for it (pace_plan, pacing::planLands)
+        bool smoothCatchup = false;  // a newly missed refresh can request gradual recovery from the game thread
         int presentMode = -1;        // VkSwapchainPresentModeInfoEXT (-1 = none), applied to every present
         uint64_t presentId = 0;      // VkPresentIdKHR (0 = none), forwarded on the real frame
         VkFence presentFence = VK_NULL_HANDLE;  // VkSwapchainPresentFenceInfoEXT, idem
@@ -214,6 +215,8 @@ private:
     // planned (present thread) — pacing::planLands.
     std::atomic<double> readyLagMs_{1.0};
     double lastPlannedMs_ = 0.0;
+    pacing::MotionClock motionClock_;  // present thread: the previous real frame's scheduled refresh
+    pacing::IntervalFilter intervalFilter_;  // present thread: confirmed changes of the game's cadence
     // virtual_grid (fbMutex_): with the adaptive pacing and no measured
     // refresh grid, a grid of the output period at a phase of our own
     // (0 = none), moved half a period when frames get replaced.
@@ -388,6 +391,7 @@ private:
     uint32_t statsRepeats_ = 0;  // repeated-frame counter at the last statistics line (dedup)
     uint32_t statsGen_ = 0;      // presents with generated frames in the statistics window
     uint32_t statsBehind_ = 0;   // presents left without generation to let the presentation catch up
+    uint32_t statsTrimmed_ = 0;  // intermediate outputs omitted by the gradual catch-up
     int lastPresentFrames_ = 1;  // present thread: frames of the previous present (its multiplier)
     // Worker: consecutive jobs whose real frame went out a refresh or more
     // after its time (runJob); present() then leaves one without generation.
@@ -424,6 +428,8 @@ private:
     std::atomic<uint64_t> statsOutFrames_{0};
     std::atomic<uint64_t> statsRealDelayUs_{0};
     std::atomic<uint64_t> statsSkipped_{0};
+    pacing::PlanSlip planSlip_;                 // worker only: newly added whole-refresh delay of the plan
+    std::atomic<bool> smoothCatchupRequested_{false};
     std::atomic<uint64_t> statsWakeLateUs_{0}, statsWakes_{0};  // sleepUntilPrecise: how late the worker woke  // sum of (real frame present call - app present call)
     double statsCpuMs_ = 0;
     int dumpCount_ = 0;

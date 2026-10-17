@@ -6,13 +6,17 @@
 //             [--deterministic] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]
 //             [--gpu-load N] [--latency-test [auto]] [--latency-log FILE]
 //             [--stress KIND:N[,KIND:N...]] [--stress-until N]
-//             [--replay DIR [--replay-step N] [--replay-start N]]
+//             [--replay DIR [--replay-step N] [--replay-start N]
+//              [--replay-timing [--replay-log FILE]]]
 //
 // --replay: a recorded sequence (fNNNN.ppm, e.g. from « Enregistrer » or
 // tools/make_corpus.py) played as the game's frames — frame start + k*step
 // on present k, scaled to the window — so the whole online path (layer,
 // pacing, swapchain) runs on real content; tools/replay_bench.py scores the
 // frames shown against the frames left out.
+// --replay-timing uses the recording's timestamps.csv instead of --fps and
+// stops after the last selected source. --replay-log records source offsets,
+// requested deadlines, actual presents and overload shifts (steady ms).
 //
 // Run it with BDEX_FG=1 (and VK_LAYER_PATH pointing at the build tree if the
 // layer is not installed) to see the generated frames.
@@ -32,6 +36,7 @@
 #include <vector>
 
 #include "demo_shaders.h"
+#include "replay_timing.h"
 
 #define VK_CHECK(x)                                                                             \
     do {                                                                                        \
@@ -76,6 +81,8 @@ struct Options {
     std::string replayDir;  // --replay: the frames (sorted .ppm) shown instead of the scene
     long replayStep = 1;    // --replay-step: recorded frames per present (the ground truth in between)
     long replayStart = 0;   // --replay-start
+    bool replayTiming = false;  // --replay-timing: timestamps.csv instead of --fps, stop at the last source
+    std::string replayLog;      // --replay-log: requested and actual source present times
 };
 enum Stress { kResize, kRecreate, kSurface, kWindow, kFullscreen, kMinimize, kStressKinds };
 const char* const kStressNames[kStressKinds] = {"resize", "recreate", "surface", "window", "fullscreen", "minimize"};
@@ -106,6 +113,7 @@ private:
     void recreateSwapchain();
     void initReplay();
     void recordReplay(VkCommandBuffer cmd, uint32_t imageIndex, int fi);
+    size_t replayIndex() const;
     uint32_t findMemory(uint32_t bits, VkMemoryPropertyFlags flags);
 
     Options opt_;
@@ -165,6 +173,11 @@ private:
     // --replay: the frames, a staging buffer per frame in flight and the
     // image they are copied into, then blitted (scaled) to the swapchain's.
     std::vector<std::filesystem::path> replayFrames_;
+    std::vector<double> replayTimes_;
+    bdex::replay::Clock replayClock_;
+    FILE* replayLog_ = nullptr;
+    double replayShiftMs_ = 0.0;
+    uint32_t replayLate_ = 0;
     uint32_t replayW_ = 0, replayH_ = 0;
     VkBuffer replayBuf_[kInFlight]{};
     VkDeviceMemory replayBufMem_[kInFlight]{};
@@ -617,7 +630,25 @@ submit:
         fflush(latencyLog_);
     }
     antiLag(false);
+    double replayTarget = 0.0, replayActual = 0.0, replayOffset = 0.0;
+    if (opt_.replayTiming) {
+        replayOffset = replayTimes_[replayIndex()] - replayTimes_[size_t(opt_.replayStart)];
+        replayTarget = replayClock_.target(replayOffset, steadyMs());
+        using clock = std::chrono::steady_clock;
+        std::this_thread::sleep_until(clock::time_point(std::chrono::duration_cast<clock::duration>(
+            std::chrono::duration<double, std::milli>(replayTarget))));
+        replayActual = steadyMs();
+    }
     r = vkQueuePresentKHR(queue_, &pi);
+    if (opt_.replayTiming) {
+        const double shift = replayClock_.commit(replayOffset, replayActual);
+        replayShiftMs_ += shift;
+        replayLate_ += shift > 0.0;
+        if (replayLog_ && fprintf(replayLog_, "%s,%.3f,%.3f,%.3f,%.3f\n",
+                                 replayFrames_[replayIndex()].filename().string().c_str(), replayOffset,
+                                 replayTarget, replayActual, shift) < 0)
+            throw std::runtime_error("--replay-log: write failed");
+    }
     if (r == VK_ERROR_OUT_OF_DATE_KHR || (!opt_.ignoreResize && (r == VK_SUBOPTIMAL_KHR || resized_))) {
         resized_ = false;
         vkDeviceWaitIdle(device_);
@@ -646,6 +677,23 @@ void Demo::initReplay() {
         throw std::runtime_error("--replay: no readable .ppm frame in " + opt_.replayDir);
     printf("demo: replay of %zu frames %ux%u (every %ld from %ld)\n", replayFrames_.size(), replayW_, replayH_,
            opt_.replayStep, opt_.replayStart);
+    if (opt_.replayTiming) {
+        if (size_t(opt_.replayStart) >= replayFrames_.size())
+            throw std::runtime_error("--replay-timing: start is past the last source frame");
+        std::ifstream times(std::filesystem::path(opt_.replayDir) / "timestamps.csv");
+        if (!times) throw std::runtime_error("--replay-timing: timestamps.csv missing; this recording has no source clock");
+        std::vector<std::string> names;
+        for (const auto& p : replayFrames_) names.push_back(p.filename().string());
+        replayTimes_ = bdex::replay::readTimes(times, names);
+        if (!opt_.replayLog.empty()) {
+            // Never overwrite a recording (including its PPMs or timestamps).
+            if (std::filesystem::exists(opt_.replayLog)) throw std::runtime_error("--replay-log: file already exists");
+            replayLog_ = fopen(opt_.replayLog.c_str(), "w");
+            if (!replayLog_ || fprintf(replayLog_, "frame,source_ms,target_ms,present_ms,shift_ms\n") < 0)
+                throw std::runtime_error("--replay-log: cannot create log");
+        }
+        printf("demo: recorded source timing (not --fps), stops at the last source; late frames shift following deadlines\n");
+    }
     const VkDeviceSize bytes = VkDeviceSize(replayW_) * replayH_ * 4;
     for (int i = 0; i < kInFlight; ++i) {
         VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
@@ -681,8 +729,7 @@ void Demo::initReplay() {
 // end): loaded into this frame's staging buffer, copied, blitted to the
 // swapchain image at its size.
 void Demo::recordReplay(VkCommandBuffer cmd, uint32_t imageIndex, int fi) {
-    const size_t n = replayFrames_.size();
-    const size_t idx = std::min(n - 1, size_t(opt_.replayStart) + size_t(frameCount_) * size_t(opt_.replayStep));
+    const size_t idx = replayIndex();
     uint32_t w = 0, h = 0;
     if (!readPpm(replayFrames_[idx], w, h, static_cast<uint8_t*>(replayMapped_[fi])) || w != replayW_ || h != replayH_)
         throw std::runtime_error("--replay: " + replayFrames_[idx].string() + " unreadable or of another size");
@@ -714,6 +761,10 @@ void Demo::recordReplay(VkCommandBuffer cmd, uint32_t imageIndex, int fi) {
                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
     barrier(images_[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
             VK_ACCESS_TRANSFER_WRITE_BIT, 0);
+}
+
+size_t Demo::replayIndex() const {
+    return std::min(replayFrames_.size() - 1, size_t(opt_.replayStart) + size_t(frameCount_) * size_t(opt_.replayStep));
 }
 
 void Demo::recreateSwapchain() {
@@ -801,23 +852,39 @@ void Demo::run() {
         }
         drawFrame();
         ++statFrames;
+        if (opt_.replayTiming && frameCount_ > (replayFrames_.size() - 1 - size_t(opt_.replayStart)) / size_t(opt_.replayStep)) break;
         if (opt_.frames >= 0 && frameCount_ >= static_cast<uint32_t>(opt_.frames)) break;
         if (opt_.duration > 0.0 && std::chrono::duration<double>(clock::now() - runStart).count() >= opt_.duration) break;
         const auto now = clock::now();
         if (std::chrono::duration<double>(now - statT).count() >= 2.0) {
             char title[128];
-            snprintf(title, sizeof(title), "bdex demo - %.1f fps rendered (target %.0f)",
-                     statFrames / std::chrono::duration<double>(now - statT).count(), opt_.fps);
+            if (opt_.replayTiming)
+                snprintf(title, sizeof(title), "bdex demo - %.1f fps rendered (recorded source timing)",
+                         statFrames / std::chrono::duration<double>(now - statT).count());
+            else
+                snprintf(title, sizeof(title), "bdex demo - %.1f fps rendered (target %.0f)",
+                         statFrames / std::chrono::duration<double>(now - statT).count(), opt_.fps);
             glfwSetWindowTitle(window_, title);
             printf("%s\n", title);
             statT = now;
             statFrames = 0;
         }
-        next += period;
-        if (next > clock::now()) std::this_thread::sleep_until(next);
-        else next = clock::now();
+        if (!opt_.replayTiming) {
+            next += period;
+            if (next > clock::now()) std::this_thread::sleep_until(next);
+            else next = clock::now();
+        }
     }
     vkDeviceWaitIdle(device_);
+    if (opt_.replayTiming) {
+        printf("demo: replayed %u sources; %u late frames shifted deadlines by %.3f ms total\n",
+               frameCount_, replayLate_, replayShiftMs_);
+        if (replayLog_) {
+            const int result = fclose(replayLog_);
+            replayLog_ = nullptr;
+            if (result != 0) throw std::runtime_error("--replay-log: flush failed");
+        }
+    }
 }
 
 void Demo::cleanup() {
@@ -845,6 +912,7 @@ void Demo::cleanup() {
     if (surface_) vkDestroySurfaceKHR(instance_, surface_, nullptr);
     if (instance_) vkDestroyInstance(instance_, nullptr);
     if (latencyLog_) fclose(latencyLog_);
+    if (replayLog_) fclose(replayLog_);
     if (window_) glfwDestroyWindow(window_);
     glfwTerminate();
 }
@@ -897,17 +965,22 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--replay") o.replayDir = value();
         else if (a == "--replay-step") o.replayStep = std::max(1L, atol(value().c_str()));
         else if (a == "--replay-start") o.replayStart = std::max(0L, atol(value().c_str()));
+        else if (a == "--replay-timing") o.replayTiming = true;
+        else if (a == "--replay-log") o.replayLog = value();
         else if (a == "-h" || a == "--help") {
             printf("usage: bdex_demo [--fps N] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]\n"
                    "                 [--deterministic] [--ignore-resize] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]\n"
                    "                 [--gpu-load N] [--latency-test [auto]] [--latency-log FILE] [--anti-lag]\n"
                    "                 [--stress resize|recreate|surface|window|fullscreen|minimize:N[,...]] [--stress-until N]\n"
-                   "                 [--replay DIR [--replay-step N] [--replay-start N]]\n");
+                   "                 [--replay DIR [--replay-step N] [--replay-start N]\n"
+                   "                  [--replay-timing [--replay-log FILE]]]\n");
             exit(0);
         } else {
             throw std::runtime_error("unknown option " + a);
         }
     }
+    if (o.replayTiming && o.replayDir.empty()) throw std::runtime_error("--replay-timing needs --replay DIR");
+    if (!o.replayLog.empty() && !o.replayTiming) throw std::runtime_error("--replay-log needs --replay-timing");
     return o;
 }
 

@@ -1940,3 +1940,490 @@ par flux lissé, gaussienne, référence compensée par le mouvement, seuil 1,1.
 **Conseils à l'utilisateur** : plafonner Cyberpunk à 36 i/s (×4 = 144 Hz
 exactement, sans `refresh_fill` : ~7 ms de moins, mouvement par image −17 %) ;
 flou de mouvement bas ou coupé.
+
+### 16/10 — installation locale pour les essais avant la 0.6
+
+À la demande de l'utilisateur, installation depuis `main` au commit
+`a2f7230` (15/10), confirmé identique à la tête distante par
+`git ls-remote`. Le numéro déclaré dans CMake reste `0.5.6` ; cette
+installation contient les changements préparatoires à la 0.6.
+
+- Builds Release 64 bits et 32 bits vérifiés, puis `bash tools/install.sh`
+  exécuté pour mettre à jour `~/.local` (couches, panneau, capture,
+  calibration, démo et métadonnées des options).
+- Sept vérifications réussies : `unit`, `formats`, `min_limits`,
+  `option_keys`, `panel_logic`, `linux_scripts`, `integration` (génération
+  ×2). Le bac à sable ne peut pas charger le pilote NVIDIA ni accéder à
+  l'affichage : les trois tests GPU ont été relancés hors de celui-ci et
+  ont réussi. Il ne s'agit pas d'une validation complète de release.
+- Bibliothèques installées 64/32 bits, scripts et `options_ui.json`
+  identiques aux fichiers construits ; chemins des deux manifestes valides.
+  Configuration utilisateur conservée (SHA256 identique avant/après).
+- Sauvegarde temporaire de l'installation précédente et de la configuration :
+  `/tmp/bdex-framegen-avant-install-25t17b3z/installation.tar.gz`
+  (non persistante après nettoyage de `/tmp`). Relancer le panneau et les
+  jeux déjà ouverts pour charger les fichiers installés.
+
+### 16/10 — première correction du saut de mouvement entre les paires
+
+Objectif continu de l'utilisateur : analyser ses captures, corriger la
+sensation de saccade/retard/téléportation, puis chercher et implémenter
+d'autres améliorations jusqu'à demande d'arrêt. Pas de publication ni de
+push demandés. L'utilisateur demande de travailler sans confirmations
+répétées. Compte rendu et suite :
+[`analyse-saccades-2026-10-16.md`](analyse-saccades-2026-10-16.md).
+
+Sept séquences du jour (Cyberpunk ×2, Oblivion ×2, PRAGMATA ×3), 150 images
+853×480 chacune. Les captures sont les sources réelles, sans horodatage par
+image : ne pas les présenter comme une preuve de cadence d'affichage.
+
+`phase_smooth` (défaut 1, à chaud, panneau Cadence) : en interpolation pure
+avec un plan valide, le dénominateur de `t` devient l'intervalle entre les
+rafraîchissements prévus des deux images réelles. À 30 i/s sur 144 Hz,
+l'alternance ×4/×5 mettait tout le décalage de phase dans le premier pas
+de la paire ; il est maintenant réparti. Heures de présentation identiques,
+pas de retenue ni de passe GPU ajoutée. Horloge du contenu préservée ;
+sans plan, hybride, extrapolation et `dedup` : ancien comportement.
+
+Simulateur : écart RMS du pas de mouvement **1,277 → 0,625 ms**, pire
+**5,539 → 1,385 ms**. 84 tests unitaires, options/panneau, nouveau test GPU
+`frame_state`, matcher, formats, déterminisme, intégration et réglages à chaud
+réussis ; builds Release x86_64 et i386 réussis. L'effet ressenti sur le vrai
+écran reste à mesurer. Prochaine étape : horodatages dans les enregistrements,
+puis plans manqués et variations du nombre de sorties. Original pré-correction
+pour A/B : `/tmp/bdex-before-phase/` (temporaire).
+
+Correction installée ensuite par `bash tools/install.sh` dans `~/.local`,
+64 et 32 bits ; bibliothèques installées comparées aux builds et identiques.
+Le panneau doit être relancé pour afficher `phase_smooth`, les jeux pour
+charger la nouvelle bibliothèque. Aucun commit ni push effectué.
+
+### 16/10 — temps précis des sources enregistrées
+
+Deuxième axe : instrumenter les captures du panneau pour pouvoir mesurer
+les à-coups du jeu séparément de ceux de l'affichage. `FrameRecorder::queued`
+reçoit désormais l'heure monotone `t0` du `present()` ; le writer produit
+`timestamps.csv` (nom, heure en ms, intervalle) et le flush avant `DONE`,
+qui déclenche le déplacement/archivage par le panneau. Aucune écriture
+supplémentaire sur le thread du jeu.
+
+`corpus_pack.py` conserve l'horloge même sur `--start` / `--count`, renomme
+les lignes selon les images retenues et refuse des temps invalides plutôt
+que de les perdre (le panneau supprime la source après un pack réussi).
+`corpus_fetch.py` restaure le CSV. `python3 tools/recording_report.py SEQ`
+rapporte FPS, min/médiane/p95/p99/max, écart-type et pics. Les anciens
+enregistrements restent utilisables ; le chemin CLI `--record` utilise
+toujours le dump et ne bénéficie pas de cette horloge.
+
+Tests `record_live` (40 sources, horloge monotone cohérente et génération
+maintenue) et `recording_times` (sélection/pack/fetch, rejet des données
+invalides, ancien format) réussis. Rejeu des temps source et mesure des
+plans manqués : prochaine recherche. Ne pas prétendre que l'instrumentation
+améliore à elle seule la fluidité.
+
+Mise à jour de l'enregistreur compilée et installée ensuite en 64/32 bits
+via le même installateur autorisé ; bibliothèques installées identiques
+aux builds. Les jeux doivent recharger la couche pour produire le CSV.
+
+### 16/10 — `refresh_fill` autour de 36 i/s ×4 et au-dessus
+
+Troisième correction : l'activation de `refresh_fill` exigeait
+`rafraîchissements/image > multiplicateur × 1,02`. Elle laissait donc le
+chemin fixe actif à 36–37 i/s ×4 sur 144 Hz (dont les captures Cyberpunk
+à ~36,2), y compris quand il dépassait l'écran. La couche suit désormais
+l'écran de deux sorties par image du jeu jusqu'au plafond alloué ;
+×8 aussi (sans sortie supplémentaire). Conditions de mode inchangées,
+opt-out `refresh_fill=0`. Même logique avec une cible `target_fps`.
+
+Simulateur, `phase_smooth` actif, grille non mesurée : RMS du pas de
+mouvement 36,2 i/s **1,207 → 0,312 ms**, 37 i/s **1,458 → 0,628**,
+48 i/s **2,457 → 0,094**. 86 tests unitaires, options/panneau,
+intégration et `gamescope_limit` réussis.
+
+Trois A/B GPU alternés, 36,2 i/s ×4, quality, 720p, gamescope 144 Hz :
+médianes affichées 143,3 → 142,6 i/s, tenues 6,3 → 6,3/s,
+réelle 32,6 → 33,9 ms ; rattrapages sans génération 4 → 3 par essai.
+Ces mesures sont bruitées et n'établissent pas un gain matériel net.
+Le gain établi est celui du mouvement dans le modèle. Détails et limites
+dans `analyse-saccades-2026-10-16.md`, logs/script temporaires
+`/tmp/bdex-refresh-cap-bench/`, `/tmp/bdex_refresh_cap_bench.py` ;
+ancienne couche avant cette correction : `/tmp/bdex-before-refresh-cap/`.
+
+Piste suivante : ces essais montrent encore des rattrapages qui remplacent
+une paire entière par sa seule image réelle, environ 3 fois en 8 s stables.
+Mesurer la cause (`workerWaitMs` ou huit jobs consécutifs tardifs), puis
+essayer de retirer moins de sorties pour un léger retard, en gardant le
+rattrapage immédiat quand le GPU/la présentation ne suit plus.
+
+Cette troisième correction a été compilée et installée en 64/32 bits,
+bibliothèques comparées aux builds et identiques.
+
+### 16/10 — rattrapage progressif des jobs tardifs sans pression GPU
+
+Quatrième axe, cause mesurée : sur le même banc 36,2 i/s, un rattrapage
+avec `workerWaitMs=0,000`, délai de première sortie 7,19–8,36 ms pour
+un intervalle de 27,62 ms, dû aux huit jobs tardifs consécutifs. Il
+supprimait toute la génération malgré un GPU qui suit.
+
+`catchup_smooth` (défaut 1, à chaud, panneau Cadence) : en interpolation
+pure, grille/horloge adaptative et historique valides, avec `phase_smooth`
+et `pace_plan`, sans `dedup`, garde n−1 sorties si n≥3, attente worker
+≤¼ I et délai GPU estimé <½ I. La continuité du mouvement reste active.
+Attente worker forte, GPU lent, ×2 ou autre mode : réelle seule comme
+avant. Stats distinctes (`intermediate frame(s) omitted to catch up`),
+debug détaille le motif et le nombre de sorties conservées.
+
+87 tests unitaires, options/panneau, intégration et `gamescope_limit`
+réussis ; le test GPU `frame_state` vérifie aussi le job raccourci ×4 → ×3.
+Trois A/B supplémentaires, 720p/quality/36,2 i/s sur gamescope 144 Hz :
+paires sans génération 0/3/0 → 0/0/0 ; sorties retirées progressivement
+0/0/0 → 6/4/1. Médianes réelle 32,4 → 32,7 ms, affichées 144,0 → 143,4/s,
+tenues 2,1 → 2,8/s (banc bruité). Le mécanisme ne jette plus toute la paire
+dans ce cas ; pas de gain global d'affichage établi. L'effet ressenti sur
+le jeu reste à vérifier. Opt-out : `catchup_smooth=0`.
+
+Logs/script temporaires : `/tmp/bdex-catchup-bench/`,
+`/tmp/bdex_catchup_bench.py`, diagnostic `/tmp/bdex-catchup-trace/` ;
+référence pré-correction `/tmp/bdex-before-catchup/`. Suite : rejeu aux
+temps source, puis retards GPU et trajectoires des rotations très floues.
+L'accès complet de la session est désormais actif (plus de demandes
+d'approbation nécessaires pour ces commandes).
+
+Contrôle du protocole : les premiers A/B ci-dessus utilisaient encore la
+couche WSI de gamescope (gamescope remet `ENABLE_GAMESCOPE_WSI` à son enfant).
+Retirer cette variable **dans l'enfant** et `WAYLAND_DISPLAY` reproduit le
+chemin X11/Xwayland : journaux sans `[Gamescope WSI]`, présentation immediate,
+grille non mesurée, grille virtuelle du panneau. Trois A/B supplémentaires :
+paires sans génération **3/4/0 → 0/0/0**, sorties retirées **0/0/0 → 0/0/7** ;
+médianes affichées **143,0 → 143,7/s**, tenues **1,5 → 1,5/s**, réelle
+**30,3 → 30,7 ms**. Conservation des intermédiaires vérifiée ; disparition
+de toutes les saccades non établie. Logs/script temporaires :
+`/tmp/bdex-catchup-x11-bench/`, `/tmp/bdex_catchup_x11_bench.py`.
+
+Le banc gamescope termine par un signal au démontage après la fermeture
+de la démo, avant et après (déjà connu de `latency_bench.sh`) : seules les
+mesures pendant la partie active sont utilisées. Correction compilée et
+installée en 64/32 bits. Aucun commit ni push effectué.
+
+### 16/10 — rejeu des temps source et réaction aux changements de cadence
+
+Le rejeu `bdex_demo --replay SEQ --replay-timing` utilise maintenant
+`timestamps.csv`, conserve les écarts avec `--replay-start/--replay-step`
+et s'arrête après la dernière source. Horloge manquante/incohérente :
+erreur explicite. `--replay-log FILE` (nouveau fichier) conserve source,
+échéance visée, appel de présentation réel et décalage. Un retard >0,5 ms
+décale les échéances suivantes : pas de rafale qui fausserait le banc.
+Les décalages restent visibles dans le CSV et dans le résumé. Le lecteur
+et l'horloge sont isolés de Vulkan (`demo/replay_timing.h`). Le banc PSNR
+`replay_bench.py` garde sa cadence constante et ses sources espacées.
+Les anciennes captures du joueur n'ont toujours pas d'horodatage ; ne pas
+inventer leurs temps ni les déduire des dates d'écriture des images.
+
+**Cinquième correction : la moyenne des temps d'image réagit trop tard aux
+changements durables.** Sur le rejeu contrôlé 30→60→30 i/s (100 sources par
+phase), l'ancien filtre 0,8/0,2 surproduit après la hausse des i/s. La file
+s'accumule ; attente worker jusqu'à 27 ms et rattrapages sans génération.
+`pacing::IntervalFilter`, partagé couche/captures Linux et Windows, conserve
+l'EMA sous gigue et sur pic isolé, mais adopte la moyenne de deux intervalles
+à ±10 % l'un de l'autre et tous deux à >25 % du même côté de l'estimation.
+Intervalle hors 0,5..500 ms : candidat effacé. L'horloge exacte du contenu
+reste `dt`. Aucun réglage supplémentaire à choisir.
+
+**Mesure GPU, cinq A/B alternés** : quality ×4, 1280×720, gamescope headless
+144 Hz, X11 sans WSI. Images de Cyberpunk réutilisées pour la charge ; temps
+**synthétiques**, pas ceux de la partie enregistrée. Médianes des essais :
+
+- latence réelle des 25 premières sources après passage à 60 i/s :
+  **28,76 → 19,55 ms** ;
+- plus grande attente worker : **27,12 → 13,31 ms** ;
+- rattrapages entièrement sans génération : **4 → 2** par essai
+  (individuellement 6/3/4/4/4 → 2/2/2/2/2) ;
+- décalage de l'horloge de rejeu : **11,07 → 0 ms** ;
+- affichées **142,9 → 143,5/s**, tenues **2,2 → 1,1/s** ;
+- latence réelle sur toute la partie après la première seconde :
+  **32,8 → 31,6 ms**.
+
+La baisse locale à la transition se répète dans les cinq paires. Le banc
+reste dépendant du compositeur et ne prouve pas que toutes les saccades du
+joueur ont disparu. Comme avant, gamescope termine par un signal après la
+fermeture de l'enfant ; seule sa partie active est mesurée. Référence avant
+correction `/tmp/bdex-before-interval-response/`, script
+`/tmp/bdex_interval_response_bench.py`, journaux et `summary.json` dans
+`/tmp/bdex-timed-transition-bench/`.
+
+**Écarté** : remplacer simplement la moyenne par chaque `dt`. Un modèle de
+comptage montre une perte de sorties au plafond ×5 sur alternance court/long.
+Le filtre avec confirmation conserve exactement l'ancien résultat sur les
+scénarios de gigue, temps alternés et pic modéré isolé testés.
+
+Vérifications réussies : **92 tests unitaires** (rejeu irrégulier, erreurs de
+CSV, surcharge sans rafale, nouveau filtre et faux positifs), clés des
+options et logique du panneau ; GPU : `integration`, `capture_linux`
+(interpolation/hybride/extrapolation/armement), `replay_bench`, `replay_timing`
+(sélection, fin, absence d'horloge, préservation des sources), `gamescope_limit`
+(limite Steam puis retrait). Contrôle MinGW x64/i686, ordre des en-têtes de
+la capture et liaison de ses appels réussis. Cela valide la compilation
+Windows, pas son exécution matérielle.
+
+Correction compilée et installée en Release 64/32 bits via `tools/install.sh`.
+Bibliothèques, démo et capture installées comparées aux builds : identiques.
+SHA256 du fichier de configuration identique avant/après installation.
+La correction sera chargée au prochain lancement du jeu ; la démo installée
+expose bien `--replay-timing/--replay-log`. Aucun commit ni push effectué.
+
+Suite : observer les trajectoires des sorties sur les rotations floues de
+Cyberpunk entre sources consécutives, puis les retards GPU qui manquent
+encore le plan. L'objectif continu d'amélioration reste actif.
+
+### Nuit du 16 au 17/10 — accélération et durée des deux paires
+
+**Observation de Cyberpunk** : synthèse ×4/quality entre 120 sources
+consécutives, pas entre sources espacées. Suivi aller-retour sur les trois
+intermédiaires : 111 paires exploitables, 18 781 trajectoires. Écart-type
+médian des quatre pas normalisés 0,0052 pour un pas nominal de 0,25 ;
+0,16 % des trajectoires retenues font plus de la moitié du mouvement au
+dernier pas. Le suivi exclut points occultés/illisibles : aucune conclusion
+sur toute l'image, ni sur les temps d'affichage absents des vieux fichiers.
+Inspection de la paire 95→96 : progression continue, flou déjà dans les
+sources. Artefacts temporaires : `/tmp/bdex-cp-pair96.png`,
+`/tmp/bdex-cp-motion.json`, script `/tmp/bdex_track_motion.py` ; OpenCV
+installé uniquement dans `/tmp/bdex-motion-deps`.
+
+**Sixième correction** : l'accélération comparait les déplacements de deux
+paires sans leurs durées. Pour r = durée courante / précédente, la courbure
+utilise `2r/(1+r) × (−B+rB0)`. Cela élimine l'accélération fictive d'une
+vitesse constante échantillonnée sur deux durées différentes. Actif avec
+`frame_timing`, ou `content_clock` + heures d'affichage ; `dedup` garde
+son chemin (les durées des sources distinctes ne sont pas sur CPU).
+
+Garde nécessaire : les seuls horodatages ne doivent ni amplifier ni inverser
+la courbure observée dans les vecteurs. Sans elle, le contenu à pas fixe
+présenté irrégulièrement perdait 0,25 dB. Le plancher de bruit est augmenté
+par la propagation de l'erreur du vecteur précédent ; la visibilité du pas
+précédent utilise `B/r`. Historique temporel invalide : aucune courbure.
+À ±0,5 % entre durées : expression historique, pour garder la voie stable
+sous petites variations de réveil. L'horloge du contenu et le plan de
+présentation restent ceux des corrections précédentes.
+
+Implémentation : `FrameGen::recordFrameState` suit les deux temps source
+même sans passe d'état GPU ; `recordAcquireSources` invalide une mesure
+manquante. `FgContext::flowIntervalRatio`, `SynthesisInputs::accelIntervalRatio`
+(associé à la paire gardée, aussi pour la sonde), `AccelMapPC` partagé avec
+le test ; shader `accel_map.comp` et extrapolation de `interpolate.comp`.
+Pas de nouvelle passe GPU. `bdex_offline` partage maintenant
+`pacing::IntervalFilter` avec les produits : il simulait encore l'ancien
+lissage après la cinquième correction.
+
+**Qualité, filtre identique des deux côtés**, quality ×4, 12 sources par
+cas, `frame_timing=1`, accélération 1, temps variables ±60 % :
+
+- panoramique : interpolation **36,63→37,41 dB** (+0,78), extrapolation
+  **31,85→35,42 dB** (+3,57), scintillement −0,80/−5,89 ;
+- scène avec personnage, parallaxe, flou : **+0,11/+0,74 dB**, scintillement
+  −0,21/−1,56 ; coups de souris **+0,24/+0,51**, scintillement −0,008/−0,054 ;
+- contenu à pas fixe avec seuls les appels irréguliers : différences
+  globales entre **−0,011 et +0,009 dB** ; panoramique inchangé ;
+- 72 sorties de Cyberpunk à cadence constante identiques octet par octet.
+
+Les scores comprennent les réelles (plafond 60 dB), comme le banc avec
+temps variables. Anciennes mesures +1,34/+4,15 dB : premiers essais avec
+une autre longueur et sans harmonisation du filtre, ne pas les citer comme
+chiffres de la version finale. Mesures finales :
+`/tmp/bdex-accel-timing-eval/aligned-final-results.log`, JSON par cas ;
+script `/tmp/bdex_accel_timing_final_eval.py`, référence compilée avec
+rapport forcé à 1 dans `/tmp/bdex-accel-final-baseline/build`.
+
+**Cadence 1440p, cinq A/B alternés** : rejeu 30→60→30 i/s, quality ×4,
+gamescope 144 Hz sans WSI. Médianes affichées **143,7→143,7/s**, tenues
+**1,0→1,1/s**, réelle **35,1→35,0 ms**, hors plan **0,3→0,3 %**. Profilage
+des périodes à 30 i/s : flux **1,96→1,95 ms**, synthèse de ses intermédiaires
+**6,07→6,00 ms**. Coût comparable, aucun gain global de cadence revendiqué.
+La série sans tolérance aux écarts minimes était moins régulière ; les
+mesures ci-dessus concernent la version retenue. Logs et `summary.json` :
+`/tmp/bdex-accel-timing-cadence-deadband/`, script
+`/tmp/bdex_accel_timing_deadband_bench.py`. Toujours le signal connu de
+gamescope au démontage, après fermeture de l'enfant ; mesures sur la partie
+active uniquement.
+
+**Tests** : 92 unitaires, clés des options et panneau réussis ; GPU :
+`frame_state` étendu aux cas analytiques d'accélération (durées inégales,
+pas fixe, bruit amplifié, pause), `offline`, `corpus`, `formats`, `matcher`,
+`min_limits`, `determinism`. Le test historique de `frame_timing` était devenu
+peu discriminant après harmonisation du filtre (gain 0,13 dB) : stimulus
+plus marqué, seuil +0,3 dB conservé. Nouveau test de vitesse constante sur
+la zone avec historique valide, en interp/extrap, temps variables et pas
+fixe. GPU en ligne avec `FRAME_TIMING=1` : `integration`, `capture_linux`
+(quatre modes), `live_config`, `replay_bench` réussis. MinGW x64/i686 complet
+et vérification ciblée de l'interface finale réussis ; Windows non exécuté
+sur matériel.
+
+**Défaut restant à ce stade, expliqué ensuite** : sur le panoramique
+contrôlé entier, l'extrapolation avec accélération garde une perte locale
+(34,86 sans, 34,58 avec), tandis que la zone observée est identique. Le
+flux précédent aux bords était suspecté ; l'enquête suivante identifie
+en fait un traitement `reveal_fill` sauté dans la branche accélérée.
+L'objectif continu reste actif ; aucun commit ni push effectué.
+
+Correction installée le 17/10 via `tools/install.sh` en Release 64/32 bits.
+Bibliothèques et capture Linux installées comparées aux builds : identiques.
+Configuration conservée (SHA256 avant/après identique). Chargement de la
+nouvelle couche au prochain lancement du jeu ; aucun redémarrage forcé.
+
+### 17/10 — remplissage des zones révélées et accélération
+
+**Septième correction** : `interpolate.comp` avait deux recherches de
+source en extrapolation. Celle à vitesse constante appliquait
+`reveal_fill` si les deux dernières sources oscillaient et si la
+trajectoire était incohérente ; celle avec accélération sautait ce choix,
+même avec une accélération localement nulle. Elle applique désormais le
+même critère et choisit le fond, plus lent. Pas de nouvelle ressource,
+descripteur, passe ou option. L'interpolation ne prend pas cette branche.
+
+**Qualité, avant/après cette seule correction** : panoramique contrôlé
+384×256, balanced ×4, horloge active, accélération 1 et `reveal_fill=1`,
+image entière : **34,575→34,866 dB** sous durées variables, scintillement
+−0,142 ; contenu à pas fixe avec appels irréguliers : **23,433→23,600 dB**,
+arêtes +0,495 dB. Les sorties interpolées sont inchangées. Sur les scènes
+720p avec personnage/parallaxe/flou et coups de souris, quality ×4,
+12 sources par cas : écarts globaux en extrapolation **−0,015 à 0 dB** ;
+arêtes jusqu'à −0,107 dB, SSIM +0,0002 à +0,0008. L'amélioration concerne
+les zones révélées ; aucun gain de cadence ou de ressenti en jeu n'est
+déduit de ces scores. Logs : `/tmp/bdex-reveal-accel-pan.log`,
+`/tmp/bdex-reveal-accel-games.log`, JSON dans les dossiers correspondants.
+
+**Écartés** : garder une copie du flux avant précédent pour vérifier son
+accord aller-retour, puis garder son coût de matching à la place. Les deux
+prototypes étaient presque neutres (au mieux +0,001 dB) et ne corrigeaient
+pas le panoramique. Aucune de leurs ressources/interfaces n'est retenue.
+Le test de vitesse constante de `test_offline.py` couvre maintenant
+l'image entière dans les quatre combinaisons interpolation/extrapolation
+et contenu variable/fixe, avec `reveal_fill=1` explicite. La restriction à
+la zone intérieure de la sixième correction est retirée. Test `offline`
+complet et test GPU `frame_state` réussis sur RTX 3060 Ti.
+
+**Coût et vérifications finales** : trois A/B alternés hors ligne, scène
+720p avec personnage, quality ×4, accélération et remplissage actifs :
+médiane des trois synthèses par entrée **2,20→2,21 ms**, analyse 0,09 ms
+et flux 1,42 ms des deux côtés. Ce profil local n'est pas une mesure de
+cadence affichée. Avec `reveal_fill=0`, 33 sorties avant/après identiques
+octet par octet. Journaux `/tmp/bdex-reveal-accel-perf/` et résumé JSON.
+Les quatre cas de vitesse constante sur image entière passent aussi sur
+lavapipe (LLVM 20.1.2, conteneur Ubuntu 24.04, quatre threads), journal
+`/tmp/bdex-reveal-accel-software.log`. Intégration de la couche et quatre
+modes de capture Linux réussis sous gamescope headless sans WSI, avec
+`FRAME_TIMING=1`, `EXTRAPOLATE_ACCEL=1`, `REVEAL_FILL=1` explicites.
+Même signal 139 connu de gamescope au démontage après la réussite des
+tests et la fermeture de l'enfant ; aucun échec de test masqué.
+
+Correction 7 installée le 17/10 via `tools/install.sh`, Release 64/32 bits.
+Comparaisons binaires avec les builds réussies pour les deux couches et
+la capture Linux. Configuration inchangée : SHA256
+`730a681b5cfff47ac3d1e2aeec03f8364fbe965133a76c36b378295fd09e4f49`.
+La couche sera chargée au prochain lancement du jeu. Version CMake
+0.5.6 conservée, 0.6 toujours non publiée ; aucun commit ni push effectué.
+Suite : reprendre les plans manqués sous charge GPU et distinguer les
+variations du contenu de celles des présentations. L'objectif continu
+reste actif.
+
+### 17/10 — rattraper plus tôt un nouveau décalage du plan
+
+**Huitième correction** : après un créneau perdu, le rattrapage progressif
+attendait encore huit jobs tardifs consécutifs. `pacing::PlanSlip` suit le
+nombre de périodes entières entre le plan du premier intermédiaire et le
+créneau atteignable lors de sa présentation. Une hausse demande le
+rattrapage dès la paire suivante (`Job::smoothCatchup`, drapeau atomique
+`smoothCatchupRequested_`). Un décalage identique n'est signalé qu'une fois.
+Démarrage, pause, changement de fréquence, absence de grille et déphasage
+d'une demi-période réinitialisent le suivi. Il s'agit de la grille du
+cadencement, pas d'une nouvelle mesure matérielle de l'affichage.
+
+Le thread du jeu conserve les gardes de `catchup_smooth` : interpolation
+pure planifiée avec `phase_smooth`, historique valide, sans `dedup`, hors
+`low_latency`, horloge adaptative avec au moins trois sorties, attente
+worker ≤ ¼ I et délai GPU estimé < ½ I. Le worker ne demande rien si sa
+première sortie arrive après la moitié de la durée du job. La prochaine
+paire est recalculée sur n−1 sorties, avec des phases réparties à nouveau.
+Pas de nouvelle passe, allocation ou attente GPU. Les autres retards
+durables gardent le détecteur conservateur à huit jobs et les chemins
+de pression restent inchangés.
+
+**Prototype écarté** : supprimer dans le worker les intermédiaires déjà
+calculés dont le créneau était perdu. Modèle à 100 Hz : premier pas de
+contenu 20 ms au lieu de 13,33 ms avec le rattrapage progressif (nominal
+10 ms). Cela récupérait la latence en amplifiant le saut de mouvement.
+Code et tests de ce prototype retirés. La marge fixe sur le délai du plan
+n'a pas été réessayée : les essais archivés du 14–15/10 étaient neutres.
+
+**Simulation 36 i/s / 144 Hz**, un retard ponctuel de synthèse : le
+rafraîchissement ajouté persiste **13→1 images du jeu**, plus grand pas
+de contenu pendant la récupération **11,111→11,111 ms**, une seule sortie
+retirée dans les deux cas. Le délai du vieux détecteur varie avec la phase
+(au moins huit jobs) ; le test vérifie cette propriété, pas un nombre
+exact indépendant de la grille. Tests du nouveau détecteur : signal unique,
+nouveau retard supplémentaire, diminution du retard, demi-phase,
+fréquence modifiée, pause et entrées invalides. **94 tests unitaires réussis.**
+
+**GPU, trois A/B alternés à 1440p** avec alternance de sources de Cyberpunk
+figées/en mouvement, 30 i/s synthétiques : activation précoce dans une
+paire seulement ; les deux autres ne déclenchent pas la nouvelle voie.
+Les variations de gamescope ne permettent pas de conclure globalement.
+Logs `/tmp/bdex-plan-slip-motion-bench/`.
+
+**Essai contrôlé de récupération**, trois A/B alternés, source répétée,
+quality ×4, 2560×1440, gamescope 144 Hz sans WSI : deux bibliothèques de
+test reçoivent les mêmes réveils worker retardés de **9 ms** aux jobs
+90/180/270. La référence désactive seulement la nouvelle demande précoce ;
+le rattrapage progressif existant reste actif. Ces délais et ce commutateur
+existent uniquement dans `/tmp/bdex-plan-slip-controlled/source`, jamais
+dans la source de production. Ce test isole la récupération d'un retard
+ponctuel ; il ne reproduit pas les temps des anciennes parties.
+
+- Latence des 15 premières réelles après chaque perturbation :
+  **43,04→38,65 ms** (médiane des trois essais, chacun moyenne des trois
+  perturbations) ;
+- excédent positif sur la médiane locale d'avant la perturbation :
+  **4,49→1,16 ms**, même agrégation ;
+- cadence affichée médiane **143,8→143,7/s**, images tenues **0,8→2,0/s** ;
+- aucune paire entièrement sans génération dans les six essais ; sorties
+  retirées progressivement **2/3/3→4/5/4**.
+
+Le gain local de latence se répète dans les trois paires. Aucun gain global
+de cadence ou de ressenti n'est établi ; le nombre d'images tenues reste
+bruité sur ce banc et n'est pas amélioré dans cette série. Les trois
+perturbations ont bien été enregistrées dans chacun des six journaux.
+Les deux variantes terminent avec le signal 11 connu de gamescope après
+la fermeture de l'enfant. Scripts `/tmp/bdex_plan_slip_controlled_build.py`,
+`/tmp/bdex_plan_slip_delay_bench.py` ; journaux et `summary.json` dans
+`/tmp/bdex-plan-slip-delays/`. Premier essai par modifications de config
+écarté (`/tmp/bdex-plan-slip-bench/INVALID.txt`) : heartbeat fautif et
+reconstruction de l'étage de sortie, donc stimulus invalide.
+
+**Vérifications finales et arrêt demandé** : 94 tests unitaires, clés des
+options et logique du panneau réussis. Intégration et réglages à chaud
+réussis sous gamescope headless sans WSI avec `FRAME_TIMING=1` ; son signal
+139 connu arrive après les deux succès et la fermeture de l'enfant.
+MinGW x64 (60 fichiers), i686 (53), ordre des en-têtes capture (38) et
+liaison des appels de la capture réussis ; Windows non exécuté sur matériel.
+Source de production contrôlée : aucun délai de test ni désactivation
+artificielle de la récupération.
+
+Correction 8 installée via `tools/install.sh` en Release 64/32 bits.
+Les deux couches et la capture Linux installées sont identiques aux builds
+de production. SHA256 de la configuration conservé :
+`730a681b5cfff47ac3d1e2aeec03f8364fbe965133a76c36b378295fd09e4f49`.
+Chargement au prochain lancement du jeu ; aucun redémarrage forcé, commit,
+push, tag ou release. Version CMake 0.5.6 conservée.
+
+**L'utilisateur a demandé de terminer la correction en cours puis
+d'arrêter. Cette correction est achevée ; le travail est arrêté à sa
+demande. Ne pas poursuivre d'autres axes sans nouvelle demande.**
+
+### 17/10 — demande de publication des changements
+
+L'utilisateur demande de committer et pousser les changements préparés sur
+`main` vers `origin`. La version reste 0.5.6 ; cette publication du code
+ne crée ni tag ni release 0.6. Le travail d'amélioration reste arrêté à sa
+demande ; cette étape porte uniquement sur la publication du travail testé.
+Contrôles disponibles avant commit : 94 tests unitaires, clés des options,
+panneau, intégration et réglages à chaud, MinGW x64/i686 et capture ; les
+validations GPU et qualité de chaque correction sont détaillées ci-dessus.

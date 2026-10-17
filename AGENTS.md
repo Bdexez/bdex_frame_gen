@@ -123,6 +123,8 @@ bdex-framegen --tuned-profile [JEU] [--apply]           # décisions d'online_tu
 bdex-framegen --record DIR [N] -- <jeu>                 # enregistre N images réelles (corpus)
 tools/corpus_pack.py DIR out.tar.gz --name X            # séquence -> archive (release GitHub "corpus", notée en CI)
 tools/cadence_report.py LOG [--hz HZ]                  # cadence réelle d'une partie (BDEX_FG_LATENCY_LOG) : affichées/s, tenues, hors plan, grille
+python3 tools/recording_report.py SEQUENCE             # temps des images réelles (timestamps.csv, enregistrements du panneau depuis le 16/10)
+build/demo/bdex_demo --replay SEQ --replay-timing --replay-log /tmp/rejeu.csv  # rejoue les temps source ; journal nouveau, retards de rejeu visibles
 tools/eval_sequence.py <dir_ppm> --variant KEY=VAL     # éval hors ligne (bdex_offline, sans fenêtre) sur séquence enregistrée
 tools/pending_decisions.py SEQ... [--only K,...]       # options en attente notées sur des jeux enregistrés : verdict par option
 tools/replay_bench.py SEQ [--multiplier M] [--other-layer NAME]  # éval EN LIGNE : séquence rejouée comme un jeu (bdex_demo --replay) à travers la couche
@@ -232,6 +234,17 @@ donne alors les temps d'affichage nominaux (k·P, sur la grille si connue)
 faux) et `job.intervalMs = n·P` (le pacing espace de P). 50 i/s → 144 Hz :
 144,0 i/s affichées. Même logique dans `VkCtx::synthesize` (capture), avec
 la fréquence du moniteur de l'overlay (`monitorHz`).
+**Changement de cadence** (16/10) : `pacing::IntervalFilter`, commun couche
+et captures Linux/Windows, garde l'EMA 0,8/0,2 sous gigue. Deux intervalles
+à ±10 % l'un de l'autre et tous deux à >25 % du même côté de l'estimation
+confirment une nouvelle cadence : moyenne de ces deux intervalles. Un
+intervalle hors 0,5..500 ms efface le candidat. Cela évite la surproduction
+prolongée après une hausse des i/s ; temps de contenu toujours mesurés par
+`dt`. Rejeu contrôlé 30→60→30 i/s à 144 Hz, cinq A/B alternés : réelle des
+25 premières images après hausse 28,8→19,5 ms (médianes), rattrapages sans
+génération 4→2 par essai. Gigue, alternance et ralentissement isolé testés
+identiques à l'ancien filtre. Ne pas remplacer simplement l'EMA par chaque
+`dt` : la saturation au plafond perd des sorties sous temps alternés.
 **×m qui ne remplit pas l'écran** (14/10) : `refresh_fill` (1 = dès ×3)
 passe en adaptatif vers la fréquence de l'écran avec un plafond m+1
 (`Config::frameCeiling`, sorties dimensionnées pour m+1) quand
@@ -244,6 +257,58 @@ le worker présente pour lui. `latency_log` : 4e colonne = rafraîchissement
 prévu. Statut `display_grid=2` = grille virtuelle. Mesurer la cadence :
 démo dans gamescope sans fenêtre + `BDEX_FG_LATENCY_LOG`, trois essais
 (le banc varie d'un lancement à l'autre).
+Depuis le 16/10, `refresh_fill` suit aussi l'écran si le multiplicateur
+atteint/dépasse sa fréquence (×4 autour de 36–37 i/s sur 144 Hz), au lieu
+de laisser un trou de ±2 % autour d'un rapport entier. `allowsRefreshFill`
+garde les conditions de mode ; `pacing::refreshFillFits` exige 2 sorties
+par image du jeu au minimum et un nombre dans le plafond alloué (×8 aussi,
+sans image supplémentaire). Tests de mouvement à 36, 36,2, 37, 40, 48, 50
+i/s : RMS réduit, cadence non ralentie dans le simulateur. Mesure matérielle
+bruitée : ne pas confondre ce résultat avec un gain ressenti prouvé.
+**`phase_smooth`** (16/10, défaut 1, à chaud) : interpolation pure avec un
+plan valide, `pacing::MotionClock` garde le rafraîchissement prévu de la
+réelle précédente ; `FrameTiming::displaySpanMs` → `FrameStatePC` → shader
+d'état : `t` divise l'écart d'affichage par cet intervalle prévu, au lieu
+de l'intervalle du contenu. L'alternance ×4/×5 à 30 i/s sur 144 Hz ne
+concentre plus l'erreur de phase dans un seul pas. Simulateur : RMS du pas
+1,277 → 0,625 ms, pire 5,539 → 1,385 ms, présentations identiques. L'horloge
+du contenu reste intacte ; sans plan, hybride, extrapolation, `dedup` :
+ancien chemin. Invalidation après pause/changement d'horloge ; test GPU
+`frame_state` pour la phase et la disposition des push constants.
+**`catchup_smooth`** (16/10, défaut 1, à chaud) : les huit jobs tardifs
+consécutifs ne justifient pas toujours une paire entière sans génération.
+Mesuré : attente worker 0 ms, première sortie prête en 7–8 ms sur une base
+de 27,6 ms. Avec interpolation pure, horloge adaptative, grille valide,
+`phase_smooth`/`pace_plan`, historique valide, sans `dedup`,
+`pacing::catchUpFrames` retire une seule sortie si attente ≤ ¼ I et délai
+GPU estimé < ½ I ; sinon vraie seule comme avant (×2 aussi).
+Stats : `intermediate frame(s) omitted to catch up` ; debug : cause, attente,
+délai et nombre de sorties conservées. L'horloge entre les deux réelles
+reste continue. Test GPU `frame_state` inclut le job raccourci ×4 → ×3.
+Depuis le 17/10, `pacing::PlanSlip` repère aussi un **nouveau** décalage
+du plan d'un rafraîchissement entier : le worker demande ce rattrapage dès
+la paire suivante (`Job::smoothCatchup`, `smoothCatchupRequested_`). Le
+même décalage n'est signalé qu'une fois ; démarrage, pause, changement de
+fréquence et déplacement de phase d'une demi-période réinitialisent le
+suivi. Actif seulement avec au moins trois sorties, les contrôles de
+pression habituels, hors `low_latency`. Ne pas retirer une sortie déjà
+calculée dans le worker : cela doublait un pas de mouvement (prototype
+écarté). L'ancien détecteur à huit jobs couvre les autres retards durables.
+**Enregistrements du panneau** (16/10) : `FrameRecorder::queued` reçoit
+l'heure monotone de `present()` (`t0`), puis le writer produit
+`timestamps.csv` (`frame,present_ms,interval_ms`) avant `DONE`. Ne jamais
+déduire ces temps des dates de fichier (écriture asynchrone). Le pack et le
+fetch du corpus préservent cette horloge, même sur une sous-séquence ;
+`recording_report.py` la résume. Ce sont les temps des sources, pas ceux de
+l'affichage. `bdex-framegen --record` reste le chemin dump, sans cette
+horloge. Tests : `record_live`, `recording_times`.
+Le rejeu `bdex_demo --replay SEQ --replay-timing` suit le CSV, s'arrête à la
+dernière source et préserve les écarts avec `--replay-start/--replay-step`.
+`--replay-log FILE` (nouveau fichier) note temps visé/réel et décalages de
+l'horloge quand la préparation ou le réveil dépasse l'échéance de 0,5 ms :
+pas de rafale de rattrapage, surcharge visible. Lecteur/horloge purs dans
+`demo/replay_timing.h` ; tests unitaires + `replay_timing` sur la démo Vulkan.
+`replay_bench.py` garde sa cadence constante pour la vérité terrain.
 `max_frame_latency` (1 par défaut, seulement en génération) : `present()`
 attend, hors `mutex_`, la fence du slot de l'image N−1. Puis
 **`latency_limiter`** (défaut 1, `syncFrameStart`) : la durée de cette
@@ -326,6 +391,36 @@ sous mouvement de caméra — 25 % des pixels changés ; à 1 %, la démo à
 caméra fixe perdait 0,3 dB en extrapolation). La synthèse a un binding 8
 « masque statique » générique (`FgContext::setStaticMask`, 1×1 à zéro
 sinon).
+**Durée des paires et accélération** (16/10) :
+`FgContext::flowIntervalRatio()` vient des deux `FrameTiming::sinceLastMs`,
+suivis sur CPU dans `recordFrameState`, même sans passe GPU. Actif avec
+`frame_timing` ou `content_clock` + temps d'affichage, pas avec `dedup`
+(intervalles distincts sur GPU). Rapport `r = I_courant/I_précédent` :
+`a = 2r/(1+r) × (−B + rB0)` au lieu de `−B+B0`, soit l'accélération
+physique × I_courant². Ne pas créer/amplifier/inverser une courbure sur le
+seul horodatage : module plafonné au changement observé et inversion
+rejetée. Le seuil de bruit est multiplié par
+`max(1, 2r/(1+r) × sqrt((1+r²)/2))`, car la quantification de B0 est
+amplifiée ; le test de visibilité utilise `B/r` pour le pas précédent.
+Historique temporel invalide : rapport 0, pas de courbure. Sans horloge,
+avec `dedup`, ou intervalles à ±0,5 % : rapport 1, expression historique.
+`recordAcquireSources` invalide le temps si le frame précédent n'a pas
+fourni son état. `SynthesisInputs::accelIntervalRatio` appartient à la
+paire gardée par la passe : la sonde d'extrapolation utilise encore cette
+paire avant `flowBegin`, pas l'horodatage du nouveau flux. `AccelMapPC`
+centralisé dans `framegen_internal.h`, même disposition dans le test GPU.
+`bdex_offline` partage désormais `pacing::IntervalFilter` avec les produits.
+
+**`reveal_fill` avec accélération** (17/10) : les deux recherches de source
+de l'extrapolation doivent appliquer le même choix du fond en cas
+d'oscillation et d'incohérence. L'ancien branchement n'appliquait ce choix
+que sans `extrapolate_accel` : même une accélération localement nulle
+perdait 0,29 dB sur le panoramique entier. Le test de vitesse constante
+dans `test_offline.py` inclut désormais le bord entrant, `reveal_fill=1`
+explicite pour les GPU logiciels ; ne pas masquer cette zone. Aucun
+historique de coût ou de flux avant supplémentaire n'est conservé : les
+deux prototypes de validation du flux précédent n'apportaient pas de gain.
+
 **`online_tune` — sonde de synthèse** (`passes/synthesis_probe.*`) : note
 les options de synthèse sur une image que le jeu a rendue et que la
 synthèse n'a pas vue (interpolation : B reconstruite de A et C, flux

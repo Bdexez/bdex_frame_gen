@@ -63,8 +63,10 @@ struct Config {
     bool  pipelineCache = true;   // the passes' compiled shaders kept on disk (~/.cache/bdex-framegen/pipelines-*.bin): faster starts
     bool  threadPriority = true;  // the presentation thread at a higher scheduling priority: real-time round-robin where permitted, else nice -10 from rtkit (as PipeWire's audio threads), else unchanged
     bool  preciseWake   = true;   // the presentation thread drops the kernel's timer slack (50 us by default on Linux): its sleeps until each present's moment end closer to it
-    int   refreshFill   = 1;      // fixed multiplier m whose output falls short of a fixed refresh rate by under a game frame (30 fps x4 on 144 Hz: 120 for 144): m or m+1 frames a game frame, one a refresh (the adaptive pacing), instead of a frame held every fifth refresh; 0 off, 1 from x3 (x2 at 60 fps on 144 Hz would hold its real frame ~7 ms more), 2 from x2
+    int   refreshFill   = 1;      // pure interpolation: follow the refresh rate with 2..m+1 outputs (at most 8) while the allocated outputs can fill it; also cap a multiplier that exceeds the screen; 0 off, 1 from x3, 2 from x2 (x2 at 60 fps on 144 Hz holds the real frame ~7 ms more)
     bool  pacePlan      = true;   // on a refresh grid, interpolated frames are planned for their refresh when the game presents (from the usual GPU delay) and presented for it: the content each shows is that refresh's
+    bool  phaseSmooth   = true;   // planned pure interpolation: spread movement over the scheduled span between real frames, avoiding a single large step when their refresh phase changes
+    bool  catchupSmooth = true;   // a new plan slip or persistent display backlog with a ready GPU: re-space the next pair over one fewer output (pure interpolation with an adaptive clock)
     bool  virtualGrid   = true;   // adaptive pacing without a measured refresh grid: a grid of the output period at a phase of our own (moved when frames get replaced), so every refresh gets one frame
     bool  vrrHold       = true;   // on a variable-refresh screen (present feedback, no refresh grid), interp_hold 1 counts as auto: frames show when presented, so the real one may go sooner
     float interpHold    = 1.0f;   // interpolation: the real frame's hold as a fraction of the usual one ((m-1)/m of an interval at xm): the generated frames go out closer together before it, showing the content of their own display time (motion stays right, spacing uneven); 1 = evenly spaced, 0.5 = half the added latency; -1 (any negative) = auto: as close as the screen allows (one refresh apart), only where it saves at least 2 ms
@@ -213,10 +215,10 @@ struct Config {
     bool sameOutputSettings(const Config& o) const;
     // refresh_fill may give a game frame one frame more than `multiplier`
     // (interpolation, fixed multiplier or target_fps): the most frames a present can have.
-    int frameCeiling() const {
-        const bool fill = refreshFill > 0 && multiplier >= (refreshFill >= 2 ? 2 : 3) && multiplier < 8 && !extrapolate && !hybrid && !adaptive;
-        return multiplier + (fill ? 1 : 0);
+    bool allowsRefreshFill() const {
+        return refreshFill > 0 && multiplier >= (refreshFill >= 2 ? 2 : 3) && !extrapolate && !hybrid && !adaptive;
     }
+    int frameCeiling() const { return multiplier + (allowsRefreshFill() && multiplier < 8 ? 1 : 0); }
     // Same, starting from product defaults instead of Config{} (the capture
     // app defaults to extrapolation, still overridable by the file and env).
     static Config loadWithDefaults(Config defaults, const std::string& extraProcess = "");

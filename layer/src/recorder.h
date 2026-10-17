@@ -15,7 +15,8 @@ namespace bdex {
 
 // A recording for the evaluation corpus (the control panel's « Enregistrer »,
 // DeviceData::recordDir): the game's next N real frames as fNNNN.ppm (at most
-// 960 pixels wide), then DONE. The GPU copies each frame into one of a few
+// 960 pixels wide), timestamps.csv (the game's present times), then DONE.
+// The GPU copies each frame into one of a few
 // host buffers; a thread of its own converts and writes them. Written in
 // present() — a fence wait, then the conversion and the file, on the game's
 // thread — a recording held a game at 3 fps, so its frames were far apart
@@ -34,7 +35,7 @@ public:
     // for the writer when every buffer is in use. VK_NULL_HANDLE: stopped.
     VkBuffer next(VkExtent2D extent, const OutputEncoding& encoding, const SlotDone& done);
     // That copy went into submission (slot, generation).
-    void queued(uint32_t slot, uint64_t generation, double gameFps);
+    void queued(uint32_t slot, uint64_t generation, double gameFps, double presentMs);
     // Frames whose submission finished go to the writer.
     void pump(const SlotDone& done);
     // Every queued frame written (waits for the GPU and the writer).
@@ -55,6 +56,7 @@ private:
         VkExtent2D extent{};
         OutputEncoding encoding;
         double gameFps = 0.0;
+        double presentMs = 0.0;  // steady clock, sampled on the game thread, not when the file is written
     };
     void writerLoop();
 

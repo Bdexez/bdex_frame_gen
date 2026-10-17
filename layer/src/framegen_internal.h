@@ -23,6 +23,7 @@ struct MatchPC { int32_t size[2]; int32_t blocks[2]; int32_t radius; int32_t has
 struct SizePC { int32_t size[2]; };
 struct HistPC { int32_t size[2]; int32_t tiles; };
 struct ReducePC { int32_t size[2]; int32_t tiles; float cutHist; float cutLow; };
+struct AccelMapPC { int32_t fine[2]; int32_t size[2]; float flowInvSize[2]; float flowScale; float intervalRatio; };
 
 struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; int32_t subpixel; };
 // interpolate.comp's kFeatures bits: the opt-ins a synthesis variant compiles in.
@@ -33,16 +34,17 @@ enum : uint32_t {
     SYNTH_PIXEL_VECTORS = 64u, SYNTH_OCCLUSION = 256u,
     SYNTH_STATIC_GUARD = 1024u, SYNTH_STATIC_MASK = 2048u, SYNTH_DEBUG_CONF = 4096u,
 };
-struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; float occlusionStrength; float staticGuard; int32_t splat; int32_t pixelVectors; int32_t transfer; int32_t timing; int32_t localCut; float accel; int32_t bicubic; float staticFrames; int32_t revealFill; float staticSoft; };
+struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; float occlusionStrength; float staticGuard; int32_t splat; int32_t pixelVectors; int32_t transfer; int32_t timing; int32_t localCut; float accel; int32_t bicubic; float staticFrames; int32_t revealFill; float staticSoft; float flowIntervalRatio; };
 struct GlobalPC { int32_t size[2]; int32_t radius; int32_t mode; };
 struct UpscalePC { int32_t outSize[2]; int32_t srcSize[2]; uint32_t encoding; int32_t filter; };
-struct FrameStatePC { int32_t size[2]; int32_t mode; int32_t multiplier; float sinceLastMs; float intervalMs; int32_t flags; int32_t gateCount; uint32_t dupMaxPixels; float displayMs[kMaxFrames]; int32_t realPos; };
+struct FrameStatePC { int32_t size[2]; int32_t mode; int32_t multiplier; float sinceLastMs; float intervalMs; int32_t flags; int32_t gateCount; uint32_t dupMaxPixels; float displayMs[kMaxFrames]; int32_t realPos; float displaySpanMs; };
 struct CasPC { int32_t size[2]; uint32_t encoding; float sharpness; };
 
 constexpr uint32_t kBlockSize = 8;
 constexpr uint32_t kFineBlock = 4;
 constexpr uint32_t kPushSize = 128;  // the guaranteed minimum of maxPushConstantsSize
 static_assert(sizeof(InterpPC) <= kPushSize && sizeof(MatchPC) <= kPushSize && sizeof(FrameStatePC) <= kPushSize);
+static_assert(sizeof(AccelMapPC) <= kPushSize);
 
 // Frame state buffer layout (the State block of frame_state.comp; the
 // synthesis shaders read its head).

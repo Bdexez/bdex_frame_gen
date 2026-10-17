@@ -38,9 +38,49 @@ Varier les jeux compte plus que le nombre de scènes par jeu.
   qui démarre directement dans la scène. Sans génération : ×1, images
   réelles seulement.
 
-Les fichiers s'appellent `sc0_<taille>_<n>_real_….ppm`. Si un dossier
-contient aussi des `sc1_…` (la swapchain a été recréée, par exemple après un
-changement de résolution), ne garder qu'une des deux séries.
+Les enregistrements du panneau s'appellent `f0000.ppm`, `f0001.ppm`… puis
+`DONE`. Depuis le 16/10, `timestamps.csv` conserve aussi l'heure monotone de
+présentation de chaque source et son intervalle avec la précédente. Les
+dates de fichier ne donnent pas cette information : les écritures sont
+asynchrones. Pour mesurer les variations du temps d'image :
+
+```bash
+python3 tools/recording_report.py ~/.cache/bdex-framegen/recordings/<séquence>
+```
+
+Les archives créées par `corpus_pack.py` conservent ces temps, y compris avec
+`--start` / `--count`, et `corpus_fetch.py` les restaure. Les captures plus
+anciennes restent utilisables pour l'image, mais ne permettent pas de
+retrouver le temps précis de chaque source. Cette mesure porte sur les
+présentations du jeu ; pour les images affichées, utiliser `latency_log` et
+`tools/cadence_report.py`.
+
+Pour reproduire ces variations dans la démo à travers la couche :
+
+```bash
+BDEX_FG_CONFIG=/dev/null BDEX_FG=1 BDEX_FG_PRESET=quality BDEX_FG_MULTIPLIER=4 \
+  build/demo/bdex_demo --replay <séquence> --replay-timing --replay-log /tmp/rejeu.csv
+```
+
+`--replay-timing` utilise `timestamps.csv` à la place de `--fps` et s'arrête
+à la dernière source. `--replay-start` / `--replay-step` conservent les
+écarts de temps des sources sélectionnées. L'option refuse une horloge
+manquante ou incohérente. Le journal CSV donne le décalage source, l'heure
+visée, l'heure d'appel de présentation et les retards qui décalent la suite
+(`source_ms,target_ms,present_ms,shift_ms`, après le nom de l'image). Une
+machine de rejeu trop lente décale les échéances suivantes, sans rafale de
+rattrapage ; ces décalages sont aussi résumés dans le terminal. Le fichier
+du journal doit être nouveau. Le nombre d'i/s et la fluidité d'un rejeu
+fortement décalé ne représentent plus le rythme du jeu enregistré.
+
+Ce mode mesure le comportement temporel. Le banc de qualité
+`replay_bench.py` conserve sa cadence constante et ses sources espacées
+pour disposer d'images de référence entre elles.
+
+Le chemin dump de la ligne de commande produit
+`sc0_<taille>_<n>_real_….ppm`, sans `timestamps.csv`. Si un dossier contient
+aussi des `sc1_…` (swapchain recréée, par exemple après un changement de
+résolution), ne garder qu'une des deux séries.
 
 ## 3. Obtenir les verdicts
 

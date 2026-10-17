@@ -14,12 +14,14 @@ fetched and scored by the Linux CI on every push (tests/test_corpus.py with
 BDEX_CORPUS_DIR); add their references with `test_corpus.py build --update`.
 """
 import argparse
+import csv
 import io
 import json
 import tarfile
 from pathlib import Path
 
 from PIL import Image
+from recording_report import read_timestamps
 
 
 def main():
@@ -42,12 +44,35 @@ def main():
     h = max(2, round(src.height * a.width / src.width / 2) * 2)
     meta = {"name": a.name, "frames": len(files), "source_size": [src.width, src.height], "size": [a.width, h],
             "source": str(Path(a.frames).name), "start": a.start, "note": a.note}
+    timing = None
+    clock = Path(a.frames) / "timestamps.csv"
+    if clock.exists():
+        # The panel may delete the source directory after a successful pack:
+        # never silently discard an invalid or incomplete recording clock.
+        try:
+            times = {Path(name).stem: ms for name, ms, _ in read_timestamps(clock)}
+            selected = [times[f.stem] for f in files]
+            if any(b <= a for a, b in zip(selected, selected[1:])):
+                raise ValueError("frame order differs from timestamp order")
+        except (ValueError, KeyError, OSError) as e:
+            ap.error(f"cannot preserve recording timestamps: {e}")
+        buf = io.StringIO(newline="")
+        writer = csv.writer(buf)
+        writer.writerow(["frame", "present_ms", "interval_ms"])
+        for i, ms in enumerate(selected):
+            writer.writerow([f"f{i:04d}.ppm", f"{ms:.3f}", f"{ms - selected[i-1] if i else 0:.3f}"])
+        timing = buf.getvalue().encode()
+        duration = selected[-1] - selected[0]
+        meta.update(timing_clock="steady_present_ms", duration_ms=duration,
+                    game_fps=(len(selected) - 1) * 1000.0 / duration)
     with tarfile.open(a.out, "w:gz") as tar:
         def add(name, data):
             info = tarfile.TarInfo(f"{a.name}/{name}")
             info.size = len(data)
             tar.addfile(info, io.BytesIO(data))
         add("meta.json", json.dumps(meta, indent=1).encode())
+        if timing is not None:
+            add("timestamps.csv", timing)
         for i, f in enumerate(files):
             buf = io.BytesIO()
             Image.open(f).convert("RGB").resize((a.width, h), Image.LANCZOS).save(buf, "PNG", optimize=True)

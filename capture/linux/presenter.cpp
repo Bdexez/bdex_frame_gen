@@ -496,8 +496,8 @@ int Presenter::synthesize(const X11Capture::Frame& f) {
     double dt = 0.0;
     if (lastArrival_.time_since_epoch().count() != 0) {
         dt = std::chrono::duration<double, std::milli>(content - lastArrival_).count();
-        if (dt > 0.5 && dt < 500.0) intervalMs_ = intervalMs_ * 0.8 + dt * 0.2;
     }
+    intervalMs_ = intervalFilter_.update(intervalMs_, dt);
     lastArrival_ = content;
 
     const Config& cfg = layerDev_.config;

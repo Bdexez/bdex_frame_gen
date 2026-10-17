@@ -862,15 +862,15 @@ int VirtualSwapchain::chooseMultiplier() {
         // refresh_fill: x4 at 30 fps on 144 Hz shows 120 frames a second on
         // 144 refreshes — one frame held two refreshes every fifth, 24 times a
         // second, and the frames' content off their display by up to half a
-        // refresh. Where the multiplier falls short of the refresh rate by
-        // less than a frame a game frame, m or m+1 frames, one a refresh (the adaptive pacing,
-        // virtual_grid without a measured grid): every refresh a new frame.
-        // (~1.4 ms more of hold on average, a fifth more synthesis.)
-        if (cfg_.frameCeiling() > maxMult && frameIntervalMs_ > 0.0) {
+        // refresh. When it meets or exceeds the refresh rate too (36-37 fps
+        // x4 on 144 Hz), use the adaptive pacing: independent GPU origins
+        // and more output than refreshes otherwise replace frames unevenly.
+        // At least two outputs per game frame, up to the allocated ceiling.
+        if (cfg_.allowsRefreshFill() && frameIntervalMs_ > 0.0) {
             const double hz = displayHz(), r = hz * frameIntervalMs_ / 1000.0;  // refreshes a game frame
-            if (hz > 0.0 && r > maxMult * 1.02 && r <= (maxMult + 1) * 1.02) {
+            if (hz > 0.0 && pacing::refreshFillFits(r, cfg_.frameCeiling())) {
                 adaptivePeriodMs_ = 1000.0 / hz;
-                return adaptive_.next(frameIntervalMs_, adaptivePeriodMs_, maxMult + 1);
+                return adaptive_.next(frameIntervalMs_, adaptivePeriodMs_, cfg_.frameCeiling());
             }
         }
         return maxMult;
@@ -899,11 +899,12 @@ int VirtualSwapchain::chooseMultiplier() {
     // got x4, 120 frames for 144 refreshes; 40 fps x3 — so where one frame
     // more a game frame fills it, the adaptive pacing (as for a fixed one).
     const int fillFrom = cfg_.refreshFill >= 2 ? 2 : 3;
-    if (cfg_.refreshFill > 0 && dynMult_ >= fillFrom && dynMult_ < cfg_.frameCeiling() && frameIntervalMs_ > 0.0) {
+    if (cfg_.allowsRefreshFill() && dynMult_ >= fillFrom && frameIntervalMs_ > 0.0) {
         const double r = target * frameIntervalMs_ / 1000.0;
-        if (r > dynMult_ * 1.02 && r <= (dynMult_ + 1) * 1.02) {
+        const int ceiling = std::min(dynMult_ + 1, cfg_.frameCeiling());
+        if (pacing::refreshFillFits(r, ceiling)) {
             adaptivePeriodMs_ = 1000.0 / target;
-            return adaptive_.next(frameIntervalMs_, adaptivePeriodMs_, dynMult_ + 1);
+            return adaptive_.next(frameIntervalMs_, adaptivePeriodMs_, ceiling);
         }
     }
     return dynMult_;
@@ -1119,12 +1120,13 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         return pending;
     }
 
-    // Frame interval estimate (EMA) for pacing.
+    // Frame interval estimate for pacing: EMA under jitter, new cadence
+    // after two consistent intervals confirm a large rate change.
     double dt = 0.0;
     if (lastAppPresent_.time_since_epoch().count() != 0) {
         dt = std::chrono::duration<double, std::milli>(t0 - lastAppPresent_).count();
-        if (dt > 0.5 && dt < 500.0) frameIntervalMs_ = frameIntervalMs_ * 0.8 + dt * 0.2;
     }
+    frameIntervalMs_ = intervalFilter_.update(frameIntervalMs_, dt);
     lastAppPresent_ = t0;
     if (lastReturnMs_ > 0.0) {
         const double own = msOf(t0) - lastReturnMs_;
@@ -1135,13 +1137,38 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     // even be submitted — every real image still waits for the display. With
     // generation producing frames at the display's rate, such a queue never
     // drains by itself (measured in gamescope after a 1 s frame limit: 100 ms
-    // more from present to screen, for good): this present shows its real
-    // frame alone, until the queue is gone.
-    const bool lagging = lateJobs_.load(std::memory_order_relaxed) >= 8;
+    // more from present to screen, for good): give the queue room to drain.
+    // Under pressure this present shows only its real frame; a light job
+    // with a persistent display backlog can instead omit one output below.
+    const bool smoothCatchup = generating_ && !cfg_.lowLatency && cfg_.catchupSmooth && cfg_.phaseSmooth && cfg_.pacePlan &&
+        !cfg_.hybrid && !cfg_.extrapolate && !cfg_.dedup && !historyLost_ && prevIndex_ >= 0;
+    const bool missedPlan = smoothCatchupRequested_.exchange(false, std::memory_order_relaxed);
+    const double readyLag = readyLagMs_.load(std::memory_order_relaxed);
+    const bool recoverMiss = missedPlan && smoothCatchup && cfg_.frameCeiling() >= 3 &&
+        adaptivePeriodMs_ > 0.0 && frameIntervalMs_ >= 3.0 * adaptivePeriodMs_ && readyLag > 0.0 &&
+        pacing::catchUpFrames(3, true, workerWaitMs, frameIntervalMs_, adaptivePeriodMs_, readyLag) > 1;
+    const bool lagging = lateJobs_.load(std::memory_order_relaxed) >= 8 || recoverMiss;
     if (lagging) lateJobs_.store(0, std::memory_order_relaxed);
     const bool catchUp = !cfg_.lowLatency && ((!gateOnDisplay && workerWaitMs > 0.25 * frameIntervalMs_) || lagging);
-    if (catchUp) ++statsBehind_;
-    const int mult = generating_ && !catchUp ? chooseMultiplier() : 1;
+    int mult = generating_ && !catchUp ? chooseMultiplier() : 1;
+    if (catchUp) {
+        const double ready = readyLagMs_.load(std::memory_order_relaxed);
+        // A light job held behind its predecessor on the display grid: give
+        // back one refresh while keeping the intermediate movement. Under
+        // worker/GPU pressure, keep the real-only path which avoids flow work.
+        if (smoothCatchup &&
+            lagging && workerWaitMs <= 0.25 * frameIntervalMs_) {
+            const int nominal = chooseMultiplier();
+            double lastGridMs, gridPeriodMs;
+            if (displayGrid(lastGridMs, gridPeriodMs))
+                mult = pacing::catchUpFrames(nominal, lagging, workerWaitMs, frameIntervalMs_, adaptivePeriodMs_, ready);
+            if (mult > 1) statsTrimmed_ += uint32_t(nominal - mult);
+        }
+        if (mult == 1) ++statsBehind_;
+        BDEX_DBG("catch up: keep %d output(s), worker wait %.3f ms, interval %.3f ms, persistent late %d, ready lag %.3f ms",
+                 mult, workerWaitMs, frameIntervalMs_, int(lagging), ready);
+        if (recoverMiss) BDEX_DBG("catch up: newly missed refresh of the presentation plan");
+    }
     lastPresentFrames_ = mult;
     {
         // virtual_grid: frames one output period apart on a grid of our own
@@ -1267,6 +1294,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     fg_->collectMeanCost(slotIdx);  // the slot's fence was waited in nextSlot
     double planned[8] = {};  // Job::planned
     bool planActive = false;
+    if (!generating_) motionClock_.reset();
     if (generating_) {
         fg_->recordAcquireSources(cb, prev, static_cast<int>(imageIndex));
         fg_->recordAnalysis(cb, parity_, imageIndex);
@@ -1321,6 +1349,8 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             timing.displayMs[7] = float(at[order.real]);
             for (int o = 0; o + 1 < mult && o < 7; ++o) timing.displayMs[o] = float(at[order.position(o)]);
         }
+        timing.displaySpanMs = motionClock_.span(planActive ? planned[order.real] : 0.0, dt,
+            cfg_.phaseSmooth && planActive && !cfg_.hybrid && !cfg_.extrapolate && !cfg_.dedup && !timing.reset);
         fg_->recordFrameState(cb, timing);
         fg_->profileMark(cb, slotIdx, FrameGen::StageAnalysis);
         if (interpolate) {
@@ -1481,7 +1511,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             }
         }
     }
-    if (recBuf_) recorder_->queued(slotIdx, slot.generation, frameIntervalMs_ > 0.0 ? 1000.0 / frameIntervalMs_ : 0.0);
+    if (recBuf_) recorder_->queued(slotIdx, slot.generation, frameIntervalMs_ > 0.0 ? 1000.0 / frameIntervalMs_ : 0.0, msOf(t0));
     recBuf_ = VK_NULL_HANDLE;
     if (recorder_) recorder_->pump([this](uint32_t s, uint64_t g, bool w) { return slotDone(s, g, w); });
 
@@ -1498,6 +1528,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     job.intervalMs = frameIntervalMs_;
     if (interpolate) std::copy(std::begin(planned), std::end(planned), std::begin(job.planned));
     job.plan = interpolate && planActive;
+    job.smoothCatchup = job.plan && smoothCatchup && mult >= 3;
     // Adaptive: one output period between the frames (paceTarget spreads
     // intervalMs / frames).
     if (interpolate && adaptivePeriodMs_ > 0.0) job.intervalMs = adaptivePeriodMs_ * mult;
@@ -1587,6 +1618,12 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
                 len += snprintf(skip + len, sizeof(skip) - size_t(len), ", %u frame(s) without generation to catch up",
                                 statsBehind_);
             statsBehind_ = 0;
+            if (statsTrimmed_ && len < int(sizeof(skip))) {
+                const int written = snprintf(skip + len, sizeof(skip) - size_t(len),
+                    ", %u intermediate frame(s) omitted to catch up", statsTrimmed_);
+                if (written > 0) len += std::min(written, int(sizeof(skip)) - len - 1);
+            }
+            statsTrimmed_ = 0;
             if (gsLimited_.load() && len < int(sizeof(skip)))
                 len += snprintf(skip + len, sizeof(skip) - size_t(len), ", gamescope frame limit %.0f fps", gsHz_.load());
             if (feedback_) {

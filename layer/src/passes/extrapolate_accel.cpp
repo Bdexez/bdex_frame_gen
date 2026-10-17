@@ -10,8 +10,6 @@
 namespace bdex {
 namespace {
 
-struct AccelMapPC { int32_t fine[2]; int32_t size[2]; float flowInvSize[2]; float flowScale; };
-
 class ExtrapolateAccelPass : public FgPass {
 public:
     const char* name() const override { return "extrapolate_accel"; }
@@ -43,14 +41,16 @@ public:
     // flow (on a repeat, dedup keeps the flow: the acceleration is zero).
     void fineFlow(FgContext& ctx, VkCommandBuffer cmd, uint32_t, const Config& cfg) override {
         const bool kept = active(cfg) && ctx.flowLastFrame();
+        intervalRatio_ = ctx.flowIntervalRatio();
         weight_ = kept && (cfg.extrapolate || cfg.hybrid) ? cfg.extrapolateAccel : 0.f;
         interpWeight_ = kept && (!cfg.extrapolate || cfg.hybrid) ? cfg.interpAccel : 0.f;
         if (interpWeight_ <= 0.f) return;
         const FgFineLevel l0 = ctx.fineLevel();
         const VkExtent2D r = ctx.renderExtent(), d = ctx.displayExtent();
         const float sx = float(d.width) / r.width, sy = float(d.height) / r.height, f2r = ctx.flowToRender();
-        AccelMapPC pc{{(int32_t)l0.fine.width, (int32_t)l0.fine.height}, {(int32_t)d.width, (int32_t)d.height},
-                      {1.f / (l0.fine.width * l0.block * f2r * sx), 1.f / (l0.fine.height * l0.block * f2r * sy)}, f2r * sx};
+        fg::AccelMapPC pc{{(int32_t)l0.fine.width, (int32_t)l0.fine.height}, {(int32_t)d.width, (int32_t)d.height},
+                      {1.f / (l0.fine.width * l0.block * f2r * sx), 1.f / (l0.fine.height * l0.block * f2r * sy)},
+                      f2r * sx, ctx.flowIntervalRatio()};
         auto& vt = ctx.device().vt;
         vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe_.pipeline);
         vt.CmdPushConstants(cmd, pipe_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
@@ -61,11 +61,15 @@ public:
     void beforeSynthesis(FgContext&, VkCommandBuffer, float t, int32_t, bool, const Config&,
                          SynthesisInputs& in) override {
         in.accel = t > 1.f ? weight_ : interpWeight_;
+        // A probe may synthesise from the previous pair before flowBegin
+        // resets its weights. Keep that pair's interval with its weight.
+        in.accelIntervalRatio = intervalRatio_;
     }
 
 private:
     float weight_ = 0.f;        // for this frame's extrapolations (0 = constant velocity)
     float interpWeight_ = 0.f;  // ... and interpolations
+    float intervalRatio_ = 1.f;
     FgPipeline pipe_;
     AllocatedImage map_;
     VkDescriptorSet set_ = VK_NULL_HANDLE;

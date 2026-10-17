@@ -12,6 +12,7 @@
 // The engine's headers before Xlib's: X11 defines None, Bool, Status...
 // as macros (Config::Debug::None).
 #include "device.h"
+#include "pacing.h"
 
 #include "x11_capture.h"
 #include <vulkan/vulkan_xlib.h>
@@ -120,6 +121,7 @@ private:
     bool genEnabled_ = true;
     Job job_;
     clock::time_point lastArrival_{};
+    pacing::IntervalFilter intervalFilter_;
     double intervalMs_ = 16.7, adaptiveAcc_ = 0.0, displayHz_ = 0.0;
     int hudGame_ = 0, hudOut_ = 0;
 

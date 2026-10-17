@@ -120,6 +120,7 @@ void VirtualSwapchain::runJob(const Job& job) {
     // With FIFO the presentation engine paces the frames; otherwise they are
     // spread over the game's frame interval.
     const bool paced = job.pacing && !job.fifo && job.frames > 1;
+    if (!paced || !job.smoothCatchup) planSlip_.reset();
 
     if (job.realIndex > 0 || job.frames == 1) {
         // Interpolation, hybrid (and a lone real frame): every frame is
@@ -193,8 +194,15 @@ void VirtualSwapchain::runJob(const Job& job) {
         auto noteLateness = [&](int i) {
             if (!paced || i != 0) return;
             pacing::Grid g;
-            if (lastLandMs_ <= 0.0 || !displayGrid(g.lastMs, g.periodMs)) return;
+            if (lastLandMs_ <= 0.0 || !displayGrid(g.lastMs, g.periodMs)) { planSlip_.reset(); return; }
             g.valid = true;
+            const bool slipped = planSlip_.update(job.planned[0], lastLandMs_, g.periodMs, job.smoothCatchup);
+            const double readyMs = std::chrono::duration<double, std::milli>(origin - job.start).count();
+            if (slipped && readyMs < 0.5 * job.intervalMs) {
+                smoothCatchupRequested_.store(true, std::memory_order_relaxed);
+                BDEX_DBG("presentation plan slipped: first output %.3f ms late, ready lag %.3f ms",
+                         lastLandMs_ - job.planned[0], readyMs);
+            }
             // (Or the job itself began a refresh late: the worker was still
             // presenting the job before.)
             if (pacing::jobLate(msOf(origin), lastLandMs_, jobStartDelayMs_, g))

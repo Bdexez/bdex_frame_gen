@@ -69,6 +69,7 @@ layout(push_constant) uniform PC {
     float displayMs[8];  // FLAG_DISPLAY: predicted display times of outputs 0..6 and the real frame [7]
     int realPos;         // display position of the real frame among the m (frame_order.h): outputs before it are
                          // interpolated, those after it extrapolated (m-1 = interpolation, 0 = extrapolation)
+    float displaySpanMs; // phase_smooth: scheduled interval between real anchors (pure interpolation only), 0 = off
 } pc;
 
 #define FLAG_RESET 1   // no usable previous frame: restart the clock
@@ -147,8 +148,11 @@ void main() {
                 // real frame shows "now", so an output displayed d ms after
                 // it shows now + d (d < 0 before it, interpolation).
                 float d = pc.displayMs[i - 1] - pc.displayMs[7];
+                // Keep the actual content clock for flow/dedup. Only the
+                // interpolation phase follows the two scheduled real anchors.
+                float span = pc.displaySpanMs > 0.0 && !dup && pc.realPos == m - 1 ? pc.displaySpanMs : interval;
                 if (extrap) t = 1.0 + clamp((d + ageT) / interval, 0.0, 1.0);
-                else t = clamp(1.0 + (d + ageT) / interval, 0.0, 1.0);
+                else t = clamp(1.0 + (d + ageT) / span, 0.0, 1.0);
             } else {
                 // Written as the fixed position plus a correction, so that a
                 // steady game (interval == I, no repeat) gets exactly the fixed

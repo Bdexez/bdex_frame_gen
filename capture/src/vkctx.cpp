@@ -573,16 +573,17 @@ int VkCtx::synthesize(const Capture::Frame& f, bool& consumed) {
         if (!rebuildEngine(f.width, f.height)) return -1;
     }
 
-    // Capture interval estimate (EMA) for the pacing and the HUD, and the
-    // content interval for frame_timing / dedup: measured on the compositor's
+    // Capture interval estimate (EMA, fast on confirmed rate changes) for
+    // pacing/HUD, and content interval for frame_timing / dedup: measured
+    // on the compositor's
     // timestamps (Frame::contentAt), not on when the capture thread woke up.
     const auto now = clock::now();
     const auto content = f.contentAt.time_since_epoch().count() != 0 ? f.contentAt : now;
     double dt = 0.0;
     if (lastArrival_.time_since_epoch().count() != 0) {
         dt = std::chrono::duration<double, std::milli>(content - lastArrival_).count();
-        if (dt > 0.5 && dt < 500.0) intervalMs_ = intervalMs_ * 0.8 + dt * 0.2;
     }
+    intervalMs_ = intervalFilter_.update(intervalMs_, dt);
     lastArrival_ = content;
 
     const Config& cfg = layerDev_.config;

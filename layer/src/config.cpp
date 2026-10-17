@@ -309,6 +309,8 @@ const std::vector<OptionDef>& registry() {
     B("vrr_hold", nullptr, &Config::vrrHold, kLive),
     I("refresh_fill", nullptr, &Config::refreshFill, 0, 2),
     B("pace_plan", nullptr, &Config::pacePlan, kLive),
+    B("phase_smooth", nullptr, &Config::phaseSmooth, kLive),
+    B("catchup_smooth", nullptr, &Config::catchupSmooth, kLive),
     B("virtual_grid", nullptr, &Config::virtualGrid, kLive),
     B("precise_wake", nullptr, &Config::preciseWake, kLive),
     B("thread_priority", nullptr, &Config::threadPriority),

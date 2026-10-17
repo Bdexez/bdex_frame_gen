@@ -6,6 +6,74 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Movement across refresh phases (2026-10-16)
+
+- **Earlier gradual recovery after a missed refresh** (layer): a new
+  whole-refresh slip of a presentation plan requests `catchup_smooth` for
+  the next pair. It previously waited for eight consecutive late jobs.
+  The next pair is re-spaced over one fewer output; already-generated
+  intermediates are preserved. Repeated observations of the same slip,
+  startup and half-refresh grid phase changes do not create new requests.
+  Existing worker/GPU pressure checks still apply. No additional GPU work.
+- **Revealed areas with extrapolation acceleration**: `reveal_fill` now
+  also handles an oscillating source search when `extrapolate_accel` is
+  enabled. Previously, enabling acceleration skipped this treatment even
+  where the measured acceleration was zero. The constant-motion regression
+  now includes the entering border. No additional GPU pass or resource.
+- **Acceleration with uneven source times**: `interp_accel` and
+  `extrapolate_accel` now account for the duration of both flow pairs when a
+  content clock is active. Constant velocity sampled over different intervals
+  must not become a curved trajectory. Timing cannot create a stronger or
+  reversed acceleration than the flow suggests; the noise floor follows the
+  previous vector's amplified rounding error. History visibility uses the
+  previous interval too. Nearly equal intervals (within 0.5%) keep the historical expression;
+  duplicate detection keeps its existing path. No additional GPU pass.
+- **Cadence changes** (layer and capture): two similar source intervals
+  departing from the pacing estimate by more than 25% now update it directly.
+  Ordinary jitter and isolated slow frames keep the existing EMA. The old
+  estimate overproduced for several frames after an FPS rise, building a
+  queue and discarding interpolation to catch up. Five alternating GPU A/B
+  runs, controlled 30 → 60 → 30 fps replay on 144 Hz: median latency of the
+  first 25 real frames after the rise 28.8 → 19.5 ms; median real-only
+  catch-ups per run 4 → 2. These are controlled replay measurements, not a
+  measurement of the user's game's original cadence.
+- **`catchup_smooth`** (on, layer): a persistent display backlog with little
+  worker wait and a first output ready within half a game frame now omits
+  one intermediate output while keeping interpolation. It used to show the
+  real frame alone even with 0 ms worker wait, causing a deliberate movement
+  jump. Requires phase smoothing, a display grid and adaptive pacing; GPU
+  or worker pressure keeps immediate real-only recovery. Applied live.
+- **`refresh_fill`** also follows the screen when the selected multiplier
+  meets or exceeds its rate (x4 at 36–37 fps on 144 Hz). It previously only
+  filled a shortfall greater than 2%, leaving a gap around integer ratios
+  and allowing fixed multipliers to overflow the screen. Uses the existing
+  adaptive pacing from two outputs per game frame, within the allocated
+  ceiling, including x8. Simulator at 36.2 fps / 143.912 Hz: motion-step RMS
+  1.207 → 0.312 ms; at 48 fps: 2.457 → 0.094 ms. Real display measurements
+  on headless gamescope remain noisy; these are simulator gains.
+- **`phase_smooth`** (on, layer interpolation): use the scheduled span
+  between real frames for the interpolation phase. At 30 fps on 144 Hz,
+  alternating four and five output frames left the refresh phase error in
+  a single movement step. The pacing simulator now measures 0.63 ms RMS
+  step error instead of 1.28 ms, worst 1.39 instead of 5.54 ms, with the
+  same presentation times. No additional hold or GPU pass. Inactive without
+  a presentation plan, in hybrid/extrapolation or with duplicate detection.
+  Can be switched off live for comparison. GPU timing-shader regression test
+  covers its phase and the unchanged source/duplicate/prediction clocks.
+- Panel recordings now keep each source frame's present time in
+  `timestamps.csv`, sampled on the game thread and written asynchronously
+  before `DONE`. Corpus packing and unpacking preserve the clock when
+  selecting a subsequence. `python3 tools/recording_report.py SEQUENCE`
+  reports frame-time percentiles and spikes. This measures source presents;
+  display cadence still requires a latency log. Older recordings still work.
+- **Timed source replay**: `bdex_demo --replay DIR --replay-timing` follows
+  `timestamps.csv`, including source selections, and ends at the last source.
+  `--replay-log FILE` records requested/actual presents and overload shifts.
+  Late preparation shifts following deadlines instead of sending a burst;
+  invalid/missing clocks are rejected. The quality benchmark keeps its
+  constant-rate mode. CPU parser/scheduler tests and a Vulkan demo test cover
+  uneven timing, source slices, end conditions and preservation of recordings.
+
 ### x4 on 30 fps: every refresh a new frame; frames on curved trajectories (2026-10-14)
 
 - **`refresh_fill`** (on from x3): a fixed multiplier whose output falls
