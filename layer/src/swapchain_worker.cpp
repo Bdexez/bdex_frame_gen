@@ -500,7 +500,7 @@ void VirtualSwapchain::feedbackLoop() {
                 // layer's hold and the compositor included).
                 if (!cfg_.latencyLog.empty()) latencyLogLine(cfg_.latencyLog, entry.presentMs, now, entry.real, entry.plannedMs);
                 const double latency = now - entry.presentMs;
-                if (entry.real && latency >= 0.0 && latency < 1000.0) {
+                if (entry.real && latency >= 0.0 && latency < 1000.0 && !latencyFromX11_.load(std::memory_order_relaxed)) {
                     fbLatencyMs_ = fbLatencyMs_ < 0.0 ? latency : fbLatencyMs_ * 0.9 + latency * 0.1;
                     fbLatencySum_ += latency;
                     ++fbLatencyCount_;
@@ -565,7 +565,7 @@ void VirtualSwapchain::resumeFeedback() {
 }
 
 double VirtualSwapchain::displayLatencyMs() {
-    if (!feedback_) return -1.0;
+    if (!feedback_ && !latencyFromX11_.load(std::memory_order_relaxed)) return -1.0;
     std::lock_guard<std::mutex> lock(fbMutex_);
     return fbLatencyMs_;
 }
@@ -911,6 +911,26 @@ VkResult VirtualSwapchain::presentCopied(const Job& job, const Copied& c) {
     lastLandMs_ = displayGrid(lastMs, periodMs)
                       ? lastMs + std::ceil((lastPresentMs_ - lastMs) / periodMs) * periodMs
                       : 0.0;
+    // x11_clock in place of the present feedback (which, under Xwayland in
+    // immediate mode, reports each present at once): the real frame reaches
+    // the compositor at the refresh after its present, and the screen a
+    // refresh later at the soonest — the latency from there.
+    if (c.real && lastLandMs_ > 0.0 && x11Grid()) {
+        std::lock_guard<std::mutex> lock(fbMutex_);
+        const bool x11 = !displayClock_.valid();
+        latencyFromX11_.store(x11, std::memory_order_relaxed);
+        const double latency = lastLandMs_ + periodMs - msOf(job.start);
+        if (x11 && latency >= 0.0 && latency < 1000.0) {
+            fbLatencyMs_ = fbLatencyMs_ < 0.0 ? latency : fbLatencyMs_ * 0.9 + latency * 0.1;
+            fbLatencySum_ += latency;
+            ++fbLatencyCount_;
+            const double frameLatency = lastLandMs_ + periodMs - job.frameStartMs;
+            if (job.frameStartMs > 0.0 && frameLatency >= 0.0 && frameLatency < 1000.0) {
+                fbFrameLatencySum_ += frameLatency;
+                ++fbFrameLatencyCount_;
+            }
+        }
+    }
     if (feedbackId && r >= 0) {
         {
             std::lock_guard<std::mutex> lock(fbMutex_);

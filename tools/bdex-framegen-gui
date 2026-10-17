@@ -146,6 +146,7 @@ _EN = {
  'hybride': 'hybrid',
  "limite Steam {} i/s (rien au-delà ne s'affiche)": 'Steam limit {} fps (nothing above it is shown)',
  'écran {} Hz': 'screen {} Hz',
+ 'écran {} Hz (cadence lue auprès du serveur X)': 'screen {} Hz (timing read from the X server)',
  'latence {} ms': 'latency {} ms',
  'affichées {}/s, tenues {}/s': 'shown {}/s, held {}/s',
  'budget GPU : niveau {}': 'GPU budget: level {}',
@@ -2062,6 +2063,8 @@ def describe_entry(e):
         hz, limit = float(e.get("refresh_hz", 0)), float(e.get("limit_hz", 0))
         if limit > 0:   # Steam's framerate limit (gamescope): nothing past it is shown
             parts.append(tr(f"limite Steam {limit:.0f} i/s (rien au-delà ne s'affiche)"))
+        elif hz > 0 and e.get("display_grid") == "3":   # x11_clock: the compositor's refreshes, from the X server
+            parts.append(tr(f"écran {hz:.0f} Hz (cadence lue auprès du serveur X)"))
         elif hz > 0:
             parts.append(tr(f"écran {hz:.0f} Hz"))
         lat = float(e.get("latency_ms", -1))

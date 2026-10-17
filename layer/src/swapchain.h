@@ -291,6 +291,7 @@ private:
     // X server, where the present feedback finds none (Xwayland in immediate
     // mode reports each present complete at once). Its own lock.
     std::unique_ptr<X11PresentClock> x11Clock_;
+    std::atomic<bool> latencyFromX11_{false};  // the latency figures come from x11_clock's refreshes (presentCopied)
     bool x11Grid() { return x11Clock_ && x11Clock_->refreshHz() > 0.0; }
     // What reached the screen: the present feedback's counts, or the X
     // server's where its grid stands in for the feedback's (fbMutex_ held).
