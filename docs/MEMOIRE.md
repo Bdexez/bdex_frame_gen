@@ -2719,3 +2719,10 @@ de l'heure de la présentation) : `cadence_report.py` redevient lisible
 sous Xwayland. Note de banc : l'outil `mscwatch`, même passif, perturbait le
 banc à 1 Hz (cascades de décalages toutes les 1 000 ms pile) ; les compteurs
 de la couche (statistiques « N refresh(es) held ») suffisent.
+
+**Résidu à 1440p (gamescope), suite** : sur 30 s, les incidents viennent par
+**phases** de plusieurs secondes (0–8 puis 25–47 par 2 s), GPU stable à
+2115 MHz et 50 % — la dérive lente du rythme du jeu face aux tics, pas la
+température. Essai : retenir la synthèse suivante jusqu'à la présentation de
+la réelle précédente si elle tombe dans le rafraîchissement : 71/149 contre
+308/55 sans (bruit dominant) et +4 à +10 ms sur la réelle — écarté.
