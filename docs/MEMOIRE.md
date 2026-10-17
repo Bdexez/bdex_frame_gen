@@ -2726,3 +2726,16 @@ de la couche (statistiques « N refresh(es) held ») suffisent.
 température. Essai : retenir la synthèse suivante jusqu'à la présentation de
 la réelle précédente si elle tombe dans le rafraîchissement : 71/149 contre
 308/55 sans (bruit dominant) et +4 à +10 ms sur la réelle — écarté.
+
+### 17/10 — fin de session (arrêt demandé par l'utilisateur)
+
+État : tout est committé sur `main` (dernier correctif `7f5d711`) et installé
+localement en 64/32 bits ; **rien n'est poussé** (CI GitHub indisponible ce
+mois-ci : vérifications locales — tests, réplique Docker, MinGW, TSan). En
+attente : le test en jeu de l'utilisateur (ligne du panneau « écran 144 Hz
+(cadence lue auprès du serveur X) », affichées ~144/s, tenues ~0/s) ; s'il
+reste des saccades, activer `latency_log` dans sa config et lire
+`tools/cadence_report.py`. Pistes ouvertes : panneau HUD translucide (décor
+vu au travers), mosaïque du personnage qui pivote (`mosaic_blur` en option),
+contention GPU/compositeur à 1440p (par phases). Captures pleine taille
+(`record_scale = 1`) nécessaires pour juger le HUD sur de vrais jeux.
