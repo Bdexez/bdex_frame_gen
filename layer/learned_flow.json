@@ -1,0 +1,8 @@
+{
+ "train_texels": 2839832,
+ "test_texels": 1435904,
+ "epochs": 40,
+ "hidden": 16,
+ "held_out_epe_engine": 0.5222,
+ "held_out_epe_corrected": 0.2065
+}
