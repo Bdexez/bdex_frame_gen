@@ -6,6 +6,26 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### The screen's refresh under Xwayland (2026-10-17)
+
+- **`x11_clock`** (on, layer): an X11 window — every Proton game on a
+  Wayland desktop — gets its refresh grid from the X server. Xwayland
+  reports an immediate-mode present complete at once, so the present
+  feedback saw no grid and the layer paced on a grid of its own at an
+  arbitrary phase: depending on the phase taken at start, 9 to 23 frames a
+  second were replaced and as many refreshes held (measured on gamescope's
+  Xwayland and on Hyprland, x4 at 30 fps, 144 Hz). The layer now listens to
+  the X Present completion events of the game's window on a connection of
+  its own (libxcb loaded at run time) and presents 0.6 refresh ahead of the
+  moments Xwayland hands the window to the compositor: 0.3 to 1.5 a second
+  on Hyprland at 1440p. Status `display_grid=3`; the shown / held counts now
+  come from the X server there (they counted the layer's own presents).
+- **Plan phase**: a presentation plan that fills every refresh chained each
+  job on the previous one and kept the phase of the grid it started on,
+  even after the grid moved (virtual_grid's half-period shift, a measured
+  grid replacing the virtual one). The last planned refresh is now taken on
+  the current grid.
+
 ### Movement across refresh phases (2026-10-16)
 
 - **Earlier gradual recovery after a missed refresh** (layer): a new

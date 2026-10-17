@@ -42,6 +42,11 @@ public:
     // the « Auto » multiplier to x1). A period the intervals fit in whole
     // multiples of the hint's is the hint's.
     void setHint(double hz) { hintMs_ = hz > 0.0 ? 1000.0 / hz : 0.0; }
+    // The jitter tolerated on an interval (ms, and as a share of the period
+    // tried): the observer's wake-up by default; x11_clock's times are the
+    // compositor's frame callbacks, up to ~1 ms off (KWin) — at 0.5 ms / 8 %
+    // the grid came and went.
+    void setJitter(double ms, double share) { jitterMs_ = ms; jitterShare_ = share; }
     bool valid() const { return periodMs_ > 0.0; }
     double periodMs() const { return periodMs_; }
     double refreshHz() const { return valid() ? 1000.0 / periodMs_ : 0.0; }
@@ -57,6 +62,8 @@ private:
     double last_ = 0.0;
     double periodMs_ = 0.0;
     double hintMs_ = 0.0;
+    double jitterMs_ = 0.5;
+    double jitterShare_ = 0.08;
     int sinceEstimate_ = 0;
 };
 

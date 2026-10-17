@@ -1320,6 +1320,10 @@ un vrai écran.
   - Mesures sous gamescope : charger la build par un `XDG_DATA_HOME` privé.
     L'environnement de l'hôte charge la couche **installée** ;
     `VK_IMPLICIT_LAYER_PATH` cache la couche WSI de gamescope.
+  - **Jamais dans la session de l'utilisateur** (17/10, sa demande : « évite
+    de toucher à mon écran ou ma souris ») : pas de sortie sans tête ni de
+    fenêtre via `hyprctl`. Xwayland : `kwin_wayland --virtual --xwayland`
+    ou l'Xwayland de gamescope sans tête (sans `ENABLE_GAMESCOPE_WSI`).
 - **Avant de pousser du C++** : `tools/ci/run.sh build` et `mingw`. Après
   toute modification du worker ou de la synchronisation, toujours la
   reproduction Docker (lavapipe a révélé un danger WAW que le GPU du poste ne
@@ -2427,3 +2431,88 @@ demande ; cette étape porte uniquement sur la publication du travail testé.
 Contrôles disponibles avant commit : 94 tests unitaires, clés des options,
 panneau, intégration et réglages à chaud, MinGW x64/i686 et capture ; les
 validations GPU et qualité de chaque correction sont détaillées ci-dessus.
+
+### 17/10 (suite) — la grille de l'écran sous Xwayland : `x11_clock`
+
+Demande : saccades « comme si l'écran était figé puis avançait d'un coup »,
+×4 à 30 i/s, écran 143,912 Hz sans VRR sous Hyprland (jeux Proton, donc
+**Xwayland**). Les sept enregistrements du 16/10 (150 images 853×480) ne
+montrent pas de saccade du jeu lui-même : le panoramique d'Oblivion avance
+par pas réguliers (balayages de souris), aucune image répétée hors menus.
+
+**Ce que la couche voyait sous Xwayland.** `auto` présente en IMMEDIATE (pas
+de MAILBOX en Xwayland NVIDIA). Xwayland copie alors chaque présentation
+dans la fenêtre tout de suite et la déclare **terminée tout de suite** :
+`vkWaitForPresentKHR` revient à l'heure de la présentation, pas de
+l'affichage. Mesuré sous KWin virtuel 60 Hz : « displayed 120 fps ». Donc :
+pas de grille mesurée (statut `refresh_hz=0`, `display_grid=2`), grille
+virtuelle à **phase arbitraire**, et les compteurs affichées/tenues/
+remplacées (panneau, `--report`, et les bancs « X11 sans WSI » du 16/10)
+comptaient nos présentations, pas l'écran. La détection d'images
+remplacées qui déplace la phase virtuelle était aveugle.
+
+**Vérité terrain** : les événements X Present `CompleteNotify` de la
+fenêtre (sélectionnables par n'importe quel client) portent, pour chaque
+présentation, le MSC et l'UST de la fenêtre au moment de son exécution.
+Sous Xwayland, l'UST est le dernier rappel de trame du compositeur, c'est-
+à-dire l'instant où Xwayland lui remet le contenu de la fenêtre ; sur un
+serveur X, le dernier vblank. Deux présentations dans le même MSC = la
+première écrasée ; un intervalle de deux périodes entre tics = un
+rafraîchissement sans image nouvelle. Outil : `mscwatch` (scratchpad) sur
+la fenêtre de la démo.
+
+**Loterie de la phase, mesurée** (gamescope sans tête 144 Hz, son Xwayland,
+sans couche WSI, contexte du panneau émulé, ×4 30 i/s 720p, 5 lancements) :
+3 lancements à 0–0,2 remplacée/s, 2 à **16 et 23 remplacées + autant de
+tenues par seconde** selon la phase prise au démarrage. Sous le vrai
+Hyprland (sortie sans tête, 1440p quality, 2 lancements) : **9 et 15/s**.
+C'est une saccade qui dépend de la session, cohérente avec « souvent ».
+
+**Corrections :**
+- `x11_clock` (défaut 1, option du panneau) : la couche intercepte
+  `vkCreateXlibSurfaceKHR`/`vkCreateXcbSurfaceKHR` (fenêtre de chaque
+  surface, `InstanceData::x11Windows`), ouvre sa propre connexion xcb
+  (libxcb/libxcb-present par dlopen, aucune dépendance de build) et apprend
+  la grille des UST (`X11PresentClock`, `PresentTimeline`, `DisplayClock`
+  avec une tolérance de 1 ms / 15 % : les rappels de KWin dévient jusqu'à
+  ~0,9 ms, à 0,5 ms la grille allait et venait, validée en ~6 s au lieu de
+  2). Elle remplace la grille virtuelle (statut `display_grid=3`), et les
+  compteurs affichées/tenues/remplacées viennent du serveur X quand le
+  retour d'affichage n'a pas de grille.
+- **Avance 0,6 période** sur cette grille (`pacing::kX11Lead`,
+  `Grid::lead`) : le tic d'Xwayland n'est pas un vblank, ce qui a été
+  présenté depuis part au tic suivant où qu'il tombe, mais la copie
+  d'Xwayland (sur un GPU occupé par notre synthèse) et le travail du
+  compositeur doivent être finis à son échéance. 0,3 : 5–9 rafraîchissements
+  sautés/s à 720p ; 0,85–0,95 : 3 à 35/s en 1440p (une image pas prête à
+  l'heure part quand elle l'est, en fin de période) ; 0,6 : 0 à 720p, 1 à
+  10 en 1440p sur gamescope. **Sous Hyprland, 1440p : 1,5 et 0,3/s contre
+  9 et 15 pour la grille virtuelle.** (Essais arrêtés à la demande de
+  l'utilisateur : ne plus toucher à sa session, cf. §10.)
+- **Bogue du plan corrigé** : `planLands` enchaînait chaque job sur
+  `lastPlannedMs + P`. En remplissage (une image par rafraîchissement) le
+  job suivant bute toujours dessus : la chaîne gardait **pour toujours** la
+  phase de la grille qui l'avait commencée — la grille virtuelle « déplacée
+  d'une demi-période » ne déplaçait donc pas les images, et la grille X,
+  arrivée après la virtuelle, restait 0,6 période à côté (30 à 37
+  remplacées/s). `lastPlannedMs` est maintenant recalé sur le point le plus
+  proche de la grille courante (test `pacing_plan_follows_a_moved_grid`).
+
+**Contention GPU, non résolue** : le rafraîchissement sauté suit la
+présentation de l'image réelle, quand la rafale de synthèse du job suivant
+(1440p quality ×4 : ~6 ms d'interpolation + 0,8 ms de flux d'un bloc)
+occupe le GPU au moment où le compositeur compose. En préréglage
+performance, même phase : ~0/s. Essayés et écartés : `async_compute` (pire :
+14–18/s, le calcul concurrent ralentit davantage le compositeur) ; priorité
+globale basse de la file de synthèse (sans effet net) ; une marge dans le
+plan pour la première image du job (moins de sorties, +3 à 5 ms, et les
+rattrapages de `catchup_smooth` retirent des sorties). Piste : soumettre
+chaque intermédiaire à son heure (juste-à-temps) au lieu d'une rafale.
+
+**Bancs** : `kwin_wayland --virtual --xwayland` (60 Hz) et gamescope sans
+tête 144 Hz sans WSI, avec `BDEX_FG_STATUS_DIR` + `app.session` réécrit
+chaque seconde avec le pid de la démo (lancée par `exec`, pas sous
+`timeout` : sinon le pid ne correspond pas et rien ne génère). Les
+compteurs de la couche ne valent que si `display_grid` vaut 1 ou 3.
+Scripts dans le scratchpad de la session (`gsrun.sh`, `kwrun.sh`,
+`mscwatch.c`, `mscan.py`).

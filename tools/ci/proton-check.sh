@@ -57,6 +57,8 @@ check() {  # check NAME EXE
   grep -q "frames presented" <<<"$out" || { echo "$1: the program did not finish:"; tail -30 <<<"$out"; exit 1; }
   grep -q "VK_LAYER_BDEX_framegen" <<<"$out" || { echo "$1: the layer did not load into Wine"; tail -20 <<<"$out"; exit 1; }
   grep -q "generation on" <<<"$out" || { echo "$1: no generation:"; tail -20 <<<"$out"; exit 1; }
+  # x11_clock: the X Present events of the window Wine hands winevulkan.
+  grep -q "x11_clock: watching" <<<"$out" || { echo "$1: x11_clock did not watch the window:"; grep x11_clock <<<"$out"; exit 1; }
   ratio=$(grep -E "game [0-9.]+ fps -> output" <<<"$out" | tail -2 | head -1 | sed -n "s/.*(x\([0-9.]*\)).*/\1/p")
   grep -E "fps -> output" <<<"$out" | tail -2
   echo "$1: generation on, output/game x$ratio"

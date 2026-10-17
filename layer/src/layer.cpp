@@ -248,6 +248,66 @@ VKAPI_ATTR VkResult VKAPI_CALL GetPhysicalDeviceSurfaceCapabilities2KHR(VkPhysic
     return r;
 }
 
+#ifdef __linux__
+// X11 surfaces: the window each one shows, for the swapchains' X Present
+// clock (x11_present_clock.h). The create infos by their layout, without the
+// Xlib / xcb headers (VkXlibSurfaceCreateInfoKHR, VkXcbSurfaceCreateInfoKHR).
+struct XlibSurfaceCreateInfo {
+    VkStructureType sType;
+    const void* pNext;
+    VkFlags flags;
+    void* dpy;
+    unsigned long window;
+};
+struct XcbSurfaceCreateInfo {
+    VkStructureType sType;
+    const void* pNext;
+    VkFlags flags;
+    void* connection;
+    uint32_t window;
+};
+
+template <typename Info>
+VkResult createX11Surface(VkInstance instance, const char* name, const Info* pCreateInfo,
+                          const VkAllocationCallbacks* pAllocator, VkSurfaceKHR* pSurface) {
+    InstanceData* inst = getInstance(dispatchKey(instance));
+    if (!inst) return VK_ERROR_INITIALIZATION_FAILED;
+    using Fn = VkResult(VKAPI_PTR*)(VkInstance, const Info*, const VkAllocationCallbacks*, VkSurfaceKHR*);
+    auto next = reinterpret_cast<Fn>(inst->vt.GetInstanceProcAddr(instance, name));
+    if (!next) return VK_ERROR_EXTENSION_NOT_PRESENT;
+    const VkResult r = next(instance, pCreateInfo, pAllocator, pSurface);
+    if (r == VK_SUCCESS && pCreateInfo && pSurface) {
+        std::lock_guard<std::mutex> lk(inst->surfMutex);
+        inst->x11Windows[*pSurface] = static_cast<uint32_t>(pCreateInfo->window);
+    }
+    return r;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL CreateXlibSurfaceKHR(VkInstance instance, const XlibSurfaceCreateInfo* pCreateInfo,
+                                                    const VkAllocationCallbacks* pAllocator, VkSurfaceKHR* pSurface) {
+    return createX11Surface(instance, "vkCreateXlibSurfaceKHR", pCreateInfo, pAllocator, pSurface);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL CreateXcbSurfaceKHR(VkInstance instance, const XcbSurfaceCreateInfo* pCreateInfo,
+                                                   const VkAllocationCallbacks* pAllocator, VkSurfaceKHR* pSurface) {
+    return createX11Surface(instance, "vkCreateXcbSurfaceKHR", pCreateInfo, pAllocator, pSurface);
+}
+#endif
+
+// A destroyed surface's handle may come back for another one.
+VKAPI_ATTR void VKAPI_CALL DestroySurfaceKHR(VkInstance instance, VkSurfaceKHR surface,
+                                             const VkAllocationCallbacks* pAllocator) {
+    InstanceData* inst = getInstance(dispatchKey(instance));
+    if (!inst) return;
+    if (surface != VK_NULL_HANDLE) {
+        std::lock_guard<std::mutex> lk(inst->surfMutex);
+        inst->waylandSurfaces.erase(surface);
+        inst->x11Windows.erase(surface);
+    }
+    auto next = reinterpret_cast<PFN_vkDestroySurfaceKHR>(inst->vt.GetInstanceProcAddr(instance, "vkDestroySurfaceKHR"));
+    if (next) next(instance, surface, pAllocator);
+}
+
 // ---------------------------------------------------------------------------
 // Device
 // ---------------------------------------------------------------------------
@@ -1059,6 +1119,11 @@ const Hook g_instanceHooks[] = {
     HOOK(CreateDevice),
     HOOK(GetPhysicalDeviceSurfaceCapabilitiesKHR),
     HOOK(GetPhysicalDeviceSurfaceCapabilities2KHR),
+    HOOK(DestroySurfaceKHR),
+#ifdef __linux__
+    HOOK(CreateXlibSurfaceKHR),
+    HOOK(CreateXcbSurfaceKHR),
+#endif
 };
 
 const Hook g_deviceHooks[] = {

@@ -35,11 +35,29 @@ struct IntervalFilter {
     }
 };
 
+// x11_clock's refreshes are the moments the X server hands the window's
+// content over (Xwayland: at the compositor's frame callback); whatever was
+// presented since goes out then, wherever it falls in the period, but the
+// X server's copy into the window — on a GPU busy with the next synthesis —
+// and the compositor's own work must be done by its deadline. Measured on
+// gamescope's Xwayland, x4 at 30 fps, 144 Hz: 0.3 period ahead, 5 to 9
+// refreshes skipped a second at 720p; 0.85 to 0.95 (right after the previous
+// one), 3 to 35 at 1440p — a frame not ready by then goes out when it is,
+// late in the period, into the deadline; 0.6, none at 720p, 1 to 10 at 1440p
+// (headless gamescope, its compositor short of GPU time, varies most). On
+// Hyprland (1440p): 1.5 and 0.3 a second, against 9 and 15 for the virtual
+// grid at the phase it happened to take.
+constexpr double kX11Lead = 0.6;
+
 // The display's refresh grid, when the present feedback knows it.
 struct Grid {
     bool valid = false;
     double lastMs = 0.0;    // a refresh
     double periodMs = 0.0;
+    // How far ahead of its refresh a frame is presented, in periods: 0.3 for
+    // a display's refresh (a present just after it would slip a whole
+    // period); kX11Lead for x11_clock's.
+    double lead = 0.3;
     // The first refresh at or after `ms`.
     double land(double ms) const { return lastMs + std::ceil((ms - lastMs) / periodMs) * periodMs; }
 };
@@ -57,7 +75,7 @@ inline double presentTargetMs(double originMs, double intervalMs, int frames, co
     if (grid.valid && plannedLandMs > 0.0) {  // planLands: for that refresh, or the next one free
         double land = plannedLandMs;
         if (lastLandMs > 0.0 && land < lastLandMs + 0.5 * grid.periodMs) land = lastLandMs + grid.periodMs;
-        return land - 0.3 * grid.periodMs;
+        return land - grid.lead * grid.periodMs;
     }
     const double slot = intervalMs / std::max(1, frames);
     const bool held = order.hold < 1.f;
@@ -66,7 +84,7 @@ inline double presentTargetMs(double originMs, double intervalMs, int frames, co
     if (grid.valid) {
         double land = grid.land(t);
         if (lastLandMs > 0.0 && land < lastLandMs + 0.5 * grid.periodMs) land = lastLandMs + grid.periodMs;
-        t = land - 0.3 * grid.periodMs;
+        t = land - grid.lead * grid.periodMs;
     }
     return t;
 }
@@ -83,9 +101,17 @@ inline double presentTargetMs(double originMs, double intervalMs, int frames, co
 // 30 fps x4 on 144 Hz: the content steps off their display steps by 4.4 ms
 // rms, 1.5 with the plan. Each frame on a refresh after the one planned
 // before it; a plan that ran more than two refreshes ahead of this one
-// starts again (the worker fell behind: those refreshes are gone).
+// starts again (the worker fell behind: those refreshes are gone). The
+// previous plan's last refresh is taken on the grid as it is now: the grid's
+// phase moves (virtual_grid's half period, x11_clock's grid replacing the
+// virtual one, a measured grid refined), and a plan whose frames fill every
+// refresh chains each job on the one before — it kept the old phase for good
+// (measured, x11_clock: every frame planned 0.6 period off the X server's
+// refreshes for the whole run, 30 to 37 frames a second replaced).
 inline void planLands(double nowMs, double lagMs, const double* baseMs, int frames, const Grid& grid,
                       double& lastPlannedMs, double* landMs) {
+    if (lastPlannedMs > 0.0)
+        lastPlannedMs = grid.lastMs + std::round((lastPlannedMs - grid.lastMs) / grid.periodMs) * grid.periodMs;
     if (lastPlannedMs > 0.0 && lastPlannedMs > grid.land(nowMs + lagMs) + 2.0 * grid.periodMs) lastPlannedMs = 0.0;
     for (int k = 0; k < frames; ++k) {
         double land = grid.land(nowMs + lagMs + baseMs[k]);

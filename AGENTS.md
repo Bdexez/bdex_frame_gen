@@ -335,6 +335,20 @@ génération) : ce cas ne se juge pas côté affichage sur ce banc. Seul le cas
 où **notre** synthèse domine (démo non plafonnée `--fps 1000`, réglages
 lourds, 4K) laisse gamescope composer à ~200 Hz.
 
+**Xwayland, 17/10 (`x11_clock`, `x11_present_clock.{h,cpp}`).** En
+IMMEDIATE, Xwayland déclare chaque présentation terminée tout de suite :
+le retour d'affichage n'y voit **aucune grille** et ses compteurs comptent
+nos présentations. Les UST des `PresentCompleteNotify` de la fenêtre (même
+sélectionnés par un autre client) sont les instants où Xwayland remet la
+fenêtre au compositeur : la couche les écoute (connexion xcb à elle,
+dlopen) et en tire la grille (`display_grid=3`), présentée 0,6 période en
+avance (`pacing::kX11Lead`, `Grid::lead` ; 0,3 et 0,9 mesurés pires).
+`planLands` recale `lastPlannedMs` sur la grille courante (sinon une
+chaîne pleine gardait la phase d'une grille périmée). Reste : la rafale de
+synthèse retarde le compositeur (1440p quality : 1 à 10 rafraîchissements
+sautés/s sur gamescope). **Ne jamais tester dans la session Hyprland de
+l'utilisateur** (sorties, fenêtres) : KWin `--virtual --xwayland` ou
+gamescope sans tête ; vérité terrain = MSC des `CompleteNotify`.
 **Latence, 2026-10-02.** `interp_hold` (défaut 1, bit à bit) : en
 interpolation, les positions jusqu'à la réelle espacées de h/m
 (`FrameOrder::offset`, champ `Job::order`, `paceTarget`), `t` = 1 −
