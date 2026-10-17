@@ -75,6 +75,11 @@ _EN = {
  'Calibration appliquée : profil {}, jusqu\'à ×{}': 'Calibration applied: {} preset, up to ×{}',
  'k calibrer le GPU': 'k calibrate the GPU',
  'Appliquer ? (o/n) ': 'Apply? (y/n) ',
+ 'Fenêtre Wayland (portail)…': 'Wayland window (portal)…',
+ 'Un jeu en fenêtre Wayland native : le bureau demande laquelle partager': 'A game in a native Wayland window: the desktop asks which one to share',
+ 'fenêtre Wayland': 'Wayland window',
+ 'Choisis la fenêtre du jeu dans la fenêtre du bureau': "Choose the game's window in the desktop's dialog",
+ ' · y fenêtre Wayland (portail)': ' · y Wayland window (portal)',
  'w capturer une autre fenêtre · c méthode · g GPU de génération · e enregistrer (corpus)': 'w capture another window · c method · g generation GPU · e record (corpus)',
  "L'enregistrement n'a pas abouti (le jeu est-il armé ?)": 'The recording did not finish (is the game armed?)',
  'Attention': 'Warning',
@@ -1352,13 +1357,27 @@ def capture_log_path():
     return os.path.join(cache, "bdex-framegen", "capture.log")
 
 
-def start_capture(pid, gpu):
+def capture_wayland_available():
+    """A Wayland session and a bdex-capture built with the screen-cast portal
+    (PipeWire): native Wayland windows can be captured too."""
+    binary = capture_binary()
+    if not binary or not os.environ.get("WAYLAND_DISPLAY"):
+        return False
+    try:
+        out = subprocess.run([binary, "--help"], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "--wayland" in out
+
+
+def start_capture(pid, gpu, wayland=False):
     """bdex-capture on a game window (by its pid; pid 0: the next window
-    clicked), on `gpu` ("" = the best): the Popen, its output in capture.log."""
+    clicked; `wayland`: the window chosen in the desktop's screen-cast
+    dialog), on `gpu` ("" = the best): the Popen, its output in capture.log."""
     binary = capture_binary()
     if not binary:
         raise OSError(tr("bdex-capture introuvable"))
-    cmd = [binary] + (["--pid", str(pid)] if pid else []) + (["--gpu", gpu] if gpu else [])
+    cmd = [binary] + (["--wayland"] if wayland else ["--pid", str(pid)] if pid else []) + (["--gpu", gpu] if gpu else [])
     os.makedirs(os.path.dirname(capture_log_path()), exist_ok=True)
     log = open(capture_log_path(), "w")
     try:
@@ -2145,7 +2164,7 @@ class Window(Adw.ApplicationWindow):
             self.session_btn.remove_css_class(c)
         self.session_btn.add_css_class("destructive-action" if on else "suggested-action")
 
-    def _set_target(self, target, pick=False):
+    def _set_target(self, target, pick=False, wayland=False):
         """Generation for `target` (pid, name), or none: injection through the
         layer's session where plan() says so, else bdex-capture on the game's
         window (`pick`: on the next window clicked, any program)."""
@@ -2164,7 +2183,7 @@ class Window(Adw.ApplicationWindow):
                 self.save()   # the game reads the options shown here
             write_session(target[0] if target and how[0] == "layer" else 0)
             if how and how[0] == "capture":
-                self.capture_proc = start_capture(0 if pick else inner_pid(target[0]), self.opt.gpu)
+                self.capture_proc = start_capture(0 if pick else inner_pid(target[0]), self.opt.gpu, wayland)
         except OSError as e:
             self.toast(tr(f"Échec : {e}"))
             target, how = None, None
@@ -2290,6 +2309,11 @@ class Window(Adw.ApplicationWindow):
         pick.set_sensitive(capture_binary() is not None)
         buttons = Gtk.Box(spacing=6)
         buttons.append(pick)
+        if capture_wayland_available():
+            way = Gtk.Button(label=tr("Fenêtre Wayland (portail)…"), valign=Gtk.Align.CENTER,
+                             tooltip_text=tr("Un jeu en fenêtre Wayland native : le bureau demande laquelle partager"))
+            way.connect("clicked", self.on_capture_wayland)
+            buttons.append(way)
         buttons.append(refresh)
         self.running_group.set_header_suffix(buttons)
         self.running_rows = []
@@ -2367,6 +2391,11 @@ class Window(Adw.ApplicationWindow):
                 return False
             return True
         GLib.timeout_add(1000, wait)
+
+    def on_capture_wayland(self, _btn):
+        self._set_target((0, tr("fenêtre Wayland")), pick=True, wayland=True)
+        if self.capture_proc is not None:
+            self.toast(tr("Choisis la fenêtre du jeu dans la fenêtre du bureau"))
 
     def on_capture_window(self, _btn):
         self._set_target((0, tr("fenêtre choisie")), pick=True)
@@ -2797,7 +2826,7 @@ def text_main():
             print(tr("[numéro] démarrer dans ce jeu · a arrêter · r actualiser · m multiplicateur · "
                   "o mode · p préréglage · h compteur · j mode Jeu · s options Steam · b signaler un problème · q quitter"))
             print(tr("w capturer une autre fenêtre · c méthode · g GPU de génération · e enregistrer (corpus)"))
-            print(tr("k calibrer le GPU"))
+            print(tr("k calibrer le GPU") + (tr(" · y fenêtre Wayland (portail)") if capture_wayland_available() else ""))
             try:
                 cmd = input("> ").strip().lower()
             except EOFError:
@@ -2811,6 +2840,15 @@ def text_main():
                 save()
                 start((0, tr("fenêtre choisie")), pick=True)
                 print(tr("Clique sur la fenêtre du jeu"))
+            elif cmd == "y" and capture_wayland_available():
+                save()
+                stop_capture(state["proc"])
+                try:
+                    state["proc"] = start_capture(0, opt.gpu, wayland=True)
+                    state["target"], state["how"] = (0, tr("fenêtre Wayland")), ("capture", tr("capture (fenêtre choisie)"))
+                    print(tr("Choisis la fenêtre du jeu dans la fenêtre du bureau"))
+                except OSError as e:
+                    print(tr(f"Échec : {e}"))
             elif cmd == "e":
                 armed = [(n, (p, n)) for p, n in games if any(e.get("kind") == "swapchain" for e in read_status(p))]
                 if not armed:
