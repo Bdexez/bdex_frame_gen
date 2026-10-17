@@ -39,6 +39,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   clipboard and shown in Explorer, then the pre-filled issue form (the same
   fields as `bdex-framegen --issue-url`).
 
+### Quality (experimental)
+
+- **`affine_flow`** (off): with `pixel_vectors`, the affine motion fitted
+  on the 3×3 flow texels around the source tried per pixel (rotation,
+  zoom), in a synthesis variant of its own (`SYNTH_AFFINE`). Measured
+  neutral on the corpus — rotation and zoom are already followed by
+  `rot_weight` and `pixel_vectors` (45.23 / 51.34 dB either way) —: kept
+  as an option for real-game recordings to decide.
+
 ### Wayland capture
 
 - **`bdex-capture --wayland`**: native Wayland windows through the
