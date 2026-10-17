@@ -2544,3 +2544,18 @@ Scripts dans le scratchpad de la session (`gsrun.sh`, `kwrun.sh`,
   bras, identique avec `pixel_vectors`, `interp_splat` ou `false_detail`
   coupés — échec du flux sur un objet qui change d'aspect (rotation 3D), pas
   un réglage de la synthèse.
+- **Mesures propres (17/10, soir)** : l'outil de vérité terrain (`mscwatch`)
+  bouclait sur des `NotifyMSC` qui se terminaient tout de suite (~600 000
+  événements par essai) et chargeait le serveur X — Hyprland compris. Corrigé
+  (écoute passive des `CompleteNotify`, comme la couche). Remesuré sur
+  gamescope 144 Hz, ×4 à 30 i/s, 4 essais : **720p** grille virtuelle 0/0/28/0
+  incidents par seconde (le mauvais à la phase 0,9, juste avant le tic),
+  `x11_clock` 0/0,1/0 (+ un essai perturbé par le réglage automatique
+  ci-dessous) ; **1440p** grille virtuelle 0/6/25/21 (moyenne 12,8),
+  `x11_clock` à 0,6 : 5/0/12/1 (moyenne 4,6). Le résidu à 1440p varie d'un
+  lancement à l'autre à phase égale : contention GPU selon l'alignement du
+  rythme du jeu sur les tics, pas la phase.
+- **Réglage automatique de l'avance** (`LeadTuner` : essayer 0,75/0,45/0,9/0,3
+  si plus de 2 incidents/s sur 2 s, garder le meilleur) : **pire** (1440p
+  moyenne 9,9 contre 4,6) — il explore des avances mauvaises et le résidu ne
+  dépend pas de l'avance. Retiré ; 0,6 fixe.
