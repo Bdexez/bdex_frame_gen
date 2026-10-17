@@ -17,7 +17,8 @@ constexpr int kBuffers = 6;
 } // namespace
 
 FrameRecorder::FrameRecorder(DeviceData& dev, std::string dir, int frames)
-    : dev_(dev), dir_(std::move(dir)), total_(frames), left_(frames), buffers_(kBuffers) {
+    : dev_(dev), dir_(std::move(dir)), total_(frames), left_(frames), buffers_(kBuffers),
+      scale_(uint32_t(std::max(0, dev.config.recordScale))) {
     writer_ = std::thread([this] { writerLoop(); });
 }
 
@@ -137,7 +138,9 @@ void FrameRecorder::writerLoop() {
         const void* pixels = buffers_[size_t(f.buffer)].mapped;
         const bool failed = failed_;
         lock.unlock();
-        const uint32_t ds = std::max(1u, (f.extent.width + 959) / 960);
+        // record_scale: 0 = about 960 pixels wide (a 1440p game at a third:
+        // its HUD's thin strokes then never stay exactly still), else 1/N.
+        const uint32_t ds = scale_ > 0 ? scale_ : std::max(1u, (f.extent.width + 959) / 960);
         char name[32];
         snprintf(name, sizeof(name), "/f%04d.ppm", f.index);
         bool ok = !failed && FrameGen::writePpm(dir_ + name, pixels, f.extent, f.encoding, ds);

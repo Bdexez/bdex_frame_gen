@@ -8,6 +8,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Edges in camera turns (2026-10-17)
 
+- **`record_scale`**: the panel's recordings at 1/N of the game's size (`1` =
+  full). The default (~960 px wide, a third at 1440p) resamples the HUD's
+  thin strokes, so HUD handling cannot be judged on such recordings.
+
 - **`border_fill`** (on with a discrete GPU): in a camera turn, the content
   entering the picture is in the current frame only and its backward flow
   is garbage (its match is off-screen), so the synthesis fell to a

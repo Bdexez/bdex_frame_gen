@@ -72,6 +72,7 @@ private:
     std::mutex mutex_;
     std::condition_variable cv_;
     std::vector<Buffer> buffers_;  // `busy` under mutex_
+    const uint32_t scale_;         // record_scale: 1/N of the size written, 0 = about 960 pixels wide
     std::deque<Frame> toWrite_;
     int written_ = 0;
     bool failed_ = false, stop_ = false;
