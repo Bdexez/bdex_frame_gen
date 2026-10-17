@@ -376,6 +376,7 @@ const std::vector<OptionDef>& registry() {
     B("reveal_fill", nullptr, &Config::revealFill, kLive, Tune::SynthExtrapolation, "1", 12),
     B("border_fill", nullptr, &Config::borderFill, kLive),
     I("record_scale", nullptr, &Config::recordScale, 0, 4),
+    F("mosaic_blur", nullptr, &Config::mosaicBlur, 0.f, 1.f, kLive),
     B("online_tune", nullptr, &Config::onlineTune),
     F("upscale_temporal", nullptr, &Config::upscaleTemporal, 0.f, 0.95f),
     B("frame_timing", nullptr, &Config::frameTiming, kLive),

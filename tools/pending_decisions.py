@@ -47,6 +47,7 @@ CANDIDATES = [
     ("extrapolate_accel=1", "e", "accelerating camera +2.6 dB, pan -0.78, scroll -1.4"),
     ("hud_mask=4", "ie", "+0.20 dB on a HUD scene at render scale 0.75"),
     ("parallax_search=1", "ie", "railing scene x4 +0.32 dB, neutral elsewhere; ~1 ms of flow at 1440p"),
+    ("mosaic_blur=1", "i", "PRAGMATA +0.14 dB, flicker -0.17; sharp self-moving edges up to -0.5 dB"),
 ]
 MODES = {"i": "interpolate", "e": "extrapolate"}
 

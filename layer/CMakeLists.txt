@@ -27,6 +27,7 @@ bdex_add_shaders(bdex_layer_shaders
     shaders/accel_map.comp
     shaders/learned_correction.comp
     shaders/false_detail.comp
+    shaders/mosaic_blur.comp
     shaders/flow_parallax.comp
     shaders/learned_flow.comp
     shaders/luma_match.comp:f32
@@ -118,6 +119,7 @@ set(BDEX_ENGINE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/flow_confidence.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/learned_correction.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/false_detail.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/mosaic_blur.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/parallax_search.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/learned_flow.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/luma_match.cpp

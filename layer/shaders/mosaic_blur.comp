@@ -1,0 +1,105 @@
+#version 450
+// mosaic_blur: where the finest flow is chaos — most vectors around a pixel
+// far from their neighbours' — the synthesis assembles its picture from
+// blocks that took unrelated motions: a mosaic (a character turning on
+// itself in a fast camera move, content the block search cannot follow).
+// No vector there is right; the pieces' edges are the synthesis's own. The
+// generated frame leans to its local average there, the position kept (a
+// fallback to the cross-fade, measured before, ghosts instead). A lone
+// discontinuity — an object's edge in parallax — is not chaos: the density
+// test leaves it sharp. Three modes:
+//   0  the chaos density per flow texel (once a frame): the share, over 5x5
+//      texels, of vectors with fewer than `agree` of their 8 neighbours
+//      within `deviation` (a lone edge between two motions keeps most)
+//   1  the average (radius `radius`) where the density is past `threshold`,
+//      into the scratch image (the output itself is only read)
+//   2  the scratch image back into the output there
+#extension GL_GOOGLE_include_directive : require  // #include with glslangValidator too
+#include "common.glsl"
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0, r32ui) uniform uimage2D outImg;   // the output (swapchain storage encoding)
+layout(binding = 1, r32ui) uniform uimage2D scratch;  // the filtered pixels
+layout(binding = 2, r32f) uniform image2D density;    // per flow texel (mode 0 writes it)
+layout(binding = 3) uniform sampler2D flowFwd;        // the finest forward flow (flow units)
+
+#define ENC_BGRA8       1u
+#define ENC_A2B10G10R10 2u
+#define ENC_A2R10G10B10 3u
+
+layout(push_constant) uniform PC {
+    ivec2 size;        // the output (display pixels); mode 0: the flow texels
+    uint encoding;
+    int mode;
+    float strength;    // 0..1
+    float threshold;   // density from which the average takes over (fully at +0.2)
+    float deviation;   // flow units: a vector this far from a neighbour's is chaos
+    int radius;        // of the average
+    vec2 toFlow;       // display pixel -> flow texel
+    int agree;         // a vector with fewer neighbours (of 8) within `deviation` is chaos
+} pc;
+
+vec4 unpackOut(uint v) {
+    uint enc = pc.encoding & 0xffu;
+    if (enc == ENC_A2B10G10R10)
+        return vec4(uvec4(v & 1023u, (v >> 10) & 1023u, (v >> 20) & 1023u, v >> 30)) / vec4(1023.0, 1023.0, 1023.0, 3.0);
+    if (enc == ENC_A2R10G10B10)
+        return vec4(uvec4((v >> 20) & 1023u, (v >> 10) & 1023u, v & 1023u, v >> 30)) / vec4(1023.0, 1023.0, 1023.0, 3.0);
+    vec4 c = unpackUnorm4x8(v);
+    return enc == ENC_BGRA8 ? c.bgra : c;
+}
+uint packOut(vec4 c) {
+    uint enc = pc.encoding & 0xffu;
+    c = clamp(c, 0.0, 1.0);
+    if (enc == ENC_A2B10G10R10 || enc == ENC_A2R10G10B10) {
+        uvec4 q = uvec4(round(c * vec4(1023.0, 1023.0, 1023.0, 3.0)));
+        return enc == ENC_A2B10G10R10 ? q.r | (q.g << 10) | (q.b << 20) | (q.a << 30)
+                                      : q.b | (q.g << 10) | (q.r << 20) | (q.a << 30);
+    }
+    return enc == ENC_BGRA8 ? packUnorm4x8(c.bgra) : packUnorm4x8(c);
+}
+
+bool chaotic(ivec2 t, ivec2 fs) {
+    t = clamp(t, ivec2(0), fs - 1);
+    vec2 v = texelFetch(flowFwd, t, 0).xy;
+    int agree = 0;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x)
+            if ((x != 0 || y != 0) &&
+                length(texelFetch(flowFwd, clamp(t + ivec2(x, y), ivec2(0), fs - 1), 0).xy - v) <= pc.deviation)
+                ++agree;
+    return agree < pc.agree;
+}
+
+float weightAt(ivec2 p) {
+    ivec2 ds = imageSize(density);
+    float k = imageLoad(density, min(ivec2((vec2(p) + 0.5) * pc.toFlow), ds - 1)).r;
+    return pc.strength * clamp((k - pc.threshold) / 0.2, 0.0, 1.0);
+}
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (pc.mode == 0) {
+        ivec2 fs = textureSize(flowFwd, 0);
+        if (any(greaterThanEqual(p, fs))) return;
+        float n = 0.0;
+        for (int y = -2; y <= 2; ++y)
+            for (int x = -2; x <= 2; ++x) n += chaotic(p + ivec2(x, y), fs) ? 1.0 : 0.0;
+        imageStore(density, p, vec4(n / 25.0));
+        return;
+    }
+    if (any(greaterThanEqual(p, pc.size))) return;
+    float w = weightAt(p);
+    if (w <= 0.0) return;
+    if (pc.mode == 1) {
+        vec4 sum = vec4(0.0);
+        int r = pc.radius;
+        for (int y = -r; y <= r; ++y)
+            for (int x = -r; x <= r; ++x) sum += unpackOut(imageLoad(outImg, clamp(p + ivec2(x, y), ivec2(0), pc.size - 1)).r);
+        vec4 c = unpackOut(imageLoad(outImg, p).r);
+        imageStore(scratch, p, uvec4(packOut(mix(c, sum / float((2 * r + 1) * (2 * r + 1)), w)), 0u, 0u, 0u));
+    } else {
+        imageStore(outImg, p, imageLoad(scratch, p));
+    }
+}
