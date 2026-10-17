@@ -2559,3 +2559,11 @@ Scripts dans le scratchpad de la session (`gsrun.sh`, `kwrun.sh`,
   si plus de 2 incidents/s sur 2 s, garder le meilleur) : **pire** (1440p
   moyenne 9,9 contre 4,6) — il explore des avances mauvaises et le résidu ne
   dépend pas de l'avance. Retiré ; 0,6 fixe.
+- **Xwayland pris pour un écran VRR** : sans `x11_clock`, le faux retour
+  d'affichage (images « affichées » à leur présentation, sans grille)
+  faisait conclure `variableRefresh()` → `vrr_hold` rapprochait l'image
+  réelle de la générée (×2 à 30 i/s : réelle à ~11 ms au lieu de ~18) —
+  espacement inégal sur un écran fixe. Avec la grille du serveur X,
+  espacement régulier (+7 ms sur la réelle à ×2, voulu : `interp_hold=1`).
+  À ×4 avec `refresh_fill` (le cas de l'utilisateur), latence inchangée
+  (31–35 ms). Extrapolation : identique.
