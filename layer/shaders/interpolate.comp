@@ -106,6 +106,7 @@ layout(push_constant) uniform PC {
     float staticSoft;        // static_soft: strength of hud_mask's "holds still" evidence (0 = off)
     float flowIntervalRatio; // current / previous source interval (1 legacy, 0 invalid timed history)
     int borderFill;          // interpolation: content entering (leaving) the picture from cur (prev) alone
+    int hudAvoid;            // interpolation with hud_mask: a trajectory with an endpoint on a still overlay pixel is contaminated
 } pc;
 
 // flow_confidence's trust at display pixel p (the map covers the flow's area).
@@ -485,6 +486,26 @@ void main() {
             float e = colourError(a, b);
             if (e < eb) { eb = e; B = Bk; pb = pk; cb = a; cb2 = b; }
         }
+    }
+
+    if (kStaticMask && pc.staticFrames > 0.0 && pc.hudAvoid != 0) {
+        // hud_avoid: the scene between still HUD elements moves behind
+        // them, and its trajectories often end on one (the camera brought
+        // the background under the icon): their colour is the overlay's,
+        // copied into the gap — bars of HUD colour between icons. Where q
+        // itself is not an overlay pixel, a trajectory with both endpoints
+        // on one (overlay to overlay: consistent, so it won) counts as
+        // broken; the other one, or the fallback, decides. (Either endpoint:
+        // the same gains on game-like scenes, but PRAGMATA's recordings -0.03
+        // to -0.05 dB and more flicker — still dark scenery learned as overlay.)
+        ivec2 ms = textureSize(staticMask, 0);
+        vec2 toMask = vec2(ms) / fsize;
+        #define STILL_AT(pos) (texelFetch(staticMask, clamp(ivec2((pos) * toMask), ivec2(0), ms - 1), 0).r >= pc.staticFrames)
+        if (!STILL_AT(q)) {
+            if (STILL_AT(pf) && STILL_AT(pf + F)) ef = max(ef, 0.3);
+            if (STILL_AT(pb) && STILL_AT(pb + B)) eb = max(eb, 0.3);
+        }
+        #undef STILL_AT
     }
 
     // Each trajectory carries a sample from both frames: the forward one from
