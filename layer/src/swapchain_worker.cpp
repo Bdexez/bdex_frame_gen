@@ -498,7 +498,8 @@ void VirtualSwapchain::feedbackLoop() {
                 // Latency the player sees: the game's present call to the
                 // moment its real frame is on screen (all queueing, the
                 // layer's hold and the compositor included).
-                if (!cfg_.latencyLog.empty()) latencyLogLine(cfg_.latencyLog, entry.presentMs, now, entry.real, entry.plannedMs);
+                if (!cfg_.latencyLog.empty() && !latencyFromX11_.load(std::memory_order_relaxed))
+                    latencyLogLine(cfg_.latencyLog, entry.presentMs, now, entry.real, entry.plannedMs);
                 const double latency = now - entry.presentMs;
                 if (entry.real && latency >= 0.0 && latency < 1000.0 && !latencyFromX11_.load(std::memory_order_relaxed)) {
                     fbLatencyMs_ = fbLatencyMs_ < 0.0 ? latency : fbLatencyMs_ * 0.9 + latency * 0.1;
@@ -579,7 +580,7 @@ double VirtualSwapchain::displayHz() {
     if (const double g = gsHz_.load(); g > 0.0) return g;
     const double x11 = x11Clock_ ? x11Clock_->refreshHz() : 0.0;
     std::lock_guard<std::mutex> lock(fbMutex_);
-    const double measured = displayClock_.refreshHz();
+    const double measured = x11 > 0.0 ? 0.0 : displayClock_.refreshHz();  // (x11_clock first, as displayGrid)
     // Not measurable (no present feedback, or no refresh grid, e.g. KDE with
     // NVIDIA): the X server's (x11_clock), else the refresh rate the control
     // panel reads from the system.
@@ -624,21 +625,22 @@ void VirtualSwapchain::pollGamescope() {
 
 bool VirtualSwapchain::displayGrid(double& lastMs, double& periodMs, double* lead) {
     if (lead) *lead = 0.3;
-    {
-        std::lock_guard<std::mutex> lock(fbMutex_);
-        if (feedback_ && displayClock_.valid()) {
-            lastMs = displayClock_.lastMs();
-            periodMs = displayClock_.periodMs();
-            return true;
-        }
-    }
-    // x11_clock: the moments the X server handed the window's content over
-    // (Xwayland: to the compositor), the refreshes a present must beat.
+    // x11_clock first: the moments the X server handed the window's content
+    // over (Xwayland: to the compositor), the refreshes a present must beat.
+    // Before the present feedback's, which under Xwayland in immediate mode
+    // times our own presents — once they are paced on a grid, they fit one
+    // and that "grid" took over now and then (at another phase and the
+    // display's lead: a job in ten planned a refresh off, all its frames).
     if (x11Clock_ && x11Clock_->grid(lastMs, periodMs)) {
         if (lead) *lead = pacing::kX11Lead;
         return true;
     }
     std::lock_guard<std::mutex> lock(fbMutex_);
+    if (feedback_ && displayClock_.valid()) {
+        lastMs = displayClock_.lastMs();
+        periodMs = displayClock_.periodMs();
+        return true;
+    }
     if (vgPeriodMs_ <= 0.0) return false;
     lastMs = vgAnchorMs_;
     periodMs = vgPeriodMs_;
@@ -915,10 +917,20 @@ VkResult VirtualSwapchain::presentCopied(const Job& job, const Copied& c) {
     // immediate mode, reports each present at once): the real frame reaches
     // the compositor at the refresh after its present, and the screen a
     // refresh later at the soonest — the latency from there.
-    if (c.real && lastLandMs_ > 0.0 && x11Grid()) {
+    if (lastLandMs_ > 0.0 && x11Grid()) {
         std::lock_guard<std::mutex> lock(fbMutex_);
-        const bool x11 = !displayClock_.valid();
+        const bool x11 = true;  // (x11_clock first, as displayGrid)
         latencyFromX11_.store(x11, std::memory_order_relaxed);
+        // latency_log too: the refresh the frame reaches the compositor at
+        // (on screen a refresh later; the plan is on these refreshes), where
+        // the present feedback's times are this present's.
+        if (x11 && !latencyLogPath_.empty())
+            latencyLogLine(latencyLogPath_, msOf(job.start), lastLandMs_, c.real,
+                           c.index >= 0 && c.index < 8 ? job.planned[c.index] : 0.0);
+    }
+    if (c.real && lastLandMs_ > 0.0 && latencyFromX11_.load(std::memory_order_relaxed)) {
+        std::lock_guard<std::mutex> lock(fbMutex_);
+        const bool x11 = true;
         const double latency = lastLandMs_ + periodMs - msOf(job.start);
         if (x11 && latency >= 0.0 && latency < 1000.0) {
             fbLatencyMs_ = fbLatencyMs_ < 0.0 ? latency : fbLatencyMs_ * 0.9 + latency * 0.1;

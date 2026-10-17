@@ -70,6 +70,7 @@ VirtualSwapchain::VirtualSwapchain(DeviceData& dev, const VkSwapchainCreateInfoK
         if (feedback_) fbThread_ = std::thread([this] { feedbackLoop(); });
         // x11_clock: an X11 window's refresh grid from the X server — under
         // Xwayland in immediate mode, the only one there is.
+        latencyLogPath_ = cfg_.latencyLog;
         if (cfg_.x11Clock && !throwaway_ && dev_.inst) {
             uint32_t window = 0;
             {
@@ -123,9 +124,8 @@ void VirtualSwapchain::publishStatus(int multiplier) {
         // (2: virtual_grid — the frames on a grid of our own, one a refresh)
         std::lock_guard<std::mutex> lock(fbMutex_);
         // (3: x11_clock — the X server's)
-        const bool measured = feedback_ && displayClock_.valid();
-        if (measured) e.displayGrid = 1;
-        else if (x11Grid()) e.displayGrid = 3;
+        if (x11Grid()) e.displayGrid = 3;  // (first, as displayGrid)
+        else if (feedback_ && displayClock_.valid()) e.displayGrid = 1;
         else if (feedback_) e.displayGrid = vgPeriodMs_ > 0.0 ? 2 : fbDisplayed_ >= 120 ? 0 : -1;
         else if (vgPeriodMs_ > 0.0) e.displayGrid = 2;
     }
@@ -954,7 +954,7 @@ bool VirtualSwapchain::variableRefresh() {
 // nothing else does), the X server's where only x11_clock does.
 VirtualSwapchain::ShownCounts VirtualSwapchain::shownCountsLocked() {
     ShownCounts c;
-    if (!displayClock_.valid() && x11Grid()) {
+    if (x11Grid()) {
         const X11PresentClock::Counts x = x11Clock_->counts();
         c.shown = x.shown;
         c.held = x.held;
@@ -1218,7 +1218,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         const bool x11 = x11Grid();
         std::lock_guard<std::mutex> lock(fbMutex_);
         const double nowMs = msOf(t0);
-        if (cfg_.virtualGrid && adaptivePeriodMs_ > 0.0 && !(feedback_ && displayClock_.valid()) && !x11) {
+        if (cfg_.virtualGrid && adaptivePeriodMs_ > 0.0 && !(feedback_ && displayClock_.valid()) && !x11) {  // (x11 first)
             if (vgAnchorMs_ <= 0.0) vgAnchorMs_ = fbLastMs_ > 0.0 ? fbLastMs_ : nowMs;
             vgPeriodMs_ = adaptivePeriodMs_;
             if (nowMs - vgCheckMs_ >= 1000.0) {
@@ -1671,7 +1671,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             if (feedback_ || x11) {
                 const double x11Hz = x11 ? x11Clock_->refreshHz() : 0.0;
                 std::lock_guard<std::mutex> fbLock(fbMutex_);
-                const bool fromX11 = x11 && !displayClock_.valid();  // (shownCountsLocked's choice)
+                const bool fromX11 = x11;  // (shownCountsLocked's choice: x11_clock first)
                 const double hz = fromX11 ? x11Hz : displayClock_.refreshHz();
                 char buf[96];
                 const int k = hz > 0.0 ? snprintf(buf, sizeof buf, fromX11 ? ", display %.1f Hz (X server)" : ", display %.1f Hz", hz)
