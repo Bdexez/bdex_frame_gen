@@ -249,6 +249,7 @@ const std::vector<OptionDef>& registry() {
     F("flow_upsample", nullptr, &Config::flowUpsample, 0.f, 0.5f, kLive),
     B("alt_vectors", nullptr, &Config::altVectors, kLive),
     B("affine_flow", nullptr, &Config::affineFlow, kLive),
+    F("learned_flow", nullptr, &Config::learnedFlow, 0.f, 1.f, kLive),
     B("interp_splat", nullptr, &Config::interpSplat, kLive),
     B("sync_present", "sync", &Config::syncPresent),
     B("hide_present_ext", nullptr, &Config::hidePresentExt),

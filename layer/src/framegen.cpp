@@ -313,7 +313,9 @@ void FrameGen::createResources() {
         lv.blocks = {divUp(size.width, kBlockSize), divUp(size.height, kBlockSize)};
         lv.fine = {divUp(size.width, kFineBlock), divUp(size.height, kFineBlock)};
         if (l > 0 && (lv.blocks.width < 2 || lv.blocks.height < 2)) break;
-        for (int p = 0; p < 2; ++p) lv.pyr[p] = dev_.createImage(lumaFormat_, lv.size, storageSampled, true);
+        // (Level 0 readable: bdex_offline --dump-flow.)
+        for (int p = 0; p < 2; ++p)
+            lv.pyr[p] = dev_.createImage(lumaFormat_, lv.size, storageSampled | (l == 0 ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0), true);
         if (chroma_)
             for (int p = 0; p < 2; ++p) lv.chroma[p] = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, lv.size, storageSampled, true);
         for (int d = 0; d < 2; ++d) {
@@ -798,6 +800,8 @@ void FrameGen::destroyAll() {
     sharp_.clear();
     if (sharpReal_.image) dev_.destroyImage(sharpReal_);
     dev_.destroyBuffer(stateBuf_);
+    if (flowDumpMapped_) dev_.vt.UnmapMemory(dev_.device, flowDumpBuf_.memory);
+    dev_.destroyBuffer(flowDumpBuf_);
     if (stateMapped_) vt.UnmapMemory(d, stateReadback_.memory);
     stateMapped_ = nullptr;
     dev_.destroyBuffer(stateReadback_);
@@ -1090,6 +1094,61 @@ float FrameGen::lastCutWeight() const {
     const Config& cfg = *cfgp_;
     const float t = std::clamp((lastCost_ - cfg.sceneCutLow) / std::max(cfg.sceneCutHigh - cfg.sceneCutLow, 1e-6f), 0.f, 1.f);
     return t * t * (3.f - 2.f * t);
+}
+
+void FrameGen::recordFlowDump(VkCommandBuffer cmd, uint32_t parity) {
+    if (levels_v_.empty()) return;
+    const Level& l0 = levels_v_[0];
+    const VkDeviceSize flowBytes = VkDeviceSize(l0.fine.width) * l0.fine.height * 8;
+    const VkDeviceSize lumaTexel = lumaFormat_ == VK_FORMAT_R16_SFLOAT ? 2 : 4;
+    const VkDeviceSize lumaBytes = VkDeviceSize(l0.size.width) * l0.size.height * lumaTexel;
+    if (!flowDumpBuf_.buffer) {
+        flowDumpBuf_ = dev_.createBuffer(2 * flowBytes + 2 * lumaBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
+        VK_CHECK(dev_.vt.MapMemory(dev_.device, flowDumpBuf_.memory, 0, VK_WHOLE_SIZE, 0, &flowDumpMapped_));
+    }
+    memoryBarrier(cmd);
+    auto copy = [&](VkImage img, VkExtent2D e, VkDeviceSize offset) {
+        VkBufferImageCopy r{};
+        r.bufferOffset = offset;
+        r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        r.imageExtent = {e.width, e.height, 1};
+        dev_.vt.CmdCopyImageToBuffer(cmd, img, VK_IMAGE_LAYOUT_GENERAL, flowDumpBuf_.buffer, 1, &r);
+    };
+    copy(l0.flowFine[0].image, l0.fine, 0);
+    copy(l0.flowFine[1].image, l0.fine, flowBytes);
+    copy(l0.pyr[1 - parity].image, l0.size, 2 * flowBytes);
+    copy(l0.pyr[parity].image, l0.size, 2 * flowBytes + lumaBytes);
+}
+
+bool FrameGen::readFlowDump(FlowDump& out) {
+    if (!flowDumpMapped_ || levels_v_.empty()) return false;
+    const Level& l0 = levels_v_[0];
+    out.w = l0.fine.width;
+    out.h = l0.fine.height;
+    out.block = l0.refined ? kFineBlock : kBlockSize;
+    out.lw = l0.size.width;
+    out.lh = l0.size.height;
+    out.scale = flowScale_ * float(displayExtent_.width) / float(extent_.width);
+    const size_t nf = size_t(out.w) * out.h * 2, nl = size_t(out.lw) * out.lh;
+    const auto* f = static_cast<const float*>(flowDumpMapped_);
+    out.fwd.assign(f, f + nf);
+    out.bwd.assign(f + nf, f + 2 * nf);
+    out.lumaPrev.resize(nl);
+    out.lumaCur.resize(nl);
+    const uint8_t* lb = static_cast<const uint8_t*>(flowDumpMapped_) + 2 * nf * 4;
+    for (size_t i = 0; i < nl; ++i) {
+        if (lumaFormat_ == VK_FORMAT_R16_SFLOAT) {
+            uint16_t a, b;
+            std::memcpy(&a, lb + i * 2, 2);
+            std::memcpy(&b, lb + nl * 2 + i * 2, 2);
+            out.lumaPrev[i] = halfToFloat(a);
+            out.lumaCur[i] = halfToFloat(b);
+        } else {
+            std::memcpy(&out.lumaPrev[i], lb + i * 4, 4);
+            std::memcpy(&out.lumaCur[i], lb + nl * 4 + i * 4, 4);
+        }
+    }
+    return true;
 }
 
 bool FrameGen::readState(State& out) const {
