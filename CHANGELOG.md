@@ -39,6 +39,20 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   clipboard and shown in Explorer, then the pre-filled issue form (the same
   fields as `bdex-framegen --issue-url`).
 
+### Wayland capture
+
+- **`bdex-capture --wayland`**: native Wayland windows through the
+  screen-cast portal (GDBus: CreateSession, SelectSources with the choice
+  kept — `restore_token` cached —, Start, OpenPipeWireRemote) and a
+  PipeWire stream (BGRx / RGBx, mapped memory, the window's crop region),
+  copied into the same page-aligned ring as X11's — the presenter imports
+  it in place. The overlay covers `--rect`, else the whole screen.
+  `--screen` shares a screen. Built when libpipewire-0.3 and GIO are there.
+  Panel: *Fenêtre Wayland (portail)…*, text mode `y`. CI:
+  `wayland-capture-check` (sway headless with two outputs, the portal's wlr
+  backend, PipeWire, lavapipe): 30 → 60 fps, x2.00, in place. Pitfall:
+  offer `maxFramerate` — at 0/0 the portal's wlr backend sends one frame.
+
 ### Display timing
 
 - **`VK_EXT_present_timing`** (`present_timing`, default 1, with

@@ -421,6 +421,18 @@ The settings are the layer's (configuration file with the game's `[section]`,
 `BDEX_FG_*`), then `-m`, `--mode`, `--preset`, `--hud`. Ctrl+Alt+G toggles
 the generation, Ctrl+Alt+Q quits (`--hotkey` rebinds the toggle).
 
+**Native Wayland windows** (a native game, Wine's Wayland driver):
+`bdex-capture --wayland [--name GAME] [--rect X,Y,W,H]` goes through the
+desktop's screen-cast portal — the desktop asks once which window to share
+(the choice is kept for the next times) — and PipeWire; the frames are read
+in place as on X11. A Wayland window's position is the compositor's, so the
+overlay covers `--rect`, by default the whole screen: a fullscreen game's.
+`--screen` shares a whole screen instead (then show the result on another
+screen: the overlay would be captured too). In the panel: *Fenêtre Wayland
+(portail)…*. Checked end to end in a container (`tools/ci/wayland-capture-check.sh`:
+sway headless, xdg-desktop-portal-wlr, PipeWire): a 30 fps game x2.00, read
+in place, 20 ms from the frame to the screen.
+
 Measured on an RTX 3060 Ti (a 60 fps game, 144 Hz): x2 120 fps with 10 ms
 from the game's frame to the screen in interpolation, 0.6 ms in
 extrapolation; hybrid x3 178 fps, 8 ms (from the frame's arrival at the X

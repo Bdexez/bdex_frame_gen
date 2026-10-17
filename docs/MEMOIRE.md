@@ -583,10 +583,22 @@ interpolation, 0,6 ms en extrapolation ; hybride ×3 178 i/s, 7,8 ms. Piège
 corrigé : une image du jeu repérée pendant l'attente d'une prédite faisait
 encore attendre 20 ms dans `pump()` (l'hybride tombait à 30 i/s).
 
+**Wayland natif** (03/10, `--wayland`, `pw_capture.cpp`) : portail
+ScreenCast par GDBus (choix gardé, `restore_token` en cache) puis flux
+PipeWire copié dans l'anneau aligné page (import en place). L'overlay couvre
+`--rect` (défaut : tout l'écran X) — la position d'une fenêtre Wayland est
+au compositeur. Banc : `tools/ci/wayland-capture-check.sh` (sway headless
+deux sorties, xdpw `chooser_type=none`, la démo en plein écran sur la 1re,
+l'overlay sur la 2de) : ×2,00, en place. Pièges vécus : le binaire sway a
+`cap_sys_nice` (refusé en conteneur : en copier une version sans) ;
+proposer `maxFramerate` (à 0/0 xdpw n'envoie qu'une image) ; la démo
+masquée par l'overlay tombe à 2 i/s (fenêtre occultée).
+
 **Limites** : pas sous gamescope (mode Jeu du Deck : les jeux y présentent
-par la couche WSI de gamescope, la fenêtre X reste vide), pas de fenêtre
-Wayland native (portail PipeWire à faire), lavapipe trop lent pour les
-prédites (normal : elles arrivent après l'image suivante du jeu).
+par la couche WSI de gamescope, la fenêtre X reste vide), lavapipe trop lent
+pour les prédites (normal : elles arrivent après l'image suivante du jeu) ;
+Wayland natif jamais essayé sur un vrai bureau (KDE, GNOME, Hyprland : le
+dialogue du portail et l'overlay au-dessus d'un jeu plein écran).
 
 ### 4.6 Windows, mode 1 — la couche Vulkan
 
