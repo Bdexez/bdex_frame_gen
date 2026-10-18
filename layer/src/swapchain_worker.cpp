@@ -777,4 +777,102 @@ void VirtualSwapchain::prepareStaging() {
     fg_->ensureStaging(static_cast<uint32_t>(std::max(0, predicted ? frames - 1 : frames - acquireAhead_)));
 }
 
+VkResult VirtualSwapchain::presentCopied(const Job& job, const Copied& c) {
+    uint32_t ri = c.image;
+    VkPresentIdKHR presentId{VK_STRUCTURE_TYPE_PRESENT_ID_KHR};
+    VkSwapchainPresentModeInfoEXT presentMode{VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODE_INFO_EXT};
+    const VkPresentModeKHR presentModeValue = static_cast<VkPresentModeKHR>(job.presentMode);
+    VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+    pi.waitSemaphoreCount = 1;
+    pi.pWaitSemaphores = &realImages_[ri].readySem;
+    pi.swapchainCount = 1;
+    pi.pSwapchains = &real_;
+    pi.pImageIndices = &ri;
+    const void** tail = bdexNext(pi);
+    uint64_t feedbackId = 0;
+    if (c.real && job.presentId) {
+        presentId.swapchainCount = 1;
+        presentId.pPresentIds = &job.presentId;
+        *tail = &presentId;
+        tail = bdexNext(presentId);
+    } else if (feedback_ && !job.presentId) {
+        // Our own ids (the game cannot use present ids: they are hidden).
+        feedbackId = ++presentCounter_;
+        presentId.swapchainCount = 1;
+        presentId.pPresentIds = &feedbackId;
+        *tail = &presentId;
+        tail = bdexNext(presentId);
+    }
+    if (job.presentMode >= 0) {
+        presentMode.swapchainCount = 1;
+        presentMode.pPresentModes = &presentModeValue;
+        *tail = &presentMode;
+        tail = bdexNext(presentMode);
+    }
+#ifdef VK_EXT_present_timing
+    // The driver times this frame's display (the feedback thread reads it).
+    VkPresentTimingInfoEXT timingInfo{VK_STRUCTURE_TYPE_PRESENT_TIMING_INFO_EXT};
+    VkPresentTimingsInfoEXT timings{VK_STRUCTURE_TYPE_PRESENT_TIMINGS_INFO_EXT};
+    const bool timed = ptActive_.load() && feedbackId;
+    const void** timingsLink = nullptr;  // (the last link: cut on a full timing queue)
+    if (timed) {
+        timingInfo.timeDomainId = ptDomainId_;
+        timingInfo.presentStageQueries = ptStage_;
+        timings.swapchainCount = 1;
+        timings.pTimingInfos = &timingInfo;
+        timingsLink = tail;
+        *tail = &timings;
+        tail = bdexNext(timings);
+    }
+#endif
+    // Steam's framerate limit (gamescope): gamescope shows one frame per
+    // cycle of the limit and queues the others, first in first out — a
+    // frame goes out once the previous one is on screen, so one frame waits
+    // there instead of the whole swapchain (measured at 30 fps: 92 ms from
+    // present to screen with three queued). Bounded, should the feedback stall.
+    if (feedbackId > 1 && gsLimited_.load()) {
+        const double hz = gsHz_.load();
+        waitDisplayed(feedbackId - 1, hz > 0.0 ? 3000.0 / hz : 100.0);
+    }
+    const auto now = clock::now();
+    if (c.real)
+        statsRealDelayUs_.fetch_add(
+            static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(now - job.start).count()),
+            std::memory_order_relaxed);
+    VkResult r;
+    {
+        std::lock_guard<std::mutex> qlock(dev_.queueMutex(dev_.queue));
+        r = dev_.vt.QueuePresentKHR(dev_.queue, &pi);
+#ifdef VK_EXT_present_timing
+        if (r == VK_ERROR_PRESENT_TIMING_QUEUE_FULL_EXT && timed) {
+            // The results were not read back in time (the feedback thread
+            // paused): present without them from now on.
+            ptActive_ = false;
+            *timingsLink = nullptr;
+            BDEX_WARN("present timing queue full: display times from present waits only");
+            r = dev_.vt.QueuePresentKHR(dev_.queue, &pi);
+        }
+#endif
+    }
+    // For the spacing of the next present (paceTarget): when this one went
+    // out, and the refresh it was due to show on.
+    lastPresentMs_ = msOf(now);
+    double lastMs, periodMs;
+    lastLandMs_ = feedback_ && displayGrid(lastMs, periodMs)
+                      ? lastMs + std::ceil((lastPresentMs_ - lastMs) / periodMs) * periodMs
+                      : 0.0;
+    if (feedbackId && r >= 0) {
+        {
+            std::lock_guard<std::mutex> lock(fbMutex_);
+            if (!fbPaused_) fbPending_.push_back({feedbackId, msOf(job.start), job.frameStartMs, c.real});
+        }
+        fbCv_.notify_one();
+    }
+    if (r == VK_SUBOPTIMAL_KHR) surfaceChanged_.store(true, std::memory_order_relaxed);
+    if (r == VK_ERROR_OUT_OF_DATE_KHR) realOutOfDate_ = real_;
+    if (r < 0) return r;
+    statsOutFrames_.fetch_add(1, std::memory_order_relaxed);
+    return VK_SUCCESS;
+}
+
 } // namespace bdex
