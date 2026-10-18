@@ -332,4 +332,113 @@ void VirtualSwapchain::runJob(const Job& job) {
 // soon as the next present is *called*: its rendering may end a frame later
 // (a GPU-bound game), and the predicted frames are ready before it — dropping
 // them then showed a GPU-bound game at x1 in extrapolation and hybrid.
+bool VirtualSwapchain::predictedCancelled() {
+    VkFence next = VK_NULL_HANDLE;
+    {
+        std::lock_guard<std::mutex> wlock(workerMutex_);
+        if (cancelPredicted_ || stop_) return true;
+        if (jobs_.empty()) return false;
+        next = jobs_.front().ready;
+    }
+    return next == VK_NULL_HANDLE || dev_.vt.GetFenceStatus(dev_.device, next) == VK_SUCCESS;
+}
+
+// Until `target`, or false as soon as predictedCancelled: sleeps until a
+// newer present is queued, then watches its ready fence. (Its slot's fence
+// is not recycled before the worker reaches that job: the application thread
+// recycles a slot only presents later, each waiting for the job before.)
+// The worker's sleep until a present's moment, and how late it woke (for
+// the statistics; only sleeps whose moment was still ahead). precise_wake
+// drops the kernel's timer slack for this thread (workerLoop: 50 us by
+// default). Measured: spinning the last half millisecond (sleep, then
+// yield) won nothing on an idle machine (141 -> 120 us late) and lost
+// frames on a busy one (1 ms late, 114.7 of 119 shown): the yield hands the
+// CPU to the load. Not done.
+void VirtualSwapchain::sleepUntilPrecise(clock::time_point target) {
+    if (target <= clock::now()) return;
+    std::this_thread::sleep_until(target);
+    const int64_t late = std::chrono::duration_cast<std::chrono::microseconds>(clock::now() - target).count();
+    statsWakeLateUs_.fetch_add(uint64_t(std::max<int64_t>(late, 0)), std::memory_order_relaxed);
+    statsWakes_.fetch_add(1, std::memory_order_relaxed);
+}
+
+bool VirtualSwapchain::waitUntilOrCancelled(clock::time_point target) {
+    VkFence next = VK_NULL_HANDLE;
+    {
+        std::unique_lock<std::mutex> wlock(workerMutex_);
+        workerCv_.wait_until(wlock, target, [this] { return cancelPredicted_ || stop_ || !jobs_.empty(); });
+        if (cancelPredicted_ || stop_) return false;
+        if (jobs_.empty()) return true;  // the target, nothing newer
+        next = jobs_.front().ready;
+    }
+    if (next == VK_NULL_HANDLE) return false;
+    for (;;) {
+        const auto now = clock::now();
+        if (now >= target) return dev_.vt.GetFenceStatus(dev_.device, next) != VK_SUCCESS;
+        // Short waits, so that cancelPredicted_ is honoured promptly.
+        const int64_t left = std::chrono::duration_cast<std::chrono::nanoseconds>(target - now).count();
+        const VkResult r = dev_.vt.WaitForFences(dev_.device, 1, &next, VK_TRUE, uint64_t(std::min<int64_t>(left, 1'000'000)));
+        if (r != VK_TIMEOUT) return false;  // ready (or lost): obsolete
+        std::lock_guard<std::mutex> wlock(workerMutex_);
+        if (cancelPredicted_ || stop_) return false;
+    }
+}
+
+// Bounded: a frame the GPU has not finished within 250 ms is paced from then
+// (a hang is not ours to diagnose, and the pacing must not stall on it).
+bool VirtualSwapchain::waitGpu(VkFence fence, bool cancellable, clock::time_point& doneAt) {
+    const auto limit = clock::now() + std::chrono::milliseconds(250);
+    for (;;) {
+        // Short waits: vkWaitForFences returns as soon as the fence signals,
+        // so doneAt stays within the driver's wake-up time of the GPU's end.
+        const VkResult r = dev_.vt.WaitForFences(dev_.device, 1, &fence, VK_TRUE, 500'000);
+        if (r != VK_TIMEOUT) break;
+        if (cancellable && predictedCancelled()) return false;
+        if (clock::now() >= limit) break;
+    }
+    doneAt = clock::now();
+    return true;
+}
+
+// Frame k goes out k/m of the frame interval after the origin (when the GPU
+// finished the job's first frame), never less than half a slot after the
+// previous present (a job whose GPU work ended early must not land on the
+// previous frame's refresh), and, with a known refresh grid, well before the
+// refresh it should show on (a present landing just after a refresh would
+// slip a whole period) and on a refresh of its own.
+VirtualSwapchain::clock::time_point VirtualSwapchain::paceTarget(const Job& job, clock::time_point origin, int k) {
+    pacing::Grid g;
+    g.valid = feedback_ && displayGrid(g.lastMs, g.periodMs);
+    const double t = pacing::presentTargetMs(msOf(origin), job.intervalMs, job.frames, job.order, k, lastPresentMs_,
+                                             lastLandMs_, g);
+    return clock::time_point(std::chrono::duration_cast<clock::duration>(std::chrono::duration<double, std::milli>(t)));
+}
+
+// ---------------------------------------------------------------------------
+// Present feedback
+// ---------------------------------------------------------------------------
+
+namespace {
+// latency_log: one line per displayed frame, from every swapchain of the
+// process into one file (opened once, appended under a lock).
+void latencyLogLine(const std::string& path, double presentMs, double displayMs, bool real) {
+    static std::mutex mutex;
+    static FILE* file = nullptr;
+    static bool failed = false;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!file && !failed) {
+        file = fopen(path.c_str(), "w");
+        failed = !file;
+        if (failed) BDEX_WARN("latency_log: cannot write %s", path.c_str());
+    }
+    if (!file) return;
+    fprintf(file, "%.3f %.3f %d\n", presentMs, displayMs, real ? 1 : 0);
+    fflush(file);
+}
+} // namespace
+
+// Waits for each presented id in turn. vkWaitForPresentKHR returns once that
+// frame *or a later one* is displayed, so an id that completes right after
+// its predecessor (well within a refresh) means the predecessor was replaced
+// before being shown (mailbox), and the display time belongs to this one.
 } // namespace bdex
