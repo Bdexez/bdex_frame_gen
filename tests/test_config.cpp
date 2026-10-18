@@ -66,7 +66,6 @@ TEST(config_apply_values) {
     CHECK(c.apply("occlusion_strength", "2") && c.occlusionStrength == 1.0f);
     CHECK(c.apply("static_guard", "1") && c.staticGuard == 1.0f);
     CHECK(c.apply("TEMPORAL_PREDICTION", "1") && c.temporalPrediction);
-    CHECK(c.apply("extrapolate_hold", "1") && c.extrapolateHold == 1.0f);
     CHECK(c.apply("zero_bias_contrast", "0.05") && c.zeroBiasContrast == 0.05f);
     CHECK(c.apply("subpixel", "1") && c.subpixel);
     CHECK(c.apply("pixel_vectors", "1") && c.pixelVectors);

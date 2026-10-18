@@ -1,7 +1,7 @@
 // flow_confidence: the trust in the finest flow, per flow texel
 // (shaders/flow_confidence.comp), after the flow and before the syntheses —
 // bound to every synthesis (FgContext::setConfidenceMap) for
-// confidence_fallback and debug=confidence, and counted (the share of
+// debug=confidence, and counted (the share of
 // uncertain texels in the statistics, the panel and --report).
 #include "fg_pass.h"
 #include "framegen_internal.h"

@@ -76,7 +76,7 @@ for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hy
     # a 4-CPU runner; the pacing and the validation are what is checked.)
     state="BDEX_FG_INTERP_HOLD=0.3 BDEX_FG_FRAME_TIMING=1"; mult=4; demo_args="--frames 60 --duration 40 --size 640x360"
     output="BDEX_FG_HUD=6"  # (the pacing graph)
-    state="$state BDEX_FG_FLOW_CONFIDENCE=1 BDEX_FG_CONFIDENCE_FALLBACK=0.5"
+    state="$state BDEX_FG_FLOW_CONFIDENCE=1 BDEX_FG_DEBUG=confidence"
     state="$state BDEX_FG_LEARNED_CORRECTION=1"
     state="$state BDEX_FG_INTERP_SPLAT=1 BDEX_FG_PIXEL_VECTORS=1"
     state="$state BDEX_FG_ROT_WEIGHT=1"  # (the matcher's rotation-only variant)

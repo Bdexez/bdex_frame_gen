@@ -49,15 +49,11 @@ struct Config {
     bool  lowLatency    = false;  // block the game until the previous frames are handed to the display
     int   maxFrameLatency = 1;    // while generating: frames the GPU may still be working on when the game begins its next one (0 = no limit); a GPU-bound game otherwise runs ahead by up to a few frames of input lag
     bool  latencyLimiter = true;  // with maxFrameLatency: a GPU-bound game's present returns just in time for its next frame to reach the GPU as it frees up (fresher input, same frame rate)
-    bool  flowConfidence = false; // per flow texel confidence (round trip of the vectors, luma match): the share of uncertain pixels in the statistics, the panel and --report; on with debug=confidence or confidence_fallback
+    bool  flowConfidence = false; // per flow texel confidence (round trip of the vectors, luma match): the share of uncertain pixels in the statistics, the panel and --report; on with debug=confidence
     bool  interpSplat   = false;  // interpolation: both frames forward-splatted to t (the extrapolation's splat map, twice as wide); each output pixel also tries the trajectories of the prev and cur pixels that landed on it (the right layer at an object's edge)
     float learnedFlow   = 0.f;    // the finest flow corrected by tools/train_flow.py's network (share of its correction, 0 = off)
-    bool  affineFlow    = false;  // interpolation, with pixel_vectors: also try an affine fit of the 3x3 flow texels around the source (rotation, zoom)
-    bool  altVectors    = false;  // the matcher also keeps its best candidate 2 px or more from the winner; the synthesis tries that trajectory per pixel and keeps it where its endpoints agree better (ambiguous fast motion)
-    float flowUpsample  = 0.0f;   // the finest flow brought to the luma resolution along the picture's edges (joint bilateral, this brightness scale; 0 = off): an object's edge keeps its own motion
     float lumaMatch     = 0.01f;  // the previous frame's luma brought to the current one's mean and contrast before the flow when the whole picture's mean moved by at least this much (0..1 luma; 0 = off): fades, lighting changes
     float learnedCorrection = 0.0f; // interpolation: the trained correction network (tools/train_correction.py) over each generated frame, 0 = off .. 1 = as trained; 8-bit formats without upscaling
-    float confidenceFallback = 0.0f; // interpolation: fade toward the plain cross-fade where the flow is not trusted (flow_confidence's map), 0 = off (historical), 1 = fully
     bool  crashLog      = true;   // Linux: a crash in the layer writes ~/.cache/bdex-framegen/crash-<game>-<pid>.txt (signal, offsets in the layer, settings); other faults go untouched to the game's handlers
     bool  skipFast      = true;   // fixed multiplier: no generation while the game already runs at 85 % of the screen's refresh rate or more (back under 75 %): it would add almost no frame to the screen, only GPU work and the interpolation's hold (refresh rate known only)
     bool  pipelineCache = true;   // the passes' compiled shaders kept on disk (~/.cache/bdex-framegen/pipelines-*.bin): faster starts
@@ -127,7 +123,6 @@ struct Config {
     bool  onlineTune    = false;  // per-game choice of the opt-in flow options from an online self-evaluation (opt-in, read at start-up; decisions cached per game)
     std::string tuneName;         // the game's name for the online_tune cache (set by load: the extra process, else this process)
     float extrapolateAccel = 0.0f; // extrapolation: weight of a second-order (acceleration) term from the previous pair's motion (0 = constant velocity, bit-for-bit)
-    float extrapolateHold = 0.0f; // extrapolation: keep pixels with inconsistent motion in place (1 = pre-0.4 behaviour, shows double images; 0 = follow the warp)
     bool  frameTiming   = false;  // t of each generated frame from the real content times (frame-time spikes) instead of the fixed i/multiplier (opt-in)
     bool  dedup         = false;  // detect frames the game presents twice: keep the previous motion, time the output on first appearances (opt-in)
     bool  paused        = false;  // live toggle: present only the real frames (reloaded while running; see tools/bdex-framegen --toggle)
