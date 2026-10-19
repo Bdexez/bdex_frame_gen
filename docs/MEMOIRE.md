@@ -1,9 +1,9 @@
 # Mémoire du projet bdex-framegen
 
-État au **5 octobre 2026** — dernière version publiée **0.5.5** (26/09) ;
-tout ce qui a suivi est sur `main` sans version (section `[Unreleased]` du
-CHANGELOG) : parité Lossless Scaling, compatibilité matériel/distributions,
-SteamOS, capture Linux, injection Windows par défaut, ménage du 04/10.
+État au **5 octobre 2026** — dernière version publiée **0.5.6** (05/10), qui
+regroupe tout depuis la 0.5.5 : parité Lossless Scaling, compatibilité
+matériel/distributions, SteamOS, capture Linux, injection Windows par défaut,
+ménage du 04/10. Première version propriétaire.
 Ce qui reste : [`ROADMAP.md`](../ROADMAP.md).
 
 Ce fichier rassemble ce qu'il faut savoir pour comprendre, utiliser et faire
