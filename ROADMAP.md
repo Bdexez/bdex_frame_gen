@@ -56,6 +56,13 @@ log is in [`CHANGELOG.md`](CHANGELOG.md).
   more iterations change nothing there. Other weak spots: particles
   (17.7 dB), brightness pulses (worse than the plain cross-fade), and
   rotation / zoom (each block carries a translation only).
+  **Measured on 2026-10-05 (`tools/edge_bench/`): it is occlusion.** Pixels
+  visible in only one of the two frames hold 51–78 % of all the error; the
+  flow's resolution is not the cause (`flow_scale=1` is worse). Picking the
+  right one-sided sample would give up to ~+4 dB, but which layer is in
+  front cannot be told reliably from two frames: next step, use frame N−2
+  from the history ring (MEMOIRE §9; prototype on branch
+  `wip/occlusion-layers`).
 - **Windows**: forward `VK_EXT_full_screen_exclusive` through the virtual
   swapchain; an installer with Authenticode signing; a Desktop Duplication
   fallback for capture; measuring capture latency from the game's present

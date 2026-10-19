@@ -1163,6 +1163,42 @@ rapide ; puis rotations et zoom (un bloc ne porte qu'une translation),
 particules, pulsations de luminosité. Options en attente de vrais jeux :
 `tools/pending_decisions.py` (guide : `docs/corpus-jeux.md`).
 
+**Contours : c'est l'occultation** (05/10, `tools/edge_bench/` :
+`make_sequence.py` still|pan|fast|lowcon, 1280×720, vérité exacte des
+couches et vitesses ; `score.py --flow`). La bande de ±6 px autour des objets
+(4 à 5 % des pixels) porte 62 à 91 % de l'erreur. Dedans, **les pixels
+visibles dans une seule des deux images portent 51 à 78 % de toute
+l'erreur** (still 78, pan 60, fast 51, lowcon 57), à 19–25 dB. Le vecteur
+vrai absent des 4×4 texels voisins : 3 à 8 % seulement (lowcon 16).
+- **Pas la résolution du flux** : `flow_scale=1` (un vecteur pour 4×4 px
+  au lieu de 8×8) perd 1,4 dB dans la bande (still, pan), −0,6 à −1,3 dB
+  sur l'image. Le flux par blocs est faux sur toute la bande (texel le plus
+  proche juste à 39 % même pour les pixels visibles), le bon vecteur est
+  dans le voisinage.
+- **Marge** : choisir, avec la vérité, le meilleur échantillon pris d'un
+  seul côté parmi les vecteurs des 16 texels autour de q donne 39–42 dB sur
+  ces pixels (moteur 23) → jusqu'à ~+4 dB sur l'image.
+- **Pourquoi le moteur rate** : une trajectoire fausse paraît cohérente
+  (fond lisse : erreur médiane à deux côtés 0,011), le repli en fondu ne se
+  déclenche presque jamais, l'objet bave.
+- **Prototype** (branche locale `wip/occlusion-layers`, derrière
+  `occlusion_strength ≥ 1,5`) : (a) trajectoire à deux côtés choisie au
+  pixel parmi les vecteurs des 3×3 texels des deux champs, gardée seulement
+  si chaque extrémité est expliquée par elle au moins aussi bien que par
+  les autres, sur fenêtre décalée (meilleur des 4 quadrants 2×2 : un patch
+  centré sur la frontière contient l'autre couche) → +0,22 / +0,17 / +0,09
+  / +0,42 dB, aucune perte, mais synthèse 0,14 → 0,73 ms en 720p ;
+  (b) échantillon d'un seul côté en occultation : quand le côté est juste,
+  il retire la moitié de l'erreur totale de still (19,5 → 30 dB sur ces
+  pixels), mais **l'ordre des couches est ambigu avec deux images** —
+  « le plus rapide devant », couches = les deux vecteurs les plus fréquents,
+  comparaison des deux hypothèses : toujours net négatif (−0,4 à −1 dB).
+- **Suite** : l'image N−2 (anneau d'historique de 3) tranche les zones
+  recouvertes — un fond recouvert entre N−1 et N était visible en N−2, sa
+  vitesse se vérifie (prev(a) ≈ prevprev(a − v)), pas celle du mauvais
+  vecteur. L'ordre établi là vaut pour le bord découvert du même objet.
+  Rendre (a) abordable (porte sur l'erreur du moteur, moins de candidats).
+
 **Windows**
 - Transmettre le plein écran exclusif (mode 1).
 - Installateur et signature.
