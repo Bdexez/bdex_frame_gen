@@ -5,6 +5,7 @@
 #include "frame_order.h"
 #include "pacing.h"
 #include "framegen.h"
+#include "recorder.h"
 
 #include <atomic>
 #include <chrono>
@@ -157,7 +158,6 @@ private:
     FrameSlot& nextSlot(std::vector<FrameSlot>& slots, uint32_t& cursor);
     VkResult consumeSemaphores(const VkSemaphore* sems, uint32_t count);
     void dumpFrame(FrameSlot& slot, bool generated, float t, uint32_t output = 0);
-    void recordFrame(FrameSlot& slot);  // a recording's real frame (DeviceData::recordDir)
 
     // Worker thread.
     void workerLoop();
@@ -402,8 +402,9 @@ private:
     bool dumping_ = false;
     bool recording_ = false;   // this present's real frame goes to the recording
     uint64_t recSeen_ = 0;     // DeviceData::recordSerial last taken
-    std::string recDir_;
-    int recLeft_ = 0, recCount_ = 0;
+    std::unique_ptr<FrameRecorder> recorder_;
+    VkBuffer recBuf_ = VK_NULL_HANDLE;  // this present's frame, in recorder_
+    bool slotDone(uint32_t slot, uint64_t generation, bool wait);
 };
 
 } // namespace bdex

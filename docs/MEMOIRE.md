@@ -966,6 +966,23 @@ d'affichage tournent dans `gamescope --backend headless` ou dans Docker
   deux : côté jeu, et `swapchain_worker.cpp` côté worker (sans changement de
   code).
 
+### 07/10 — premiers enregistrements de vrais jeux
+
+- **L'enregistrement faisait tomber le jeu à 3 i/s** (Fallout: New Vegas,
+  Vega 8 : `game_fps=2,76` dans `DONE`). `present()` attendait la fence de
+  l'image, puis convertissait et écrivait le PPM sur le thread du jeu, depuis
+  une mémoire hôte non cachée. Un jeu à pas de temps variable avance alors de
+  ~360 ms entre deux images : la séquence n'a plus le mouvement du jeu.
+  Désormais `FrameRecorder` (`layer/src/recorder.*`) : copie GPU de l'image
+  du jeu (taille de rendu, sans HUD ni upscale) dans un anneau de 6 tampons
+  hôte en cache (`createBuffer(…, hostCached)`), et un thread écrit les
+  fichiers. Conteneur CI (lavapipe), démo 1280×720 ×2 : 17,3 → 13,9 i/s
+  pendant l'enregistrement avant, 17,7 → 17,0 après. **Un enregistrement
+  fait avec une couche antérieure est à refaire.**
+- Le panneau : vrai bouton « ● Enregistrer » (l'icône seule passait
+  inaperçue), et `explorer` / `xalia` (Wine) ne sont plus pris pour des jeux.
+  `--record` enregistre dès le lancement : à éviter dans un jeu à menus.
+
 ---
 
 ## 8. Chiffres à retenir

@@ -610,6 +610,8 @@ void VirtualSwapchain::destroyAll() {
     // semaphore-consuming ones) and the async compute queue may still refer
     // to them.
     waitQueuesIdle();
+    if (recorder_) recorder_->finish([](uint32_t, uint64_t, bool) { return true; });  // (queues idle)
+    recorder_.reset();
     destroySlots(slots_, appPool_);
     destroySlots(workerSlots_, workerPool_);
     if (appPool_) dev_.vt.DestroyCommandPool(d, appPool_, nullptr);
@@ -750,26 +752,12 @@ VkResult VirtualSwapchain::consumeSemaphores(const VkSemaphore* sems, uint32_t c
     return dev_.submit(si, VK_NULL_HANDLE);
 }
 
-// One real frame of a recording, for the corpus: fNNNN.ppm (the corpus'
-// layout), at most 960 pixels wide (a box filter: the corpus is scored at
-// 480), then DONE once the count is reached.
-void VirtualSwapchain::recordFrame(FrameSlot& slot) {
-    dev_.vt.WaitForFences(dev_.device, 1, &slot.fence, VK_TRUE, UINT64_MAX);
-    const uint32_t ds = std::max(1u, (displayExtent_.width + 959) / 960);
-    char name[32];
-    snprintf(name, sizeof(name), "/f%04d.ppm", recCount_);
-    if (!fg_->writeDump(recDir_ + name, fg_->outputCount(), ds)) {
-        BDEX_WARN("recording: could not write %s%s — stopped", recDir_.c_str(), name);
-        recLeft_ = 0;
-        return;
-    }
-    ++recCount_;
-    if (--recLeft_ == 0) {
-        std::ofstream done(recDir_ + "/DONE");
-        done << "frames=" << recCount_ << "\nwidth=" << displayExtent_.width / ds << "\nheight=" << displayExtent_.height / ds
-             << "\ngame_fps=" << (frameIntervalMs_ > 0.0 ? 1000.0 / frameIntervalMs_ : 0.0) << "\n";
-        BDEX_INFO("recording done: %d frames in %s", recCount_, recDir_.c_str());
-    }
+// Whether submission (slot, generation) of slots_ finished on the GPU (a
+// slot is reused only once its fence signalled).
+bool VirtualSwapchain::slotDone(uint32_t slot, uint64_t generation, bool wait) {
+    FrameSlot& s = slots_[slot];
+    if (s.generation != generation || !s.submitted) return true;
+    return dev_.vt.WaitForFences(dev_.device, 1, &s.fence, VK_TRUE, wait ? UINT64_MAX : 0) != VK_TIMEOUT;
 }
 
 void VirtualSwapchain::dumpFrame(FrameSlot& slot, bool generated, float t, uint32_t output) {
@@ -1004,12 +992,11 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         std::lock_guard<std::mutex> lk(dev_.configMutex);
         if (dev_.recordSerial != recSeen_) {
             recSeen_ = dev_.recordSerial;
-            recDir_ = dev_.recordDir;
-            recLeft_ = dev_.recordFrames;
-            recCount_ = 0;
+            if (recorder_) recorder_->finish([this](uint32_t s, uint64_t g, bool w) { return slotDone(s, g, w); });
+            recorder_ = std::make_unique<FrameRecorder>(dev_, dev_.recordDir, dev_.recordFrames);
         }
     }
-    recording_ = recLeft_ > 0;
+    recording_ = recorder_ && recorder_->wantsFrame();
     if (cfg_.fpsLimit != 0.f) limitFrameRate();  // before mutex_: never block acquire while sleeping
     std::unique_lock<std::mutex> lock(mutex_);
     const auto t0 = clock::now();
@@ -1186,6 +1173,11 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     // generate the intermediate frames into the internal output images.
     FrameSlot& slot = nextSlot(slots_, slotCursor_);
     const uint32_t slotIdx = static_cast<uint32_t>(&slot - slots_.data());
+    // (still set: a present that failed after taking it)
+    if (recording_ && !recBuf_)
+        recBuf_ = recorder_->next(extent_, fg_->encoding(),
+                                  [this](uint32_t s, uint64_t g, bool w) { return slotDone(s, g, w); });
+    recording_ = recBuf_ != VK_NULL_HANDLE;
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     dev_.vt.BeginCommandBuffer(slot.cmd, &bi);
@@ -1243,23 +1235,26 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         // Resample the real frame into the internal image the worker presents
         // (for upscaling, or so the HUD can be drawn on it).
         if (fg_->packReal()) fg_->recordUpscaleReal(slot.cmd, imageIndex, interpolate ? prev : -1);
-        if (dumping_ || recording_) {
-            if (dumping_ && interpolate)
+        if (dumping_) {
+            if (interpolate)
                 for (int i = 0; i < mult - 1; ++i) fg_->recordDump(slot.cmd, static_cast<uint32_t>(i), imageIndex);
             fg_->recordDump(slot.cmd, fg_->outputCount(), imageIndex);
         }
+        if (recBuf_) fg_->recordReadbackSource(slot.cmd, imageIndex, recBuf_);
         fg_->recordReleaseSources(slot.cmd, prev, static_cast<int>(imageIndex));
     } else if (fg_->packReal()) {
         // No frame generation: still process the one real frame (upscale / HUD).
         fg_->recordAcquireSources(slot.cmd, -1, static_cast<int>(imageIndex));
         fg_->recordUpscaleReal(slot.cmd, imageIndex);
-        if (dumping_ || recording_) fg_->recordDump(slot.cmd, fg_->outputCount(), imageIndex);
+        if (dumping_) fg_->recordDump(slot.cmd, fg_->outputCount(), imageIndex);
+        if (recBuf_) fg_->recordReadbackSource(slot.cmd, imageIndex, recBuf_);
         fg_->recordReleaseSources(slot.cmd, -1, static_cast<int>(imageIndex));
     } else if (dumping_ || recording_) {
         // Ground-truth runs use multiplier=1: copy the unmodified source into
         // the dump buffer while the image is temporarily in GENERAL layout.
         fg_->recordAcquireSources(slot.cmd, -1, static_cast<int>(imageIndex));
-        fg_->recordDump(slot.cmd, fg_->outputCount(), imageIndex);
+        if (dumping_) fg_->recordDump(slot.cmd, fg_->outputCount(), imageIndex);
+        if (recBuf_) fg_->recordReadbackSource(slot.cmd, imageIndex, recBuf_);
         fg_->recordReleaseSources(slot.cmd, -1, static_cast<int>(imageIndex));
     }
     // Pass-through: an empty submission still consumes the application's
@@ -1363,7 +1358,9 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             }
         }
     }
-    if (recording_) recordFrame(slot);
+    if (recBuf_) recorder_->queued(slotIdx, slot.generation, frameIntervalMs_ > 0.0 ? 1000.0 / frameIntervalMs_ : 0.0);
+    recBuf_ = VK_NULL_HANDLE;
+    if (recorder_) recorder_->pump([this](uint32_t s, uint64_t g, bool w) { return slotDone(s, g, w); });
 
     // Hand the presentation over to the worker.
     Job job;

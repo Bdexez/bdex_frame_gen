@@ -59,6 +59,7 @@ _EN = {
  'capture (fenêtre choisie)': 'capture (window picked)',
  'anti-triche': 'anti-cheat',
  'Enregistrer quelques secondes de ce jeu (corpus d\'évaluation)': 'Record a few seconds of this game (evaluation corpus)',
+ '● Enregistrer': '● Record',
  'Enregistrement impossible : {}': 'Recording impossible: {}',
  'Enregistrement de {}… (le jeu peut ralentir quelques secondes)': 'Recording {}… (the game may slow down for a few seconds)',
  'Enregistrement prêt : {}': 'Recording ready: {}',
@@ -1879,7 +1880,8 @@ def mirror_config():
 NOT_GAMES = {"steam", "steamwebhelper", "gamescope", "gamescopereaper", "gamescope-wl", "mangoapp",
              "steam-runtime-check-requirements", "chrome", "chromium",
              "firefox", "librewolf", "brave", "zen", "electron", "discord", "vesktop", "code",
-             "obs", "vulkaninfo", "vkcube", "bdex-framegen-gui", "bdex-capture"}
+             "obs", "vulkaninfo", "vkcube", "bdex-framegen-gui", "bdex-capture",
+             "explorer", "xalia"}   # Wine's desktop and accessibility helpers (Proton)
 
 
 def layer_name(arg):
@@ -2362,9 +2364,8 @@ class Window(Adw.ApplicationWindow):
             if armed:
                 # A few seconds of this game for the evaluation corpus (the
                 # layer writes its real frames; packed when done).
-                rec = Gtk.Button(icon_name="media-record-symbolic", valign=Gtk.Align.CENTER,
+                rec = Gtk.Button(label=tr("● Enregistrer"), valign=Gtk.Align.CENTER,
                                  tooltip_text=tr("Enregistrer quelques secondes de ce jeu (corpus d'évaluation)"))
-                rec.add_css_class("flat")
                 rec.connect("clicked", self.on_record, (pid, name))
                 row.add_suffix(rec)
             self.running_group.add(row)
