@@ -13,6 +13,7 @@
 # an x86_64 container: no binfmt registration on the host, Docker is all it
 # needs.
 set -uo pipefail
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 archive="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 shift
 targets=("$@")
@@ -162,7 +163,7 @@ for target in "${targets[@]}"; do
   fi
   ext=tar.gz
   case "$archive" in *.deb) ext=deb ;; *.rpm) ext=rpm ;; esac
-  if docker run --rm -v "$archive:/work/pkg.$ext:ro" -v "$job:/work/job.sh:ro" "${cmd[@]}" 2>&1 |
+  if docker run --rm -v "$ROOT/tools/ci/apt-get:/usr/local/sbin/apt-get:ro" -v "$archive:/work/pkg.$ext:ro" -v "$job:/work/job.sh:ro" "${cmd[@]}" 2>&1 |
      sed "s|^|[$target] |"; then
     echo "[$target] OK"
   else

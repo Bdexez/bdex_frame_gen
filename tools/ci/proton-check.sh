@@ -20,7 +20,7 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/src"
 (cd "$ROOT" && git ls-files -co --exclude-standard | grep -v '^build\|^dist' | tar -cf - -T - | tar -xf - -C "$work/src")
-docker run --rm -e dxvk_ver=$dxvk_ver -e dxvk_sha=$dxvk_sha -e vkd3d_ver=$vkd3d_ver -e vkd3d_sha=$vkd3d_sha -v "$work:/work" "$image" bash -euo pipefail -c '
+docker run --rm -v "$ROOT/tools/ci/apt-get:/usr/local/sbin/apt-get:ro" -e dxvk_ver=$dxvk_ver -e dxvk_sha=$dxvk_sha -e vkd3d_ver=$vkd3d_ver -e vkd3d_sha=$vkd3d_sha -v "$work:/work" "$image" bash -euo pipefail -c '
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq --no-install-recommends cmake make g++ glslc libvulkan-dev python3 curl ca-certificates zstd \

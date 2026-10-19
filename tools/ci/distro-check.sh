@@ -97,7 +97,7 @@ JOB
 status=0
 for img in "${images[@]}"; do
   # (Alpine has no bash until it is installed.)
-  if docker run --rm ${BDEX_DOCKER_ARGS:-} -v "$work:/work:ro" "$img" sh -c \
+  if docker run --rm -v "$ROOT/tools/ci/apt-get:/usr/local/sbin/apt-get:ro" ${BDEX_DOCKER_ARGS:-} -v "$work:/work:ro" "$img" sh -c \
        'command -v bash >/dev/null || apk add -q bash >/dev/null; exec bash /work/job.sh "$1"' sh "$cc" 2>&1 |
      sed "s|^|[$img] |"; then
     echo "[$img] OK"
