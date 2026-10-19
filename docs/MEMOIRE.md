@@ -1,9 +1,10 @@
 # Mémoire du projet bdex-framegen
 
-État au **30 septembre 2026** — dernière version publiée **0.5.5** (26/09) ;
-depuis, trois lots non publiés en version mais poussés sur `main` (jusqu'à
-`86e6996`) : parité Lossless Scaling, compatibilité matériel/distributions,
-SteamOS.
+État au **5 octobre 2026** — dernière version publiée **0.5.5** (26/09) ;
+tout ce qui a suivi est sur `main` sans version (section `[Unreleased]` du
+CHANGELOG) : parité Lossless Scaling, compatibilité matériel/distributions,
+SteamOS, capture Linux, injection Windows par défaut, ménage du 04/10.
+Ce qui reste : [`ROADMAP.md`](../ROADMAP.md).
 
 Ce fichier rassemble ce qu'il faut savoir pour comprendre, utiliser et faire
 évoluer le logiciel **sur chaque système** : comment il marche, ce qui a été
@@ -943,6 +944,28 @@ d'affichage tournent dans `gamescope --backend headless` ou dans Docker
   d'options, `interp_splat` à demi-résolution ; options qualité auto
   jusqu'à 4K ×3 ; `synth_bicubic` −16 % ; mémoire GPU affichée.
 
+**04–05/10 (ménage, local)**
+
+- **Cinq options retirées**, mesurées négatives ou neutres : `alt_vectors`,
+  `affine_flow`, `flow_upsample`, `confidence_fallback` et `extrapolate_hold`
+  (l'ancien comportement aux images doubles). Le code est parti des shaders,
+  du moteur, du panneau et du lanceur. Toutes les autres sorties sont
+  identiques au bit près : 276 cas (réglages × séquences × modes) hachés
+  avant et après sur la RTX 3060 Ti.
+- **Où est l'erreur restante** : sur des séquences type jeu en 1280×720
+  (monde texturé qui défile, objets indépendants, HUD), la caméra rapide est
+  bien suivie (34 dB à 80 px par paire). **60 à 80 % de l'erreur est au
+  contour des objets qui bougent par eux-mêmes**, sur 2 à 4 % des pixels,
+  même à caméra fixe et à mouvement entier exact. Rien n'y change : sous-pixel
+  (LK ou parabolique), bicubique, `learned_flow`, `levels=5`,
+  `flow_iterations=3`, `occlusion_strength`, `interp_splat=0`.
+- **Outils** : `tools/pending_decisions.py` note les options en attente sur
+  des jeux enregistrés et rend un verdict par option ; `docs/corpus-jeux.md`
+  dit quoi enregistrer pour chaque décision. `ROADMAP.md` réécrit (l'ancien
+  datait du 23/09, `todo.md` du 24/09, supprimé). `swapchain.cpp` coupé en
+  deux : côté jeu, et `swapchain_worker.cpp` côté worker (sans changement de
+  code).
+
 ---
 
 ## 8. Chiffres à retenir
@@ -1047,7 +1070,7 @@ les sources arrivées en q sont des trajectoires candidates (erreur actuelle
 +0,41, démo +0,01..+0,03, **hud −0,12** (interaction avec pixel_vectors, ni
 la marge ni le seuil n'y changent rien). +0,09 ms à 960×540.
 
-**`alt_vectors`** (03/10, opt-in, écarté) : second candidat du matcher (≥ 2 px
+**`alt_vectors`** (03/10, écarté, **retiré du code le 04/10**) : second candidat du matcher (≥ 2 px
 du gagnant) essayé par pixel dans la synthèse. Sans marge : scroll −3,0,
 subpixel −2,7 (il gagne sur du bruit) ; avec marge (×0,75 − 0,004) et seulement
 si la trajectoire gardée est mauvaise (erreur > 0,04) : seul hud +0,57, pan
@@ -1055,7 +1078,7 @@ si la trajectoire gardée est mauvaise (erreur > 0,04) : seul hud +0,57, pan
 Tampons de stockage (pas d'image : 4 images de stockage garanties, test
 `min_limits`). pixel_vectors trouve déjà les mêmes cas.
 
-**`flow_upsample`** (03/10, opt-in, écarté des défauts) : sur-échantillonnage
+**`flow_upsample`** (03/10, écarté, **retiré du code le 04/10**) : sur-échantillonnage
 bilatéral joint du flux aux frontières de mouvement. Mesuré contradictoire :
 sans pixel_vectors rotate +0,51 / scroll −0,88 / démo −0,06, avec
 pixel_vectors l'inverse (rotate −1,41, scroll +1,66). pixel_vectors fait déjà
@@ -1090,7 +1113,7 @@ part 0,52 → 0,21. Corpus : zoom +1,0 à +2,6, sous-pixel +0,5 à +2,2, fondu
 (la synthèse coûte plus aussi : vecteurs fractionnaires → plus de tests de
 frontière de pixel_vectors). Pas de PyTorch sur la machine. À réentraîner sur
 des enregistrements de vrais jeux (« Enregistrer ») avant tout défaut.
-`affine_flow` (même jour, désactivé) : candidat affine 3×3 dans
+`affine_flow` (même jour, **retiré du code le 04/10**) : candidat affine 3×3 dans
 pixel_vectors, mesuré neutre (les vecteurs entiers laissent un résidu ≥ 0,5
 px : il passe rarement le test, et rot_weight + pixel_vectors suivent déjà).
 
@@ -1111,14 +1134,17 @@ jeux (`--record`). +0,12 ms à 960×540. Désactivé par défaut.
 (zones unies exclues : sinon tout le damier de la démo était « incertain »)
 et accord de luma ; part incertaine dans les stats, le statut, le panneau,
 `--report` (démo 0,7 % à ¼ vitesse, 1,9 % normale, 6,9 % à ×3) ;
-`debug=confidence` en rouge. Repli `confidence_fallback` (binding 9 de la
+`debug=confidence` en rouge. Repli `confidence_fallback` (**retiré du code le 04/10** ; binding 9 de la
 synthèse, variante complète seulement) **mesuré négatif** : 0,5 → démo +0,20,
 rapide +0,02, corpus −0,2 à −1,1 dB, scintillement en hausse partout ;
 laissé à 0. Ne pas y revenir sans nouvelle idée de repli (le fondu est plus
 flou qu'un warp approximatif).
 
-**Qualité** : mouvement rapide (ambiguïté du coût SAD), rotations et zoom
-(modèle affine par bloc à faire), occlusions.
+**Qualité** : le point faible mesuré le 04/10 est le contour des objets qui
+bougent par eux-mêmes (60 à 80 % de l'erreur, cf. §7), plus que la caméra
+rapide ; puis rotations et zoom (un bloc ne porte qu'une translation),
+particules, pulsations de luminosité. Options en attente de vrais jeux :
+`tools/pending_decisions.py` (guide : `docs/corpus-jeux.md`).
 
 **Windows**
 - Transmettre le plein écran exclusif (mode 1).
