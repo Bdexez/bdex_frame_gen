@@ -124,14 +124,16 @@ void VirtualSwapchain::runJob(const Job& job) {
 
     if (job.realIndex > 0 || job.frames == 1) {
         // Interpolation, hybrid (and a lone real frame): every frame is
-        // copied at once, in display order, right behind the synthesis on the
-        // queue — into its swapchain image for as many as the surface lets us
-        // hold acquired at once (acquireAhead_), into a staging image for the
-        // rest (a surface allowing few images, high multipliers; hybrid's
-        // predicted frames). The application thread only waits for these
-        // copies to be submitted before it records the next synthesis (which
-        // rewrites what they read), so the pacing below never holds the game
-        // back; a staged frame goes to its swapchain image when presented.
+        // copied at once (a split synthesis: after the first frame's present,
+        // deferRest below), in display order, right behind the synthesis on
+        // the queue — into its swapchain image for as many as the surface
+        // lets us hold acquired at once (acquireAhead_), into a staging image
+        // for the rest (a surface allowing few images, high multipliers;
+        // hybrid's predicted frames). The application thread only waits for
+        // these copies to be submitted before it records the next synthesis
+        // (which rewrites what they read), so the pacing below holds the game
+        // back at most to the first frame; a staged frame goes to its
+        // swapchain image when presented.
         // Hybrid: the predicted frames after the real one are presented at
         // their times unless the next present's first frame is ready first.
         // (Past the staging images there are — a live change not yet
@@ -142,20 +144,51 @@ void VirtualSwapchain::runJob(const Job& job) {
         std::vector<Copied> out(static_cast<size_t>(eager));
         int n = 0;
         VkResult err = VK_SUCCESS;
-        for (int i = 0; i < eager; ++i) {
-            const VkResult r = submitCopy(job, i, out[size_t(i)]);
-            if (r < 0) { err = r; break; }
-            copied[size_t(i)] = true;
-            ++n;
-        }
-        for (int i = eager; i < staged && err >= 0; ++i) {
-            const VkResult r = submitStage(job, i, static_cast<uint32_t>(i - eager));
+        bool restSubmitted = false;
+        auto submitRest = [&] {
+            restSubmitted = true;
+            for (int i = n; i < eager && err >= 0; ++i) {
+                const VkResult r = submitCopy(job, i, out[size_t(i)]);
+                if (r < 0) { err = r; break; }
+                copied[size_t(i)] = true;
+                ++n;
+            }
+            for (int i = eager; i < staged && err >= 0; ++i) {
+                const VkResult r = submitStage(job, i, static_cast<uint32_t>(i - eager));
+                if (r < 0) err = r;
+                else copied[size_t(i)] = true;
+            }
+            if (err < 0 || staged == job.frames) {
+                consumeUnused();
+                markSubmitted();
+            }
+        };
+        // A split synthesis (FrameSlot::cmd2) still running: the first
+        // frame's copy alone goes on the queue now, the others once it is
+        // presented. Queued at once, they wait for the rest of the synthesis
+        // — and so does all that follows them on the queue, the first
+        // frame's present included: the driver signals the compositor's
+        // acquire point (explicit sync) from there. Ready, the first frame
+        // reached the compositor only with the whole synthesis, past the
+        // refresh it was presented for whenever that ran late: a refresh
+        // held, then two frames in the next one (measured, 1440p x4.8 on a
+        // 144 Hz Xwayland: 6 to 20 times a second, the frame presented less
+        // than ~9 ms after the game's present; never after 11 ms — 0.2 a
+        // second deferred). Submitting the rest as soon as the synthesis
+        // ends, should that come first: 0.4 to 0.9 a second (their acquires
+        // and copies just before the first frame).
+        const VkFence slotFence = job.slot >= 0 ? slots_[size_t(job.slot)].fence : VK_NULL_HANDLE;
+        const bool deferRest = paced && job.firstReady && eager > 1 && slotFence &&
+                               dev_.vt.GetFenceStatus(dev_.device, slotFence) == VK_NOT_READY;
+        if (deferRest) {
+            const VkResult r = submitCopy(job, 0, out[0]);
             if (r < 0) err = r;
-            else copied[size_t(i)] = true;
-        }
-        if (err < 0 || staged == job.frames) {
-            consumeUnused();
-            markSubmitted();
+            else {
+                copied[0] = true;
+                n = 1;
+            }
+        } else {
+            submitRest();
         }
         auto staging = [&](int i) { return i < staged ? i - eager : -1; };
         // The frames are timed from when the GPU finished the synthesis (the
@@ -215,7 +248,9 @@ void VirtualSwapchain::runJob(const Job& job) {
             const VkResult r = presentCopied(job, out[size_t(i)]);
             if (r < 0 && err == VK_SUCCESS) err = r;
             noteLateness(i);
+            if (!restSubmitted && err >= 0) submitRest();  // (n grows)
         }
+        if (!restSubmitted && err >= 0) submitRest();
         if (err < 0) {
             fail(err);
             return;
@@ -445,7 +480,8 @@ VirtualSwapchain::clock::time_point VirtualSwapchain::paceTarget(const Job& job,
 namespace {
 // latency_log: one line per displayed frame, from every swapchain of the
 // process into one file (opened once, appended under a lock).
-void latencyLogLine(const std::string& path, double presentMs, double displayMs, bool real, double plannedMs) {
+void latencyLogLine(const std::string& path, double presentMs, double displayMs, bool real, double plannedMs,
+                    const char* more = "") {
     static std::mutex mutex;
     static FILE* file = nullptr;
     static bool failed = false;
@@ -456,10 +492,24 @@ void latencyLogLine(const std::string& path, double presentMs, double displayMs,
         if (failed) BDEX_WARN("latency_log: cannot write %s", path.c_str());
     }
     if (!file) return;
-    fprintf(file, "%.3f %.3f %d %.3f\n", presentMs, displayMs, real ? 1 : 0, plannedMs);
+    fprintf(file, "%.3f %.3f %d %.3f%s\n", presentMs, displayMs, real ? 1 : 0, plannedMs, more);
     fflush(file);
 }
 } // namespace
+
+// latency_log with x11_clock: a line per present once the X server reports
+// it executed, with the refresh it really went out at, plus its MSC, the
+// content time it shows (Job::contentMs), the completion's UST and mode, and
+// when the worker presented it.
+void VirtualSwapchain::logX11Completions() {
+    x11Clock_->logTo([path = latencyLogPath_](const X11PresentClock::Sent& s, double handoverMs, uint64_t msc,
+                                              double ustMs, int mode) {
+        char more[128];
+        snprintf(more, sizeof more, " %llu %.3f %.3f %d %.3f", static_cast<unsigned long long>(msc), s.contentMs, ustMs, mode,
+                 s.sentMs);
+        latencyLogLine(path, s.presentMs, handoverMs, s.real, s.plannedMs, more);
+    });
+}
 
 // Waits for each presented id in turn. vkWaitForPresentKHR returns once that
 // frame *or a later one* is displayed, so an id that completes right after
@@ -891,6 +941,12 @@ VkResult VirtualSwapchain::presentCopied(const Job& job, const Copied& c) {
         statsRealDelayUs_.fetch_add(
             static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(now - job.start).count()),
             std::memory_order_relaxed);
+    const bool x11Log = x11Clock_ && !latencyLogPath_.empty();
+    if (x11Log) {
+        const bool known = c.index >= 0 && c.index < 8;
+        x11Clock_->sent({msOf(job.start), known ? job.planned[c.index] : 0.0, known ? job.contentMs[c.index] : 0.0,
+                         msOf(clock::now()), c.real});
+    }
     VkResult r;
     {
         std::lock_guard<std::mutex> qlock(dev_.queueMutex(dev_.queue));
@@ -906,6 +962,7 @@ VkResult VirtualSwapchain::presentCopied(const Job& job, const Copied& c) {
         }
 #endif
     }
+    if (x11Log && r < 0) x11Clock_->unsent();
     // For the spacing of the next present (paceTarget): when this one went
     // out, and the refresh it was due to show on.
     lastPresentMs_ = msOf(now);
@@ -921,12 +978,8 @@ VkResult VirtualSwapchain::presentCopied(const Job& job, const Copied& c) {
         std::lock_guard<std::mutex> lock(fbMutex_);
         const bool x11 = true;  // (x11_clock first, as displayGrid)
         latencyFromX11_.store(x11, std::memory_order_relaxed);
-        // latency_log too: the refresh the frame reaches the compositor at
-        // (on screen a refresh later; the plan is on these refreshes), where
-        // the present feedback's times are this present's.
-        if (x11 && !latencyLogPath_.empty())
-            latencyLogLine(latencyLogPath_, msOf(job.start), lastLandMs_, c.real,
-                           c.index >= 0 && c.index < 8 ? job.planned[c.index] : 0.0);
+        // (latency_log: x11_clock writes the line, logX11Completions — the
+        // present feedback's times are this present's.)
     }
     if (c.real && lastLandMs_ > 0.0 && latencyFromX11_.load(std::memory_order_relaxed)) {
         std::lock_guard<std::mutex> lock(fbMutex_);

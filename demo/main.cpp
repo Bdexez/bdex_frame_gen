@@ -569,6 +569,29 @@ void Demo::drawFrame() {
     vkBeginCommandBuffer(cmd, &bi);
     double flashInput = -1.0;
     if (!opt_.replayDir.empty()) {
+        // --gpu-load: the scene drawn first, all overwritten by the
+        // recorded frame — a game as heavy on the GPU, on real content.
+        if (opt_.gpuLoad > 1) {
+            VkRenderPassBeginInfo rbi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+            rbi.renderPass = renderPass_;
+            rbi.framebuffer = framebuffers_[imageIndex];
+            rbi.renderArea = {{0, 0}, extent_};
+            vkCmdBeginRenderPass(cmd, &rbi, VK_SUBPASS_CONTENTS_INLINE);
+            VkViewport viewport{0.f, 0.f, float(extent_.width), float(extent_.height), 0.f, 1.f};
+            VkRect2D scissor{{0, 0}, extent_};
+            vkCmdSetViewport(cmd, 0, 1, &viewport);
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
+            PushConstants pc{{float(extent_.width), float(extent_.height)}, 0.f, frameCount_, 0u};
+            vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
+            for (long i = 0; i < opt_.gpuLoad; ++i) vkCmdDraw(cmd, 3, 1, 0, 0);
+            vkCmdEndRenderPass(cmd);
+            VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            mb.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            mb.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                                 1, &mb, 0, nullptr, 0, nullptr);
+        }
         recordReplay(cmd, imageIndex, fi);
         goto submit;
     }
@@ -608,7 +631,9 @@ void Demo::drawFrame() {
 submit:
     vkEndCommandBuffer(cmd);
 
-    VkPipelineStageFlags wait = opt_.replayDir.empty() ? VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT : VK_PIPELINE_STAGE_TRANSFER_BIT;
+    VkPipelineStageFlags wait = opt_.replayDir.empty() ? VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+                                : opt_.gpuLoad > 1     ? VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT
+                                                       : VK_PIPELINE_STAGE_TRANSFER_BIT;
     VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     si.waitSemaphoreCount = 1;
     si.pWaitSemaphores = &acquireSem_[fi];

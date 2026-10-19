@@ -6,6 +6,34 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### The first generated frame no longer waits for the others (2026-10-20)
+
+- **Stutter fix, x3 and up with two queues** (the default): the worker
+  queued the copies of all of a present's frames at once, on the queue it
+  presents from. With the synthesis split (the first generated frame
+  submitted alone, the others in a second submission), the copies of the
+  later frames wait for that second submission — and so did everything
+  queued behind them, the first frame's present included: the driver
+  signals the compositor's acquire point (explicit sync) from that queue.
+  Ready, the first frame reached the compositor only with the whole
+  synthesis; when that ran past the refresh it was presented for, the
+  screen kept the previous frame a refresh more, then two frames met in the
+  next one: the picture stopped, then jumped. It happened whenever the
+  first frame went out less than ~9 ms after the game's present (never past
+  11 ms), so by phases as the game's rhythm drifts against the refresh.
+  The later copies are now submitted once the first frame is presented.
+  Measured, 1440p preset quality x4.8 (refresh fill) on a 144 Hz Xwayland,
+  the PRAGMATA recording replayed at its own present times: motion jumps
+  16.0 and 16.5 a second → 0.1 to 0.4; refreshes reaching the compositor
+  127.7 → 143.8 a second; demo scene, preset performance: 7 to 21 → 0.9.
+- **`latency_log` under Xwayland** (`x11_clock`): a line per present once the
+  X server reports it executed, with the refresh it really went to the
+  compositor at (instead of the one aimed at), then its MSC, the content
+  time it shows, the completion's UST and mode, and when it was presented.
+  `tools/cadence_report.py` adds « motion jumps/s » from them.
+- **`bdex_demo --gpu-load` with `--replay`**: the scene drawn N times before
+  the recorded frame is copied over it — a replayed game as heavy on the GPU.
+
 ### Edges in camera turns (2026-10-17)
 
 - **`hud_avoid`** (on with a discrete GPU, with `hud_mask`): the scene

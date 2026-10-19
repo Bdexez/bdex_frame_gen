@@ -2739,3 +2739,77 @@ reste des saccades, activer `latency_log` dans sa config et lire
 vu au travers), mosaïque du personnage qui pivote (`mosaic_blur` en option),
 contention GPU/compositeur à 1440p (par phases). Captures pleine taille
 (`record_scale = 1`) nécessaires pour juger le HUD sur de vrais jeux.
+
+### 20/10 — saccades dans PRAGMATA : la 1re image générée attendait les autres
+
+Demande (/goal) : « des sauts d'images où d'un coup l'image avance
+rapidement », PRAGMATA plafonné à 30 i/s dans le jeu (voulu), ×4 →
+remplissage ×5 vers 143,9 Hz, 1440p quality, Hyprland (Xwayland), RTX 3060
+Ti. « La vidéo » est l'enregistrement du panneau `pragmata-20261020-003116`
+(aucun autre fichier vidéo sur la machine ; « Game Recording » de Steam
+n'avait rien gardé).
+
+**Analyse de l'enregistrement** : il ne contient que les images *réelles*
+du jeu (853×480), pas les générées. Horloge source régulière (30,0 i/s,
+27–39 ms, sd 1,6 ms, comme les six enregistrements PRAGMATA précédents).
+Mouvement mesuré par appariement de blocs (médiane des vecteurs, script
+`bm.py` du scratchpad) : les virages montent et descendent sans à-coup
+(0 → 12 → 24 → 32 → … → 52 → 46 → 14 px par image). Le jeu est fluide :
+le saut naît dans la génération ou la présentation.
+
+**Banc** (scratchpad `bench.sh`) : gamescope sans tête 2560×1440 à 144 Hz,
+Xwayland seul (`ENABLE_GAMESCOPE_WSI=0`), réglages de l'utilisateur, la
+séquence rejouée en aller-retour sur 60 s à ses temps (`--replay-timing`),
+`latency_log` exact (ci-dessous) analysé tic par tic (`x11an.py`, `delay.py`).
+Avant correction : **16 sauts/s** (un rafraîchissement tenu puis deux
+images dans le suivant), toujours **à la jonction de deux jobs** : la 1re
+image générée part à l'heure (+2,8 ms après le tic), mais Xwayland reçoit la
+suivante encore rattachée à ce tic — le compositeur n'a pas pris la 1re.
+Probabilité selon le délai entre la présentation du jeu et celle de la 1re
+image : ≤ 5 ms ~100 %, 9 ms ~15 %, ≥ 11 ms 0 %, dans tous les essais
+(quality, balanced, performance, scène régulière ou temps de PRAGMATA). Le
+« 0 incident en performance » du 17/10 ne se reproduit pas (7 à 21/s).
+
+**Cause** : `WAYLAND_DEBUG` montre chaque commit d'Xwayland avec un point
+d'acquisition `wp_linux_drm_syncobj` ; le compositeur attend ce point avant
+de prendre l'image. Le pilote le signale depuis la file où l'on présente —
+où le worker avait déjà mis, d'avance, les copies de *toutes* les images du
+job. Avec la synthèse découpée (`FrameSlot::cmd2`, ×3+ à deux files), les
+copies 1..n attendent la 2e soumission, et tout ce qui les suit sur la file
+aussi : la présentation de la 1re image, pourtant prête (sa copie finie
+0,1 ms après), n'était libérée qu'à la fin de toute la synthèse. Si celle-ci
+débordait le tic : image ratée. Un jeu chargé allonge la synthèse : pire.
+
+**Correction** (`deferRest`, `runJob`) : synthèse découpée encore en cours
+→ seule la copie de la 1re image est soumise, le reste juste après sa
+présentation. Deux A/B alternés, réglages de l'utilisateur : sauts
+16,0/16,5 → 0,12/0,14 par seconde, tics remis au compositeur 127,7 →
+143,8/s ; build finale 0,34/s, 143,9 affichées, 0,1 % hors plan ; scène
+performance 7–21 → 0,9. Latence affichée +1,5 ms. Écarté : soumettre le
+reste dès la fin de la synthèse si elle précède la 1re image (0,44/0,88 —
+leurs acquisitions et copies retardent encore la 1re ; et un
+`vkWaitForFences` à long délai rendait la main ~4 ms trop tard : attendre
+par tranches de 0,5 ms). Délai minimal imposé dans le plan (11 ms) : moins
+de remplacées mais des trous et +3 ms, écarté. Le jeu attend désormais au
+plus jusqu'à la 1re image du job précédent (à 30 i/s ×5 : jamais).
+
+**`latency_log` exact sous Xwayland** : une ligne par présentation quand le
+serveur X la déclare exécutée (`X11PresentClock::sent/logTo`, file des
+présentations dans l'ordre, l'horodatage de la complétion), avec le tic où
+elle part au compositeur (UST + période, et non plus le tic visé), puis MSC,
+temps de contenu montré (`Job::contentMs`, réplique CPU du `t` de
+`frame_state`), UST, mode, heure d'envoi. Tant que la grille X n'est pas
+apprise, le retour d'affichage écrit comme avant (gamescope avec sa couche
+WSI : aucune complétion X). Piège : le MSC d'Xwayland ne compte que les
+rappels de trame demandés (aucun sans image nouvelle) — compter les tics par
+l'UST. `cadence_report.py` : ligne « motion jumps/s ».
+
+**Bancs, pièges** : sous charge (`--gpu-load 160`, 86 % du GPU) gamescope
+sans tête n'affiche que ~43 i/s (compositeur affamé) : inutilisable, comme
+le 17/10. `bdex_demo --gpu-load` vaut désormais aussi en `--replay`.
+
+**Reste à vérifier en jeu** (Hyprland, PRAGMATA chargé) : activer
+`latency_log = ~/fg-lat.log` dans la config, jouer une minute avec des
+virages, puis `tools/cadence_report.py ~/fg-lat.log --hz 143.912` : viser
+« motion jumps/s » < 1. Les ratés propres au compositeur (Hyprland qui
+manque un vblank sous charge GPU) restent invisibles au serveur X.
