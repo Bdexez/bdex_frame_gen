@@ -18,8 +18,9 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/src"
 (cd "$ROOT" && git ls-files -co --exclude-standard | grep -v '^build\|^dist' | tar -cf - -T - | tar -xf - -C "$work/src")
-docker run --rm -v "$ROOT/tools/ci/apt-get:/usr/local/sbin/apt-get:ro" -e vkrt_ver=$vkrt_ver -e vkrt_sha=$vkrt_sha -v "$work:/work" "$image" bash -euo pipefail -c '
+docker run --rm -v "$ROOT/tools/ci/apt-get:/opt/bdex-ci/apt-get:ro" -e vkrt_ver=$vkrt_ver -e vkrt_sha=$vkrt_sha -v "$work:/work" "$image" bash -euo pipefail -c '
 export DEBIAN_FRONTEND=noninteractive
+[ ! -x /usr/bin/apt-get ] || export PATH="/opt/bdex-ci:$PATH"  # tools/ci/apt-get
 apt-get update -qq
 apt-get install -y -qq --no-install-recommends cmake make g++ glslc libvulkan-dev g++-mingw-w64-x86-64-posix wine64 \
   xserver-xorg-core xserver-xorg-video-dummy mesa-vulkan-drivers libvulkan1 unzip curl ca-certificates \

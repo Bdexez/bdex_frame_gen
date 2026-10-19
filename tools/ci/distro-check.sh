@@ -25,6 +25,7 @@ cc="$1"
 # on a virtual display: GLFW, Xvfb, Mesa's software Vulkan driver (lavapipe).
 if command -v apt-get >/dev/null; then
   export DEBIAN_FRONTEND=noninteractive
+  [ ! -x /usr/bin/apt-get ] || export PATH="/opt/bdex-ci:$PATH"  # tools/ci/apt-get
   apt-get update -qq
   apt-get install -y -qq --no-install-recommends cmake make g++ clang pkg-config libvulkan-dev python3 \
     glslang-tools >/dev/null
@@ -97,7 +98,7 @@ JOB
 status=0
 for img in "${images[@]}"; do
   # (Alpine has no bash until it is installed.)
-  if docker run --rm -v "$ROOT/tools/ci/apt-get:/usr/local/sbin/apt-get:ro" ${BDEX_DOCKER_ARGS:-} -v "$work:/work:ro" "$img" sh -c \
+  if docker run --rm -v "$ROOT/tools/ci/apt-get:/opt/bdex-ci/apt-get:ro" ${BDEX_DOCKER_ARGS:-} -v "$work:/work:ro" "$img" sh -c \
        'command -v bash >/dev/null || apk add -q bash >/dev/null; exec bash /work/job.sh "$1"' sh "$cc" 2>&1 |
      sed "s|^|[$img] |"; then
     echo "[$img] OK"

@@ -22,6 +22,7 @@ if command -v pacman >/dev/null; then
   pacman -Syu --noconfirm --needed python-gobject gtk4 libadwaita xorg-server-xvfb >/dev/null 2>&1
 elif command -v apt-get >/dev/null; then
   export DEBIAN_FRONTEND=noninteractive
+  [ ! -x /usr/bin/apt-get ] || export PATH="/opt/bdex-ci:$PATH"  # tools/ci/apt-get
   apt-get update -qq
   # No GTK 4 before Ubuntu 22.04 / Debian 12: the text mode alone there.
   apt-get install -y -qq --no-install-recommends python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 xvfb bsdutils \
@@ -80,7 +81,7 @@ exit $status
 JOB
 status=0
 for img in "${images[@]}"; do
-  if docker run --rm -v "$ROOT/tools/ci/apt-get:/usr/local/sbin/apt-get:ro" -v "$job:/work/job.sh:ro" -v "$ROOT/tools/bdex-framegen-gui:/work/bdex-framegen-gui:ro" \
+  if docker run --rm -v "$ROOT/tools/ci/apt-get:/opt/bdex-ci/apt-get:ro" -v "$job:/work/job.sh:ro" -v "$ROOT/tools/bdex-framegen-gui:/work/bdex-framegen-gui:ro" \
        -v "$ROOT/tests/panel_logic.py:/work/panel_logic.py:ro" -v "$json:/work/options_ui.json:ro" \
        "$img" bash /work/job.sh 2>&1 | sed "s|^|[$img] |"; then
     echo "[$img] OK"
