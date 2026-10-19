@@ -6,13 +6,17 @@
 # its end of life) fails at once, as before, for the scripts' own fallbacks.
 # Mounted as /opt/bdex-ci/apt-get, outside PATH (the scripts detect apt with
 # `command -v apt-get`); each job puts it first only where /usr/bin/apt-get
-# exists.
+# exists. Each attempt is bounded: a stalled mirror otherwise keeps apt-get
+# waiting indefinitely (the runner's own apt hung 4 hours on 2026-10-08, see
+# runner-apt.sh); a timed-out attempt counts as a network error.
 net='Connection failed|Could not connect|Connection timed out|Temporary failure|Could not resolve|Unable to connect|Hash Sum mismatch|Network is unreachable'
 log="$(mktemp)"
 i=0
 while :; do
-  /usr/bin/apt-get "$@" >"$log" 2>&1
+  timeout 900 /usr/bin/apt-get -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 \
+    "$@" >"$log" 2>&1
   rc=$?
+  [ "$rc" -eq 124 ] && echo "Connection timed out (apt-get killed after 900 s)" >>"$log"
   if ! grep -Eq "$net" "$log"; then
     cat "$log"; rm -f "$log"; exit "$rc"
   fi
