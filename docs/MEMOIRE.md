@@ -847,13 +847,18 @@ d'affichage tournent dans `gamescope --backend headless` ou dans Docker
 (Xvfb + lavapipe).
 
 **CI GitHub**
-- `linux.yml` :
+- `linux.yml`, à chaque push, sous 15 min (demande du 08/10) :
   - build + tests + seuil PSNR (28,0 / 23,0 dB) ;
   - sanitizers (ASan, UBSan, TSan) ;
-  - syntaxe Windows (MinGW x64/i686) ;
-  - `distros` : 6 distributions ;
-  - `package` : archives + `archive-check` avant toute release.
-- `windows.yml` : MSVC x64 et Win32, tests, zips. En cas d'échec, les logs
+  - fuzz ; syntaxe Windows (MinGW x64/i686).
+- `compat.yml`, chaque nuit (si `main` a bougé dans les 24 h), sur les tags
+  `v*` et à la main (Actions → compat → Run workflow) :
+  - `distros` : 6 distributions ; `source-packages` (dont Proton/Wine) ;
+    `panel` ; `nix` ;
+  - `package` : archives + `archive-check`, jointes à la release.
+- Chaque job a un `timeout-minutes` ; apt sur le runner passe par
+  `tools/ci/runner-apt.sh` (le miroir Azure a bloqué une CI 4 h le 08/10).
+- `windows.yml` : MSVC x64 et Win32 (SDK Vulkan en cache), tests, zips. En cas d'échec, les logs
   sont poussés sur les branches `ci-log-x64` / `ci-log-Win32`.
 - **Le dépôt est privé** : l'assistant ne voit pas la CI.
 

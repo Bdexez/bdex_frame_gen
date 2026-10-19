@@ -89,10 +89,16 @@ tous les shaders de `layer/shaders/`.
 - `.github/workflows/windows.yml` — build MSVC x64 + Win32, tests, zip par arch
   (`bdex-framegen-windows-<arch>`), logs poussés sur `ci-log-<arch>` en cas
   d'échec ; tags `v*` → GitHub Release (pré-release si suffixe `-`).
-- `.github/workflows/linux.yml` — build + tests unit/intégration (Xvfb,
-  lavapipe) + gate qualité PSNR (échec sous 28,0 dB normal / 23,0 dB rapide) à
-  chaque push ; `distros` (build et démo dans 6 distributions) ; `package`
-  (archives x86_64/aarch64, vérifiées par `archive-check.sh` avant release). Pièges runner (cf. §9) : paquet `glslc` (pas `glslc-tools`),
+- `.github/workflows/linux.yml` — à chaque push, **sous 15 min** (demande
+  utilisateur, 2026-10-08) : build + tests unit/intégration (Xvfb,
+  lavapipe) + gate qualité PSNR (échec sous 28,0 dB normal / 23,0 dB rapide),
+  sanitizers, fuzz, syntaxe MinGW.
+- `.github/workflows/compat.yml` — le lourd, **hors push** : chaque nuit
+  (s'il y a eu un commit dans les 24 h), sur les tags `v*`, à la main
+  (`workflow_dispatch`) : `distros` (6 distributions), `source-packages`
+  (dont Proton/Wine), `panel`, `nix`, `package` (archives x86_64/aarch64,
+  vérifiées par `archive-check.sh`, jointes à la release). Un job ajouté à
+  `linux.yml` doit tenir le budget de 15 min, sinon il va dans `compat.yml`. Pièges runner (cf. §9) : paquet `glslc` (pas `glslc-tools`),
   ICD lavapipe résolu par glob + vérifié `vulkaninfo`, couche enregistrée dans
   `implicit_layer.d` global.
 

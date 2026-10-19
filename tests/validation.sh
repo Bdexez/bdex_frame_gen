@@ -40,6 +40,12 @@ printf 'zero_bias_contrast 0.1 dropped 0 0\ntemporal_prediction 1 dropped 0 0\ns
   > "$TUNE_CACHE/online-tune-bdex_demo-extrapolate.txt"
 trap 'rm -rf "$LOG" "$BDEX_LAYER_XDG" "$TUNE_CACHE"' EXIT
 status=0
+# BDEX_VALIDATION_SHARD=i/n: only the runs k with k mod n = i - 1 (the panel
+# run in shard 1), so that CI spreads them over parallel jobs (each run of the
+# demo under sync validation on a software renderer takes tens of seconds).
+shard="${BDEX_VALIDATION_SHARD:-1/1}"
+shard_i=$(( ${shard%/*} - 1 )); shard_n=${shard#*/}
+k=-1
 # Second pass per mode: the per-frame state options (content-time t, repeated
 # frames, per-region scene cuts, acceleration, chroma, flow_temporal,
 # online_tune, upscale_temporal, GPU budget), on a demo that presents every
@@ -53,6 +59,8 @@ status=0
 # synthesis of its own, the comparison), from the primed cache above.
 for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hybrid:state extrapolate:direct \
            interpolate:async extrapolate:async interpolate:probe extrapolate:probe hybrid:adaptive interpolate:x8 interpolate:hold hybrid:hold; do
+  k=$((k + 1))
+  [ $((k % shard_n)) -eq "$shard_i" ] || continue
   mode=${run%%:*}
   mult=3
   output="BDEX_FG_RENDER_SCALE=0.75 BDEX_FG_SHARPNESS=0.5 BDEX_FG_HUD=2"
@@ -106,6 +114,8 @@ for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hy
     echo "$run: the GPU budget did not walk the quality ladder"; grep "gpu budget" "$LOG"; status=1
   fi
 done
+
+[ "$shard_i" -eq 0 ] || exit $status
 
 # "panel": the control panel's session (require_app), like the Windows
 # launcher — the game starts armed, « Démarrer » targets it, the options
