@@ -673,3 +673,97 @@ TEST(pacing_catchup_keeps_interpolation_only_without_gpu_or_worker_pressure) {
     }
     CHECK(std::abs(previous - I) < 1e-9);
 }
+
+namespace {
+// A 30 fps game whose presents jitter like PRAGMATA's (27 to 39 ms, sd ~1.6)
+// on a 143.912 Hz screen with the refresh grid known (x11_clock's lead), the
+// content of a frame its present time. Each refresh's content step against
+// its display step: pinned real frames (pace_plan + phase_smooth, refresh
+// fill x4-x5) or even_motion.
+struct Motion { double stepRmsMs, worstStepMs, holdsPerS, latencyMs, outputsPerFrame; };
+Motion runMotion(bool even) {
+    const double P = 1000.0 / 143.912, I = 1000.0 / 30.0;
+    pacing::Grid g{true, 0.0, P};
+    g.lead = pacing::kX11Lead;
+    pacing::AdaptivePacer ap;
+    pacing::MotionClock motion;
+    pacing::IntervalFilter filter;
+    pacing::EvenClock clock;
+    Config c;
+    struct F { double display, content; };
+    std::vector<F> shown;
+    double lastPresent = 0.0, lastLand = 0.0, lastPlanned = 0.0, lag = 4.0, interval = I, prevNow = 0.0;
+    uint32_t rng = 777;
+    auto uniform = [&] { rng = rng * 1664525u + 1013904223u; return (rng >> 8) / double(1 << 24); };
+    int outputs = 0, frames = 0;
+    for (int f = 1; f <= 1200; ++f) {
+        // (sum of three uniforms: about normal, sd 1.6, within +-5 ms)
+        const double now = f * I + 1.6 * 2.0 * (uniform() + uniform() + uniform() - 1.5);
+        const double dt = prevNow > 0.0 ? now - prevNow : I;
+        prevNow = now;
+        interval = filter.update(interval, dt);
+        const double gpu = 3.0 + 3.0 * uniform();  // first frame ready
+        double planned[8] = {}, content[8] = {};
+        int n;
+        if (even) {
+            double realMs = 0.0;
+            n = clock.plan(now, dt, lag, g, 6, lastPlanned, planned, realMs);
+            for (int k = 0; k < n; ++k) content[k] = planned[k] - (realMs - now);
+        } else {
+            double period = P;
+            n = ap.next(interval, period, 5);
+            double base[8] = {};
+            for (int k = 1; k < n; ++k) base[k] = k * P;
+            pacing::planLands(now, lag, base, n, g, lastPlanned, planned);
+            double span = motion.span(planned[n - 1], dt, true);
+            if (!(span > 0.0)) span = dt;
+            for (int k = 0; k < n; ++k) content[k] = now + (planned[k] - planned[n - 1]) * dt / span;
+        }
+        const FrameOrder o = FrameOrder::of(c, even ? n + 1 : n);
+        const double origin = now + gpu;
+        for (int k = 0; k < n; ++k) {
+            double t = pacing::presentTargetMs(origin, n * P, n, o, k, lastPresent, lastLand, g, planned[k]);
+            t = std::max({t, origin, lastPresent + 0.01});
+            // (an X11 tick: what was presented since the last one goes out at the next)
+            const double d = g.land(t);
+            if (!shown.empty() && shown.back().display == d) shown.back() = {d, content[k]};
+            else shown.push_back({d, content[k]});
+            lastPresent = t;
+            lastLand = d;
+        }
+        lag += (gpu > lag ? 0.5 : 0.05) * (gpu - lag);
+        if (f > 100) outputs += n, ++frames;
+    }
+    double e2 = 0.0, worst = 0.0, lat = 0.0;
+    int steps = 0, holds = 0;
+    for (size_t i = 1; i < shown.size(); ++i) {
+        if (shown[i].display < 100 * I) continue;
+        const double gap = shown[i].display - shown[i - 1].display;
+        if (gap > 1.5 * P) { ++holds; continue; }
+        const double e = (shown[i].content - shown[i - 1].content) - gap;
+        e2 += e * e;
+        worst = std::max(worst, std::abs(e));
+        lat += shown[i].display - shown[i].content;
+        ++steps;
+    }
+    const double secs = (shown.back().display - 100 * I) / 1000.0;
+    return {std::sqrt(e2 / std::max(1, steps)), worst, holds / secs, lat / std::max(1, steps), double(outputs) / frames};
+}
+} // namespace
+
+// even_motion: every refresh its own moment — the content steps by one
+// refresh's worth at each, where pinned real frames give pairs of 4 and 5
+// refreshes (a quarter faster through one in five) and the game's jitter on
+// top. The price: a generated frame in place of each real one and a few
+// milliseconds of latency, never a refresh held for it.
+TEST(pacing_even_motion_steps_every_refresh_alike) {
+    const Motion pinned = runMotion(false), even = runMotion(true);
+    std::printf("even_motion: content step error rms %.3f -> %.3f ms, worst %.3f -> %.3f, holds %.2f -> %.2f /s, "
+                "latency %.1f -> %.1f ms, outputs a frame %.2f -> %.2f\n",
+                pinned.stepRmsMs, even.stepRmsMs, pinned.worstStepMs, even.worstStepMs, pinned.holdsPerS, even.holdsPerS,
+                pinned.latencyMs, even.latencyMs, pinned.outputsPerFrame, even.outputsPerFrame);
+    CHECK(pinned.stepRmsMs > 0.5);
+    CHECK(even.stepRmsMs < 0.05);
+    CHECK(even.holdsPerS <= pinned.holdsPerS + 0.1);
+    CHECK(even.latencyMs < pinned.latencyMs + 10.0);
+}

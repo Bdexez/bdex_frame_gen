@@ -171,7 +171,7 @@ std::unique_ptr<FrameGen> VirtualSwapchain::makeFrameGen(bool& generating) {
     if (generating) {
         try {
             return std::make_unique<FrameGen>(dev_, format_, extent_, displayExtent_,
-                                              static_cast<uint32_t>(cfg_.frameCeiling() - 1), sources, colorSpace_,
+                                              static_cast<uint32_t>(cfg_.outputCeiling()), sources, colorSpace_,
                                               flowScaleFactor_, &cfg_);
         } catch (const VkError& e) {
             BDEX_WARN("frame generation unavailable for this swapchain (%s); passing frames through", e.what());
@@ -259,7 +259,7 @@ void VirtualSwapchain::createReal(const VkSwapchainCreateInfoKHR& appInfo) {
         // imageCount - minImageCount >= mult - 1 (VUID-vkAcquireNextImageKHR-
         // swapchain-01802: more, and the driver may hand back an image still
         // being presented).
-        const uint32_t mult = static_cast<uint32_t>(cfg_.requireApp ? std::max(4, cfg_.frameCeiling()) : std::max(1, cfg_.frameCeiling()));
+        const uint32_t mult = static_cast<uint32_t>(cfg_.requireApp ? std::max(4, cfg_.presentCeiling()) : std::max(1, cfg_.presentCeiling()));
         uint32_t want = std::max({appInfo.minImageCount, 2u + mult, caps.minImageCount + mult - 1});
         if (caps.maxImageCount) want = std::min(want, caps.maxImageCount);
         ci.minImageCount = std::max(want, caps.minImageCount);
@@ -1185,7 +1185,9 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     const bool recoverMiss = missedPlan && smoothCatchup && cfg_.frameCeiling() >= 3 &&
         adaptivePeriodMs_ > 0.0 && frameIntervalMs_ >= 3.0 * adaptivePeriodMs_ && readyLag > 0.0 &&
         pacing::catchUpFrames(3, true, workerWaitMs, frameIntervalMs_, adaptivePeriodMs_, readyLag) > 1;
-    const bool lagging = lateJobs_.load(std::memory_order_relaxed) >= 8 || recoverMiss;
+    // (even_motion plans its frames a lag behind the game on purpose: not a
+    // backlog to give back.)
+    const bool lagging = (lateJobs_.load(std::memory_order_relaxed) >= 8 && !evenActive_) || recoverMiss;
     if (lagging) lateJobs_.store(0, std::memory_order_relaxed);
     const bool catchUp = !cfg_.lowLatency && ((!gateOnDisplay && workerWaitMs > 0.25 * frameIntervalMs_) || lagging);
     int mult = generating_ && !catchUp ? chooseMultiplier() : 1;
@@ -1207,7 +1209,30 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
                  mult, workerWaitMs, frameIntervalMs_, int(lagging), ready);
         if (recoverMiss) BDEX_DBG("catch up: newly missed refresh of the presentation plan");
     }
-    lastPresentFrames_ = mult;
+    // even_motion (pacing::EvenClock): the refreshes this present covers,
+    // each a generated frame of its own moment; the real frame is the last
+    // of the m positions, only standing for its moment (not presented).
+    double evenLands[8] = {};
+    double evenRealMs = 0.0;
+    int evenFrames = 0;
+    if (cfg_.evenMotion && generating_ && mult > 1 && adaptivePeriodMs_ > 0.0 && !cfg_.extrapolate && !cfg_.hybrid &&
+        !cfg_.dedup && cfg_.pacePlan && prevIndex_ >= 0 && !historyLost_ && dt > 0.5 && dt < 500.0) {
+        pacing::Grid g;
+        if (displayGrid(g.lastMs, g.periodMs, &g.lead)) {
+            g.valid = true;
+            evenFrames = evenClock_.plan(msOf(t0), dt, readyLagMs_.load(std::memory_order_relaxed), g,
+                                         std::min(cfg_.presentCeiling(), int(fg_->outputCount())), lastPlannedMs_,
+                                         evenLands, evenRealMs);
+        }
+    }
+    if (evenFrames > 0) {
+        mult = evenFrames + 1;
+        lateJobs_.store(0, std::memory_order_relaxed);
+    } else {
+        evenClock_.reset();
+    }
+    evenActive_ = evenFrames > 0;
+    lastPresentFrames_ = evenFrames > 0 ? evenFrames : mult;
     {
         // virtual_grid: frames one output period apart on a grid of our own
         // where the display's is not measured (Wayland compositors, KDE with
@@ -1371,7 +1396,10 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             // (pacing::planLands) — where the frames fit at one a refresh.
             const bool plan = grid && cfg_.pacePlan && !cfg_.extrapolate && mult <= 8 &&
                               (adaptive || mult * periodMs <= frameIntervalMs_ * 1.02);
-            if (plan) {
+            if (evenFrames > 0) {
+                for (int k = 0; k < evenFrames; ++k) at[k] = evenLands[k] - now;
+                at[evenFrames] = evenRealMs - now;  // (the real frame's moment, not a refresh)
+            } else if (plan) {
                 double base[8] = {};
                 for (int k = 1; k < mult; ++k)
                     base[k] = adaptive ? spacing * k : held ? frameIntervalMs_ * order.offset(k) : frameIntervalMs_ * k / mult;
@@ -1387,13 +1415,17 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
                              : land(now + (held ? frameIntervalMs_ * order.offset(k) : frameIntervalMs_ * k / mult))) - now;
             }
             for (int k = 0; k < mult && k < 8; ++k) planned[k] = now + at[k];
-            planActive = plan;
+            planActive = plan || evenFrames > 0;
             timing.haveDisplay = true;
             timing.displayMs[7] = float(at[order.real]);
             for (int o = 0; o + 1 < mult && o < 7; ++o) timing.displayMs[o] = float(at[order.position(o)]);
         }
         timing.displaySpanMs = motionClock_.span(planActive ? planned[order.real] : 0.0, dt,
             cfg_.phaseSmooth && planActive && !cfg_.hybrid && !cfg_.extrapolate && !cfg_.dedup && !timing.reset);
+        if (evenFrames > 0) {
+            timing.displaySpanMs = dt;  // (t over the content interval: each frame its moment)
+            motionClock_.reset();
+        }
         // latency_log: the content time each frame shows, as frame_state
         // gives it (display times in pure interpolation; else the fixed t).
         const double contentInterval = timing.haveDisplay && cfg_.contentClock && !cfg_.extrapolate && dt > 0.5 ? dt
@@ -1495,7 +1527,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             std::lock_guard<std::mutex> wlock(workerMutex_);
             copyWaits.swap(pendingCopyDone_);
         }
-        const int frames = interpolate ? mult : 1;
+        const int frames = interpolate ? (evenFrames > 0 ? evenFrames : mult) : 1;  // (presented ones)
         if (deferSynthesis) {
             VkSemaphore outs[2] = {slot.realIn, slot.synthIn};
             si.signalSemaphoreCount = 2;
@@ -1578,7 +1610,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     Job job;
     job.parity = parity_;
     job.source = imageIndex;
-    job.frames = interpolate ? mult : 1;
+    job.frames = interpolate ? (evenFrames > 0 ? evenFrames : mult) : 1;
     job.generated = interpolate;
     job.realIndex = interpolate ? order.real : 0;
     job.order = interpolate ? order : FrameOrder{};
@@ -1588,10 +1620,10 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     if (interpolate) std::copy(std::begin(planned), std::end(planned), std::begin(job.planned));
     std::copy(std::begin(contentMs), std::end(contentMs), std::begin(job.contentMs));
     job.plan = interpolate && planActive;
-    job.smoothCatchup = job.plan && smoothCatchup && mult >= 3;
+    job.smoothCatchup = job.plan && smoothCatchup && mult >= 3 && evenFrames == 0;
     // Adaptive: one output period between the frames (paceTarget spreads
     // intervalMs / frames).
-    if (interpolate && adaptivePeriodMs_ > 0.0) job.intervalMs = adaptivePeriodMs_ * mult;
+    if (interpolate && adaptivePeriodMs_ > 0.0) job.intervalMs = adaptivePeriodMs_ * job.frames;
     job.pacing = cfg_.pacing;
     if (deferSynthesis) job.synthSlot = static_cast<int>(slotIdx);
     job.slot = static_cast<int>(slotIdx);
@@ -1670,6 +1702,8 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             if (const uint64_t wakes = statsWakes_.exchange(0); wakes && len < int(sizeof(skip)))
                 len += snprintf(skip + len, sizeof(skip) - size_t(len), ", wake-up late %.0f us",
                                 double(statsWakeLateUs_.exchange(0)) / double(wakes));
+            if (evenActive_ && len < int(sizeof(skip)))
+                len += snprintf(skip + len, sizeof(skip) - size_t(len), ", even motion %.1f ms behind the game", evenClock_.lagMs);
             if (fastGate_.idle && len < int(sizeof(skip)))
                 len += snprintf(skip + len, sizeof(skip) - size_t(len), ", generation idle: the game is at the screen's rate (skip_fast)");
             if (cfg_.latencyLimiter && dev_.appPacesLatency(msOf(clock::now())) && len < int(sizeof(skip)))

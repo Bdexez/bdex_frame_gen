@@ -1,6 +1,7 @@
 #pragma once
 #include "vk_compat.h"
 
+#include <algorithm>
 #include <iosfwd>
 #include <string>
 #include <utility>
@@ -66,6 +67,7 @@ struct Config {
     int   refreshFill   = 1;      // pure interpolation: follow the refresh rate with 2..m+1 outputs (at most 8) while the allocated outputs can fill it; also cap a multiplier that exceeds the screen; 0 off, 1 from x3, 2 from x2 (x2 at 60 fps on 144 Hz holds the real frame ~7 ms more)
     bool  pacePlan      = true;   // on a refresh grid, interpolated frames are planned for their refresh when the game presents (from the usual GPU delay) and presented for it: the content each shows is that refresh's
     bool  phaseSmooth   = true;   // planned pure interpolation: spread movement over the scheduled span between real frames, avoiding a single large step when their refresh phase changes
+    bool  evenMotion    = false;  // adaptive pure interpolation on a refresh grid: every refresh shows the content of its own moment (all frames generated, the real one standing only for its moment) — no 4/5-refresh pairs; one synthesis more a game frame, a few ms of latency (pacing::EvenClock)
     bool  catchupSmooth = true;   // a new plan slip or persistent display backlog with a ready GPU: re-space the next pair over one fewer output (pure interpolation with an adaptive clock)
     bool  x11Clock      = true;   // an X11 window (Xwayland included): the refresh grid from the X server's Present completion events, where the present feedback measures none (Xwayland in immediate mode) — the frames paced on the compositor's real refreshes instead of a grid of our own
     bool  virtualGrid   = true;   // adaptive pacing without a measured refresh grid: a grid of the output period at a phase of our own (moved when frames get replaced), so every refresh gets one frame
@@ -224,6 +226,12 @@ struct Config {
         return refreshFill > 0 && multiplier >= (refreshFill >= 2 ? 2 : 3) && !extrapolate && !hybrid && !adaptive;
     }
     int frameCeiling() const { return multiplier + (allowsRefreshFill() && multiplier < 8 ? 1 : 0); }
+    // The most frames a present shows: even_motion may need one more (a long
+    // game frame: 39 ms on 144 Hz is 6 refreshes), all generated.
+    int presentCeiling() const { return std::min(7, frameCeiling() + (evenMotion && allowsRefreshFill() ? 1 : 0)); }
+    // Generated outputs to allocate: one a frame but the real one, or
+    // even_motion's, all generated.
+    int outputCeiling() const { return evenMotion && allowsRefreshFill() ? presentCeiling() : frameCeiling() - 1; }
     // Same, starting from product defaults instead of Config{} (the capture
     // app defaults to extrapolation, still overridable by the file and env).
     static Config loadWithDefaults(Config defaults, const std::string& extraProcess = "");

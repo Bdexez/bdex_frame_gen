@@ -138,7 +138,8 @@ void VirtualSwapchain::runJob(const Job& job) {
         // their times unless the next present's first frame is ready first.
         // (Past the staging images there are — a live change not yet
         // applied — frames are copied at their times, the game waiting.)
-        const int upToReal = job.frames == 1 ? 1 : job.realIndex + 1;
+        // (even_motion: the real frame past the presented ones)
+        const int upToReal = job.frames == 1 ? 1 : std::min(job.frames, job.realIndex + 1);
         const int eager = std::min(upToReal, acquireAhead_);
         const int staged = std::min(job.frames, eager + job.staging);  // frames [eager, staged) go through staging
         std::vector<Copied> out(static_cast<size_t>(eager));
@@ -749,6 +750,9 @@ VkResult VirtualSwapchain::submitCopy(const Job& job, int index, Copied& out, in
     const bool real = index == job.realIndex;
     const uint32_t output = static_cast<uint32_t>(index < job.realIndex ? index : index - 1);
     out.index = index;
+    // even_motion: the real frame is not presented; the job's last frame
+    // stands for it (the game's present id and fence, the latency figures).
+    const bool anchor = real || (job.realIndex >= job.frames && index == job.frames - 1);
 
     FrameSlot& slot = nextSlot(workerSlots_, workerCursor_);
     uint32_t ri = 0;
@@ -812,7 +816,7 @@ VkResult VirtualSwapchain::submitCopy(const Job& job, int index, Copied& out, in
         // present; otherwise the game blocks forever waiting on a display
         // completion that our async worker owns. A deferred synthesis still
         // reads it: submitDeferredSynthesis signals then.
-        if (real && job.presentFence && job.synthSlot < 0 && staged < 0) {
+        if (anchor && job.presentFence && job.synthSlot < 0 && (staged < 0 || !real)) {
             VkSubmitInfo fs{VK_STRUCTURE_TYPE_SUBMIT_INFO};
             dev_.vt.QueueSubmit(dev_.queue, 1, &fs, job.presentFence);
         }
@@ -823,7 +827,7 @@ VkResult VirtualSwapchain::submitCopy(const Job& job, int index, Copied& out, in
     }
     slot.submitted = true;
     out.image = ri;
-    out.real = real;
+    out.real = anchor;
     out.fence = slot.fence;
     return VK_SUCCESS;
 }
@@ -874,7 +878,7 @@ VkResult VirtualSwapchain::submitStage(const Job& job, int index, uint32_t stage
 // extrapolation stage their predicted frames too (all but the real one).
 void VirtualSwapchain::prepareStaging() {
     if (!fg_) return;
-    const int frames = generating_ ? std::max(1, cfg_.frameCeiling()) : 1;
+    const int frames = generating_ ? std::max(1, cfg_.presentCeiling()) : 1;
     const bool predicted = cfg_.extrapolate || cfg_.hybrid;
     fg_->ensureStaging(static_cast<uint32_t>(std::max(0, predicted ? frames - 1 : frames - acquireAhead_)));
 }

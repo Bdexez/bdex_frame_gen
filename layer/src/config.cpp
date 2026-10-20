@@ -324,6 +324,7 @@ const std::vector<OptionDef>& registry() {
     I("refresh_fill", nullptr, &Config::refreshFill, 0, 2),
     B("pace_plan", nullptr, &Config::pacePlan, kLive),
     B("phase_smooth", nullptr, &Config::phaseSmooth, kLive),
+    B("even_motion", nullptr, &Config::evenMotion),
     B("catchup_smooth", nullptr, &Config::catchupSmooth, kLive),
     B("virtual_grid", nullptr, &Config::virtualGrid, kLive),
     B("x11_clock", nullptr, &Config::x11Clock),

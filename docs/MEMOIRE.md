@@ -2850,3 +2850,25 @@ rafraîchissements (24/s). Aucun des deux n'est régulier ; le seul rythme
 régulier est que chaque rafraîchissement montre le contenu de son instant
 (des générées à t quelconque, la réelle seulement quand elle tombe juste) —
 à faire si son ressenti confirme ce rythme.
+
+**`even_motion`** (20/10, opt-in, panneau « Mouvement parfaitement régulier ») :
+chaque rafraîchissement montre le contenu de son instant. `pacing::EvenClock` :
+l'affichage suit l'horloge de présentation du jeu avec un retard `lag` ; le
+job couvre les rafraîchissements dont l'instant tombe entre la présentation
+précédente et la sienne, tous générés (`t = (tic − lag − précédente) / dt`),
+la réelle en position m−1 non présentée (`job.realIndex ≥ job.frames` : la
+dernière image du job porte l'identifiant et la barrière de présentation du
+jeu, et les mesures de latence). `lag ≥ dt + délai de la 1re image + avance`
+: marque haute des temps d'image (décroissance 0,002 ms par image — à 0,02,
+chaque image longue faisait abandonner un rafraîchissement), un rafraîchissement
+impossible est abandonné et le retard grandit d'autant (image tenue, pas de
+saut) ; jamais de redémarrage en avant de la chaîne (le mouvement
+reculerait). Une sortie de plus allouée (`Config::presentCeiling/
+outputCeiling`, 39 ms = 6 rafraîchissements). Le détecteur « 8 jobs en
+retard » et `PlanSlip` neutralisés dans ce mode (le retard est voulu).
+Simulateur (gigue type PRAGMATA) : erreur de pas 0,764 → 0,001 ms rms,
+pire 2,66 → 0,04, 0 tenue, latence 43,1 → 48,2 ms. Banc (1440p quality,
+rejeu PRAGMATA, retards de tics d'Hyprland rejoués dans `x11_clock` par un
+crochet de banc non committé, `bench_hooks.patch` du scratchpad) : 0,74 →
+0,18 ms rms, p99 1,86 → 0,07, tenues 0,27 → 0,11/s, latence 45,9 → 52,1
+ms. Validation (sync) propre, run `interpolate:even` ajouté.
