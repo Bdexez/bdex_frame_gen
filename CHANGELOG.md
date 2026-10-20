@@ -23,6 +23,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   x2 / x4; on a recorded Cyberpunk 2–3 % of the picture is treated, the
   minimap, the quest text, the icons and the prompts. ~0.36 ms a game frame
   at 1440p x4.
+- Predicted frames too (the hybrid's predictions, extrapolation; in place is
+  the current input): game-like scenes hybrid x4 with `hybrid_predict=1`
+  +0.08 dB, extrapolation +0.13 (moving edges +0.3 / +0.8), every scene up;
+  recordings +0.007 / +0.015.
 
 ### Whole shapes instead of fragments on a character in a fast turn: `mosaic_blur` (2026-10-21)
 
