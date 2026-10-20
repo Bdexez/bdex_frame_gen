@@ -3255,3 +3255,8 @@ Le travail GPU n'est pas le levier, l'ordre des images l'est
 (`hybrid_predict=1` : −5,9 ms). **À 120 Hz** le ×4 de 30 i/s devient
 parfaitement régulier mais les trois rafraîchissements valent 25 ms : ~+4 ms
 de latence — le dire en même temps que le conseil.
+`interp_splat` à vitesse réelle : +0,094 dB sur chaque scène, scintillement
+en baisse, mais arêtes en mouvement −0,125 partout. Restreindre ses
+candidats (carte à demi-résolution : un bloc 2×2 une source) : gain d'erreur
+exigé 0,75 au lieu de 0,9 → −0,010 ; point d'arrivée de la source à moins
+d'un pixel de q → −0,026 (arêtes +0,04). Rien gardé.
