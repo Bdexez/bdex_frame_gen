@@ -3163,3 +3163,14 @@ Seuil du poids de `hud_layer` 0,3→0,6 abaissé à 0,2→0,5 (avec la persistan
 et le contraste, sans risque) : scènes +0,043 dB de plus (toutes en hausse),
 enregistrements +0,011 / +0,009 ; Cyberpunk : 4 % de l'image traitée, que du
 HUD (mini-carte, quête, icônes, commandes, le repère au sol).
+Écarté (21/10) : garder l'image courante là où prev et cur sont identiques
+sur 3×3 (le HUD dès sa première paire, sans attendre `hud_mask`) — seuil
+1/255 : ±0,00 sauf les premières images des scènes (`turn` +0,36) ; 2/255 :
+`walk` −0,14, PRAGMATA −0,02 (un décor lisse qui avance lentement reste à
+2/255 près, la synthèse y est plus juste) ; 4/255 : jusqu'à −0,75.
+**Bilan de la nuit et de la journée du 21/10** face à la version testée par
+l'utilisateur (origin/main 0eab19e), même GPU, préréglage quality : scènes
+`make_game.py` ×4 (vitesse réelle) +0,139 dB, chaque scène en hausse (min
++0,021), arêtes en mouvement +0,55, scintillement −0,013 ; 9 enregistrements
+×2 +0,083 (min 0,000), ×4 +0,106 (min +0,020), scintillement −0,05 / −0,18.
+Latence au banc (×4 30 i/s 144 Hz) −2,8 ms (`tight_hold`).
