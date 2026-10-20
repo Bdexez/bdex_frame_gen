@@ -127,7 +127,7 @@ python3 tools/recording_report.py SEQUENCE             # temps des images réell
 build/demo/bdex_demo --replay SEQ --replay-timing --replay-log /tmp/rejeu.csv  # rejoue les temps source ; journal nouveau, retards de rejeu visibles
 tools/eval_sequence.py <dir_ppm> --variant KEY=VAL     # éval hors ligne (bdex_offline, sans fenêtre) sur séquence enregistrée
 tools/pending_decisions.py SEQ... [--only K,...]       # options en attente notées sur des jeux enregistrés : verdict par option
-tools/edge_bench/make_game.py DIR turn|walk|dark|strafe|fps|fence|flick  # un jeu à 30 i/s vu à 120 Hz, vérité exacte : eval_sequence.py --multiplier 4 (le vrai ×4)
+tools/edge_bench/make_game.py DIR turn|walk|dark|strafe|fps|fence|flick|subs  # un jeu à 30 i/s vu à 120 Hz, vérité exacte : eval_sequence.py --multiplier 4 (le vrai ×4) ; subs : sous-titres qui changent et disparaissent
 tools/replay_bench.py SEQ [--multiplier M] [--other-layer NAME]  # éval EN LIGNE : séquence rejouée comme un jeu (bdex_demo --replay) à travers la couche
 bdex-framegen --calibrate [--apply]                     # bdex-calibrate : coût sur ce GPU, preset/multiplicateur recommandés
 tools/train_flow.py [--write]                           # entraîne learned_flow (numpy, flux vrai de synthèse, bdex_offline --dump-flow)

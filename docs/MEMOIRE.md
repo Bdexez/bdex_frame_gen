@@ -3183,3 +3183,17 @@ apprise en 2 images au lieu de 4 (les faux HUD habituels, des plaques unies
 du décor, gardent le compte lent ; `hud_mask=2` partout perdait −0,017 sur
 les enregistrements). Scènes ×4 +0,014 dB (aucune perte), enregistrements
 ±0,001.
+**Sous-titres qui changent et disparaissent** (21/10, `make_game.py subs` :
+la scène `turn`, une boîte noire à 60 % avec deux lignes de texte blanc
+anticrénelé qui changent toutes les secondes et disparaissent le dernier
+cinquième). `hud_layer` y gagne +0,36 dB sur l'image, la boîte quand le
+texte est là 28,30 → 28,70 ; mais la moyenne lente gardait le poids ~10
+images **après** la disparition : fondu du décor à la place de la boîte, 34,2
+dB contre 39,9 sans la passe. Montée lente (0,1), **descente rapide (0,3)** :
+boîte disparue 39,2, affichée 28,64 ; scènes à HUD fixe −0,006 (0,6 : boîte
+39,9 mais −0,012 ailleurs). Le poids dilaté déborde aussi sur le décor
+rapide autour de la boîte (bande de 5 px : 30,8 avec ou sans) ; le couper là
+où prev et cur diffèrent beaucoup sur place gagnait +0,15 dans la boîte mais
+−0,09 sur l'image : non retenu. `hud_mask` (pixels contrastés comptés
+double) : sans effet ici — ces glyphes, décalés d'un tiers de pixel, n'ont
+presque aucun pixel strictement immobile.
