@@ -2940,3 +2940,11 @@ CHANGELOG ; banc 1440p ×4 : latence 42,0 → 39,2 ms, écrasées 0,1/s, tenues
 24,0 → 23,2/s. L'échéance mesurée : envoyée ≥ 1,5 ms avant le tic, toujours
 prise ; 0,5–1 ms, ratée 64 %. Sans la marge, `tight_hold` écrasait 1,9
 images/s (la 1re générée en retard rejoint la 2e).
+
+**Matcher, variante rotation** (21/10) : `rpix` (2 × 15 × 64 flottants, 7,7 Ko
+de mémoire partagée réservés pour tous les blocs) traité un candidat et une
+échelle à la fois (5 × 64) : mêmes sommes dans le même ordre — sorties
+identiques octet pour octet (PRAGMATA et Cyberpunk, ×2 et ×4,
+`rot_weight=1`) ; flux à 1440p 1,64–1,73 → 1,60 ms seulement : le coût de
+`rot_weight` (0,69 ms) est le reclassement lui-même (beaucoup de blocs
+ambigus sur ces images agrandies), pas l'occupation.

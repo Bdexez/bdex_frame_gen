@@ -115,7 +115,7 @@ const bool kRotOn = kOptIns || kRot;
 const int kRegS  = kRotOn ? REG : BS + 2 * MAXR + 2;  // staged side, border 1
 const int kCenT  = kOptIns ? (REG - 2) * (REG - 2) : 1;
 const int kNtO   = kOptIns ? NT : 1;
-const int kRotO  = kRotOn ? NROT : 1;
+const int kRotO  = kRotOn ? ROT_A : 1;  // (one scale's angles at a time: see the re-ranking)
 const int kRotNt = kRotOn ? NT : 1;
 const int kRbO   = kOptIns ? RB * RB : 1;
 const int kRegO  = kOptIns ? REG * REG : 1;
@@ -161,7 +161,7 @@ shared int   sIdx[NT];
 shared uint  refCen[kNtO];             // census of the 8x8 block interior
 shared uint  tgtCen[kCenT];            // census of the staged target interior
 shared float sCost2[MAXCAND + 1];      // full per-candidate cost
-shared float rpix[2][kRotO][kRotNt];   // per-pixel costs of the rotated re-evaluation
+shared float rpix[kRotO][kRotNt];      // per-pixel costs of the rotated re-evaluation (one candidate, one scale at a time)
 shared float rsum[2][NROT];            // block sums of rpix
 shared ivec2 sBase;
 shared int   sStatic;                  // static-block early-out (see main)
@@ -568,44 +568,49 @@ void main() {
         int px = tid & (BS - 1), py = tid >> 3;
         float rv = refBlk[(py + 1) * RB + (px + 1)];
         vec2 q = vec2(px, py) - 3.5;
+        // (A candidate and a scale at a time, the five angles' per-pixel
+        // costs then their sums — each sum over the same 64 values in the
+        // same order as when all 30 were staged at once: same results, with
+        // a shared array a sixth the size, which halved the occupancy of the
+        // whole matcher, re-ranked block or not.)
         for (int j = 0; j < nj; ++j)
-            for (int k = 0; k < NROT; ++k) {
-                float sc = kRotScale[k / ROT_A];
-                float th = radians(kRotAngle[k % ROT_A]);
-                vec2 p = (sc == 1.0 && th == 0.0) ? q
-                        : sc * vec2(cos(th) * q.x - sin(th) * q.y, sin(th) * q.x + cos(th) * q.y);
-                // Sample position in staged-tile pixels: anchor at origin+base-R-anc,
-                // so the displacement is taken relative to base (dd is absolute;
-                // using it as is read outside the tile whenever base != 0).
-                vec2 pos = vec2(R + anc) + vec2(dd[j] - base) + 3.5 + p;
-                float tv;
-                if (sc == 1.0 && th == 0.0) {
-                    // Identity transform: integer sampling, exactly the first
-                    // pass's evaluation of the same displacement.
-                    ivec2 ip = ivec2(round(pos));
-                    tv = tgt[ip.y * regG + ip.x];
-                } else {
-                    vec2 fl = floor(pos), f = pos - fl;
-                    ivec2 i0 = ivec2(fl);
-                    i0 = clamp(i0, ivec2(0), ivec2(regG - 2));
-                    float t00 = tgt[i0.y * regG + i0.x];
-                    float t10 = tgt[i0.y * regG + i0.x + 1];
-                    float t01 = tgt[(i0.y + 1) * regG + i0.x];
-                    float t11 = tgt[(i0.y + 1) * regG + i0.x + 1];
-                    tv = mix(mix(t00, t10, f.x), mix(t01, t11, f.x), f.y);
+            for (int s = 0; s < ROT_S; ++s) {
+                for (int a = 0; a < ROT_A; ++a) {
+                    const int k = s * ROT_A + a;
+                    float sc = kRotScale[k / ROT_A];
+                    float th = radians(kRotAngle[k % ROT_A]);
+                    vec2 p = (sc == 1.0 && th == 0.0) ? q
+                            : sc * vec2(cos(th) * q.x - sin(th) * q.y, sin(th) * q.x + cos(th) * q.y);
+                    // Sample position in staged-tile pixels: anchor at origin+base-R-anc,
+                    // so the displacement is taken relative to base (dd is absolute;
+                    // using it as is read outside the tile whenever base != 0).
+                    vec2 pos = vec2(R + anc) + vec2(dd[j] - base) + 3.5 + p;
+                    float tv;
+                    if (sc == 1.0 && th == 0.0) {
+                        // Identity transform: integer sampling, exactly the first
+                        // pass's evaluation of the same displacement.
+                        ivec2 ip = ivec2(round(pos));
+                        tv = tgt[ip.y * regG + ip.x];
+                    } else {
+                        vec2 fl = floor(pos), f = pos - fl;
+                        ivec2 i0 = ivec2(fl);
+                        i0 = clamp(i0, ivec2(0), ivec2(regG - 2));
+                        float t00 = tgt[i0.y * regG + i0.x];
+                        float t10 = tgt[i0.y * regG + i0.x + 1];
+                        float t01 = tgt[(i0.y + 1) * regG + i0.x];
+                        float t11 = tgt[(i0.y + 1) * regG + i0.x + 1];
+                        tv = mix(mix(t00, t10, f.x), mix(t01, t11, f.x), f.y);
+                    }
+                    rpix[a][tid] = abs(rv - tv);
                 }
-                rpix[j][k][tid] = abs(rv - tv);
+                barrier();
+                if (tid < ROT_A) {
+                    float sum = 0.0;
+                    for (int i = 0; i < NT; ++i) sum += rpix[tid][i];
+                    rsum[j][s * ROT_A + tid] = sum;
+                }
+                barrier();
             }
-        barrier();
-        if (tid < 2 * NROT) {
-            int j = tid / NROT, k = tid % NROT;
-            if (j < nj) {
-                float s = 0.0;
-                for (int i = 0; i < NT; ++i) s += rpix[j][k][i];
-                rsum[j][k] = s;
-            }
-        }
-        barrier();
         // The identity evaluation of the winner is the control; a transformed
         // candidate must beat the running best by 2% to switch, and the
         // winner's displacement is preferred on ties (it is scanned first).
