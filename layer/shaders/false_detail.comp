@@ -88,6 +88,7 @@ shared float sLap[kSide * kSide];     // |Laplacian| (valid one pixel in from th
 shared uint sChanged;
 shared float sCells[(kTile / 4 + 8) * (kTile / 4 + 8)];  // (kCell 4, kReach 4)
 shared float sDil[(kTile / 4) * (kTile / 4)];
+shared vec4 sRows[kSide * kTile];      // the average's row sums (a tile with anything to filter)
 
 float srcLap(sampler2D tex, ivec2 q) {
     return abs(4.0 * srcLuma(tex, q) - srcLuma(tex, q + ivec2(-1, 0)) - srcLuma(tex, q + ivec2(1, 0)) -
@@ -195,16 +196,28 @@ void main() {
         w *= clamp(2.0 - q / (9.0 * pc.guard), 0.0, 1.0);
     }
     uint centre = sPix[c0];
-    if (inImage && w > 0.0) {
-        vec4 sum = vec4(0.0);
+    const bool filtered = inImage && w > 0.0;
+    if (filtered) atomicOr(sChanged, 1u);
+    barrier();
+    if (sChanged != 0u) {  // (the whole group: after the barrier)
+        // The average as row sums then column sums (9x9 at 1440p: 81 reads
+        // a pixel cost 0.45 ms a game frame at x4).
         const int r = clamp(pc.blur, 2, kBorder);
-        for (int y = -r; y <= r; ++y)
-            for (int x = -r; x <= r; ++x) sum += unpackOut(sPix[c0 + y * kSide + x]);
-        vec4 g = unpackOut(centre);
-        vec4 c = mix(g, sum / float((2 * r + 1) * (2 * r + 1)), w);
-        c.a = g.a;
-        centre = packOut(c);
-        atomicOr(sChanged, 1u);
+        for (int i = li; i < kSide * kTile; i += kTile * kTile) {
+            const int row = i / kTile, col = i % kTile + kBorder;
+            vec4 h = vec4(0.0);
+            for (int x = -r; x <= r; ++x) h += unpackOut(sPix[row * kSide + col + x]);
+            sRows[i] = h;
+        }
+        barrier();
+        if (filtered) {
+            vec4 sum = vec4(0.0);
+            for (int y = -r; y <= r; ++y) sum += sRows[(l.y + y) * kTile + int(gl_LocalInvocationID.x)];
+            vec4 g = unpackOut(centre);
+            vec4 c = mix(g, sum / float((2 * r + 1) * (2 * r + 1)), w);
+            c.a = g.a;
+            centre = packOut(c);
+        }
     }
     barrier();
     // The whole tile, when anything in it changed (mode 3 copies tiles).
