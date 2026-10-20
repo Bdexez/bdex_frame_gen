@@ -3275,3 +3275,13 @@ perte −0,51 → −0,05 ; scènes `make_game.py` ×4 −0,010 (pire −0,031) 
 la passe sans coupure ; sous-titres (`subs`) 33,60 → 33,59 ;
 enregistrements ×2 / ×4 : la passe vaut toujours +0,010 / +0,006. Seuils
 0,25 → 0,6 : scènes −0,002 mais corpus −0,20 seulement.
+Écarté (21/10) : rayon de la moyenne de `hud_layer` (l'écart synthèse −
+fondu). Dans le panneau transparent de `make_game.py` (fond assombri,
+glyphes serrés), 33×33 bat 9×9 de +1,3 à +1,6 dB sur le panneau (régime
+établi : la pondération n'y couvre ~90 % du panneau qu'après ~25 images du
+jeu) ; mais autour des icônes opaques (décor non assombri entre elles) −0,5
+à −1,0, en marche lente −1,4 / −3,5, et sur le texte du corpus sans panneau
+−0,5. Critères essayés pour choisir le rayon par pixel : changement sur
+place (3×3 ou sur la fenêtre large), amplitude du flux, médiane ou moyenne
+tronquée, échantillons immobiles exclus — aucun ne sépare panneau et
+icônes. 17×17 partout : scènes +0,013 dB mais corpus −0,53. Rien gardé.
