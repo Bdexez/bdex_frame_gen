@@ -1,0 +1,28 @@
+# Update pull requests, monthly, one per ecosystem (grouped). Security
+# updates (Dependabot alerts, enabled in the repository's settings) come
+# as they are published, whatever this schedule.
+# DXVK, VKD3D-Proton (tools/fetch_translation_layers.py), the Vulkan SDK
+# (windows.yml) and the CI's tool downloads are pinned by hash: updated by hand.
+version: 2
+updates:
+  # The actions the workflows use (the third-party ones pinned by commit).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "CI"
+
+  # The Decky Loader plugin (packaging/decky, pnpm lockfile).
+  - package-ecosystem: npm
+    directory: /packaging/decky
+    schedule:
+      interval: monthly
+    groups:
+      decky:
+        patterns: ["*"]
+    commit-message:
+      prefix: "Decky"

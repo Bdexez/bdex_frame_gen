@@ -24,6 +24,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
+# Read-only token by default; the jobs that publish (release, CI logs) ask
+# for more themselves.
+permissions:
+  contents: read
+
 jobs:
   # The tests in parallel jobs, each with its own build (half a minute):
   # under 15 minutes in all (measured on 4 CPUs, 2026-10-08: ctest alone
@@ -271,3 +276,18 @@ jobs:
             g++-mingw-w64-x86-64-posix g++-mingw-w64-i686-posix
       - name: MinGW syntax check (x64, x86)
         run: tools/ci/mingw/check.sh
+
+  # No secret (token, key, password) in any commit, the history included:
+  # gitleaks, pinned, in a few seconds. Checked clean on 2026-10-13 (305
+  # commits). A false positive goes into .gitleaksignore (its fingerprint).
+  secrets:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        run: |
+          docker run --rm -v "$PWD:/repo:ro" zricethezav/gitleaks:v8.21.2 \
+            detect --source /repo --log-opts="--all" --redact --no-banner -v

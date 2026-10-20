@@ -17,6 +17,9 @@ docker run --rm -v "$work:/work" -w /work/src node:20-bookworm-slim bash -euo pi
 trap "chown -R '"$(id -u):$(id -g)"' /work" EXIT   # (node_modules: removable by the caller)
 corepack enable >/dev/null 2>&1
 pnpm install --frozen-lockfile --silent >/tmp/install.log 2>&1 || { tail -30 /tmp/install.log; exit 1; }
+# Known vulnerabilities in what the zip ships (the build tools are not in it:
+# braces under @decky/rollup, 2026-10-13, has no fixed version).
+pnpm audit --prod --audit-level high
 pnpm exec tsc --noEmit
 pnpm build >/tmp/build.log 2>&1 || { tail -30 /tmp/build.log; exit 1; }
 test -s dist/index.js

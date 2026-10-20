@@ -26,6 +26,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import threading
@@ -792,8 +793,33 @@ class _Compat:
             pass
 
 
-if not HAVE_ADW:
-    Adw = _Compat
+class _PlainAdw:
+    """libadwaita with its rows and toasts in plain text, like _Compat: their
+    titles and subtitles are Pango markup by default, and the panel puts game,
+    window and GPU names and error messages there (« Command & Conquer », a
+    path with "<": a parse error, the whole text vanished)."""
+
+    def __init__(self, adw):
+        self._adw = adw
+        # Factories, not subclasses: AdwSwitchRow and others are final types.
+        # The texts go in after use-markup (given together, the title was
+        # parsed first).
+        def plain(cls, title="", subtitle="", **kw):
+            row = cls(use_markup=False, **kw)
+            row.set_title(title)
+            row.set_subtitle(subtitle)
+            return row
+        for name in ("ActionRow", "SwitchRow", "ComboRow", "SpinRow", "ExpanderRow"):
+            setattr(self, name, lambda _cls=getattr(adw, name), **kw: plain(_cls, **kw))
+        # AdwEntryRow's floating title reads markup whatever use-markup says.
+        self.EntryRow = lambda title="", **kw: adw.EntryRow(title=GLib.markup_escape_text(title), **kw)
+        self.Toast = type("Toast", (), {"new": staticmethod(lambda text: adw.Toast(title=text, use_markup=False))})
+
+    def __getattr__(self, name):
+        return getattr(self._adw, name)
+
+
+Adw = _PlainAdw(Adw) if HAVE_ADW else _Compat
 
 CONFIG_PATH = os.path.join(
     os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "bdex-framegen.conf"
@@ -863,12 +889,6 @@ def _fmt_num(value, digits):
 # help, UI ranges), completed from the engine's option registry (kinds,
 # defaults) by bdex_options at build time into options_ui.json — installed
 # next to this panel, or found in the build tree when run from the sources.
-def _m(text):
-    """Plain text for an Adwaita row (its title and subtitle are Pango markup:
-    "< 1" in a help text made the whole text vanish)."""
-    return GLib.markup_escape_text(text)
-
-
 def options_ui_path():
     here = os.path.dirname(os.path.realpath(__file__))
     for p in (os.environ.get("BDEX_FG_OPTIONS_UI"),
@@ -1406,7 +1426,21 @@ def status_dir():
     if "BDEX_FG_STATUS_DIR" in os.environ:
         return os.environ["BDEX_FG_STATUS_DIR"]
     home = os.environ.get("HOME")
-    return os.path.join(home, ".cache", "bdex-framegen", "run") if home else f"/tmp/bdex-framegen-{os.getuid()}"
+    if home:
+        return os.path.join(home, ".cache", "bdex-framegen", "run")
+    # No home: as platformStatusDir, a /tmp directory that is ours alone (any
+    # user could create the name first and plant files or symbolic links).
+    d = f"/tmp/bdex-framegen-{os.getuid()}"
+    try:
+        os.mkdir(d, 0o700)
+    except OSError:
+        pass
+    try:
+        st = os.lstat(d)
+    except OSError:
+        return ""
+    ok = stat.S_ISDIR(st.st_mode) and st.st_uid == os.getuid() and not st.st_mode & 0o077
+    return d if ok else ""
 
 
 def session_path():
@@ -1750,7 +1784,7 @@ def session_dirs():
     """Every status directory a game may read the session from: this user's,
     and the one inside each Flatpak or Snap launcher (its sandbox home is its
     app directory), so that a game started there sees the panel open."""
-    return [status_dir()] + [run for run, _ in sandbox_dirs()]
+    return [d for d in [status_dir()] if d] + [run for run, _ in sandbox_dirs()]
 
 
 def write_session(target=0):
@@ -1760,10 +1794,11 @@ def write_session(target=0):
     every second: the layer takes an older file for a closed panel."""
     hz = display_hz()
     tdir = game_paths(target)[0] if target else None
+    own = status_dir()
     dirs = session_dirs()
     if tdir and not any(same_file(tdir, d) for d in dirs if os.path.isdir(d)):
         dirs.append(tdir)
-    for i, d in enumerate(dirs):
+    for d in dirs:
         try:
             os.makedirs(d, mode=0o700, exist_ok=True)
             mine = target and tdir and same_file(tdir, d)
@@ -1772,7 +1807,7 @@ def write_session(target=0):
                 f.write(f"{os.getpid()} {inner_pid(target) if mine else 0} {hz:.3f}\n")
             os.replace(path + ".tmp", path)
         except OSError:
-            if i == 0:
+            if d == own:
                 raise  # this user's own directory must work
 
 
@@ -2527,7 +2562,7 @@ class Window(Adw.ApplicationWindow):
         self.opt_rows = {}
         self.section_rows = {}
         for sid, title, subtitle, needs_gen, opts in SECTIONS:
-            exp = Adw.ExpanderRow(title=_m(title), subtitle=_m(subtitle))
+            exp = Adw.ExpanderRow(title=title, subtitle=subtitle)
             g.add(exp)
             self.section_rows[sid] = (exp, needs_gen)
             for o in opts:
@@ -2535,13 +2570,13 @@ class Window(Adw.ApplicationWindow):
                 if o["kind"] == "spin":
                     adj = Gtk.Adjustment(lower=o["lower"], upper=o["upper"], step_increment=o["step"],
                                          page_increment=o["step"] * 10, value=-1.0 if value == "auto" else float(value))
-                    row = Adw.SpinRow(title=_m(o["title"]), subtitle=_m(o["sub"]), adjustment=adj, digits=o["digits"])
+                    row = Adw.SpinRow(title=o["title"], subtitle=o["sub"], adjustment=adj, digits=o["digits"])
                     row.connect("notify::value", self.on_change)
                 elif o["kind"] == "switch":
-                    row = Adw.SwitchRow(title=_m(o["title"]), subtitle=_m(o["sub"]), active=value == "1")
+                    row = Adw.SwitchRow(title=o["title"], subtitle=o["sub"], active=value == "1")
                     row.connect("notify::active", self.on_change)
                 elif o["kind"] == "choice":
-                    row = Adw.ComboRow(title=_m(o["title"]), subtitle=_m(o["sub"]),
+                    row = Adw.ComboRow(title=o["title"], subtitle=o["sub"],
                                        model=Gtk.StringList.new([c[0] for c in o["choices"]]))
                     row.set_selected(_combo_index(o["choices"], value))
                     row.connect("notify::selected", self.on_change)

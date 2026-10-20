@@ -77,8 +77,8 @@ std::string platformExeName();
 bool platformIsDesktopApp();
 
 // Directory of the per-process live status files (status.h): Linux
-// ~/.cache/bdex-framegen/run (shared with Steam's container; else
-// /tmp/bdex-framegen-<uid>), Windows
+// ~/.cache/bdex-framegen/run (shared with Steam's container; without a home
+// /tmp/bdex-framegen-<uid>, mode 0700 and owned by us, else ""), Windows
 // %TEMP%\bdex-framegen; BDEX_FG_STATUS_DIR overrides it, an empty value
 // disables the files. "" when no location is known.
 std::string platformStatusDir();

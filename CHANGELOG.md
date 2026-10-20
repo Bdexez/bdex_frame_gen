@@ -6,6 +6,37 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security and licensing review (2026-10-13)
+
+The usual web-application checklist, applied where a local program has an
+equivalent (`SECURITY.md` keeps the result):
+
+- **Control panel: names shown as plain text.** libadwaita reads row titles,
+  subtitles and toasts as Pango markup: a game, window or GPU name with `&`
+  or `<` (« Command & Conquer ») made the row's text vanish. Plain text now,
+  in both the libadwaita and the plain GTK 4 panel (which showed `&lt;` in
+  some help texts).
+- **No shared `/tmp` directory taken blindly**: without `HOME`, the status
+  directory `/tmp/bdex-framegen-<uid>` is used only if it is ours (0700,
+  owned by us); another user could otherwise plant a session file or
+  symbolic links there. Layer and panel.
+- **Windows, « Retirer les injections »** deletes only the translation DLLs
+  it knows by name: the list it reads sits in the game's folder, and an
+  edited line could have deleted any file.
+- **Diagnostic reports** (`bdex-framegen --report`, the Windows launcher's)
+  hide the home / profile path (`~`, `%USERPROFILE%`) and list files with
+  numeric owners: they are meant for public issues.
+- **LGPL compliance for VKD3D-Proton**: the Windows package now carries the
+  license texts of DXVK and VKD3D-Proton (fetched pinned by SHA256), and
+  each release gets VKD3D-Proton's complete source, submodules included.
+- **Releases**: `SHA256SUMS-linux.txt` and `SHA256SUMS-windows.txt`;
+  Authenticode signing of the Windows binaries ready in CI, active once a
+  certificate is in the repository's secrets.
+- **CI**: read-only token by default (only the publishing jobs write),
+  third-party actions pinned by commit, Dependabot monthly (actions, Decky
+  plugin), `pnpm audit` of what the Decky plugin ships, gitleaks over the
+  whole history at every push (checked clean: 305 commits).
+
 ## [0.5.6] - 2026-10-05
 
 Everything since 0.5.5, released together. **From this version on the

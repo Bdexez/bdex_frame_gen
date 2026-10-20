@@ -21,6 +21,7 @@
 #include <dirent.h>
 #include <dlfcn.h>
 #include <fstream>
+#include <sys/stat.h>
 #include <unistd.h>
 extern char** environ;
 #endif
@@ -254,7 +255,14 @@ std::string platformStatusDir() {
     // runtime directory, and the control panel must see the games' status
     // files and they its session file.
     if (const char* h = std::getenv("HOME"); h && *h) return std::string(h) + "/.cache/bdex-framegen/run";
-    return "/tmp/bdex-framegen-" + std::to_string(static_cast<long>(getuid()));
+    // No home: /tmp, where any user can create this name first and plant a
+    // session file, or symbolic links our writes would follow. Ours alone,
+    // or no status files.
+    const std::string dir = "/tmp/bdex-framegen-" + std::to_string(static_cast<long>(getuid()));
+    mkdir(dir.c_str(), 0700);
+    struct stat st;
+    if (lstat(dir.c_str(), &st) != 0 || !S_ISDIR(st.st_mode) || st.st_uid != getuid() || (st.st_mode & 077)) return "";
+    return dir;
 #endif
 }
 

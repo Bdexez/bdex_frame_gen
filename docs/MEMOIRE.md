@@ -850,7 +850,7 @@ d'affichage tournent dans `gamescope --backend headless` ou dans Docker
 - `linux.yml`, à chaque push, sous 15 min (demande du 08/10) :
   - build + tests + seuil PSNR (28,0 / 23,0 dB) ;
   - sanitizers (ASan, UBSan, TSan) ;
-  - fuzz ; syntaxe Windows (MinGW x64/i686).
+  - fuzz ; syntaxe Windows (MinGW x64/i686) ; `secrets` (gitleaks).
 - `compat.yml`, chaque nuit (si `main` a bougé dans les 24 h), sur les tags
   `v*` et à la main (Actions → compat → Run workflow) :
   - `distros` : 6 distributions ; `source-packages` (dont Proton/Wine) ;
@@ -987,6 +987,45 @@ d'affichage tournent dans `gamescope --backend headless` ou dans Docker
 - Le panneau : vrai bouton « ● Enregistrer » (l'icône seule passait
   inaperçue), et `explorer` / `xalia` (Wine) ne sont plus pris pour des jeux.
   `--record` enregistre dès le lancement : à éviter dans un jeu à menus.
+
+### 13/10 — revue sécurité et licences (`SECURITY.md`)
+
+Demande : une liste de contrôle d'appli web (clés d'API, secrets git,
+limitation des connexions, en-têtes, cookies, HTTPS, mots de passe, RLS,
+dépendances…), appliquée seulement là où un logiciel local a un équivalent.
+Écartés, sans objet : pas de serveur, de compte, de base, de réseau. Fait :
+- **Secrets** : gitleaks sur tout l'historique, 305 commits, rien ; job
+  `secrets` dans `linux.yml` à chaque push (quelques secondes ; faux
+  positif → `.gitleaksignore`).
+- **Panneau GTK** : libadwaita lit titres, sous-titres et toasts comme du
+  balisage Pango — un nom de jeu avec `&` ou `<` faisait disparaître la
+  ligne. `_PlainAdw` force le texte brut (fabriques, pas sous-classes :
+  `AdwSwitchRow` est final ; texte posé *après* `use_markup`, sinon déjà
+  analysé ; `AdwEntryRow` ignore `use_markup` pour son titre flottant :
+  échappé). L'ancien `_m()` affichait `&lt;` dans le panneau GTK simple.
+- **`/tmp`** : sans `HOME`, `platformStatusDir` (et le panneau) n'utilisent
+  `/tmp/bdex-framegen-<uid>` que s'il est à nous en 0700 (sinon "").
+- **Windows** : « Retirer les injections » ne supprime que les noms de DLL
+  de traduction connus (le marqueur est dans le dossier du jeu). Contenu
+  non comparé exprès : après une mise à jour de DXVK, les DLL de
+  l'ancienne version ne seraient plus reconnues.
+- **Rapports** (`--report`, lanceur) : chemin personnel masqué (`~`,
+  `%USERPROFILE%`), propriétaires numériques (`ls -ln`).
+- **LGPL (VKD3D-Proton)** : les archives binaires amont n'ont aucun texte
+  de licence ; `fetch_translation_layers.py` ajoute ceux de DXVK et
+  VKD3D-Proton (épinglés SHA256), et `--source` produit la source complète
+  (sous-modules, commit vérifié, ~30 Mo) jointe à chaque release Windows
+  (décision utilisateur : §4 au sens strict).
+- **Releases et CI** : `SHA256SUMS-{linux,windows}.txt` ; signature
+  Authenticode prête (étape « Sign », inactive sans les secrets
+  `WINDOWS_SIGN_PFX_BASE64` / `_PASSWORD`, décision utilisateur) ; jeton
+  en lecture seule par défaut ; actions tierces épinglées par commit ;
+  Dependabot mensuel groupé (décision utilisateur) ; `pnpm audit --prod`
+  au build du plugin Decky (une alerte « high » sur `braces`, outil de
+  build seulement, sans correctif).
+- Aucun accès réseau à l'exécution (vérifié) : rien à chiffrer ni à
+  « forcer en HTTPS » ; les téléchargements de la CI vérifient leur SHA256
+  ou passent par apt (signé).
 
 ---
 
