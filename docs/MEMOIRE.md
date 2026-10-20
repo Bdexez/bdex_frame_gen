@@ -3174,3 +3174,6 @@ l'utilisateur (origin/main 0eab19e), même GPU, préréglage quality : scènes
 +0,021), arêtes en mouvement +0,55, scintillement −0,013 ; 9 enregistrements
 ×2 +0,083 (min 0,000), ×4 +0,106 (min +0,020), scintillement −0,05 / −0,18.
 Latence au banc (×4 30 i/s 144 Hz) −2,8 ms (`tight_hold`).
+`mosaic_blur` aux réglages de la v2 (moitié de flux lissé, rayon 2·f2r) avec
+les protections du HUD actuelles : scènes ×4 encore −0,051 dB — les pertes
+ne venaient pas que du HUD (bords des objets proches, personnage). v3 gardée.
