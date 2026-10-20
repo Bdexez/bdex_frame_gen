@@ -236,6 +236,16 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
     // dark +0.25, fps +0.18, their HUD icons 18-29 -> 26-36 dB; 8 recorded
     // games within 0.005; four mask lookups a pixel).
     if (strong && !(autoOptionsSet & kAutoHudAvoid)) hudAvoid = true;
+    // Where the finest flow is chaos (a character turning on itself, an arm
+    // or a leg in a fast turn: the synthesis assembles the picture from
+    // blocks with unrelated motions), the generated frame leans to its local
+    // average — a soft smear in place of a mosaic flickering from pair to
+    // pair (21/10, the nine recordings of the night, preset quality: +0.045
+    // dB at x2, +0.059 at x4, every sequence up, flicker -0.05 / -0.14;
+    // false_detail kept: without it -0.02. The game-like scenes' sharp
+    // self-moving edges lose up to 0.5 dB, measured 17/10: synthetic, not
+    // what the games show. ~0.9 ms a game frame at 1440p x4.)
+    if (strong && !(autoOptionsSet & kAutoMosaicBlur) && mosaicBlur == 0.f) mosaicBlur = 1.f;
     // No bonus for the zero-motion candidate (03/10, on top of everything
     // above, 960x540 corpus + demo): the free bonus won on soft content in
     // fast motion — a ghostly blend instead of the moving picture. The HUD
@@ -544,6 +554,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "border_predict") autoOptionsSet |= kAutoBorderPredict;
     if (key == "border_fill") autoOptionsSet |= kAutoBorderFill;
     if (key == "hud_avoid") autoOptionsSet |= kAutoHudAvoid;
+    if (key == "mosaic_blur") autoOptionsSet |= kAutoMosaicBlur;
     if (const OptionDef* d = findOption(key)) {
         switch (d->kind) {
         case Kind::Bool:  return parseBool(value, this->*(d->b));
@@ -909,6 +920,7 @@ std::string Config::describe() const {
     if (synthBicubic) o << " synth_bicubic=1";
     if (hudMask > 0) o << " hud_mask=" << hudMask;
     if (falseDetail > 0.f) o << " false_detail=" << falseDetail;
+    if (mosaicBlur > 0.f) o << " mosaic_blur=" << mosaicBlur;
     if (borderPredict) o << " border_predict=1";
     if (parallaxSearch) o << " parallax_search=1";
     if (revealFill) o << " reveal_fill=1";

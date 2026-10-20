@@ -157,7 +157,8 @@ struct Config {
     enum : uint32_t { kAutoPixelVectors = 1, kAutoSplat = 2, kAutoRevealFill = 4, kAutoLocalCut = 8, kAutoInterpSplat = 16, kAutoRot = 32,
                        kAutoTemporalPrediction = 64, kAutoZeroBias = 128, kAutoGlobalMotion = 256,
                        kAutoHudMask = 512, kAutoStaticSoft = 1024, kAutoInterpAccel = 2048,
-                       kAutoFalseDetail = 4096, kAutoBorderPredict = 8192, kAutoBorderFill = 16384, kAutoHudAvoid = 32768 };
+                       kAutoFalseDetail = 4096, kAutoBorderPredict = 8192, kAutoBorderFill = 16384, kAutoHudAvoid = 32768,
+                       kAutoMosaicBlur = 65536 };
     uint32_t autoOptionsSet = 0;
     bool  pixelVectorsAuto = false; // runtime: pixel_vectors turned on by autoConfigure; FrameGen drops it where the synthesis would cost too much (display pixels x generated frames above 4K x2)
     bool  interpSplatAuto = false;  // runtime: interp_splat turned on by autoConfigure; dropped with pixelVectorsAuto

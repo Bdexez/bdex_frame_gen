@@ -6,6 +6,16 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fewer mosaics on moving characters: `mosaic_blur` on (2026-10-21)
+
+- **`mosaic_blur` on with a discrete GPU** (as `false_detail`): where the
+  finest flow is chaos — a character's arm or leg in a fast turn, assembled
+  from blocks with unrelated motions — the generated frame leans to its
+  local average: a soft smear instead of a mosaic that flickers from pair to
+  pair. The night's nine recordings (PRAGMATA, Cyberpunk, Oblivion, preset
+  quality): +0.045 dB at x2, +0.059 at x4, every sequence up, flicker −0.05
+  / −0.14. ~0.9 ms a game frame at 1440p x4.
+
 ### The real frame sooner at x4 on 144 Hz: `tight_hold` (2026-10-20, night)
 
 - **`tight_hold`** (on): a fixed multiplier whose frames fall short of the
