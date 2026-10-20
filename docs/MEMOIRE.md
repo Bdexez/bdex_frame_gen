@@ -2908,6 +2908,26 @@ Cyberpunk, Oblivion, trois chacun (`*-20261020-02*`, `-03*`). Harnais du
 scratchpad : `harness.py` (eval_sequence, préréglage quality, ×2 et ×4,
 variantes contre défaut), `cost.sh` (coût GPU à 1440p sur Cyberpunk agrandi).
 
+**Résumé (état au soir du 21/10)**. Actif d'office : `tight_hold` (×m fixe
+sur grille : la tenue inévitable va à l'image réelle, −2,8 ms), marge de prêt
+X11 1,5 ms ; `mosaic_blur` v3 (GPU dédié : un cinquième de flux lissé +
+moyenne là où le flux est chaotique, HUD exclu ; images prédites aussi) ;
+`hud_layer` (GPU dédié : texte du HUD et sous-titres gardés en place, le
+décor derrière déplacé en basses fréquences ; indice contrasté, durable,
+qui retombe vite) ; `hud_avoid` sur les images prédites ; `hud_mask` compte
+double les pixels contrastés ; `false_detail` et `mosaic_blur` −0,5 ms. En
+option : `hybrid_predict` (latence −6 ms au banc, −0,67 dB à vitesse
+réelle). Face à la version testée le 20/10 : scènes `make_game.py` ×4 +0,14
+dB, enregistrements ×2 +0,08, ×4 +0,11, scintillement en baisse. Règles
+apprises : juger aussi à vitesse réelle (`make_game.py` ×4 : les
+enregistrements à 30 i/s accélèrent le mouvement ×2/×4 et ont inversé un
+verdict), **visualiser la zone qu'une passe traite** (le PSNR cachait 12–20 %
+de faux positifs de `hud_layer`), mesurer les coûts **appariés** (binaires
+en alternance). Restent : le décor derrière une boîte transparente,
+l'occultation aux bords des objets proches et de l'arme, les virages éclair ;
+un enregistrement à 120 i/s sans génération (`record_scale = 1`) donnerait
+le premier ×4 réel sur contenu de jeu.
+
 **Analyse des enregistrements** : les pires images (×2 hors ligne = deux
 images du jeu d'écart) sont des virages extrêmes où le flux s'effondre ; les
 images médianes portent l'erreur au **personnage** (bras, arme, sac :
