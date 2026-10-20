@@ -332,6 +332,7 @@ bool platformIsNonGame(const std::string& name) {
         "steam-runtime-check-requirements", "chrome", "chromium",
         "firefox", "librewolf", "brave", "zen", "electron", "discord", "vesktop", "code",
         "obs", "vulkaninfo", "vkcube", "bdex-framegen-gui", "bdex-capture", "bdex_capture",
+        "zed-editor", "zeditor",  // the Zed editor draws with Vulkan (wgpu)
         "explorer", "xalia",  // Wine's desktop and accessibility helpers (Proton: next to every game)
     };
     for (const char* n : kNonGames)
