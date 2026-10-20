@@ -35,7 +35,18 @@ void main() {
     if (changed) atomicAdd(cnt.changed[pc.slot], 1u);
     bool moving = cnt.changed[1 - pc.slot] > pc.moving;
     vec2 m = imageLoad(mask, p).rg;
-    float s = changed ? 0.0 : (moving ? min(m.r + 1.0, 1000.0) : m.r);
+    // (a contrasted still pixel — text, an icon's edge — counts twice: a new
+    // subtitle line learned in 2 frames instead of 4; a flat still patch of
+    // the scene, the usual false overlay, keeps the slow count)
+    float s = m.r;
+    if (changed) s = 0.0;
+    else if (moving) {
+        const vec3 L = vec3(0.299, 0.587, 0.114);
+        float c0 = dot(texelFetch(curSrc, p, 0).rgb, L);
+        float cx = dot(texelFetch(curSrc, min(p + ivec2(1, 0), pc.size - 1), 0).rgb, L);
+        float cy = dot(texelFetch(curSrc, min(p + ivec2(0, 1), pc.size - 1), 0).rgb, L);
+        s = min(m.r + (max(abs(c0 - cx), abs(c0 - cy)) > 0.08 ? 2.0 : 1.0), 1000.0);
+    }
     // static_soft's evidence: a HUD's anti-aliased text never stays quite
     // unchanged (its edge pixels mix the moving scene), but the "still"
     // hypothesis explains it clearly better than the scene's motion, frame
