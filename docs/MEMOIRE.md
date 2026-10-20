@@ -3260,3 +3260,7 @@ en baisse, mais arêtes en mouvement −0,125 partout. Restreindre ses
 candidats (carte à demi-résolution : un bloc 2×2 une source) : gain d'erreur
 exigé 0,75 au lieu de 0,9 → −0,010 ; point d'arrivée de la source à moins
 d'un pixel de q → −0,026 (arêtes +0,04). Rien gardé.
+Écarté (21/10) : « trou » dans un objet (prev(q) ≈ cur(q) sur 3×3 mais la
+générée très loin des deux → fondu sur place) — seuils 8–16 / 32–64 : −0,07
+à −0,56 dB pour 0,01 à 0,3 % des pixels touchés : un objet fin qui traverse
+q entre les deux images est le cas courant, la synthèse y avait raison.
