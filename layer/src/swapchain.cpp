@@ -108,9 +108,11 @@ void VirtualSwapchain::publishStatus(int multiplier) {
     e.fpsLimit = cfg_.fpsLimit;
     if (cfg_.fpsLimit != 0.f) e.capPoint = dev_.capsAtSleep(msOf(clock::now())) ? "input" : "present";
     if (dev_.inst) e.engine = dev_.inst->engine;
-    if (feedback_) {
+    {
+        // (2: virtual_grid — the frames on a grid of our own, one a refresh)
         std::lock_guard<std::mutex> lock(fbMutex_);
-        e.displayGrid = displayClock_.valid() ? 1 : fbDisplayed_ >= 120 ? 0 : -1;
+        if (feedback_) e.displayGrid = displayClock_.valid() ? 1 : vgPeriodMs_ > 0.0 ? 2 : fbDisplayed_ >= 120 ? 0 : -1;
+        else if (vgPeriodMs_ > 0.0) e.displayGrid = 2;
     }
     e.latencyMs = displayLatencyMs();
     e.budgetLevel = budget_.level();
@@ -135,7 +137,7 @@ std::unique_ptr<FrameGen> VirtualSwapchain::makeFrameGen(bool& generating) {
     if (generating) {
         try {
             return std::make_unique<FrameGen>(dev_, format_, extent_, displayExtent_,
-                                              static_cast<uint32_t>(cfg_.multiplier - 1), sources, colorSpace_,
+                                              static_cast<uint32_t>(cfg_.frameCeiling() - 1), sources, colorSpace_,
                                               flowScaleFactor_, &cfg_);
         } catch (const VkError& e) {
             BDEX_WARN("frame generation unavailable for this swapchain (%s); passing frames through", e.what());
@@ -223,7 +225,7 @@ void VirtualSwapchain::createReal(const VkSwapchainCreateInfoKHR& appInfo) {
         // imageCount - minImageCount >= mult - 1 (VUID-vkAcquireNextImageKHR-
         // swapchain-01802: more, and the driver may hand back an image still
         // being presented).
-        const uint32_t mult = static_cast<uint32_t>(cfg_.requireApp ? std::max(4, cfg_.multiplier) : std::max(1, cfg_.multiplier));
+        const uint32_t mult = static_cast<uint32_t>(cfg_.requireApp ? std::max(4, cfg_.frameCeiling()) : std::max(1, cfg_.frameCeiling()));
         uint32_t want = std::max({appInfo.minImageCount, 2u + mult, caps.minImageCount + mult - 1});
         if (caps.maxImageCount) want = std::min(want, caps.maxImageCount);
         ci.minImageCount = std::max(want, caps.minImageCount);
@@ -840,7 +842,22 @@ int VirtualSwapchain::chooseMultiplier() {
     adaptivePeriodMs_ = 0.0;
     if (target <= 0.0) {
         if (autoTarget) return std::min(2, maxMult);
-        return fastGame(fastGameHz()) ? 1 : maxMult;
+        if (fastGame(fastGameHz())) return 1;
+        // refresh_fill: x4 at 30 fps on 144 Hz shows 120 frames a second on
+        // 144 refreshes — one frame held two refreshes every fifth, 24 times a
+        // second, and the frames' content off their display by up to half a
+        // refresh. Where the multiplier falls short of the refresh rate by
+        // less than a frame a game frame, m or m+1 frames, one a refresh (the adaptive pacing,
+        // virtual_grid without a measured grid): every refresh a new frame.
+        // (~1.4 ms more of hold on average, a fifth more synthesis.)
+        if (cfg_.frameCeiling() > maxMult && frameIntervalMs_ > 0.0) {
+            const double hz = displayHz(), r = hz * frameIntervalMs_ / 1000.0;  // refreshes a game frame
+            if (hz > 0.0 && r > maxMult * 1.02 && r <= (maxMult + 1) * 1.02) {
+                adaptivePeriodMs_ = 1000.0 / hz;
+                return adaptive_.next(frameIntervalMs_, adaptivePeriodMs_, maxMult + 1);
+            }
+        }
+        return maxMult;
     }
     if (cfg_.adaptive || limited) {
         // As many frames as fit at the target rate, the fraction carried over
@@ -1098,6 +1115,31 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     if (catchUp) ++statsBehind_;
     const int mult = generating_ && !catchUp ? chooseMultiplier() : 1;
     lastPresentFrames_ = mult;
+    {
+        // virtual_grid: frames one output period apart on a grid of our own
+        // where the display's is not measured (Wayland compositors, KDE with
+        // NVIDIA) — without one, each job's frames were spaced from its own
+        // GPU completion and the jobs met unevenly: pacing simulator, 30 fps
+        // on 144 Hz, 137 frames a second shown and 7 repeated, 144 and none
+        // with it. A grid at the wrong phase (our presents where the
+        // compositor latches) gets frames replaced: moved half a period.
+        std::lock_guard<std::mutex> lock(fbMutex_);
+        const double nowMs = msOf(t0);
+        if (cfg_.virtualGrid && adaptivePeriodMs_ > 0.0 && !(feedback_ && displayClock_.valid())) {
+            if (vgAnchorMs_ <= 0.0) vgAnchorMs_ = fbLastMs_ > 0.0 ? fbLastMs_ : nowMs;
+            vgPeriodMs_ = adaptivePeriodMs_;
+            if (nowMs - vgCheckMs_ >= 1000.0) {
+                if (vgCheckMs_ > 0.0 && fbReplaced_ - vgReplacedSeen_ >= 3) {
+                    vgAnchorMs_ += 0.5 * vgPeriodMs_;
+                    BDEX_DBG("virtual grid: %llu frames replaced in a second, phase moved", (unsigned long long)(fbReplaced_ - vgReplacedSeen_));
+                }
+                vgReplacedSeen_ = fbReplaced_;
+                vgCheckMs_ = nowMs;
+            }
+        } else {
+            vgPeriodMs_ = 0.0;
+        }
+    }
     // Where the real frame goes among the frames of this present (and, with
     // interp_hold, how far apart; adaptive keeps one output period between
     // all of them).
@@ -1194,6 +1236,8 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     VkCommandBuffer cb = slot.cmd;  // (cmd2 after the first generated frame, when split)
     fg_->profileBegin(cb, slotIdx);
     fg_->collectMeanCost(slotIdx);  // the slot's fence was waited in nextSlot
+    double planned[8] = {};  // Job::planned
+    bool planActive = false;
     if (generating_) {
         fg_->recordAcquireSources(cb, prev, static_cast<int>(imageIndex));
         fg_->recordAnalysis(cb, parity_, imageIndex);
@@ -1213,7 +1257,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         double lastMs, periodMs;
         const bool adaptive = interpolate && adaptivePeriodMs_ > 0.0;
         const double spacing = adaptive ? adaptivePeriodMs_ : frameIntervalMs_ / mult;
-        const bool grid = interpolate && feedback_ && displayGrid(lastMs, periodMs);
+        const bool grid = interpolate && displayGrid(lastMs, periodMs);
         // interp_hold: the outputs read their t from these display times too,
         // so frame_timing follows the uneven spacing.
         const bool held = interpolate && order.hold < 1.f;
@@ -1223,11 +1267,27 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
                 return grid ? lastMs + std::ceil((ms - lastMs) / periodMs) * periodMs : ms;
             };
             double at[8] = {};
-            for (int k = 0; k < mult && k < 8; ++k) at[k] = land(now + 1.0 + spacing * k) - now;
-            if (!adaptive)  // (historical: frame k at the refresh after start + I*k/m, frame 0 right after the GPU)
+            // pace_plan: on a grid, each frame planned for its own refresh
+            // from when the first one is usually ready, and presented for it
+            // (pacing::planLands) — where the frames fit at one a refresh.
+            const bool plan = grid && cfg_.pacePlan && !cfg_.extrapolate && mult <= 8 &&
+                              (adaptive || mult * periodMs <= frameIntervalMs_ * 1.02);
+            if (plan) {
+                double base[8] = {};
+                for (int k = 1; k < mult; ++k)
+                    base[k] = adaptive ? spacing * k : held ? frameIntervalMs_ * order.offset(k) : frameIntervalMs_ * k / mult;
+                const pacing::Grid g{true, lastMs, periodMs};
+                pacing::planLands(now, readyLagMs_.load(std::memory_order_relaxed), base, mult, g, lastPlannedMs_, planned);
+                for (int k = 0; k < mult; ++k) at[k] = planned[k] - now;  // (planned[] again below)
+            } else if (adaptive) {
+                for (int k = 0; k < mult && k < 8; ++k) at[k] = land(now + 1.0 + spacing * k) - now;
+            } else {  // (historical: frame k at the refresh after start + I*k/m, frame 0 right after the GPU)
                 for (int k = 0; k < mult && k < 8; ++k)
                     at[k] = (k == 0 ? land(now + 1.0)
                              : land(now + (held ? frameIntervalMs_ * order.offset(k) : frameIntervalMs_ * k / mult))) - now;
+            }
+            for (int k = 0; k < mult && k < 8; ++k) planned[k] = now + at[k];
+            planActive = plan;
             timing.haveDisplay = true;
             timing.displayMs[7] = float(at[order.real]);
             for (int o = 0; o + 1 < mult && o < 7; ++o) timing.displayMs[o] = float(at[order.position(o)]);
@@ -1407,6 +1467,8 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     job.start = t0;
     job.frameStartMs = lastReturnMs_;
     job.intervalMs = frameIntervalMs_;
+    if (interpolate) std::copy(std::begin(planned), std::end(planned), std::begin(job.planned));
+    job.plan = interpolate && planActive;
     // Adaptive: one output period between the frames (paceTarget spreads
     // intervalMs / frames).
     if (interpolate && adaptivePeriodMs_ > 0.0) job.intervalMs = adaptivePeriodMs_ * mult;

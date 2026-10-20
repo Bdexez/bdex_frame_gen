@@ -9,7 +9,7 @@ The demo writes "flash <input ms> <present ms>" for every input it answered
 with a white frame (the steady clock: a key press as the window system
 delivered it, or with `auto` one every half second, taken when the demo
 starts the frame); the layer (latency_log) writes "<present ms> <display ms>
-<real>" for every frame the screen showed, from the present feedback. The
+<real> <planned ms>" for every frame the screen showed, from the present feedback. The
 two are joined on the present call (the layer's timestamp follows the
 demo's by microseconds). Reported per flash, then as median / 95th
 percentile / mean:
@@ -47,7 +47,7 @@ def read_layer(path):
     with open(path) as f:
         for line in f:
             p = line.split()
-            if len(p) == 3:
+            if len(p) >= 3:  # (a 4th column: the refresh the frame was planned for, pace_plan)
                 shown.append((float(p[0]), float(p[1]), p[2] == "1"))
     shown.sort()
     return shown

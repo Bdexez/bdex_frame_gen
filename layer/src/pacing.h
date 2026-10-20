@@ -28,9 +28,15 @@ struct Grid {
 // present (a job whose GPU work ended early must not land on the previous
 // frame's refresh), and, with a known grid, 0.3 refresh before the refresh it
 // should show on (a present landing just after a refresh would slip a whole
-// period) and on a refresh of its own.
+// period) and on a refresh of its own — the one planned (planLands) when
+// there is a plan.
 inline double presentTargetMs(double originMs, double intervalMs, int frames, const FrameOrder& order, int k,
-                              double lastPresentMs, double lastLandMs, const Grid& grid) {
+                              double lastPresentMs, double lastLandMs, const Grid& grid, double plannedLandMs = 0.0) {
+    if (grid.valid && plannedLandMs > 0.0) {  // planLands: for that refresh, or the next one free
+        double land = plannedLandMs;
+        if (lastLandMs > 0.0 && land < lastLandMs + 0.5 * grid.periodMs) land = lastLandMs + grid.periodMs;
+        return land - 0.3 * grid.periodMs;
+    }
     const double slot = intervalMs / std::max(1, frames);
     const bool held = order.hold < 1.f;
     double t = originMs + (held ? intervalMs * order.offset(k) : slot * k);
@@ -41,6 +47,30 @@ inline double presentTargetMs(double originMs, double intervalMs, int frames, co
         t = land - 0.3 * grid.periodMs;
     }
     return t;
+}
+
+// The refresh each frame of a present should show on, decided when the
+// present is recorded — frame_timing then gives every frame the content of
+// that moment, and the worker presents it for that refresh
+// (presentTargetMs's `plannedLandMs`). `baseMs[k]` is frame k's place in the
+// present's schedule (0 for the first), `lagMs` how long after the present
+// call the first frame is usually ready (the game's rendering and the
+// synthesis still running then). Predicting from the present call alone (the
+// layer before 2026-10-14) put a frame on the refresh before the one it made
+// whenever that work crossed a refresh — measured in the pacing simulator,
+// 30 fps x4 on 144 Hz: the content steps off their display steps by 4.4 ms
+// rms, 1.5 with the plan. Each frame on a refresh after the one planned
+// before it; a plan that ran more than two refreshes ahead of this one
+// starts again (the worker fell behind: those refreshes are gone).
+inline void planLands(double nowMs, double lagMs, const double* baseMs, int frames, const Grid& grid,
+                      double& lastPlannedMs, double* landMs) {
+    if (lastPlannedMs > 0.0 && lastPlannedMs > grid.land(nowMs + lagMs) + 2.0 * grid.periodMs) lastPlannedMs = 0.0;
+    for (int k = 0; k < frames; ++k) {
+        double land = grid.land(nowMs + lagMs + baseMs[k]);
+        if (lastPlannedMs > 0.0 && land < lastPlannedMs + 0.5 * grid.periodMs) land = lastPlannedMs + grid.periodMs;
+        landMs[k] = land;
+        lastPlannedMs = land;
+    }
 }
 
 // interp_hold as the screen allows: never closer than a refresh apart (also
