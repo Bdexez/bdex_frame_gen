@@ -18,7 +18,9 @@ namespace bdex {
 //                  frame, then the predictions: 1/m of latency at x3/x4 (x4:
 //                  a quarter of a frame instead of three quarters), and no
 //                  prediction reaches as far ahead as in pure extrapolation.
-//                  At x2 hybrid is interpolation.
+//                  At x2 hybrid is interpolation. hybrid_predict N: N
+//                  predictions after the real frame (x4, 1: half a frame of
+//                  latency, one prediction a quarter of a frame ahead).
 // Shared by the layer (swapchain.cpp), the capture app and bdex_offline.
 //
 // interp_hold (h < 1, the layer's present path only: `withHold`) shortens
@@ -38,7 +40,12 @@ struct FrameOrder {
     static FrameOrder of(const Config& cfg, int multiplier, bool withHold = false) {
         FrameOrder o;
         o.m = std::max(1, multiplier);
-        o.real = cfg.extrapolate ? 0 : cfg.hybrid ? std::min(1, o.m - 1) : o.m - 1;
+        // (hybrid_predict: that many predicted frames after the real one —
+        // x4 with 1: two interpolated, the real one, a prediction a quarter
+        // of a frame ahead; 0: the real one second)
+        o.real = cfg.extrapolate ? 0
+                 : cfg.hybrid    ? (cfg.hybridPredict > 0 ? std::max(1, o.m - 1 - cfg.hybridPredict) : std::min(1, o.m - 1))
+                                 : o.m - 1;
         // (auto, negative: the smallest, which the caller raises to one refresh)
         if (withHold && o.real > 0 && cfg.interpHold < 1.f) o.hold = cfg.interpHold < 0.f ? 0.1f : std::clamp(cfg.interpHold, 0.1f, 1.f);
         return o;

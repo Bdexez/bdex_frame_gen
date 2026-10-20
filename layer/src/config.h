@@ -77,6 +77,7 @@ struct Config {
     bool  syncPresent   = false;  // block the game's present call until the worker has presented this frame (D3D12/VKD3D compat test)
     bool  hidePresentExt = true;  // hide present-timing extensions (swapchain_maintenance1, present_id/wait) from the game; their semantics target the real swapchain we virtualise, and VKD3D-Proton hangs otherwise
     bool  extrapolate   = false;  // predict the frame after the last one instead of interpolating (no added latency)
+    int   hybridPredict = 0;      // hybrid: predicted frames after the real one (0: m-2, the real frame second); x4 with 1: interpolated, interpolated, real, predicted
     bool  hybrid        = false;  // mode=hybrid: one interpolated frame, the real one, then predicted ones (x3/x4: 1/m of a frame of latency instead of (m-1)/m); see frame_order.h
     int   flowScale     = 0;      // finest flow level at 1/flowScale resolution: 1, 2, 4; 0 = auto from the resolution; -1 = auto, one step finer (quality preset)
     int   searchRadius  = 4;      // block matching search radius at the coarsest level, 1..4

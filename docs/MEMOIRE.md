@@ -2988,3 +2988,16 @@ restante : séparer au pixel la lettre (immobile) et le décor vu à travers
 (mouvement), c.-à-d. un masque qui couvre aussi les bords anticrénelés au
 moment de choisir le vecteur — et juger sur des enregistrements à pleine
 résolution (`record_scale = 1`) : à 853×480 le HUD n'est jamais immobile.
+
+**`hybrid_predict`** (21/10) : en hybride, le nombre d'images prédites après
+la réelle (`FrameOrder::of` : réelle en `max(1, m−1−N)`, 0 = comme avant).
+×4 avec 1 : t = 0,5 / 0,75, réelle, 1,25. 9 enregistrements ×4 : −0,41 dB
+(scintillement +1,7) contre −1,21 (+3,6) pour l'hybride actuel ; banc 1440p
+×4 30 i/s : réelle remise au compositeur 32,4 → 26,1 ms (hybride 18,8).
+Validation `hybrid:predict1` propre. Mesure de la vraie partie (journal ×4
+de l'utilisateur) : 1re générée envoyée 17,4 ms après le `present` du jeu
+(le GPU du jeu finit après l'appel), réelle remise 42,8 ms après — la
+retenue inhérente (25 ms à ×4/30) domine ; priorité haute de la synthèse
+refusée au processus (`synth_priority` inutilisable sans privilège). Piège
+de banc : sous zsh, `$X` non protégé ne se découpe pas (`${=X}`) — deux
+réglages devenaient une ligne ignorée.

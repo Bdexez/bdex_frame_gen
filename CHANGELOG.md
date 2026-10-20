@@ -6,6 +6,19 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Half the interpolation's latency for one short prediction: `hybrid_predict` (2026-10-21)
+
+- **`hybrid_predict`** (`mode=hybrid`, panel « Images prédites en mode
+  hybride »): how many predicted frames follow the real one. `1` at x4:
+  interpolated, interpolated, real, predicted — the real frame half a frame
+  late instead of three quarters, one prediction a quarter of a frame ahead.
+  The night's nine recordings at x4: −0.41 dB from interpolation, flicker
+  +1.7 (the hybrid so far, two predictions: −1.21 dB, +3.6). Headless
+  gamescope, 1440p x4 at 30 fps: the real frame reaches the compositor 32.4
+  → 26.1 ms after the game's present (interpolation already with
+  `tight_hold`; the hybrid so far: 18.8). `0` (default) keeps the hybrid as
+  it was.
+
 ### Fewer mosaics on moving characters: `mosaic_blur` on (2026-10-21)
 
 - **`mosaic_blur` on with a discrete GPU** (as `false_detail`): where the
