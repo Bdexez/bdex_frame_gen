@@ -19,7 +19,9 @@
 //      scene's false hits come and go (without both tests 6 to 12 % of a
 //      recorded game's picture was weighted, its floor and walls in patches;
 //      with them ~2 %: the minimap, the quest text, the icons, the subtitles)
-//   4  once a frame, per cell: the average over 3x3 cells, the weight (read
+//   4  once a frame, per cell: the average over 3x3 cells, from 0.2, fully at
+//      0.5 (0.3..0.6: 0.04 dB less on the scenes, the same weighted HUD), the
+//      weight (read
 //      bilinearly: a cell grid cost a twentieth of per-pixel maps; the
 //      maximum over a pixel window, one thread a cell, 0.55 ms at 1440p)
 //   2  the result into the scratch image (predicted frames: in place is the
@@ -151,7 +153,7 @@ void main() {
             float s = 0.0;
             for (int y = -1; y <= 1; ++y)
                 for (int x = -1; x <= 1; ++x) s += imageLoad(dilated, clamp(p + ivec2(x, y), ivec2(0), cs - 1)).r;
-            imageStore(weight, p, vec4(smoothstep(0.3, 0.6, s / 9.0)));
+            imageStore(weight, p, vec4(smoothstep(0.2, 0.5, s / 9.0)));
         }
         return;
     }

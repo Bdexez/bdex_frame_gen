@@ -3159,3 +3159,7 @@ HUD appris, ré-appariés sur leurs autres pixels) : scènes ×4 −0,007 dB
 contiennent aucun bloc mixte ; leur erreur restante (zone des icônes, MSE
 72 ; 241 sans `hud_avoid`, 88 sans `hud_layer`) n'est pas un problème de
 vecteurs.
+Seuil du poids de `hud_layer` 0,3→0,6 abaissé à 0,2→0,5 (avec la persistance
+et le contraste, sans risque) : scènes +0,043 dB de plus (toutes en hausse),
+enregistrements +0,011 / +0,009 ; Cyberpunk : 4 % de l'image traitée, que du
+HUD (mini-carte, quête, icônes, commandes, le repère au sol).
