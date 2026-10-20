@@ -278,6 +278,7 @@ void FrameGen::createPipelines() {
         else                interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB, SB, CIS, CIS, CIS}, true, false, false, true);
         frameState_ = makePass(frame_state_comp, frame_state_comp_size, {CIS, CIS, SB});
         sceneHist_ = makePass(scene_hist_comp, scene_hist_comp_size, {CIS, CIS, SB});
+        globalMotion_ = makePass(global_motion_comp, global_motion_comp_size, {CIS, CIS, SB, SI});
         if (chroma_) downChroma_ = makePass(downsample_chroma_comp, downsample_chroma_comp_size, {CIS, SI});
     }
     if (packReal_) {
@@ -379,6 +380,15 @@ void FrameGen::createResources() {
         prevBwd_ = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, levels_v_[0].fine,
                                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, true);
         if (!chroma_) chromaDummy_ = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, {1, 1}, VK_IMAGE_USAGE_SAMPLED_BIT, true);
+        // global_motion (can be switched on live): the vector the matcher's
+        // coarsest level reads in its coarse-flow slot, unused there otherwise.
+        globalVec_ = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, {1, 1}, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, true);
+        {
+            const VkExtent2D c = levels_v_.back().size;
+            globalRadius_ = std::clamp(int(std::min(c.width, c.height)) / 4, 1, 16);
+            const VkDeviceSize n = VkDeviceSize(2 * globalRadius_ + 1) * (2 * globalRadius_ + 1);
+            globalCosts_ = dev_.createBuffer(n * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        }
         // Bound as the synthesis's static mask until a pass provides one (hud_mask).
         maskDummy_ = dev_.createImage(VK_FORMAT_R32_SFLOAT, {1, 1}, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, true);
         staticMask_ = maskDummy_.view;
@@ -420,6 +430,7 @@ void FrameGen::createResources() {
         for (auto& o : out_) add(o);
         if (prevBwd_.image) add(prevBwd_);
         if (chromaDummy_.image) add(chromaDummy_);
+        if (globalVec_.image) add(globalVec_);
         if (maskDummy_.image) add(maskDummy_);
         if (confDummy_.image) add(confDummy_);
         if (packReal_) add(outReal_);
@@ -552,6 +563,11 @@ void FrameGen::createDescriptors() {
             }
         }
         const uint32_t cur = parity, prev = 1 - parity;
+        dsGlobal_[parity] = allocSet(globalMotion_.setLayout);
+        writeImage(dsGlobal_[parity], 0, CIS, levels_v_[L - 1].pyr[prev].view);
+        writeImage(dsGlobal_[parity], 1, CIS, levels_v_[L - 1].pyr[cur].view);
+        writeBuffer(dsGlobal_[parity], 2, globalCosts_.buffer);
+        writeImage(dsGlobal_[parity], 3, SI, globalVec_.view);
         for (uint32_t dir = 0; dir < 2; ++dir) {
             for (uint32_t l = 0; l < L; ++l) {
                 Level& lv = levels_v_[l];
@@ -559,7 +575,7 @@ void FrameGen::createDescriptors() {
                 // dir 0 = forward: reference is the previous frame, target the current one.
                 writeImage(s, 0, SI, lv.pyr[dir == 0 ? prev : cur].view);
                 writeImage(s, 1, SI, lv.pyr[dir == 0 ? cur : prev].view);
-                writeImage(s, 2, CIS, (l + 1 < L ? levels_v_[l + 1].flowFine[dir] : lv.flowFine[dir]).view);
+                writeImage(s, 2, CIS, l + 1 < L ? levels_v_[l + 1].flowFine[dir].view : globalVec_.view);
                 writeImage(s, 3, SI, lv.flowRaw[dir].view);
                 writeImage(s, 4, SI, lv.cost[dir].view);
                 // The previous pair's final backward flow (indexed by positions in
@@ -742,7 +758,7 @@ void FrameGen::destroyAll() {
     pools_.clear();
     planner_.reset();
     for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_, &frameState_, &downChroma_,
-                    &sceneHist_}) {
+                    &sceneHist_, &globalMotion_}) {
         destroyVariants(*p);
         if (p->pipeline) vt.DestroyPipeline(d, p->pipeline, nullptr);
         if (p->lean) vt.DestroyPipeline(d, p->lean, nullptr);
@@ -772,6 +788,8 @@ void FrameGen::destroyAll() {
     splatMap_ = VK_NULL_HANDLE;
     if (prevBwd_.image) dev_.destroyImage(prevBwd_);
     if (chromaDummy_.image) dev_.destroyImage(chromaDummy_);
+    if (globalVec_.image) dev_.destroyImage(globalVec_);
+    if (globalCosts_.buffer) dev_.destroyBuffer(globalCosts_);
     if (maskDummy_.image) dev_.destroyImage(maskDummy_);
     if (confDummy_.image) dev_.destroyImage(confDummy_);
     confMap_ = VK_NULL_HANDLE;
@@ -1189,6 +1207,21 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity, int costSlot) {
     const VkPipeline matcher = leanTerms && cfg.rotWeight == 0.f && blockMatch_.lean ? blockMatch_.lean
                                : leanTerms && blockMatch_.rot                     ? blockMatch_.rot
                                                                                    : blockMatch_.pipeline;
+    if (cfg.globalMotion) {
+        // global_motion: the frame's dominant shift at the coarsest level,
+        // a second search centre for the matcher's coarsest blocks.
+        const VkExtent2D c = levels_v_.back().size;
+        GlobalPC gpc{{(int32_t)c.width, (int32_t)c.height}, globalRadius_, 0};
+        vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, globalMotion_.pipeline);
+        vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, globalMotion_.layout, 0, 1, &dsGlobal_[parity], 0, nullptr);
+        vt.CmdPushConstants(cmd, globalMotion_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(gpc), &gpc);
+        vt.CmdDispatch(cmd, uint32_t((2 * globalRadius_ + 1) * (2 * globalRadius_ + 1)), 1, 1);
+        memoryBarrier(cmd);
+        gpc.mode = 1;
+        vt.CmdPushConstants(cmd, globalMotion_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(gpc), &gpc);
+        vt.CmdDispatch(cmd, 1, 1, 1);
+        memoryBarrier(cmd);
+    }
     for (int l = levels_ - 1; l >= 0; --l) {
         const Level& lv = levels_v_[l];
         vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, matcher);
@@ -1196,10 +1229,11 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity, int costSlot) {
                    {(int32_t)lv.blocks.width, (int32_t)lv.blocks.height},
                    l + 1 < levels_ ? cfg.searchFine : cfg.searchRadius, l + 1 < levels_ ? 1 : 0, cfg.smoothness, cfg.zeroBias,
                    cfg.gradWeight, cfg.censusWeight, cfg.censusMargin, cfg.rotWeight, 0, cfg.zeroBiasContrast,
-                   chromaWeight, 0, cfg.zeroBiasCap};
+                   chromaWeight, 0, cfg.zeroBiasCap, 0};
         const bool temporal = cfg.temporalPrediction && flowValid_;
         for (uint32_t dir = 0; dir < 2; ++dir) {
             pc.temporal = temporal ? static_cast<int32_t>(dir + 1) : 0;
+            pc.global = cfg.globalMotion && l + 1 == levels_ ? static_cast<int32_t>(dir + 1) : 0;
             pc.chromaHistory = flowValid_ ? static_cast<int32_t>(dir + 1) : 0;
             vt.CmdPushConstants(cmd, blockMatch_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
             vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, blockMatch_.layout, 0, 1, &dsMatch_[parity][dir][l], 0, nullptr);

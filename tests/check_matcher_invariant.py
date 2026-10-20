@@ -47,6 +47,11 @@ def render(build, dump):
         "BDEX_FG_SCENE_CUT_HIST": "0",
         "BDEX_FG_ZERO_BIAS_CAP": "0",
         "BDEX_FG_HUD": "0",
+        # What a discrete GPU turns on by itself with any preset but
+        # performance (Config::autoConfigure): off, as on the CI's lavapipe.
+        "BDEX_FG_PIXEL_VECTORS": "0", "BDEX_FG_INTERP_SPLAT": "0", "BDEX_FG_ROT_WEIGHT": "0",
+        "BDEX_FG_TEMPORAL_PREDICTION": "0", "BDEX_FG_ZERO_BIAS": "0.002", "BDEX_FG_SCENE_CUT_LOCAL": "0",
+        "BDEX_FG_EXTRAPOLATE_SPLAT": "0", "BDEX_FG_REVEAL_FILL": "0", "BDEX_FG_GLOBAL_MOTION": "0",
         "BDEX_FG_LOG": "0",
         "BDEX_FG_STATS": "0",
         "BDEX_FG_DUMP": str(dump),

@@ -77,7 +77,11 @@ bool Config::applyPreset(const std::string& name) {
     if (v == "balanced" || v == "default") {
         flowScale = 0; refineAll = true; flowIterations = 1; levels = 4; searchRadius = 4; searchFine = 2;
     } else if (v == "quality") {
-        flowScale = 1; refineAll = true; flowIterations = 2; levels = 5; searchRadius = 4; searchFine = 2;
+        // Full-resolution flow up to ~1080p, half above (flowScaleFor): at
+        // 1440p the full-resolution pyramid followed a third of the camera
+        // motion the half-resolution one does — recorded games, fast turns:
+        // +0.3 to +0.5 dB at half the flow's GPU time (13/10).
+        flowScale = -1; refineAll = true; flowIterations = 2; levels = 5; searchRadius = 4; searchFine = 2;
     } else if (v == "performance" || v == "perf" || v == "fast") {
         presetName = "performance";
         flowScale = 4; refineAll = false; flowIterations = 0; levels = 4; searchRadius = 4; searchFine = 2;
@@ -165,6 +169,13 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
     // menu +5.3. Losses: rotation -0.16, menu -0.18 (x2), swing -0.37
     // (hybrid). Nothing either way with the performance preset's coarse flow.
     if (strong && !(autoOptionsSet & kAutoTemporalPrediction)) temporalPrediction = true;
+    // The frame's dominant shift as a second search centre of the coarsest
+    // blocks (13/10, global_motion.comp): a fast camera turn in a game goes
+    // past the pyramid's reach and the picture breaks up. Recorded games at
+    // 1440p, fast turns: grossly wrong pixels -17 to -19 %, +0.3 to +0.8 dB
+    // (with the quality preset's half-resolution flow there: -23 to -29 %,
+    // +0.5 to +1.0); everything else within +-0.04 dB; ~0.05 ms.
+    if (strong && !(autoOptionsSet & kAutoGlobalMotion)) globalMotion = true;
     // No bonus for the zero-motion candidate (03/10, on top of everything
     // above, 960x540 corpus + demo): the free bonus won on soft content in
     // fast motion — a ghostly blend instead of the moving picture. The HUD
@@ -289,6 +300,7 @@ const std::vector<OptionDef>& registry() {
     F("rot_weight", nullptr, &Config::rotWeight, 0.f, 1.f, kLive),
     F("chroma_weight", nullptr, &Config::chromaWeight, 0.f, 8.f),
     F("occlusion_strength", nullptr, &Config::occlusionStrength, 0.f, 1.f, kLive, Tune::SynthInterpolation, "1", 10),
+    B("global_motion", nullptr, &Config::globalMotion, kLive),
     B("temporal_prediction", nullptr, &Config::temporalPrediction, kLive, Tune::Always, "1", 2),
     B("extrapolate_splat", nullptr, &Config::extrapolateSplat, kLive, Tune::SynthExtrapolation, "1", 10),
     F("extrapolate_accel", nullptr, &Config::extrapolateAccel, 0.f, 1.f, kLive, Tune::SynthExtrapolation, "1", 11),
@@ -446,6 +458,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "rot_weight") autoOptionsSet |= kAutoRot;
     if (key == "temporal_prediction") autoOptionsSet |= kAutoTemporalPrediction;
     if (key == "zero_bias") autoOptionsSet |= kAutoZeroBias;
+    if (key == "global_motion") autoOptionsSet |= kAutoGlobalMotion;
     if (const OptionDef* d = findOption(key)) {
         switch (d->kind) {
         case Kind::Bool:  return parseBool(value, this->*(d->b));
@@ -780,8 +793,9 @@ Config Config::loadWithDefaults(Config c, const std::string& extraProcess) {
 }
 
 int Config::flowScaleFor(uint32_t width, uint32_t height) const {
-    if (flowScale) return flowScale;
+    if (flowScale > 0) return flowScale;
     const uint64_t pixels = uint64_t(width) * height;
+    if (flowScale < 0) return pixels <= 2600ull * 1000 ? 1 : 2;  // the quality preset: one step finer
     if (pixels <= 640ull * 1000) return 1;   // up to ~1024x600: full resolution is cheap
     if (pixels <= 2600ull * 1000) return 2;  // up to ~1080p/1440p-ish
     return 4;                                // 4K and beyond
@@ -792,7 +806,7 @@ std::string Config::describe() const {
     static_assert(sizeof(dbg) / sizeof(dbg[0]) == size_t(Debug::Confidence) + 1, "a name per Debug value");
     std::ostringstream o;
     o << "enabled=" << enabled << " multiplier=" << multiplier << " levels=" << levels
-      << " mode=" << modeName() << " flow_scale=" << (flowScale ? std::to_string(flowScale) : "auto") << " search=" << searchRadius << "/" << searchFine << " refine=" << refine
+      << " mode=" << modeName() << " flow_scale=" << (flowScale > 0 ? std::to_string(flowScale) : flowScale < 0 ? "fine" : "auto") << " search=" << searchRadius << "/" << searchFine << " refine=" << refine
       << " present_mode=" << presentModeName(presentMode) << " pacing=" << pacing
       << " debug=" << dbg[static_cast<int>(debug)] << " log=" << logLevel;
     if (gradWeight > 0.f) o << " grad_weight=" << gradWeight;
@@ -802,6 +816,7 @@ std::string Config::describe() const {
     if (occlusionStrength > 0.f) o << " occlusion_strength=" << occlusionStrength;
     if (zeroBiasContrast > 0.f) o << " zero_bias_contrast=" << zeroBiasContrast;
     if (temporalPrediction) o << " temporal_prediction=1";
+    if (globalMotion) o << " global_motion=1";
     if (extrapolateSplat) o << " extrapolate_splat=1";
     if (extrapolateAccel > 0.f) o << " extrapolate_accel=" << extrapolateAccel;
     if (flowTemporal > 0.f) o << " flow_temporal=" << flowTemporal;

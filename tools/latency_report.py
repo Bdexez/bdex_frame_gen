@@ -25,6 +25,7 @@ screen measures the same flash end to end, compositor and panel included.
 `--compare a.json b.json ...` prints saved runs side by side.
 """
 import argparse
+import os
 import bisect
 import json
 import statistics
@@ -52,8 +53,11 @@ def read_layer(path):
     return shown
 
 
-def join(flashes, shown, tolerance_ms=2.0):
-    """Per flash: (input->present, first photon, real frame) in ms (None unknown)."""
+def join(flashes, shown, tolerance_ms=float(os.environ.get("BDEX_LATENCY_JOIN_MS", "2.0"))):
+    """Per flash: (input->present, first photon, real frame) in ms (None unknown).
+    The layer stamps a present when it takes it in hand: a layer that makes
+    the call wait first (a frame limiter) stamps it later — widen the join
+    with BDEX_LATENCY_JOIN_MS to see that wait in the totals."""
     keys = [s[0] for s in shown]
     out = []
     for inp, pres in flashes:

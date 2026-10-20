@@ -1404,3 +1404,46 @@ acceptés) et la limite d'images du jeu dans le panneau.
   mouvement (non rigide) — hors de portée d'un flux à deux images ; la
   piste suivante est la cadence (obtenir la grille sous Wayland :
   `present_timing` / retour d'affichage du compositeur).
+
+### 13/10 (suite) — limiteur sans latence, rotations rapides de la caméra
+
+Retour utilisateur : « la latence induite par la limitation d'images du
+logiciel est monstrueuse » (PRAGMATA avec `fps_limit`, Oblivion Remastered
+avec la limite du jeu) ; nouveaux enregistrements des deux jeux.
+
+- **Limiteur** : `limitFrameRate()` dormait au début de `present()` —
+  l'image finie attendait son créneau. Mesuré (`latency_bench.sh`, démo non
+  plafonnée + `fps_limit=40` contre démo plafonnée à 40) : ×1 30,2 ms contre
+  6,7, ×2 (réelle) 43,3 contre 20,2. Le limiteur est maintenant à la fin de
+  `present()`, après la remise de l'image et les attentes de
+  `max_frame_latency` / `latency_limiter` : ×1 4,5 ms, ×2 19,9 ms, 40,0 i/s
+  tenus. Piège du banc : la couche horodate le present quand elle le prend
+  en main ; avec l'ancien limiteur la jointure (2 ms) ne trouvait aucun
+  flash → `BDEX_LATENCY_JOIN_MS`. `latency_probe` vérifie désormais le
+  plafond (≤ limite du jeu + 4 ms).
+- **Observations** : `display_grid=0` confirmé sous Hyprland (pas de grille
+  de rafraîchissement). PRAGMATA : rotations de 150–190 px par image à
+  853×480 (≈ 560 px en 1440p), flou de mouvement, hologrammes transparents.
+  Oblivion : rotation sur des pavés (texture dense, quasi périodique), fumée,
+  flamme, brume ; 26 % d'images identiques = moments où la caméra est fixe
+  (pas de saccade du jeu).
+- **La portée de la recherche** : ±(4·2^(niveaux−1) + 30) pixels *d'analyse*.
+  « Qualité » analysait en pleine résolution : en 1440p sa portée relative
+  était 4× plus courte que celle de « Équilibré ». Mes bancs à 853×480 le
+  cachaient — **toujours mesurer aussi à la résolution du jeu** (séquences
+  agrandies en 1440p, `hd_*`).
+- **Conflit mesuré** : un niveau grossier de ~40 px de large suit les
+  rotations (+0,9 dB sur les jeux en 1440p) mais moyenne les objets
+  indépendants (edge_bench rapide −1,3 dB) ; ~80 px l'inverse. Résolu par
+  `global_motion` (`global_motion.comp`) : décalage dominant cherché
+  exhaustivement (±16 px au niveau le plus grossier, ~0,05 ms), second
+  centre de recherche par bloc grossier, gardé si le bloc s'y accorde mieux
+  (lu dans l'emplacement du flux grossier, inutilisé au niveau le plus
+  grossier ; `pc.global = 0` → identique bit à bit). Seul : −17/−19 % de
+  pixels grossièrement faux en 1440p, ±0,04 dB ailleurs. Avec « Qualité » à
+  demi-résolution au-delà de 2,6 Mpx (`flowScale = -1`, `flowScaleFor`) :
+  −23/−29 %, +1,0/+0,5 dB, flux 6,9 → ~2 ms. Auto sur GPU dédié
+  (`kAutoGlobalMotion`).
+- **Reste** : une rotation de ~500 px entre deux images reste détruite
+  (même vue à 15 i/s équivalents) ; la grille d'affichage sous Wayland ;
+  contours d'objets animés.

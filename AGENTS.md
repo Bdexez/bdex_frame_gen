@@ -405,7 +405,11 @@ désactivent l'auto-tune du *préréglage* ; les options de synthèse du GPU
 dédié (`pixel_vectors`, `interp_splat`, `rot_weight`, `temporal_prediction`,
 `zero_bias=0`, `scene_cut_local`, splat d'extrapolation) s'appliquent avec
 tout préréglage sauf `performance` (depuis le 13/10 : « Qualité » les
-perdait, 17–20 % de pixels grossièrement faux en plus sur un vrai jeu). Voir `Config` dans `layer/src/config.h` pour la liste
+perdait, 17–20 % de pixels grossièrement faux en plus sur un vrai jeu).
+« Qualité » = flux pleine résolution jusqu'à ~1080p, demi au-delà
+(`flowScale = -1`) ; `global_motion` (décalage dominant, second centre de
+recherche des blocs grossiers) auto sur GPU dédié. `fps_limit` dort à la
+**fin** de `present()` (jamais avant la remise de l'image : +23 ms mesurés). Voir `Config` dans `layer/src/config.h` pour la liste
 complète (multiplier 1-8, render_scale, upscale_filter, sharpness, scene cut
 0.05/0.09, overlay, debug=flow|split|passthrough, dump PPM…).
 

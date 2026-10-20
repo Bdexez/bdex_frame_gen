@@ -294,7 +294,12 @@ private:
     std::vector<VkDescriptorPool> pools_;  // opened as allocSet needs them (see DescriptorPlanner)
     DescriptorPlanner planner_;
 
-    Pass downsample_, blockMatch_, smooth_, refine_, reduce_, interp_, upscale_, cas_, frameState_, downChroma_, sceneHist_;
+    Pass downsample_, blockMatch_, smooth_, refine_, reduce_, interp_, upscale_, cas_, frameState_, downChroma_, sceneHist_,
+        globalMotion_;
+    AllocatedImage globalVec_;       // global_motion: the frame's dominant shift (1x1, coarsest level pixels)
+    AllocatedBuffer globalCosts_;    // ... the cost of every candidate shift
+    VkDescriptorSet dsGlobal_[2] = {};  // [parity]
+    int globalRadius_ = 0;           // ... its search radius (coarsest level pixels)
     VkDescriptorSet dsSceneHist_ = VK_NULL_HANDLE;  // scene_cut_hist: both pyramid slots at histLevel_
     int histLevel_ = 0;
 
