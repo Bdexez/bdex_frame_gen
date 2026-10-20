@@ -6,6 +6,23 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### The screen's grid kept under a loaded compositor (2026-10-20)
+
+- **`x11_clock`'s grid is sticky**: under GPU load a compositor's frame
+  callbacks are mostly on time with a tail of late ones (Hyprland, PRAGMATA
+  at 1440p: 82 % within 0.5 ms, the rest up to half a period off). The test
+  that learns the grid (90 % of the intervals within 1 ms) then failed two
+  estimates in three, and each time the layer paced on another grid (the
+  present feedback's, or its virtual one) at another phase: a whole job a
+  refresh off, the picture jumping. Once learned, the period now stays while
+  65 % of the intervals fit within 1.5 ms (and comes back so), is refined
+  by the median slope between callbacks apart (the mean of the fitting
+  intervals wandered 6.86–7.01 ms for 6.95), and the grid's phase is the
+  median of the recent callbacks, not the last one. The user's own callbacks
+  replayed: valid 45 % of the estimates and 34 switches → 100 % and one; the
+  grid's phase moving over 1 ms at 12.5 % of the callbacks → 0.5 %. Random
+  intervals (a variable-refresh display) never keep it (0 in 40 000).
+
 ### The first generated frame no longer waits for the others (2026-10-20)
 
 - **Stutter fix, x3 and up with two queues** (the default): the worker

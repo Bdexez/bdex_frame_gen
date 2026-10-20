@@ -1,4 +1,5 @@
 #pragma once
+#include <cmath>
 #include <cstddef>
 #include <vector>
 
@@ -47,16 +48,30 @@ public:
     // compositor's frame callbacks, up to ~1 ms off (KWin) — at 0.5 ms / 8 %
     // the grid came and went.
     void setJitter(double ms, double share) { jitterMs_ = ms; jitterShare_ = share; }
+    // x11_clock: a compositor's frame callbacks under GPU load are mostly on
+    // time, with a tail of late ones (Hyprland, PRAGMATA at 1440p: 82 %
+    // within 0.5 ms of the grid, 88 % within 1 ms) — enough to fail the
+    // 90 % test two estimates in three, the layer falling back to grids at
+    // other phases each time. Sticky: a learned period stays while 65 % of
+    // the intervals fit within 1.5 times the tolerance (and comes back so
+    // after a burst of late ones), and the grid's phase is the median of the
+    // recent times, not the last one (perhaps late).
+    void setSticky(bool on) { sticky_ = on; }
     bool valid() const { return periodMs_ > 0.0; }
     double periodMs() const { return periodMs_; }
     double refreshHz() const { return valid() ? 1000.0 / periodMs_ : 0.0; }
     // The first refresh at or after `ms` (valid() only): when a frame
     // presented in time for it shows.
     double nextRefresh(double ms) const;
-    double lastMs() const { return last_; }
+    // The last display time — sticky: the refresh of the grid nearest it.
+    double lastMs() const {
+        if (!sticky_ || !valid() || phaseMs_ == 0.0) return last_;
+        return phaseMs_ + std::round((last_ - phaseMs_) / periodMs_) * periodMs_;
+    }
 
 private:
     void estimate();
+    void setPhase(const std::vector<double>& sorted);
     std::vector<double> times_;   // ring of the latest display times
     size_t head_ = 0;
     double last_ = 0.0;
@@ -64,6 +79,9 @@ private:
     double hintMs_ = 0.0;
     double jitterMs_ = 0.5;
     double jitterShare_ = 0.08;
+    bool sticky_ = false;
+    double phaseMs_ = 0.0;    // sticky: a refresh of the grid (the median phase of times_)
+    double learnedMs_ = 0.0;  // sticky: the last period learned
     int sinceEstimate_ = 0;
 };
 
