@@ -149,6 +149,8 @@ _EN = {
  'écran {} Hz (cadence lue auprès du serveur X)': 'screen {} Hz (timing read from the X server)',
  'latence {} ms': 'latency {} ms',
  'affichées {}/s, tenues {}/s': 'shown {}/s, held {}/s',
+ 'dont ~{}/s inévitables à {} i/s sur {} Hz': 'of which ~{}/s unavoidable at {} fps on {} Hz',
+ 'un écran réglé à {} Hz serait régulier': 'a screen set to {} Hz would be even',
  'budget GPU : niveau {}': 'GPU budget: level {}',
  "flux incertain sur {} % de l'image": 'flow uncertain on {} % of the picture',
  "génération inutile : le jeu tient déjà la fréquence de l'écran": 'generation not needed: the game already '
@@ -2073,6 +2075,14 @@ def describe_entry(e):
         shown = float(e.get("shown_fps", -1))
         if shown >= 0:   # the cadence on screen (present feedback): frames shown, and those held a refresh more
             parts.append(tr(f"affichées {shown:.0f}/s, tenues {float(e.get('held_per_s', 0)):.0f}/s"))
+            # (fewer frames than refreshes: hz - output of them a second hold a
+            # frame on screen whatever the pacing — 30 fps x4 on 144 Hz, 24)
+            inherent = hz - outp if state == "generating" and hz > 0 and 0.5 * hz < outp < 0.97 * hz else 0.0
+            if inherent >= 1.0:
+                parts.append(tr(f"dont ~{inherent:.0f}/s inévitables à {outp:.0f} i/s sur {hz:.0f} Hz"))
+                even = next((r for r in (60, 72, 75, 90, 100, 120, 144, 165) if abs(outp - r) <= 0.03 * r), 0)
+                if even:
+                    parts.append(tr(f"un écran réglé à {even} Hz serait régulier"))
         lvl = int(e.get("gpu_budget_level", 0))
         if lvl > 0:
             parts.append(tr(f"budget GPU : niveau {lvl}"))

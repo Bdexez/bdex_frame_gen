@@ -1285,8 +1285,10 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     if (cfg_.tightHold && order.hold >= 1.f && mult > 1 && order.real == mult - 1 && !(adaptivePeriodMs_ > 0.0) &&
         cfg_.pacePlan && !cfg_.hybrid && !cfg_.extrapolate && frameIntervalMs_ > 0.0) {
         double gridLastMs, gridPeriodMs;
-        if (displayGrid(gridLastMs, gridPeriodMs)) order.hold = pacing::tightHold(gridPeriodMs, mult, frameIntervalMs_, order.real);
+        if (displayGrid(gridLastMs, gridPeriodMs))
+            order.hold = pacing::tightHold(gridPeriodMs, mult, frameIntervalMs_, order.real, tightOn_);
     }
+    tightOn_ = order.hold < 1.f && cfg_.interpHold >= 1.f;
     // A rebuilt output stage has no analysis of the previous frame yet.
     const bool haveHistory = prevIndex_ >= 0 && !historyLost_;
     const bool interpolate = generating_ && haveHistory && mult > 1;

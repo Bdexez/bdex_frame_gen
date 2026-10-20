@@ -220,6 +220,7 @@ private:
     pacing::MotionClock motionClock_;  // present thread: the previous real frame's scheduled refresh
     pacing::EvenClock evenClock_;      // present thread: even_motion's lag behind the game's presents
     bool evenActive_ = false;          // present thread: the last present was planned by evenClock_
+    bool tightOn_ = false;             // present thread: tight_hold spaced the last present (pacing::tightHold's hysteresis)
     pacing::IntervalFilter intervalFilter_;  // present thread: confirmed changes of the game's cadence
     // virtual_grid (fbMutex_): with the adaptive pacing and no measured
     // refresh grid, a grid of the output period at a phase of our own
