@@ -2891,3 +2891,11 @@ statut ×4, 30,0 → 120,2 i/s, journal 119–123 présentations/s pour 30 réel
 Sur un écran fixe 144 Hz, 120 i/s tient une image sur cinq un rafraîchissement
 de plus (24/s) — dit à l'utilisateur ; son choix. `even_motion` n'agit
 qu'avec le remplissage.
+
+**Résultat (20/10)** : l'utilisateur confirme en jeu, ×4 strict (120 i/s à
+30 i/s) : « c'est bon le problème est réglé ». Sa config est rendue à l'état
+du panneau (`latency_log` et `refresh_fill` retirés : le défaut est 0). La
+saccade ressentie venait du remplissage ×4 → ×4,8 (paires de 4 et 5
+rafraîchissements, mouvement +25 % une paire sur cinq), aggravée par la
+grille X perdue sous la charge d'Hyprland (corrigée, `cf59591`) et par les
+copies en file devant la 1re image (`396ca22`). `even_motion` reste en option.
