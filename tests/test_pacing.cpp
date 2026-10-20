@@ -571,6 +571,9 @@ TEST(pacing_refresh_fill_covers_integer_ratios_and_caps_output) {
     CHECK(!pacing::refreshFillFits(143.912 / 100.0, 5)); // single-frame jobs would lose the virtual grid
     Config c;
     c.multiplier = 4;
+    // (off by default since 20/10: x4 is 4 frames a game frame, 120 fps at 30)
+    CHECK(!c.allowsRefreshFill() && c.frameCeiling() == 4);
+    c.refreshFill = 1;
     CHECK(c.allowsRefreshFill() && c.frameCeiling() == 5);
     c.multiplier = 8;
     CHECK(c.allowsRefreshFill() && c.frameCeiling() == 8);

@@ -245,7 +245,9 @@ prolongée après une hausse des i/s ; temps de contenu toujours mesurés par
 génération 4→2 par essai. Gigue, alternance et ralentissement isolé testés
 identiques à l'ancien filtre. Ne pas remplacer simplement l'EMA par chaque
 `dt` : la saturation au plafond perd des sorties sous temps alternés.
-**×m qui ne remplit pas l'écran** (14/10) : `refresh_fill` (1 = dès ×3)
+**×m qui ne remplit pas l'écran** (14/10) : `refresh_fill` (1 = dès ×3 ;
+**0 par défaut depuis le 20/10**, décision de l'utilisateur : ×4 = 4 images
+par image du jeu, 120 i/s à 30)
 passe en adaptatif vers la fréquence de l'écran avec un plafond m+1
 (`Config::frameCeiling`, sorties dimensionnées pour m+1) quand
 m < I·Hz ≤ m+1 ; `virtual_grid` donne à l'adaptatif une grille à nous sans
