@@ -46,6 +46,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   of the scene where it was for a third of a second (`make_game.py subs`, a
   new scene with changing subtitles: the box's area after its text went
   34.2 → 39.2 dB, as without `hud_layer`).
+- Not where the inputs differ much in place: over a detailed scene that
+  scrolls right behind opaque text (no panel to dim it), the cross-fade
+  doubled the scene (the corpus `hud` scene: −0.51 → −0.05 dB against the
+  pass off; the subtitles and the recordings keep their gain).
 
 ### Whole shapes instead of fragments on a character in a fast turn: `mosaic_blur` (2026-10-21)
 
