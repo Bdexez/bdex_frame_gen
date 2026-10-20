@@ -354,6 +354,15 @@ void main() {
                 else pb = src + (q - (src - s * B));
             }
         }
+        if (kStaticMask && pc.staticFrames > 0.0 && pc.hudAvoid != 0) {
+            // hud_avoid, predicted frames: the scene between still HUD
+            // elements whose source in cur is one of them would take its
+            // colour (bars of HUD colour between icons); in place instead.
+            ivec2 ms = textureSize(staticMask, 0);
+            vec2 toMask = vec2(ms) / fsize;
+            if (texelFetch(staticMask, clamp(ivec2(pb * toMask), ivec2(0), ms - 1), 0).r >= pc.staticFrames &&
+                texelFetch(staticMask, clamp(ivec2(q * toMask), ivec2(0), ms - 1), 0).r < pc.staticFrames) pb = q;
+        }
         c = sampleC(curTex, pb / fsize);
         F = -B;
     } else {
