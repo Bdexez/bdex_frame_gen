@@ -3055,3 +3055,10 @@ l'offset ; audit de toutes les structures `*PC` : aucun autre cas.
 Débogage efficace : faire sortir au shader une grandeur intermédiaire
 (source non déformée, puis vecteurs encodés en couleur) et la comparer au
 modèle Python.
+Images prédites (extrapolation, prédites de l'hybride), jusqu'ici exclues
+sans mesure : prototype Python sur les prédites seules (×4,
+`hybrid_predict=1`) — moyenne 5×5 +0,100 dB, avec l'image courante déformée
+par le flux arrière lissé +0,100 / +0,104 (part 0,5 / 0,3) : rien de plus,
+gardé la moyenne seule. Moteur : extrapolation ×2 +0,062 (scintillement
+−0,13), hybride ×4 `hybrid_predict=1` +0,101 au lieu de +0,071 (−0,21 au
+lieu de −0,11), chaque séquence en hausse.
