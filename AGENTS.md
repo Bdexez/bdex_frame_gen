@@ -1147,7 +1147,7 @@ Tenus à jour dans `ROADMAP.md` (où en est le projet, ce qui reste) et
 `docs/MEMOIRE.md` §9 (problèmes ouverts, essais à ne pas refaire). Retenir :
 - **Options retirées le 2026-10-04** (mesurées négatives ou neutres) :
   `alt_vectors`, `affine_flow`, `flow_upsample`, `confidence_fallback`,
-  `extrapolate_hold`. Bits `SYNTH_*` 128, 512, 8192 libres. Vérification :
+  `extrapolate_hold`. Bit `SYNTH_*` 8192 libre (128 = `border_fill`, 512 = `still_occluder`). Vérification :
   hachage des sorties de `bdex_offline` pour chaque réglage de
   `test_determinism.py` × séquences × modes, avant et après — identiques.
   Méthode à reprendre pour toute suppression ou refactorisation du moteur.
