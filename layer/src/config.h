@@ -113,6 +113,7 @@ struct Config {
     float chromaWeight  = 0.0f;   // chroma re-ranking of the block matcher: candidates luma cannot tell apart are re-ranked on Cb/Cr SAD (0 = off, bit-for-bit; enabling it builds a chroma pyramid, read at start-up)
     float rotWeight     = 0.0f;   // rotation/scale re-ranking of ambiguous winners: the top-2 displacements are re-evaluated under local rotations and scales (0 = off, bit-for-bit; 1 = on)
     float occlusionStrength = 0.0f; // opt-in flow confidence and reduced cross-fade fallback (0 = historical synthesis)
+    float staticSoft    = 0.f;    // hud_mask's "holds still while the scene moves" evidence: such pixels lean to their place (anti-aliased HUD text), strength, interpolation
     bool  globalMotion  = false;  // the frame's dominant shift as a second search centre at the coarsest level (global_motion.comp)
     bool  temporalPrediction = false; // coarsest matching level searches around the previous frame pair's motion instead of zero, so sustained fast pans are followed beyond the pyramid's range (opt-in; off = bit-for-bit)
     bool  extrapolateSplat = false; // extrapolation: forward-splat the current frame, backward warp only where nothing lands (opt-in)
@@ -137,7 +138,7 @@ struct Config {
     // set them (autoConfigure leaves those alone): bits of kAuto*.
     enum : uint32_t { kAutoPixelVectors = 1, kAutoSplat = 2, kAutoRevealFill = 4, kAutoLocalCut = 8, kAutoInterpSplat = 16, kAutoRot = 32,
                        kAutoTemporalPrediction = 64, kAutoZeroBias = 128, kAutoGlobalMotion = 256,
-                       kAutoHudMask = 512 };
+                       kAutoHudMask = 512, kAutoStaticSoft = 1024 };
     uint32_t autoOptionsSet = 0;
     bool  pixelVectorsAuto = false; // runtime: pixel_vectors turned on by autoConfigure; FrameGen drops it where the synthesis would cost too much (display pixels x generated frames above 4K x2)
     bool  interpSplatAuto = false;  // runtime: interp_splat turned on by autoConfigure; dropped with pixelVectorsAuto

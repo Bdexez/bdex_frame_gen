@@ -14,13 +14,16 @@ layout(local_size_x = 16, local_size_y = 16) in;
 
 layout(binding = 0) uniform sampler2D prevSrc;  // previous real frame (render size)
 layout(binding = 1) uniform sampler2D curSrc;   // current real frame
-layout(binding = 2, r32f) uniform image2D mask; // frames unchanged (while the picture moved)
+layout(binding = 2, rg32f) uniform image2D mask; // r: frames unchanged (while the picture moved); g: static_soft's evidence
 layout(std430, binding = 3) buffer Counts { uint changed[2]; } cnt;
+layout(binding = 4) uniform sampler2D flowBwd;  // this frame's finest backward flow (level pixels)
 
 layout(push_constant) uniform PC {
     ivec2 size;
     int slot;        // counter written this frame; the other holds the previous pair's
     uint moving;     // changed pixels above which the previous pair counts as camera motion
+    vec2 flowInv;    // 1 / (render pixels the flow covers)
+    float flowScale; // flow units -> render pixels
 } pc;
 
 void main() {
@@ -31,7 +34,27 @@ void main() {
     bool changed = max(d.r, max(d.g, d.b)) > 2.0 / 255.0;
     if (changed) atomicAdd(cnt.changed[pc.slot], 1u);
     bool moving = cnt.changed[1 - pc.slot] > pc.moving;
-    float s = imageLoad(mask, p).r;
-    s = changed ? 0.0 : (moving ? min(s + 1.0, 1000.0) : s);
-    imageStore(mask, p, vec4(s, 0.0, 0.0, 0.0));
+    vec2 m = imageLoad(mask, p).rg;
+    float s = changed ? 0.0 : (moving ? min(m.r + 1.0, 1000.0) : m.r);
+    // static_soft's evidence: a HUD's anti-aliased text never stays quite
+    // unchanged (its edge pixels mix the moving scene), but the "still"
+    // hypothesis explains it clearly better than the scene's motion, frame
+    // after frame — a moving object crossing a pixel does so once. Moving
+    // average of that test while the scene at the pixel moves.
+    const vec2 q = vec2(p) + 0.5;
+    const vec2 B = texture(flowBwd, q * pc.flowInv).xy * pc.flowScale;
+    float ev = m.g;
+    if (length(B) > 1.0) {
+        float still = 0.0, moved = 0.0;
+        for (int k = 0; k < 5; ++k) {
+            ivec2 o = k == 0 ? ivec2(0) : k == 1 ? ivec2(1, 0) : k == 2 ? ivec2(-1, 0) : k == 3 ? ivec2(0, 1) : ivec2(0, -1);
+            ivec2 r = clamp(p + o, ivec2(0), pc.size - 1);
+            vec3 b = texelFetch(curSrc, r, 0).rgb;
+            still += dot(abs(texelFetch(prevSrc, r, 0).rgb - b), vec3(1.0 / 3.0));
+            moved += dot(abs(texture(prevSrc, (vec2(r) + 0.5 + B) / vec2(pc.size)).rgb - b), vec3(1.0 / 3.0));
+        }
+        const float hit = smoothstep(2.0, 4.0, moved / (still + 0.01)) * (1.0 - smoothstep(0.04, 0.12, still * 0.2));
+        ev = mix(ev, hit, 0.35);
+    }
+    imageStore(mask, p, vec4(s, ev, 0.0, 0.0));
 }

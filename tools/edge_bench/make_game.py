@@ -79,19 +79,29 @@ def main():
     char = texture(260, 120, rng, (0.4, 0.9, 0.6), rects=12)
     yy, xx = np.mgrid[0:260, 0:120]
     char_a = (((yy - 130) / 130.0) ** 2 + ((xx - 60) / 60.0) ** 2 <= 1).astype(np.float32)
-    # HUD: a see-through panel with glyph-like text, opaque icons.
-    hud = np.zeros((H, W, 3), np.float32); hud_a = np.zeros((H, W), np.float32)
-    hud_a[40:150, 1040:1240] = 0.45; hud[40:150, 1040:1240] = (0.05, 0.1, 0.15)
+    # HUD: a see-through panel with glyph-like text, opaque icons — drawn at
+    # 3x and averaged down, so their edges are anti-aliased as a game's are
+    # (an edge pixel mixes the HUD and the moving scene behind it).
+    SS = 3
+    hud3 = np.zeros((H * SS, W * SS, 3), np.float32); a3 = np.zeros((H * SS, W * SS), np.float32)
+    def rect(y, x, h, w, col, alpha):
+        hud3[y * SS:(y + h) * SS, x * SS:(x + w) * SS] = col; a3[y * SS:(y + h) * SS, x * SS:(x + w) * SS] = alpha
+    rect(40, 1040, 110, 200, (0.05, 0.1, 0.15), 0.45)
     for row in range(5):
         for col in range(14):
             if rng.random() < 0.8:
-                y0, x0 = 52 + row * 19, 1052 + col * 13
+                y0, x0 = (52 + row * 19) * SS + 1, (1052 + col * 13) * SS + 1
                 glyph = rng.random((11, 8)) < 0.45
-                hud[y0:y0 + 11, x0:x0 + 8][glyph] = (1.0, 0.85, 0.3); hud_a[y0:y0 + 11, x0:x0 + 8][glyph] = 1.0
+                g3 = np.kron(glyph, np.ones((SS, SS), bool))  # glyph strokes at 3x, offset by a third of a pixel
+                hud3[y0:y0 + 11 * SS, x0:x0 + 8 * SS][g3] = (1.0, 0.85, 0.3); a3[y0:y0 + 11 * SS, x0:x0 + 8 * SS][g3] = 1.0
     for i in range(4):
-        y0, x0 = 600, 40 + i * 52
-        hud[y0:y0 + 40, x0:x0 + 40] = (0.2, 0.8, 0.9); hud_a[y0:y0 + 40, x0:x0 + 40] = 1.0
-        hud[y0 + 8:y0 + 32, x0 + 8:x0 + 32] = (0.02, 0.05, 0.08)
+        y0, x0 = 600 * SS + 1, (40 + i * 52) * SS + 2
+        hud3[y0:y0 + 40 * SS, x0:x0 + 40 * SS] = (0.2, 0.8, 0.9); a3[y0:y0 + 40 * SS, x0:x0 + 40 * SS] = 1.0
+        hud3[y0 + 8 * SS:y0 + 32 * SS, x0 + 8 * SS:x0 + 32 * SS] = (0.02, 0.05, 0.08)
+    # premultiplied, then box-averaged to 1x
+    pm = (hud3 * a3[..., None]).reshape(H, SS, W, SS, 3).mean((1, 3))
+    hud_a = a3.reshape(H, SS, W, SS).mean((1, 3))
+    hud = np.where(hud_a[..., None] > 0, pm / np.maximum(hud_a[..., None], 1e-6), 0.0)
     gain = 0.25 if kind == "dark" else 1.0
     sub = 8  # sub-steps over the exposure (half a 30 fps frame = 2 frames at 120 Hz)
     for f in range(n):

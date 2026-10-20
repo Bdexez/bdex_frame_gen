@@ -184,6 +184,12 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
     // extrapolation +0.67 / +1.06; nothing lost on the recorded games, the
     // corpus or the game-like scenes without a HUD). One pass a game frame.
     if (strong && !(autoOptionsSet & kAutoHudMask) && hudMask == 0) hudMask = 8;  // (enhanced: its own 24)
+    // ... and its "holds still" evidence for the HUD pixels never quite
+    // unchanged — anti-aliased text, whose 1-2 pixel strokes mix the moving
+    // scene (13/10, x4 game-like scenes with anti-aliased HUD text: +0.05 to
+    // +0.25 dB, edges +0.5 to +4.5; recorded games and the corpus within
+    // -0.02 dB).
+    if (strong && !(autoOptionsSet & kAutoStaticSoft)) staticSoft = 1.f;
     // No bonus for the zero-motion candidate (03/10, on top of everything
     // above, 960x540 corpus + demo): the free bonus won on soft content in
     // fast motion — a ghostly blend instead of the moving picture. The HUD
@@ -309,6 +315,7 @@ const std::vector<OptionDef>& registry() {
     F("chroma_weight", nullptr, &Config::chromaWeight, 0.f, 8.f),
     F("occlusion_strength", nullptr, &Config::occlusionStrength, 0.f, 1.f, kLive, Tune::SynthInterpolation, "1", 10),
     B("global_motion", nullptr, &Config::globalMotion, kLive),
+    F("static_soft", nullptr, &Config::staticSoft, 0.f, 1.f, kLive),
     B("temporal_prediction", nullptr, &Config::temporalPrediction, kLive, Tune::Always, "1", 2),
     B("extrapolate_splat", nullptr, &Config::extrapolateSplat, kLive, Tune::SynthExtrapolation, "1", 10),
     F("extrapolate_accel", nullptr, &Config::extrapolateAccel, 0.f, 1.f, kLive, Tune::SynthExtrapolation, "1", 11),
@@ -468,6 +475,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "zero_bias") autoOptionsSet |= kAutoZeroBias;
     if (key == "global_motion") autoOptionsSet |= kAutoGlobalMotion;
     if (key == "hud_mask") autoOptionsSet |= kAutoHudMask;
+    if (key == "static_soft") autoOptionsSet |= kAutoStaticSoft;
     if (const OptionDef* d = findOption(key)) {
         switch (d->kind) {
         case Kind::Bool:  return parseBool(value, this->*(d->b));
