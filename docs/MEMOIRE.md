@@ -3119,3 +3119,34 @@ extrapolation −4,71 — plus que sur les enregistrements (−0,41 / −1,21) :
 même un quart d'image prédit coûte (bords découverts, mouvement propre des
 objets). `hybrid_predict=1` reste un compromis à proposer pour la latence,
 pas un défaut.
+
+**`hud_layer` : le texte du HUD et la scène derrière, deux couches**
+(21/10, après-midi). Sur `make_game.py` ×4, le HUD concentre 13 à 51 % de
+l'erreur sur 3,4 % de la surface (icônes : surtout l'apprentissage de
+`hud_mask`, ses 4 premières images ; le panneau transparent : tout le long).
+Dans le panneau, le simple fondu sur place bat la synthèse de +2,9 à +4,5
+dB ; fondu sur place + basses fréquences (moyenne 9×9 à 17×17) de l'écart
+synthèse − fondu : +0,4 à +0,9 de plus — les lettres restent, le décor
+lisse derrière bouge. Zone : l'indice de `static_soft` (canal g de
+`hud_mask`) dilaté (sans dilatation : rien). Prototype Python (indice
+recalculé comme `hud_mask.comp` depuis `--dump-flow`) : scènes +0,05 à
++0,76 dB, enregistrements −0,006 à +0,04 au seuil 0,3 (0,2 : −0,07 à −0,19).
+**Piège** : visualisée sur Cyberpunk (pixels traités en magenta), la zone
+couvrait 12 à 20 % de l'image, des plaques du sol et des passants — le PSNR
+ne le voyait pas (fondu sur un sol uni : invisible), l'œil verrait des
+fantômes par taches. Correctifs : moyenne lente de l'indice par cellule
+(taux 0,1 : un HUD reste des minutes, les faux positifs passent), pas
+d'indice à moins de 4 px des bords (le contenu qui entre l'imite), et
+**seulement où l'image est contrastée** (≥ 20/255 avec un voisin : un sol
+uni que le flux ne suit pas imite l'indice, une lettre jamais) → 2–3 %,
+uniquement mini-carte, texte de quête, icônes, commandes. Coût : d'abord
++2,7 ms par image du jeu à 1440p ×4 ; cartes du poids sur une grille de
+cellules de 4 px (8 à 1440p), lues en bilinéaire ; test de tuile réparti sur
+64 fils (un seul fil lisant ~40 cellules : 0,4 ms à 720p) ; le maximum sur
+une fenêtre de pixels par cellule (64 lectures par fil, 240 groupes : 0,55
+ms) remplacé par le maximum de la cellule puis des cellules voisines →
+**+0,36 ms**. Final : scènes +0,092 dB (+0,01 à +0,25, arêtes +0,61, toutes
+en hausse), enregistrements +0,010 / +0,006 (×2 / ×4). Automatique sur GPU
+dédié (avec `hud_mask`). Mesure de coût : toujours **appariée** (les
+binaires en alternance dans le même banc) — d'un lancement à l'autre la
+référence varie de ±0,3 ms.

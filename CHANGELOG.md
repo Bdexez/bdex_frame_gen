@@ -6,6 +6,24 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### HUD text no longer dragged by the scene behind it: `hud_layer` (2026-10-21)
+
+- **`hud_layer`** (on with a discrete GPU, panel « Texte du HUD sur la
+  scène »): a HUD's text over the moving scene — a see-through panel, the
+  subtitles' box — is two layers the synthesis cannot move apart: the block
+  flow follows the scene and drags the letters along, or keeps the letters
+  and freezes the scene. Where `hud_mask`'s anti-aliased-text evidence is
+  dense, contrasted and lasting (a HUD stays for minutes, the scene's false
+  hits come and go; a flat floor the flow cannot follow mimics the evidence
+  but is not contrasted), the generated frame becomes the in-place
+  cross-fade of the inputs plus the low frequencies of the synthesis's
+  difference to it: the letters stay, the scene behind moves. Game-like
+  scenes at x4 (a 30 fps game at 120 Hz, exact truth): +0.01 to +0.25 dB,
+  moving edges +0.6, every scene up; the nine recordings +0.010 / +0.006 dB at
+  x2 / x4; on a recorded Cyberpunk 2–3 % of the picture is treated, the
+  minimap, the quest text, the icons and the prompts. ~0.36 ms a game frame
+  at 1440p x4.
+
 ### Whole shapes instead of fragments on a character in a fast turn: `mosaic_blur` (2026-10-21)
 
 - Where the flow is chaos, `mosaic_blur` no longer only averages the

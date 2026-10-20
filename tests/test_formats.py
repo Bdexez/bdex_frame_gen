@@ -49,7 +49,7 @@ def main():
         print("bdex_offline not built, skipping")
         return 77
     env = dict(os.environ, BDEX_FG_CONFIG="/dev/null", BDEX_FG_PRESET="balanced", BDEX_FG_BORDER_FILL="0",
-               BDEX_FG_MOSAIC_BLUR="0")  # (packed formats only: the encodings compared without it)
+               BDEX_FG_MOSAIC_BLUR="0", BDEX_FG_HUD_LAYER="0")  # (packed formats only: the encodings compared without them)
     envFill = dict(env, BDEX_FG_BORDER_FILL="1")
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
