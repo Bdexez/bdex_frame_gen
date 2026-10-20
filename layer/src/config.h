@@ -135,6 +135,7 @@ struct Config {
     int   recordScale   = 0;      // the panel's recordings: written at 1/N of the game's size (1 = full), 0 = about 960 pixels wide (a 1440p game's HUD strokes then never stay still)
     bool  hudAvoid      = false;  // interpolation with hud_mask: a trajectory with an endpoint on a learned still overlay pixel (where the pixel itself is none) counts as broken — the scene between HUD icons no longer copies their colour
     bool  borderFill    = false;  // interpolation: content entering (leaving) the picture in a camera move from cur (prev) alone, instead of the cross-fade its off-screen trajectories fell to (opt-in, off = bit-for-bit)
+    bool  stillOccluder = false;  // interpolation: while the world moves, the scene passing behind a still object's edge (a first-person weapon, the HUD) from the input it is visible in, instead of the cross-fade its trajectories fell to (opt-in, off = bit-for-bit)
     bool  revealFill    = false;  // extrapolation: revealed areas take the slower-moving of the last two sources (opt-in, off = bit-for-bit)
     int   hudMask       = 0;      // learned static-overlay mask: frames a pixel must stay unchanged while the picture moves to be kept as is (0 = off, bit-for-bit; enabling it is read at start-up)
     bool  synthBicubic  = false;  // synthesis samples the frames with Catmull-Rom instead of bilinear (keeps sub-pixel detail; opt-in, off = bit-for-bit)
@@ -160,7 +161,7 @@ struct Config {
                        kAutoTemporalPrediction = 64, kAutoZeroBias = 128, kAutoGlobalMotion = 256,
                        kAutoHudMask = 512, kAutoStaticSoft = 1024, kAutoInterpAccel = 2048,
                        kAutoFalseDetail = 4096, kAutoBorderPredict = 8192, kAutoBorderFill = 16384, kAutoHudAvoid = 32768,
-                       kAutoMosaicBlur = 65536, kAutoHudLayer = 131072 };
+                       kAutoMosaicBlur = 65536, kAutoHudLayer = 131072, kAutoStillOccluder = 262144 };
     uint32_t autoOptionsSet = 0;
     bool  pixelVectorsAuto = false; // runtime: pixel_vectors turned on by autoConfigure; FrameGen drops it where the synthesis would cost too much (display pixels x generated frames above 4K x2)
     bool  interpSplatAuto = false;  // runtime: interp_splat turned on by autoConfigure; dropped with pixelVectorsAuto

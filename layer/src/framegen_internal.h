@@ -27,14 +27,15 @@ struct AccelMapPC { int32_t fine[2]; int32_t size[2]; float flowInvSize[2]; floa
 
 struct RefinePC { int32_t size[2]; int32_t blocks[2]; int32_t fine[2]; int32_t coarseBlock; int32_t fineBlock; float ownBias; int32_t subpixel; };
 // interpolate.comp's kFeatures bits: the opt-ins a synthesis variant compiles in.
-// (128, 512 and 8192 were alt_vectors, confidence_fallback and affine_flow,
-// removed on 2026-10-04 after measuring negative or neutral.)
+// (8192 was affine_flow, removed on 2026-10-04 after measuring neutral; 128
+// and 512, alt_vectors and confidence_fallback then, are border_fill and
+// still_occluder now.)
 enum : uint32_t {
     SYNTH_BICUBIC = 1u, SYNTH_TIMING = 2u, SYNTH_LOCAL_CUT = 4u, SYNTH_ACCEL = 8u, SYNTH_REVEAL = 16u, SYNTH_SPLAT = 32u,
-    SYNTH_PIXEL_VECTORS = 64u, SYNTH_BORDER = 128u, SYNTH_OCCLUSION = 256u,
+    SYNTH_PIXEL_VECTORS = 64u, SYNTH_BORDER = 128u, SYNTH_OCCLUSION = 256u, SYNTH_STILL_OCCLUDER = 512u,
     SYNTH_STATIC_GUARD = 1024u, SYNTH_STATIC_MASK = 2048u, SYNTH_DEBUG_CONF = 4096u,
 };
-struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; float occlusionStrength; float staticGuard; int32_t splat; int32_t pixelVectors; int32_t transfer; int32_t timing; int32_t localCut; float accel; int32_t bicubic; float staticFrames; int32_t revealFill; float staticSoft; float flowIntervalRatio; int32_t borderFill; int32_t hudAvoid; };
+struct InterpPC { int32_t size[2]; float t; float flowScale; uint32_t encoding; int32_t debugMode; float cutLow; float cutHigh; float flowInvSize[2]; int32_t iterations; float occlusionStrength; float staticGuard; int32_t splat; int32_t pixelVectors; int32_t transfer; int32_t timing; int32_t localCut; float accel; int32_t bicubic; float staticFrames; int32_t revealFill; float staticSoft; float flowIntervalRatio; int32_t borderFill; int32_t hudAvoid; int32_t stillOccluder; };
 struct GlobalPC { int32_t size[2]; int32_t radius; int32_t mode; };
 struct UpscalePC { int32_t outSize[2]; int32_t srcSize[2]; uint32_t encoding; int32_t filter; };
 struct FrameStatePC { int32_t size[2]; int32_t mode; int32_t multiplier; float sinceLastMs; float intervalMs; int32_t flags; int32_t gateCount; uint32_t dupMaxPixels; float displayMs[kMaxFrames]; int32_t realPos; float displaySpanMs; };

@@ -33,6 +33,7 @@ const bool kReveal = (kFeatures & 16u) != 0u;
 const bool kSplat = (kFeatures & 32u) != 0u;
 const bool kPixelVectors = (kFeatures & 64u) != 0u;
 const bool kBorder = (kFeatures & 128u) != 0u;
+const bool kStillOcc = (kFeatures & 512u) != 0u;
 const bool kOcclusion = (kFeatures & 256u) != 0u;
 const bool kStaticGuard = (kFeatures & 1024u) != 0u;
 const bool kStaticMask = (kFeatures & 2048u) != 0u;
@@ -107,6 +108,7 @@ layout(push_constant) uniform PC {
     float flowIntervalRatio; // current / previous source interval (1 legacy, 0 invalid timed history)
     int borderFill;          // interpolation: content entering (leaving) the picture from cur (prev) alone
     int hudAvoid;            // interpolation with hud_mask: a trajectory with an endpoint on a still overlay pixel is contaminated
+    int stillOccluder;       // interpolation: the scene passing behind a still object's edge from the input it is visible in
 } pc;
 
 // flow_confidence's trust at display pixel p (the map covers the flow's area).
@@ -618,6 +620,57 @@ void main() {
         }
         #undef OFFSCREEN
         #undef ONSCREEN
+    }
+    if (kStillOcc && pc.stillOccluder != 0) {
+        // still_occluder: while the world moves (a camera turn), what holds
+        // still on screen — the weapon, the hands, a cockpit, the HUD — is in
+        // front of it, and the scene passing behind its edge is visible in one
+        // input only: neither trajectory explains such a pixel and it fell to
+        // the cross-fade (the background coming out from behind a first-person
+        // weapon smeared over a band as wide as the motion). Along a vector V
+        // around q, an endpoint on a still pixel (unchanged in place, zero
+        // flow) while the other changes, and the two disagree: the content
+        // was hidden behind the still object there, the other input alone.
+        // Only where the world moves (most of a 4x4 grid of flow samples) and
+        // q's content moves in both inputs: with a still camera the still
+        // pixels are the background, behind what moves (a mouse-flick
+        // scene's still phases -0.27 dB without that test).
+        float found = max(1.0 - smoothstep(0.04, 0.08, ef), 1.0 - smoothstep(0.04, 0.08, eb));
+        float moveQ = found < 1.0 ? smoothstep(0.02, 0.06, colourError(texture(prevTex, uv), cur)) *
+                                    smoothstep(1.5, 3.0, min(length(Fq), length(Bq))) : 0.0;
+        if (moveQ > 0.0) {
+            float movingPts = 0.0;
+            for (int j = 0; j < 4; ++j)
+                for (int i = 0; i < 4; ++i) movingPts += step(4.0, length(fwdAt((vec2(i, j) + 0.5) * 0.25 * fsize)));
+            moveQ *= smoothstep(0.4, 0.6, movingPts / 16.0);
+        }
+        // (Not over a see-through HUD panel hud_mask learned: hud_layer's.)
+        if (moveQ > 0.0 && kStaticMask && pc.staticFrames > 0.0) {
+            ivec2 ms = textureSize(staticMask, 0);
+            moveQ *= 1.0 - smoothstep(0.3, 0.6, texelFetch(staticMask, min(ivec2(uv * vec2(ms)), ms - 1), 0).g);
+        }
+        const vec2 vlo = vec2(0.5), vhi = fsize - 0.5;
+        const vec2 cand[4] = vec2[4](Fq, -Bq, F, -B);
+        float best = 0.0;
+        vec4 one = c;
+        for (int k = 0; k < 4 && moveQ > 0.0; ++k) {
+            const vec2 V = cand[k];
+            if (length(V) < 3.0) continue;
+            const vec2 a = qa - t * V, b = qa + (1.0 - t) * V;  // where q's content is along V in prev, in cur
+            if (any(lessThan(a, vlo)) || any(greaterThan(a, vhi)) || any(lessThan(b, vlo)) || any(greaterThan(b, vhi))) continue;
+            const vec4 pa = texture(prevTex, a / fsize), ca = texture(curTex, a / fsize);
+            const vec4 pbv = texture(prevTex, b / fsize), cbv = texture(curTex, b / fsize);
+            const float split = smoothstep(0.08, 0.16, colourError(pa, cbv));
+            const float stillA = (1.0 - smoothstep(0.01, 0.03, colourError(pa, ca))) *
+                                 (1.0 - smoothstep(0.5, 1.5, max(length(fwdAt(a)), length(bwdAt(a)))));
+            const float stillB = (1.0 - smoothstep(0.01, 0.03, colourError(pbv, cbv))) *
+                                 (1.0 - smoothstep(0.5, 1.5, max(length(fwdAt(b)), length(bwdAt(b)))));
+            const float movA = smoothstep(0.02, 0.06, colourError(pa, ca)), movB = smoothstep(0.02, 0.06, colourError(pbv, cbv));
+            const float hidPrev = split * stillA * movB, hidCur = split * stillB * movA;
+            if (hidPrev > best) { best = hidPrev; one = sampleC(curTex, b / fsize); }
+            if (hidCur > best) { best = hidCur; one = sampleC(prevTex, a / fsize); }
+        }
+        c = mix(c, one, best * (1.0 - found) * moveQ);
     }
     }
 

@@ -3285,3 +3285,38 @@ jeu) ; mais autour des icônes opaques (décor non assombri entre elles) −0,5
 place (3×3 ou sur la fenêtre large), amplitude du flux, médiane ou moyenne
 tronquée, échantillons immobiles exclus — aucun ne sépare panneau et
 icônes. 17×17 partout : scènes +0,013 dB mais corpus −0,53. Rien gardé.
+**`still_occluder` : le décor qui sort de derrière l'arme** (21/10). Cartes
+d'erreur des scènes `make_game.py` ×4 : sur `fps`, une bande le long du bord
+de l'arme (le monde tourne derrière elle) — le contenu y est visible dans une
+seule entrée, aucune trajectoire ne l'explique, repli en fondu : une bouillie
+aussi large que le mouvement. Règle (synthèse, interpolation, bit 512) : là
+où ni l'une ni l'autre trajectoire ne tient (erreur > 0,04), pour chacun
+des vecteurs Fq, −Bq, F, −B (≥ 3 px), une extrémité immobile (inchangée sur
+place à 0,01–0,03 près **et** flux nul) pendant que l'autre change et que
+les deux diffèrent → l'autre entrée seule. Pièges mesurés : (1) « l'autre
+extrémité pas immobile » au lieu de « change sur place » : `walk` −0,19 ;
+(2) avec la caméra fixe, l'immobile est le décor **derrière** l'objet qui
+bouge : `flick` (phases immobiles) −0,27 — d'où « le monde bouge » (≥ 40–60 %
+d'une grille 4×4 d'échantillons du flux à ≥ 4 px) et le contenu de q qui
+bouge dans les deux entrées ; (3) plus de candidats (flux à ±16 px) : plus
+de faux déclenchements, `walk` +0,048 → +0,005 ; (4) exiger de la texture au
+point immobile : `fps` +0,126 → +0,013 (l'arme synthétique est plus lisse,
+médiane 0,008, que le sol de Cyberpunk, 0,02) — non retenu. Résultat :
+scènes ×4 `fps` +0,126 dB, `walk` +0,051, `turn` +0,017, `strafe` +0,007,
+les autres à ±0,001 (moyenne +0,025, arêtes −0,013) ; corpus `popup` +0,24,
+le reste ±0,01 ; enregistrements ×2 +0,001, ×4 −0,003 — la règle n'y touche
+que 0,002 % des pixels (quelques taches sur un sol uni pendant un virage
+rapide, sans effet visible). Le panneau transparent du HUD exclu (indice `g`
+de `hud_mask`, c'est le travail de `hud_layer`).
+Écarté (21/10), même session : **priorités de file** pour que la synthèse
+passe devant l'image suivante d'un jeu limité par le GPU. Banc Vulkan isolé
+(RTX 3060 Ti, un « jeu » qui sature le GPU sur une file) : sur une 2e file de
+la même famille, un travail de 1,4 ms seul en prend ~4 (partage par
+tranches) ; `pQueuePriorities` 0 contre 1 : aucun effet ; sur la famille de
+calcul seule : ~10 ms ; priorité globale LOW pour la famille du jeu : aucun
+effet (HIGH refusée sans privilège, cf. `synth_priority`). Conséquence :
+dans un jeu limité par le GPU, chaque ms de synthèse avant la 1re image
+générée coûte ~3 ms de latence. Banc gamescope `--gpu-load` : jusqu'à 69 %
+de GPU, 1re générée envoyée 4,7 ms (défauts) contre 3,6 ms (`false_detail`,
+`mosaic_blur`, `hud_layer`, `pixel_vectors`, `interp_splat` coupés) ; au-delà
+(97 %), gamescope sans tête s'affame et le banc ne juge plus.

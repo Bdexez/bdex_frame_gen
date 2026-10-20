@@ -499,6 +499,11 @@ croître au-delà de 3 px : panoramique +2,7 dB, balayage +2,4, occlusions
 rapide mais perdait 0,14 dB sur la démo `--speed 2`). Branche uniforme dans
 la variante allégée, l'expression historique dans le `else` : `cap=0` est
 identique bit à bit (vérifié sur NVIDIA ; l'invariant CI le fixe à 0).
+`still_occluder` (21/10, auto GPU dédié, synthèse, bit 512) : quand le
+monde bouge (grille 4×4 du flux), le décor qui passe derrière le bord d'un
+objet immobile (arme à la première personne, HUD) vient de l'entrée où il
+est visible ; caméra fixe : l'immobile est le décor, derrière — ne pas
+retirer le test « le monde bouge » (−0,27 dB sur `flick`).
 `border_fill` (17/10, auto GPU dédié, synthèse, bit 128) : le contenu
 qui entre par un bord pendant un virage vient de cur seul le long du flux
 avant (le flux arrière y est faux) ; poids continus ; gardes « décalage
