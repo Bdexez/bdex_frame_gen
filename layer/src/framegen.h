@@ -331,6 +331,7 @@ private:
     VkDescriptorSet realOutputSet(VkImageView src) override;
     void setStaticMask(VkImageView view) override;
     void setConfidenceMap(VkImageView view) override;
+    void setAccelMap(VkImageView view) override;
     VkDescriptorSet synthesisSetWithFlow(VkImageView prev, VkImageView cur, VkImageView fwd, VkImageView bwd,
                                          uint32_t output) override {
         return synthesisSetFor(interp_.setLayout, prev, cur, fwd, bwd, (sharpen_ ? sharp_[output] : out_[output]).view);
@@ -361,6 +362,8 @@ private:
     AllocatedImage maskDummy_;               // 1x1 zero: the static mask without hud_mask
     VkImageView staticMask_ = VK_NULL_HANDLE;
     AllocatedImage confDummy_;               // 1x1 one: the confidence map without flow_confidence
+    AllocatedImage accelDummy_;              // 1x1 zero: the acceleration map without interp_accel
+    VkImageView accelMap_ = VK_NULL_HANDLE;
     VkImageView confMap_ = VK_NULL_HANDLE;
     bool hasConfMap_ = false;
     std::mutex confMutex_;

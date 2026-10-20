@@ -1,0 +1,77 @@
+#version 450
+// interp_accel: the acceleration of the content at each flow texel of cur,
+// once per frame (interpolate.comp reads it, bilinearly, for every pixel of
+// every generated frame — computed there per pixel it cost 40 % of the
+// synthesis at 1440p x4). As interpolate.comp's accelAt: the previous
+// pair's backward flow looked up where the content was in prev gives the
+// motion one pair earlier, a = v - v0, only where the whole trajectory
+// stays in the picture and the current flow brings the content back. Then
+// over 5x5 flow blocks (~80 display pixels) of neighbours moving alike, kept
+// only where they agree on it: a camera turn speeding up is the same over
+// the whole area, while the previous flow looked up across an object's edge
+// lands on another object and gives each block an acceleration of its own
+// (objects at constant speed: -0.4 dB without the test; coherence 0.6-0.85:
+// -0.06; 0.85-0.98: -0.01, the recorded games' gains nearly all kept).
+// Limited to half the speed (+1 px) and faded in over one to two flow steps
+// (the block flow's quantisation), in display pixels per frame squared.
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0) uniform sampler2D flowFwd;     // finest forward flow (prev positions)
+layout(binding = 1) uniform sampler2D flowBwd;     // finest backward flow (cur positions)
+layout(binding = 2) uniform sampler2D prevBwdTex;  // the previous pair's finest backward flow
+layout(binding = 3, rg32f) uniform writeonly image2D accelOut;
+
+layout(push_constant) uniform PC {
+    ivec2 fine;        // flow texels (the map's size)
+    ivec2 size;        // display pixels
+    vec2 flowInvSize;  // 1 / (display pixels the flow covers)
+    float flowScale;   // flow units -> display pixels
+} pc;
+
+vec2 fwdAt(vec2 p) { return texture(flowFwd, p * pc.flowInvSize).xy * pc.flowScale; }
+vec2 bwdAt(vec2 p) { return texture(flowBwd, p * pc.flowInvSize).xy * pc.flowScale; }
+vec2 prevBwdAt(vec2 p) { return texture(prevBwdTex, p * pc.flowInvSize).xy * pc.flowScale; }
+
+vec3 accelAt(vec2 p) {
+    vec2 size = vec2(pc.size);
+    vec2 B = bwdAt(p);
+    vec2 q0 = p + B;
+    vec2 m = vec2(4.0 * pc.flowScale);
+    if (any(lessThan(p, m)) || any(greaterThan(p, size - m)) || any(lessThan(q0, m)) || any(greaterThan(q0, size - m)))
+        return vec3(0.0);
+    vec2 B0 = prevBwdAt(q0);
+    vec2 q1 = q0 + B0, q2 = q0 + B;
+    if (any(lessThan(min(q1, q2), m)) || any(greaterThan(max(q1, q2), size - m))) return vec3(0.0);
+    vec2 a = -B + B0;
+    float inc = length(B + fwdAt(q0));
+    return vec3(a, 1.0) * (1.0 - smoothstep(0.5 * pc.flowScale, 1.5 * pc.flowScale, inc));
+}
+
+void main() {
+    ivec2 i = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(i, pc.fine))) return;
+    vec2 p = (vec2(i) + 0.5) / vec2(pc.fine) / pc.flowInvSize;  // the texel's centre, display pixels
+    vec2 B = bwdAt(p);
+    vec2 step = vec2(16.0 * pc.flowScale);
+    vec2 sum = vec2(0.0);
+    float sq = 0.0, w = 0.0;
+    for (int y = -2; y <= 2; ++y)
+        for (int x = -2; x <= 2; ++x) {
+            vec2 n = p + vec2(x, y) * step;
+            float same = 1.0 - smoothstep(pc.flowScale, 3.0 * pc.flowScale, length(bwdAt(n) - B));
+            vec3 an = accelAt(n);
+            float wn = an.z * same;
+            sum += wn * an.xy;
+            sq += wn * dot(an.xy, an.xy);
+            w += wn;
+        }
+    vec2 a = vec2(0.0);
+    if (w >= 4.0) {
+        a = sum / w;
+        float coherence = dot(a, a) / max(sq / w, 1e-6);  // 1: all the same
+        float lim = 0.5 * length(B) + 1.0, la = length(a);
+        if (la > lim) a *= lim / la;
+        a *= smoothstep(pc.flowScale, 2.0 * pc.flowScale, la) * smoothstep(0.85, 0.98, coherence);
+    }
+    imageStore(accelOut, i, vec4(a, 0.0, 0.0));
+}

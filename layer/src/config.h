@@ -128,6 +128,7 @@ struct Config {
     float upscaleTemporal = 0.0f; // render_scale < 1 with generation: history weight of the flow-guided temporal upscaling (0 = spatial only, bit-for-bit; read at start-up)
     bool  onlineTune    = false;  // per-game choice of the opt-in flow options from an online self-evaluation (opt-in, read at start-up; decisions cached per game)
     std::string tuneName;         // the game's name for the online_tune cache (set by load: the extra process, else this process)
+    float interpAccel   = 0.0f;   // interpolation: weight of the same second-order term — frames between prev and cur on the curved trajectory (0 = straight line, bit-for-bit)
     float extrapolateAccel = 0.0f; // extrapolation: weight of a second-order (acceleration) term from the previous pair's motion (0 = constant velocity, bit-for-bit)
     bool  frameTiming   = false;  // t of each generated frame from the real content times (frame-time spikes) instead of the fixed i/multiplier (opt-in)
     bool  dedup         = false;  // detect frames the game presents twice: keep the previous motion, time the output on first appearances (opt-in)
@@ -141,7 +142,7 @@ struct Config {
     // set them (autoConfigure leaves those alone): bits of kAuto*.
     enum : uint32_t { kAutoPixelVectors = 1, kAutoSplat = 2, kAutoRevealFill = 4, kAutoLocalCut = 8, kAutoInterpSplat = 16, kAutoRot = 32,
                        kAutoTemporalPrediction = 64, kAutoZeroBias = 128, kAutoGlobalMotion = 256,
-                       kAutoHudMask = 512, kAutoStaticSoft = 1024 };
+                       kAutoHudMask = 512, kAutoStaticSoft = 1024, kAutoInterpAccel = 2048 };
     uint32_t autoOptionsSet = 0;
     bool  pixelVectorsAuto = false; // runtime: pixel_vectors turned on by autoConfigure; FrameGen drops it where the synthesis would cost too much (display pixels x generated frames above 4K x2)
     bool  interpSplatAuto = false;  // runtime: interp_splat turned on by autoConfigure; dropped with pixelVectorsAuto

@@ -66,6 +66,7 @@ layout(std430, binding = 6) readonly buffer SplatMap { uint key[]; } splatMap;  
 layout(binding = 7) uniform sampler2D prevBwdTex;  // previous pair's backward flow (extrapolate_accel)
 layout(binding = 8) uniform sampler2D staticMask;  // hud_mask: frames each render pixel stayed unchanged (1x1 zero when off)
 layout(binding = 9) uniform sampler2D confMap;     // flow_confidence: trust in the finest flow, 0..1 (1x1 one when off)
+layout(binding = 10) uniform sampler2D accelMap;   // interp_accel: the content's acceleration at cur positions (accel_map.comp; 1x1 zero when off)
 
 #define ENC_RGBA8      0u
 #define ENC_BGRA8      1u
@@ -97,7 +98,7 @@ layout(push_constant) uniform PC {
     int transfer;            // TRANSFER_* of the sampled values (HDR: errors on a perceptual scale)
     int timing;              // > 0: t is cost.t[timing - 1] (content time), pc.t only tells the mode
     int localCut;            // > 0: scene cut from the localCut^2 tile grid instead of the frame mean
-    float accel;             // extrapolation: weight of the second-order (acceleration) term, 0 = constant velocity
+    float accel;             // weight of the second-order (acceleration) term (extrapolate_accel, interp_accel), 0 = constant velocity
     int bicubic;             // synth_bicubic: Catmull-Rom sampling along the trajectories (0 = bilinear, historical)
     float staticFrames;      // hud_mask: pixels unchanged for at least this many frames stay as in cur (0 = off)
     int revealFill;          // extrapolation: a revealed pixel takes the slower-moving (background) of the last two sources
@@ -330,19 +331,30 @@ void main() {
         c = sampleC(curTex, pb / fsize);
         F = -B;
     } else {
+    // interp_accel: where the motion changed since the previous pair (a
+    // mouse turn speeding up or slowing down), the content moves along a
+    // curve between prev and cur, not a straight line: with a constant
+    // acceleration a (accel_map.comp, once per frame), at time t it is
+    // a*t*(1-t)/2 behind the straight line — a/8 at t = 0.5. Both lookups
+    // of every trajectory move by it (qa); 0 keeps the straight line.
+    vec2 qa = q;
+    if (kAccel && pc.accel > 0.0) {
+        vec2 pc0 = q - (1.0 - t) * bwdAt(q);  // about where q's content is in cur
+        qa = q + pc.accel * 0.5 * t * (1.0 - t) * texture(accelMap, pc0 * pc.flowInvSize).xy;
+    }
     // The flow fields are indexed by source-frame position, but we need the
     // motion of whatever lands on q at time t: a few fixed-point iterations
     // of p = q - t*F(p) find that source position.
-    F = fwdAt(q);
-    vec2 pf = q - t * F;
-    for (int i = 0; i < pc.iterations; ++i) { F = fwdAt(pf); pf = q - t * F; }
+    F = fwdAt(qa);
+    vec2 pf = qa - t * F;
+    for (int i = 0; i < pc.iterations; ++i) { F = fwdAt(pf); pf = qa - t * F; }
     vec4 cf = texture(prevTex, pf / fsize);
     vec4 cf2 = texture(curTex, (pf + F) / fsize);
     float ef = colourError(cf, cf2);
 
-    vec2 B = bwdAt(q);
-    vec2 pb = q - (1.0 - t) * B;
-    for (int i = 0; i < pc.iterations; ++i) { B = bwdAt(pb); pb = q - (1.0 - t) * B; }
+    vec2 B = bwdAt(qa);
+    vec2 pb = qa - (1.0 - t) * B;
+    for (int i = 0; i < pc.iterations; ++i) { B = bwdAt(pb); pb = qa - (1.0 - t) * B; }
     vec4 cb = texture(curTex, pb / fsize);
     vec4 cb2 = texture(prevTex, (pb + B) / fsize);
     float eb = colourError(cb, cb2);
@@ -366,7 +378,7 @@ void main() {
             uint index = kp & 0x7FFFFFu;
             vec2 src = vec2(float(index % uint(pc.size.x)), float(index / uint(pc.size.x))) + 0.5;
             vec2 Fs = fwdAt(src);
-            vec2 ps = q - t * Fs;
+            vec2 ps = qa - t * Fs;
             vec4 a = texture(prevTex, ps / fsize), b = texture(curTex, (ps + Fs) / fsize);
             float e = colourError(a, b);
             if (e < 0.9 * ef) { ef = e; F = Fs; pf = ps; cf = a; cf2 = b; }
@@ -376,7 +388,7 @@ void main() {
             uint index = kc & 0x7FFFFFu;
             vec2 src = vec2(float(index % uint(pc.size.x)), float(index / uint(pc.size.x))) + 0.5;
             vec2 Bs = bwdAt(src);
-            vec2 ps = q - (1.0 - t) * Bs;
+            vec2 ps = qa - (1.0 - t) * Bs;
             vec4 a = texture(curTex, ps / fsize), b = texture(prevTex, (ps + Bs) / fsize);
             float e = colourError(a, b);
             if (e < 0.9 * eb) { eb = e; B = Bs; pb = ps; cb = a; cb2 = b; }
@@ -418,7 +430,7 @@ void main() {
                 for (int j = 0; j < k; ++j) seen = seen || all(equal(Fk, triedF[j]));
                 if (seen) continue;
             }
-            vec2 pk = q - t * Fk;
+            vec2 pk = qa - t * Fk;
             vec4 a = texture(prevTex, pk / fsize), b = texture(curTex, (pk + Fk) / fsize);
             float e = colourError(a, b);
             if (e < ef) { ef = e; F = Fk; pf = pk; cf = a; cf2 = b; }
@@ -441,7 +453,7 @@ void main() {
                 for (int j = 0; j < k; ++j) seen = seen || all(equal(Bk, triedB[j]));
                 if (seen) continue;
             }
-            vec2 pk = q - (1.0 - t) * Bk;
+            vec2 pk = qa - (1.0 - t) * Bk;
             vec4 a = texture(curTex, pk / fsize), b = texture(prevTex, (pk + Bk) / fsize);
             float e = colourError(a, b);
             if (e < eb) { eb = e; B = Bk; pb = pk; cb = a; cb2 = b; }

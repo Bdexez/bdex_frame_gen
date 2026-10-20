@@ -190,6 +190,13 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
     // +0.25 dB, edges +0.5 to +4.5; recorded games and the corpus within
     // -0.02 dB).
     if (strong && !(autoOptionsSet & kAutoStaticSoft)) staticSoft = 1.f;
+    // Interpolated frames on the curved trajectory where the motion changed
+    // since the previous pair, coherently over ~80 pixels (14/10, a mouse
+    // turn speeding up or slowing down: recorded games +0.03 to +0.17 dB,
+    // flicker -0.04 to -0.51, grossly wrong pixels down on every one; scenes
+    // at constant speed within -0.02, one upscaled recording -0.09; +0.1 ms a
+    // game frame at 1440p x4, accel_map.comp).
+    if (strong && !(autoOptionsSet & kAutoInterpAccel)) interpAccel = 1.f;
     // No bonus for the zero-motion candidate (03/10, on top of everything
     // above, 960x540 corpus + demo): the free bonus won on soft content in
     // fast motion — a ghostly blend instead of the moving picture. The HUD
@@ -321,6 +328,7 @@ const std::vector<OptionDef>& registry() {
     F("static_soft", nullptr, &Config::staticSoft, 0.f, 1.f, kLive),
     B("temporal_prediction", nullptr, &Config::temporalPrediction, kLive, Tune::Always, "1", 2),
     B("extrapolate_splat", nullptr, &Config::extrapolateSplat, kLive, Tune::SynthExtrapolation, "1", 10),
+    F("interp_accel", nullptr, &Config::interpAccel, 0.f, 1.f, kLive),
     F("extrapolate_accel", nullptr, &Config::extrapolateAccel, 0.f, 1.f, kLive, Tune::SynthExtrapolation, "1", 11),
     F("flow_temporal", nullptr, &Config::flowTemporal, 0.f, 1.f, kLive, Tune::Always, "1", 4),
     I("subpixel_lk", nullptr, &Config::subpixelLk, 0, 4, kLive, Tune::Extrapolation, "2", 5),
@@ -479,6 +487,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "global_motion") autoOptionsSet |= kAutoGlobalMotion;
     if (key == "hud_mask") autoOptionsSet |= kAutoHudMask;
     if (key == "static_soft") autoOptionsSet |= kAutoStaticSoft;
+    if (key == "interp_accel") autoOptionsSet |= kAutoInterpAccel;
     if (const OptionDef* d = findOption(key)) {
         switch (d->kind) {
         case Kind::Bool:  return parseBool(value, this->*(d->b));

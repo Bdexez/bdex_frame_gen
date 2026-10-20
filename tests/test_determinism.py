@@ -28,7 +28,7 @@ SETTINGS = [
     # x8: seven generated frames a present (the state's eight slots).
     ("zero_bias_contrast=0.02", "i", ["--multiplier", "8"]),
     ("frame_timing=1,dedup=1,extrapolate_splat=1,extrapolate_accel=1,reveal_fill=1", "h", ["--multiplier", "4"]),
-    ("zero_bias_contrast=0.1", "ie"), ("temporal_prediction=1", "ie"), ("hud_mask=8,static_soft=1", "i"), ("global_motion=1", "ie"), ("subpixel=1", "ie"),
+    ("zero_bias_contrast=0.1", "ie"), ("temporal_prediction=1", "ie"), ("hud_mask=8,static_soft=1", "i"), ("interp_accel=1", "i"), ("global_motion=1", "ie"), ("subpixel=1", "ie"),
     ("subpixel_lk=2", "ie"), ("flow_temporal=1", "ie"), ("pixel_vectors=1", "i"),
     ("pixel_vectors=1,synth_bicubic=1", "i"), ("synth_bicubic=1", "ie"), ("occlusion_strength=1", "i"),
     ("static_guard=1", "i"), ("rot_weight=1", "ie"), ("census_weight=1", "ie"), ("grad_weight=1", "ie"),
