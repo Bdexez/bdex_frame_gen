@@ -3092,3 +3092,10 @@ les couper perd partout en moyenne — `false_detail` −0,041 dB,
 `rot_weight` −0,020, `pixel_vectors` −0,015 (arêtes −0,089). Défauts
 inchangés. (Enregistrements, même jour : `false_detail` vaut encore +0,017 /
 +0,013 dB par-dessus le nouveau `mosaic_blur`.)
+Options en attente à vitesse réelle (`make_game.py` ×4, 21/10) :
+`chroma_weight` +0,066 dB (scène sombre +0,27, aucune perte) mais flux
+1,66 → 5,81 ms à 1440p et enregistrements ±0,001 : reste en option ;
+`parallax_search` +0,054 (rambarde +0,32, ailleurs ≈ 0 ; ~1 ms) : en option ;
+`flow_temporal` +0,002, `synth_bicubic` +0,003, `subpixel_lk=2` + bicubique
++0,007 : neutres ; `static_guard` −0,063, `occlusion_strength=1` −0,283 :
+négatifs.

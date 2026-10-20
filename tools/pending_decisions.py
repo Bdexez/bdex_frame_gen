@@ -35,18 +35,18 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # option settings, the modes they act in (i interpolate, e extrapolate), and why they wait.
 CANDIDATES = [
-    ("chroma_weight=1", "ie", "colour-only edges +12 dB; hatched stripes scrolling -1.2 dB"),
+    ("chroma_weight=1", "ie", "colour-only edges +12 dB; hatched stripes scrolling -1.2 dB; make_game x4 +0.07 dB but flow x3.5 at 1440p"),
     ("dedup=1", "ie", "repeated frames (cutscenes, emulators) +0.9 to +7 dB, identical otherwise"),
     ("flow_temporal=1", "ie", "shimmer -5 %, demo +0.13 dB; costs 0.28 ms at 1440p"),
-    ("occlusion_strength=1", "i", "revealed areas +0.8 dB on an iGPU, noise elsewhere"),
-    ("static_guard=1", "i", "HUD over moving content; known defect on fast motion"),
+    ("occlusion_strength=1", "i", "revealed areas +0.8 dB on an iGPU, noise elsewhere; make_game x4 -0.28 dB"),
+    ("static_guard=1", "i", "HUD over moving content; known defect on fast motion; make_game x4 -0.06 dB"),
     ("synth_bicubic=1", "ie", "sharper sub-pixel trajectories, ~0.6 ms at 1.7 Mpx"),
     ("subpixel_lk=2,synth_bicubic=1", "i", "sub-pixel motion pays only with the bicubic synthesis"),
     ("learned_flow=1", "ie", "trained on synthetic motion only: zoom +1 to +2.6 dB, rotation -0.13"),
     ("learned_correction=1", "i", "trained on the demo: +0.49 dB there, sub-pixel -1.73"),
     ("extrapolate_accel=1", "e", "accelerating camera +2.6 dB, pan -0.78, scroll -1.4"),
     ("hud_mask=4", "ie", "+0.20 dB on a HUD scene at render scale 0.75"),
-    ("parallax_search=1", "ie", "railing scene x4 +0.32 dB, neutral elsewhere; ~1 ms of flow at 1440p"),
+    ("parallax_search=1", "ie", "railing scene x4 +0.32 dB, neutral elsewhere (make_game x4 too); ~1 ms of flow at 1440p"),
 ]
 MODES = {"i": "interpolate", "e": "extrapolate"}
 
