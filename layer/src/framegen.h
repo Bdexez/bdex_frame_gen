@@ -332,6 +332,7 @@ private:
     VkDescriptorSet synthesisSet(VkImageView prev, VkImageView cur, uint32_t output) override;
     VkDescriptorSet realOutputSet(VkImageView src) override;
     void setStaticMask(VkImageView view) override;
+    VkImageView staticMask() const override { return staticMask_; }
     void setConfidenceMap(VkImageView view) override;
     void setAccelMap(VkImageView view) override;
     VkDescriptorSet synthesisSetWithFlow(VkImageView prev, VkImageView cur, VkImageView fwd, VkImageView bwd,

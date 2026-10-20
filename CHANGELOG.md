@@ -9,19 +9,20 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 ### Whole shapes instead of fragments on a character in a fast turn: `mosaic_blur` (2026-10-21)
 
 - Where the flow is chaos, `mosaic_blur` no longer only averages the
-  generated frame: it mixes it half and half with both inputs warped along
-  the area's smoothed flow (the median of 5x5 vectors), then averages over
-  half a flow block each side. A character rolling during a camera turn stays
-  one soft shape moving with its surroundings instead of breaking into
-  fragments and dark grains, alike in the three frames of x4. The night's
-  nine recordings: +0.072 dB at x2, +0.117 at x4 (the previous average:
-  +0.045 / +0.059), every sequence up, flicker −0.03 / −0.18. Same cost as
-  before (~0.85 ms a game frame at 1440p x4).
-- Predicted frames too (extrapolation, the hybrid's predictions): their
-  chaos areas averaged the same way (the warp along the smoothed flow added
-  nothing there). Extrapolation x2: +0.062 dB, flicker −0.13 (nothing
-  before); hybrid x4 with `hybrid_predict=1`: +0.101 instead of +0.071,
-  flicker −0.21 instead of −0.11; every sequence up.
+  generated frame: it mixes in a fifth of both inputs warped along the
+  area's smoothed flow (the median of 5x5 vectors), then averages, leaving
+  out the pixels `hud_mask` finds still (a HUD over the moving scene: neither
+  changed nor averaged in). A character rolling during a camera turn holds
+  together better instead of breaking into fragments and dark grains, alike
+  in the three frames of x4. The night's nine recordings: +0.067 dB at x2,
+  +0.089 at x4 (the previous average: +0.045 / +0.059), every sequence up,
+  flicker −0.07 / −0.16; game-like scenes at x4 (`make_game.py`: a true
+  30 fps game at 120 Hz, exact truth): neutral (−0.004 dB). ~1 ms a game
+  frame at 1440p x4.
+- Predicted frames too (extrapolation, the hybrid's predictions), their own
+  pixels averaged: extrapolation x2 +0.043 dB, flicker −0.09 (nothing
+  before; the game-like scenes +0.018); hybrid x4 with `hybrid_predict=1`
+  +0.074 instead of +0.071 (scenes ±0).
 
 ### The panel names the unavoidable holds (2026-10-21)
 

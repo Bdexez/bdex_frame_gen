@@ -17,7 +17,7 @@ namespace bdex {
 namespace {
 
 struct MbPC { int32_t size[2]; uint32_t encoding; int32_t mode; float strength; float threshold; float deviation; int32_t radius; float toFlow[2]; int32_t agree;
-              float flowScale; float flowInvSize[2]; float t; int32_t timing; };
+              float flowScale; float flowInvSize[2]; float t; int32_t timing; float stillFrames; };
 static_assert(offsetof(MbPC, flowInvSize) % 8 == 0, "a vec2 of the shader's push constants: 8-byte aligned");
 
 class MosaicBlurPass : public FgPass {
@@ -31,7 +31,7 @@ public:
         usable_ = !enc.is64 && e <= 3 && (enc.transfer == TRANSFER_PERCEPTUAL || enc.transfer == TRANSFER_PQ || enc.srgb) && !ctx.upscaling();
         if (!usable_) return;
         const VkDescriptorType SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        pipe_ = ctx.makePipeline(mosaic_blur_comp, mosaic_blur_comp_size, {SI, SI, SI, CIS, CIS, SI, CIS, CIS, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER});
+        pipe_ = ctx.makePipeline(mosaic_blur_comp, mosaic_blur_comp_size, {SI, SI, SI, CIS, CIS, SI, CIS, CIS, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, CIS});
         const VkExtent2D d = ctx.displayExtent();
         const FgFineLevel fine = ctx.fineLevel();
         fineExtent_ = fine.fine;
@@ -40,13 +40,14 @@ public:
         smooth_ = ctx.createImage(VK_FORMAT_R32G32B32A32_SFLOAT, fineExtent_, VK_IMAGE_USAGE_STORAGE_BIT);
         // Chaos: a vector about 1 % of the picture's width from a neighbour's
         // (8 display pixels at 853, measured on recordings at that size), in
-        // flow units; the average over half a flow block each side (5x5 at
-        // the display's resolution, 9x9 where the flow is at half: a texel is
-        // at least `radius` pixels wide, as mode 1's probes need).
+        // flow units; the average over a quarter of a flow block each side
+        // (3x3 at the display's resolution, 5x5 where the flow is at half; 5x5
+        // there lost 0.1 dB on game-like scenes at x4: a texel is at least
+        // `radius` pixels wide, as mode 1's probes need).
         const VkExtent2D r = ctx.renderExtent();
         const float f2r = ctx.flowToRender(), sx = float(d.width) / float(r.width), sy = float(d.height) / float(r.height);
         deviation_ = 0.0094f * float(r.width) / std::max(f2r, 1e-3f);
-        radius_ = std::clamp(int(std::lround(2.f * f2r * sx)), 1, 4);
+        radius_ = std::clamp(int(std::lround(f2r * sx)), 1, 4);
         flowScale_ = f2r * sx;
         flowInvSize_[0] = 1.f / (float(fine.fine.width) * float(fine.block) * f2r * sx);
         flowInvSize_[1] = 1.f / (float(fine.fine.height) * float(fine.block) * f2r * sy);
@@ -64,6 +65,7 @@ public:
                     ctx.writeImage(s, 6, CIS, ctx.sourceView(prev));
                     ctx.writeImage(s, 7, CIS, ctx.sourceView(cur));
                     ctx.writeBuffer(s, 8, ctx.stateBuffer());
+                    ctx.writeImage(s, 9, CIS, ctx.staticMask());
                     sets_.push_back(s);
                 }
         pending_.assign(ctx.outputs(), Pending{});
@@ -92,6 +94,7 @@ public:
             pending_[next_].strength = cfg.mosaicBlur;
             pending_[next_].t = t;
             pending_[next_].timing = timing;
+            pending_[next_].stillFrames = float(cfg.hudMask);
         }
     }
 
@@ -103,7 +106,7 @@ public:
         MbPC pc{{(int32_t)d.width, (int32_t)d.height}, ctx.outputEncoding().encoding, 0, pd.strength,
                 kThreshold, deviation_, radius_,
                 {float(fineExtent_.width) / float(d.width), float(fineExtent_.height) / float(d.height)},
-                kAgree, flowScale_, {flowInvSize_[0], flowInvSize_[1]}, pd.t, pd.timing};
+                kAgree, flowScale_, {flowInvSize_[0], flowInvSize_[1]}, pd.t, pd.timing, pd.stillFrames};
         VkDescriptorSet set = sets_[(size_t(output) * n_ + pd.prev) * n_ + pd.cur];
         vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe_.pipeline);
         vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe_.layout, 0, 1, &set, 0, nullptr);
@@ -136,7 +139,7 @@ private:
     // walk -0.9 dB, a zoom's flow is no mosaic). Off by default for those edges.
     static constexpr float kThreshold = 0.5f;
     static constexpr int32_t kAgree = 7;
-    struct Pending { uint32_t prev = 0, cur = 0; float strength = 0.f, t = 0.5f; int32_t timing = 0; bool on = false; };
+    struct Pending { uint32_t prev = 0, cur = 0; float strength = 0.f, t = 0.5f; int32_t timing = 0; float stillFrames = 0.f; bool on = false; };
     bool usable_ = false;
     FgPipeline pipe_;
     AllocatedImage scratch_, density_, smooth_;

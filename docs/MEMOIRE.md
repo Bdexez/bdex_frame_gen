@@ -3062,3 +3062,27 @@ par le flux arrière lissé +0,100 / +0,104 (part 0,5 / 0,3) : rien de plus,
 gardé la moyenne seule. Moteur : extrapolation ×2 +0,062 (scintillement
 −0,13), hybride ×4 `hybrid_predict=1` +0,101 au lieu de +0,071 (−0,21 au
 lieu de −0,11), chaque séquence en hausse.
+
+**`mosaic_blur` revu à vitesse réelle** (21/10, fin de matinée). Les deux
+réglages précédents n'avaient été jugés que sur les enregistrements, qui
+accélèrent le mouvement ×2 ou ×4. Sur les scènes `tools/edge_bench/make_game.py`
+(un vrai jeu à 30 i/s vu à 120 Hz, vérité exacte, ×4 : turn, walk, dark,
+strafe, fps, fence, flick), la moitié de flux lissé + moyenne 5×5 **perdait
+0,107 dB** face à `mosaic_blur=0` (arêtes en mouvement −0,87) ; la v1
+(moyenne 3×3) +0,005. Cause principale : le panneau HUD semi-transparent et
+son texte — le flux lissé emporte les glyphes avec le décor qui défile
+derrière (le même défaut que les sous-titres), la moyenne 5×5 les floute.
+Essayé aussi : poids supplémentaire par le désaccord des deux échantillons
+le long du flux brut (demi-résolution, 3×3, à partir de 40 sur 255) —
+enregistrements ×2 +0,098 / ×4 +0,159, mais scènes −0,297 : écarté.
+Balayage Python (scènes ×4 / enregistrements ×2) : part du lissé 0,5 / 0,3 /
+0,2 avec rayon 1 et pixels immobiles exclus −0,048 / −0,010 / **+0,001** —
++0,089 / +0,090 / **+0,084** ; seuil 0,6–0,7 : pertes moindres mais gains
+aussi. Retenu : **un cinquième de flux lissé, rayon 1 (2 à demi-résolution),
+pixels immobiles de `hud_mask` ni changés ni moyennés** (`FgContext::
+staticMask()`). Moteur : scènes −0,004 (arêtes −0,46, comme la v1),
+enregistrements ×2 +0,067 / ×4 +0,089, prédites : extrapolation +0,043
+(scènes +0,018), hybride `hybrid_predict=1` +0,074 (scènes ±0). Coût ~1 ms
+par image du jeu à 1440p ×4 (la carte des immobiles 0,1–0,2). **Règle :
+toute option de synthèse se juge aussi sur `make_game.py` ×4**, pas sur les
+seuls enregistrements (à 30 i/s, leur ×4 simule un jeu à 7,5 i/s).
