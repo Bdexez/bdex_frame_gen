@@ -44,6 +44,7 @@ struct Config {
                                       // anti-cheat running); wins over enabled, file and env.
     bool  autoTune      = true;   // pick the quality preset from the detected GPU (until the user sets a preset or a flow option)
     std::string autoTunedTo;      // preset autoConfigure() selected, for the log/stats
+    std::string presetName;       // the preset applied last ("" = auto): autoConfigure's strong-GPU options skip "performance"
     int   multiplier    = 2;      // frames displayed per real frame: 2 = x2 ... 8 = x8
     int   levels        = 4;      // optical flow pyramid levels
     bool  lowLatency    = false;  // block the game until the previous frames are handed to the display

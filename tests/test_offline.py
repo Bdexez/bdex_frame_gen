@@ -31,7 +31,8 @@ def frames(dir_, n=13, w=320, h=192, speed=3):
 
 def evaluate(build, frames_dir, extra_env=None, args=()):
     cmd = [sys.executable, str(ROOT / "tools" / "eval_sequence.py"), str(frames_dir), "--build", str(build), *args]
-    env = dict(os.environ, **(extra_env or {}))
+    # (BDEX_FG_CONFIG: never the user's own settings file)
+    env = dict(os.environ, BDEX_FG_CONFIG="/dev/null", **(extra_env or {}))
     out = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, text=True, env=env).stdout
     print(out)
     lines = out.splitlines()
@@ -74,7 +75,9 @@ def main():
         d = Path(d)
         subprocess.run([sys.executable, str(ROOT / "tools" / "make_corpus.py"), str(d), "--frames", "29"],
                        check=True, stdout=subprocess.DEVNULL)
-        base, local = evaluate(build, d / "popup", {"BDEX_FG_MODE": "interpolate"}, ["--variant", "SCENE_CUT_LOCAL=1"])
+        # (off explicitly in the base: a discrete GPU turns it on by itself)
+        base, local = evaluate(build, d / "popup", {"BDEX_FG_MODE": "interpolate", "BDEX_FG_SCENE_CUT_LOCAL": "0"},
+                               ["--variant", "SCENE_CUT_LOCAL=1"])
         if not local > base + 0.5:
             print(f"popup: scene_cut_local {local:.2f} dB does not beat the frame-wide test {base:.2f} dB")
             return 1

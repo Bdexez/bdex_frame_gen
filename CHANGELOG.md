@@ -6,6 +6,29 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### x3 / x4: the presets keep the discrete-GPU quality options; screen timing shown (2026-10-13)
+
+- **A preset picked by hand no longer drops the quality options of a
+  discrete GPU.** `pixel_vectors`, `interp_splat`, `rot_weight`,
+  `temporal_prediction`, `zero_bias=0`, `scene_cut_local` and the
+  extrapolation splat were only turned on with the automatic preset: « Qualité »
+  in the panel ran without them. Measured on a recorded game (PRAGMATA, RTX
+  3060 Ti), `quality` with them: 17 % fewer grossly wrong pixels at x2 and
+  20 % at x3 (a pixel no truth pixel within ±2 px matches), +0.06 / +0.29 dB;
+  game-like edge sequences at x4 +0.4 to +1.1 dB. About +1 ms of synthesis
+  per game frame at 1440p x4. `performance` keeps none of them (chosen to
+  spend less); every option can still be forced either way.
+- **Screen timing in the status**: `display_grid` (refresh grid measured from
+  the present feedback, or not) and `fps_limit`. Without a grid, at x3 and
+  above the generated frames are paced on the game's interval and land up to
+  a refresh away from the moment they show (simulated, 30 fps on 144 Hz:
+  −2.5 dB and twice the flicker at x2, x3 and x4 alike): the panel, the text
+  mode and the Windows launcher say so and suggest the game frame-rate cap on
+  Auto, or a screen rate that is an exact multiple of the game's.
+- Tests: `corpus` and `offline` no longer read the user's own settings file
+  (`BDEX_FG_CONFIG=/dev/null`); on a discrete GPU, `corpus` and `min_limits`
+  turn the discrete-GPU options off to compare with the lavapipe references.
+
 ### Game frame-rate cap in the panel (2026-10-13)
 
 - « Limite d'images du jeu » moves from the advanced settings to the main

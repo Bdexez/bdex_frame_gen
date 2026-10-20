@@ -21,6 +21,12 @@ struct StatusEntry {
     double gameFps = 0.0, outFps = 0.0;
     double refreshHz = 0.0;  // measured (present feedback) or gamescope's, 0 unknown
     double limitHz = 0.0;    // Steam's framerate limit in gamescope (the screen shows no more), 0 none
+    // The screen's refresh grid, which places each generated frame on the
+    // refresh it shows on: 1 measured (present feedback), 0 frames seen
+    // displayed but on no fixed grid (VRR, or a compositor that hides it),
+    // -1 not known (no feedback yet, or none).
+    int displayGrid = -1;
+    double fpsLimit = 0.0;   // fps_limit in force: the cap, -1 auto (screen / multiplier), 0 none
     double latencyMs = -1.0; // present-to-screen, -1 unknown
     int budgetLevel = 0;     // gpu_budget quality level
     double uncertainPct = -1.0;  // flow_confidence: share of the flow not trusted, -1 not measured

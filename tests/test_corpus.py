@@ -32,12 +32,20 @@ CONFIGS = {
 }
 
 
+# What Config::autoConfigure turns on by itself on a discrete GPU.
+STRONG_GPU_OFF = {f"BDEX_FG_{k}": v for k, v in {
+    "PIXEL_VECTORS": "0", "INTERP_SPLAT": "0", "ROT_WEIGHT": "0", "TEMPORAL_PREDICTION": "0", "ZERO_BIAS": "0.002",
+    "SCENE_CUT_LOCAL": "0", "EXTRAPOLATE_SPLAT": "0", "REVEAL_FILL": "0"}.items()}
+
+
 def evaluate(build, seq, mode, variant, work):
     out = work / f"{seq.name}-{mode}.json"
     cmd = [sys.executable, str(ROOT / "tools" / "eval_sequence.py"), str(seq), "--build", str(build), "--json", str(out)]
     if variant:
         cmd += ["--variant", variant]
-    env = dict(os.environ, BDEX_FG_MODE=mode)
+    # Not the user's settings file; and the references are lavapipe's (CI),
+    # where none of the discrete-GPU options turns itself on: off here too.
+    env = dict(os.environ, BDEX_FG_MODE=mode, BDEX_FG_CONFIG="/dev/null", **STRONG_GPU_OFF)
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, env=env)
     return json.loads(out.read_text())
 
