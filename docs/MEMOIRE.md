@@ -2966,3 +2966,25 @@ lui −0,02). `subpixel_lk=2` + `mosaic_blur` : même moyenne mais pertes
 locales (−0,05 / −0,14 sur le mouvement) ; bicubique : scintillement +0,12
 en ×4 — non retenus. Coût ~0,9 ms par image du jeu à 1440p ×4. Coupée dans
 les tests de référence (corpus, invariant, hors ligne, formats).
+
+**Sous-titres sur fond qui défile (21/10, écarté)** — scène synthétique du
+scratchpad (`scripts/subtitle_scene.py` : 1280×720, monde qui défile à 24
+px/image, boîte semi-transparente à 60 %, texte blanc anticrénelé DejaVu,
+`score_text.py` : PSNR sur les lettres ±2 px, la boîte, l'image). Défaut
+quality : texte 19,4 dB en ×2 (sans `hud_mask` 16,7, avec 24 images 18,4,
+sans `static_soft` 18,4) — le masque aide, le texte reste abîmé (lettres
+fantômes décalées, grains). Flux exporté : dans la boîte −48 px (juste)
+sauf sur la ligne de texte, où les blocs de 4×4 prennent 0, même sans
+pixel de lettre (raffinés depuis un bloc de 8×8 qui en avait). Essais :
+(a) une extrémité de trajectoire sur un pixel HUD → la couleur de l'autre
+extrémité (poids inchangés), aussi avec l'indice `static_soft` : +0,03 dB ;
+(b) `hud_flow`, passe au crochet `fineFlow` de `hud_mask` (instantané du
+flux, 5×5 vecteurs voisins + zéro, coût sur les pixels non-HUD aux deux
+bouts, blocs à < 90 % de HUD et à 4 px d'un pixel HUD) : les vecteurs de la
+boîte deviennent justes, mais **le texte perd 1 dB** (19,4 → 18,4) — les
+bords anticrénelés des lettres, hors du masque, partent alors avec le décor :
+le vecteur nul les gardait en place. Combinés : idem. Tout retiré. Piste
+restante : séparer au pixel la lettre (immobile) et le décor vu à travers
+(mouvement), c.-à-d. un masque qui couvre aussi les bords anticrénelés au
+moment de choisir le vecteur — et juger sur des enregistrements à pleine
+résolution (`record_scale = 1`) : à 853×480 le HUD n'est jamais immobile.
