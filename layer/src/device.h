@@ -33,6 +33,7 @@ struct InstanceData {
     VkInstance instance = VK_NULL_HANDLE;
     uint32_t apiVersion = VK_API_VERSION_1_0;
     bool surfaceCaps2 = false;  // the application enabled VK_KHR_get_surface_capabilities2 (DXVK, VKD3D-Proton do)
+    std::string engine;         // VkApplicationInfo::pEngineName ("DXVK", "vkd3d"...): the status names a translation layer
     Config config;  // loaded at instance creation; the render-scale hook needs it before the device exists
     std::atomic<bool> renderScaleAllowed{true};  // disabled if a device needs pass-through present extensions
     std::mutex surfMutex;
@@ -59,6 +60,15 @@ struct AllocatedBuffer {
 inline double steadyMs() {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
+
+// fps_limit's schedule: wait() returns at the next slot of a `fps` cadence —
+// it sleeps until ~1.5 ms before, then spins; after a late frame the
+// schedule restarts from now instead of letting the game burst to catch up.
+struct FrameCap {
+    std::mutex mutex;
+    std::chrono::steady_clock::time_point next{};
+    void wait(double fps);
+};
 
 struct DeviceData {
     DeviceDispatch vt;
@@ -94,8 +104,31 @@ struct DeviceData {
     // on the driver's.
     std::atomic<bool> appLowLatencyMode{false};
     std::atomic<double> appPacedAtMs{0.0};
+    std::atomic<int> appLatencyApi{0};  // what paces it: 1 Reflex, 2 Anti-Lag (status)
     bool appPacesLatency(double nowMs) const {
         const double at = appPacedAtMs.load(std::memory_order_relaxed);
+        return at > 0.0 && nowMs - at < 1000.0;
+    }
+    // fps_limit where the game waits for its next frame to start — Reflex's
+    // vkLatencySleepNV, Anti-Lag's input stage: the game is held just
+    // before it reads its input, as by its own limiter. Holding its present
+    // instead (the swapchain's limiter) lets an engine whose game thread runs
+    // a frame ahead of its render thread (Unreal, RE Engine...) read the
+    // input during the wait: a frame of latency more. The swapchain sets the
+    // cap at each present (capFps, 0 = none) and steps aside while the sleep
+    // point caps (capAtSleepMs within the last second).
+    std::atomic<double> capFps{0.0};
+    std::atomic<double> capAtSleepMs{0.0};
+    FrameCap sleepCap;
+    std::atomic<bool> capAtSleepLogged{false};
+    void capAtSleep() {
+        const double fps = capFps.load(std::memory_order_relaxed);
+        if (fps <= 0.0) return;
+        sleepCap.wait(fps);
+        capAtSleepMs.store(steadyMs(), std::memory_order_relaxed);
+    }
+    bool capsAtSleep(double nowMs) const {
+        const double at = capAtSleepMs.load(std::memory_order_relaxed);
         return at > 0.0 && nowMs - at < 1000.0;
     }
     VkQueue computeQueue = VK_NULL_HANDLE;

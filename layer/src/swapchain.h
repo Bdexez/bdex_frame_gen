@@ -90,6 +90,14 @@ private:
         // async_compute, worker slots: signalled by the copy, waited by the
         // next synthesis before it overwrites the images the copy read.
         VkSemaphore copyDone = VK_NULL_HANDLE;
+        // Interpolation x3 and up, two queues: the first generated frame's
+        // work (analysis, flow, its synthesis) goes in `cmd` and signals
+        // firstFence and synthDone[0]; the other syntheses follow in cmd2
+        // (slot fence). The display schedule starts when the first frame is
+        // ready instead of when all of them are (Job::firstReady).
+        VkCommandBuffer cmd2 = VK_NULL_HANDLE;
+        VkFence firstFence = VK_NULL_HANDLE;
+        bool firstSplit = false;  // this submission was split
     };
     // One application present, handed to the worker thread.
     struct Job {
@@ -101,6 +109,7 @@ private:
         FrameOrder order;            // the present's frame order, for interp_hold's spacing (hold 1: even)
         bool fifo = false;           // the real swapchain presents in FIFO: the display paces
         int slot = -1;               // the synthesis slot (slots_) of this present
+        VkFence firstReady = VK_NULL_HANDLE;  // the first generated frame's work done (FrameSlot::firstFence), or none
         clock::time_point start{};   // when the application presented
         clock::time_point queuedAt{};  // when present() handed it to the worker
         double frameStartMs = 0.0;   // when the application's previous present returned (it began this frame then)
@@ -350,10 +359,9 @@ private:
     pacing::StartLimiter limiter_;    // latency_limiter: the hold and the slack left (pacing.h)
     double statsStartDelayMs_ = 0.0;  // sum over the statistics window
     void syncFrameStart(double waitedMs);
-    // fps_limit: next allowed application present (only the presenting
-    // thread touches it, before mutex_ is taken, under limitMutex_).
-    std::mutex limitMutex_;
-    clock::time_point limitNext_{};
+    // fps_limit at the end of present (unless the game's own sleep point
+    // caps: DeviceData::capAtSleep), without mutex_.
+    FrameCap frameCap_;
     void limitFrameRate();
     double frameIntervalMs_ = 16.6;
     uint32_t statsRepeats_ = 0;  // repeated-frame counter at the last statistics line (dedup)

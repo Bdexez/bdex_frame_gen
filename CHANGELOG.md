@@ -6,6 +6,26 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Interpolation latency; the frame cap at the game's input point (2026-10-13)
+
+- **The first generated frame no longer waits for the others.** At x3 and
+  above (two queues, the default), the analysis, the flow and the first
+  synthesis go in a submission of their own; the display schedule starts
+  when that one is done instead of when every synthesis is. Demo at 30 fps,
+  1440p, `quality`, three runs: real frame on screen x4 ~36 → ~32 ms, x3
+  ~34 → ~30 ms (medians), p95 down too.
+- **`fps_limit` at the game's Reflex sleep / Anti-Lag input stage** when the
+  game uses them: held there, before it reads its input, as by its own
+  limiter (demo with Anti-Lag: 6.6 ms input to screen at x1, the game's own
+  cap 6.7). Otherwise at the end of the present, as before.
+- **Status / panel**: `cap_point` (input or present) and `engine`. A
+  software cap on a Direct3D game under Proton (DXVK, VKD3D-Proton) holds the
+  thread they present from, while the game queues one or two frames ahead
+  (its maximum frame latency): the panel says the game's own cap (or Reflex
+  / Anti-Lag in the game) responds faster.
+- Demo: `--anti-lag` (VK_AMD_anti_lag as a game uses it); `latency_bench.sh
+  --demo-args`.
+
 ### Frame-rate cap without added latency; fast camera turns followed (2026-10-13)
 
 - **`fps_limit` no longer delays the frame.** The layer held the game's

@@ -59,6 +59,10 @@ struct Options {
     // --latency-log gets "flash <input ms> <present ms>" per flash (steady
     // clock, the layer's latency_log clock), for tools/latency_report.py.
     int latencyTest = 0;         // 0 off, 1 key presses, 2 automatic
+    // --anti-lag: VK_AMD_anti_lag (Mesa's layer: ENABLE_LAYER_MESA_ANTI_LAG=1) as a
+    // game uses it — its input stage at the start of each frame, before the
+    // input is read, its present stage before presenting.
+    bool antiLag = false;
     std::string latencyLog;
     // --stress: what games do to their swapchain, every N frames (tests/
     // swapchain_stress.sh): resize (the window to another size), recreate
@@ -133,6 +137,22 @@ private:
     uint32_t frameCount_ = 0;
     bool resized_ = false;
     double inputMs_ = -1.0;    // --latency-test: a pending input (steady ms), -1 none
+    uint64_t antiLagFrame_ = 0;
+#ifdef VK_AMD_anti_lag  // (headers from 1.3.296 on)
+    PFN_vkAntiLagUpdateAMD antiLagUpdate_ = nullptr;  // --anti-lag
+    void antiLag(bool input) {
+        if (!antiLagUpdate_) return;
+        VkAntiLagPresentationInfoAMD pi{VK_STRUCTURE_TYPE_ANTI_LAG_PRESENTATION_INFO_AMD};
+        pi.stage = input ? VK_ANTI_LAG_STAGE_INPUT_AMD : VK_ANTI_LAG_STAGE_PRESENT_AMD;
+        pi.frameIndex = antiLagFrame_;
+        VkAntiLagDataAMD d{VK_STRUCTURE_TYPE_ANTI_LAG_DATA_AMD};
+        d.mode = VK_ANTI_LAG_MODE_ON_AMD;
+        d.pPresentationInfo = &pi;
+        antiLagUpdate_(device_, &d);
+    }
+#else
+    void antiLag(bool) {}
+#endif
     double nextAutoMs_ = 0.0;
     FILE* latencyLog_ = nullptr;
     // --stress state: present mode and image count overrides (recreate), a
@@ -269,13 +289,38 @@ void Demo::initVulkan() {
     qci.queueFamilyIndex = queueFamily_;
     qci.queueCount = 1;
     qci.pQueuePriorities = &prio;
+#ifdef VK_AMD_anti_lag
+    const char* devExts[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_AMD_ANTI_LAG_EXTENSION_NAME};
+#else
     const char* devExts[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+#endif
     VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     dci.queueCreateInfoCount = 1;
     dci.pQueueCreateInfos = &qci;
     dci.enabledExtensionCount = 1;
     dci.ppEnabledExtensionNames = devExts;
+#ifdef VK_AMD_anti_lag
+    VkPhysicalDeviceAntiLagFeaturesAMD antiLagFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ANTI_LAG_FEATURES_AMD};
+    if (opt_.antiLag) {
+        uint32_t n = 0;
+        vkEnumerateDeviceExtensionProperties(physDev_, nullptr, &n, nullptr);
+        std::vector<VkExtensionProperties> exts(n);
+        vkEnumerateDeviceExtensionProperties(physDev_, nullptr, &n, exts.data());
+        bool found = false;
+        for (const auto& e : exts) found = found || strcmp(e.extensionName, VK_AMD_ANTI_LAG_EXTENSION_NAME) == 0;
+        if (!found) throw std::runtime_error("--anti-lag: VK_AMD_anti_lag not available (ENABLE_LAYER_MESA_ANTI_LAG=1?)");
+        antiLagFeature.antiLag = VK_TRUE;
+        dci.pNext = &antiLagFeature;
+        dci.enabledExtensionCount = 2;
+    }
+#else
+    if (opt_.antiLag) throw std::runtime_error("--anti-lag: built with Vulkan headers older than VK_AMD_anti_lag");
+#endif
     VK_CHECK(vkCreateDevice(physDev_, &dci, nullptr, &device_));
+#ifdef VK_AMD_anti_lag
+    if (opt_.antiLag)
+        antiLagUpdate_ = reinterpret_cast<PFN_vkAntiLagUpdateAMD>(vkGetDeviceProcAddr(device_, "vkAntiLagUpdateAMD"));
+#endif
     vkGetDeviceQueue(device_, queueFamily_, 0, &queue_);
 
     VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
@@ -489,6 +534,8 @@ void Demo::createPipeline() {
 void Demo::drawFrame() {
     static const auto start = std::chrono::steady_clock::now();
     const int fi = frameIndex_;
+    ++antiLagFrame_;
+    antiLag(true);  // (--anti-lag: its input stage, before anything of the frame, input included)
     vkWaitForFences(device_, 1, &fences_[fi], VK_TRUE, UINT64_MAX);
 
     uint32_t imageIndex = 0;
@@ -569,6 +616,7 @@ submit:
         fprintf(latencyLog_, "flash %.3f %.3f\n", flashInput, steadyMs());
         fflush(latencyLog_);
     }
+    antiLag(false);
     r = vkQueuePresentKHR(queue_, &pi);
     if (r == VK_ERROR_OUT_OF_DATE_KHR || (!opt_.ignoreResize && (r == VK_SUBOPTIMAL_KHR || resized_))) {
         resized_ = false;
@@ -823,6 +871,7 @@ Options parseArgs(int argc, char** argv) {
             o.latencyTest = 1;
             if (i + 1 < argc && std::string(argv[i + 1]) == "auto") { o.latencyTest = 2; ++i; }
         } else if (a == "--latency-log") o.latencyLog = value();
+        else if (a == "--anti-lag") o.antiLag = true;
         else if (a == "--size") {
             std::string v = value();
             if (sscanf(v.c_str(), "%dx%d", &o.width, &o.height) != 2) throw std::runtime_error("bad --size");
@@ -851,7 +900,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "-h" || a == "--help") {
             printf("usage: bdex_demo [--fps N] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]\n"
                    "                 [--deterministic] [--ignore-resize] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]\n"
-                   "                 [--gpu-load N] [--latency-test [auto]] [--latency-log FILE]\n"
+                   "                 [--gpu-load N] [--latency-test [auto]] [--latency-log FILE] [--anti-lag]\n"
                    "                 [--stress resize|recreate|surface|window|fullscreen|minimize:N[,...]] [--stress-until N]\n"
                    "                 [--replay DIR [--replay-step N] [--replay-start N]]\n");
             exit(0);

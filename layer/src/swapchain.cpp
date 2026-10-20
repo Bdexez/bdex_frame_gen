@@ -106,6 +106,8 @@ void VirtualSwapchain::publishStatus(int multiplier) {
     e.refreshHz = displayHz();
     e.limitHz = gsLimited_.load() ? gsHz_.load() : 0.0;
     e.fpsLimit = cfg_.fpsLimit;
+    if (cfg_.fpsLimit != 0.f) e.capPoint = dev_.capsAtSleep(msOf(clock::now())) ? "input" : "present";
+    if (dev_.inst) e.engine = dev_.inst->engine;
     if (feedback_) {
         std::lock_guard<std::mutex> lock(fbMutex_);
         e.displayGrid = displayClock_.valid() ? 1 : fbDisplayed_ >= 120 ? 0 : -1;
@@ -520,6 +522,10 @@ void VirtualSwapchain::createSlots(std::vector<FrameSlot>& slots, uint32_t count
         if (!withSemaphore) VK_CHECK(dev_.vt.CreateFence(dev_.device, &fi, nullptr, &s.readyFence));
         if (withSemaphore) VK_CHECK(dev_.vt.CreateSemaphore(dev_.device, &si, nullptr, &s.acquireSem));
         if (asyncSynthesis) {
+            if (!withSemaphore) {  // (the application thread's slots)
+                VK_CHECK(dev_.allocateCommandBuffer(&s.cmd2, pool));
+                VK_CHECK(dev_.vt.CreateFence(dev_.device, &fi, nullptr, &s.firstFence));
+            }
             for (auto& sem : s.synthDone) VK_CHECK(dev_.vt.CreateSemaphore(dev_.device, &si, nullptr, &sem));
             VK_CHECK(dev_.vt.CreateSemaphore(dev_.device, &si, nullptr, &s.realIn));
             VK_CHECK(dev_.vt.CreateSemaphore(dev_.device, &si, nullptr, &s.synthIn));
@@ -548,7 +554,9 @@ void VirtualSwapchain::destroySlots(std::vector<FrameSlot>& slots, VkCommandPool
         if (s.submitted) dev_.vt.WaitForFences(dev_.device, 1, &s.fence, VK_TRUE, UINT64_MAX);
         if (s.readySubmitted) dev_.vt.WaitForFences(dev_.device, 1, &s.readyFence, VK_TRUE, UINT64_MAX);
         if (s.cmd && pool) dev_.vt.FreeCommandBuffers(dev_.device, pool, 1, &s.cmd);
+        if (s.cmd2 && pool) dev_.vt.FreeCommandBuffers(dev_.device, pool, 1, &s.cmd2);
         if (s.fence) dev_.vt.DestroyFence(dev_.device, s.fence, nullptr);
+        if (s.firstFence) dev_.vt.DestroyFence(dev_.device, s.firstFence, nullptr);  // (signalled before the fence)
         if (s.readyFence) dev_.vt.DestroyFence(dev_.device, s.readyFence, nullptr);
         for (VkSemaphore sem : {s.acquireSem, s.realIn, s.synthIn, s.copyDone})
             if (sem) dev_.vt.DestroySemaphore(dev_.device, sem, nullptr);
@@ -903,20 +911,12 @@ bool VirtualSwapchain::fastGame(double hz) {
 void VirtualSwapchain::limitFrameRate() {
     // auto: the refresh rate divided by the multiplier (60 on 120 Hz at x2),
     // once the present feedback knows it; no cap until then.
-    const double fps = cfg_.fpsLimit < 0.f ? displayHz() / std::max(1, cfg_.multiplier)
-                                                  : double(cfg_.fpsLimit);
-    if (fps <= 0.0) return;
-    std::lock_guard<std::mutex> lk(limitMutex_);
-    const auto interval = std::chrono::duration_cast<clock::duration>(
-        std::chrono::duration<double>(1.0 / fps));
-    auto now = clock::now();
-    if (limitNext_ > now) {
-        const auto coarse = limitNext_ - std::chrono::microseconds(1500);
-        if (coarse > now) std::this_thread::sleep_until(coarse);
-        while ((now = clock::now()) < limitNext_) std::this_thread::yield();
-    }
-    limitNext_ = (limitNext_ == clock::time_point{} || now - limitNext_ > interval) ? now + interval
-                                                                                  : limitNext_ + interval;
+    const double fps = cfg_.fpsLimit == 0.f ? 0.0
+                       : cfg_.fpsLimit < 0.f ? displayHz() / std::max(1, cfg_.multiplier)
+                                             : double(cfg_.fpsLimit);
+    dev_.capFps.store(fps, std::memory_order_relaxed);  // (for the game's own sleep point, DeviceData::capAtSleep)
+    if (fps <= 0.0 || dev_.capsAtSleep(msOf(clock::now()))) return;
+    frameCap_.wait(fps);
 }
 
 // gpu_budget: about once a second, compare the generation's GPU time with the
@@ -1185,12 +1185,18 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     recording_ = recBuf_ != VK_NULL_HANDLE;
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    // Interpolation x3 and up on two queues: the first generated frame is
+    // submitted alone, ahead of the other syntheses (FrameSlot::cmd2).
+    // Measured, RTX 3060 Ti 1440p x4: ~1.2 ms a synthesis, the schedule (real
+    // frame included) begins ~2.4 ms earlier.
+    slot.firstSplit = generating_ && interpolate && !cfg_.extrapolate && mult >= 3 && slot.cmd2 && slot.firstFence;
     dev_.vt.BeginCommandBuffer(slot.cmd, &bi);
-    fg_->profileBegin(slot.cmd, slotIdx);
+    VkCommandBuffer cb = slot.cmd;  // (cmd2 after the first generated frame, when split)
+    fg_->profileBegin(cb, slotIdx);
     fg_->collectMeanCost(slotIdx);  // the slot's fence was waited in nextSlot
     if (generating_) {
-        fg_->recordAcquireSources(slot.cmd, prev, static_cast<int>(imageIndex));
-        fg_->recordAnalysis(slot.cmd, parity_, imageIndex);
+        fg_->recordAcquireSources(cb, prev, static_cast<int>(imageIndex));
+        fg_->recordAnalysis(cb, parity_, imageIndex);
         FrameGen::FrameTiming timing;
         timing.sinceLastMs = dt;
         timing.intervalMs = frameIntervalMs_;
@@ -1226,45 +1232,51 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             timing.displayMs[7] = float(at[order.real]);
             for (int o = 0; o + 1 < mult && o < 7; ++o) timing.displayMs[o] = float(at[order.position(o)]);
         }
-        fg_->recordFrameState(slot.cmd, timing);
-        fg_->profileMark(slot.cmd, slotIdx, FrameGen::StageAnalysis);
+        fg_->recordFrameState(cb, timing);
+        fg_->profileMark(cb, slotIdx, FrameGen::StageAnalysis);
         if (interpolate) {
-            fg_->recordFlow(slot.cmd, parity_, static_cast<int>(slotIdx));
-            fg_->profileMark(slot.cmd, slotIdx, FrameGen::StageFlow);
+            fg_->recordFlow(cb, parity_, static_cast<int>(slotIdx));
+            fg_->profileMark(cb, slotIdx, FrameGen::StageFlow);
             // Frames between prev and cur (t in (0,1)) before the real frame,
             // frames after cur (t in (1,2)) after it (frame_order.h).
-            for (int o = 0; o + 1 < mult; ++o)
-                fg_->recordInterpolate(slot.cmd, static_cast<uint32_t>(prev), imageIndex, order.t(o), static_cast<uint32_t>(o));
-            fg_->profileMark(slot.cmd, slotIdx, FrameGen::StageInterp);
+            for (int o = 0; o + 1 < mult; ++o) {
+                fg_->recordInterpolate(cb, static_cast<uint32_t>(prev), imageIndex, order.t(o), static_cast<uint32_t>(o));
+                if (o == 0 && slot.firstSplit) {  // the first generated frame is complete: the rest in cmd2
+                    dev_.vt.EndCommandBuffer(cb);
+                    cb = slot.cmd2;
+                    dev_.vt.BeginCommandBuffer(cb, &bi);
+                }
+            }
+            fg_->profileMark(cb, slotIdx, FrameGen::StageInterp);
         }
         // Resample the real frame into the internal image the worker presents
         // (for upscaling, or so the HUD can be drawn on it).
-        if (fg_->packReal()) fg_->recordUpscaleReal(slot.cmd, imageIndex, interpolate ? prev : -1);
+        if (fg_->packReal()) fg_->recordUpscaleReal(cb, imageIndex, interpolate ? prev : -1);
         if (dumping_) {
             if (interpolate)
-                for (int i = 0; i < mult - 1; ++i) fg_->recordDump(slot.cmd, static_cast<uint32_t>(i), imageIndex);
-            fg_->recordDump(slot.cmd, fg_->outputCount(), imageIndex);
+                for (int i = 0; i < mult - 1; ++i) fg_->recordDump(cb, static_cast<uint32_t>(i), imageIndex);
+            fg_->recordDump(cb, fg_->outputCount(), imageIndex);
         }
-        if (recBuf_) fg_->recordReadbackSource(slot.cmd, imageIndex, recBuf_);
-        fg_->recordReleaseSources(slot.cmd, prev, static_cast<int>(imageIndex));
+        if (recBuf_) fg_->recordReadbackSource(cb, imageIndex, recBuf_);
+        fg_->recordReleaseSources(cb, prev, static_cast<int>(imageIndex));
     } else if (fg_->packReal()) {
         // No frame generation: still process the one real frame (upscale / HUD).
-        fg_->recordAcquireSources(slot.cmd, -1, static_cast<int>(imageIndex));
-        fg_->recordUpscaleReal(slot.cmd, imageIndex);
-        if (dumping_) fg_->recordDump(slot.cmd, fg_->outputCount(), imageIndex);
-        if (recBuf_) fg_->recordReadbackSource(slot.cmd, imageIndex, recBuf_);
-        fg_->recordReleaseSources(slot.cmd, -1, static_cast<int>(imageIndex));
+        fg_->recordAcquireSources(cb, -1, static_cast<int>(imageIndex));
+        fg_->recordUpscaleReal(cb, imageIndex);
+        if (dumping_) fg_->recordDump(cb, fg_->outputCount(), imageIndex);
+        if (recBuf_) fg_->recordReadbackSource(cb, imageIndex, recBuf_);
+        fg_->recordReleaseSources(cb, -1, static_cast<int>(imageIndex));
     } else if (dumping_ || recording_) {
         // Ground-truth runs use multiplier=1: copy the unmodified source into
         // the dump buffer while the image is temporarily in GENERAL layout.
-        fg_->recordAcquireSources(slot.cmd, -1, static_cast<int>(imageIndex));
-        if (dumping_) fg_->recordDump(slot.cmd, fg_->outputCount(), imageIndex);
-        if (recBuf_) fg_->recordReadbackSource(slot.cmd, imageIndex, recBuf_);
-        fg_->recordReleaseSources(slot.cmd, -1, static_cast<int>(imageIndex));
+        fg_->recordAcquireSources(cb, -1, static_cast<int>(imageIndex));
+        if (dumping_) fg_->recordDump(cb, fg_->outputCount(), imageIndex);
+        if (recBuf_) fg_->recordReadbackSource(cb, imageIndex, recBuf_);
+        fg_->recordReleaseSources(cb, -1, static_cast<int>(imageIndex));
     }
     // Pass-through: an empty submission still consumes the application's
     // semaphores and orders the worker's copy after its rendering.
-    dev_.vt.EndCommandBuffer(slot.cmd);
+    dev_.vt.EndCommandBuffer(cb);
 
     // Extrapolation presents the real frame first. When it is copied straight
     // from the application's image (no upscaling / HUD / repeat replacement,
@@ -1319,9 +1331,26 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             si.waitSemaphoreCount = static_cast<uint32_t>(waits.size());
             si.pWaitSemaphores = waits.data();
             si.pWaitDstStageMask = waitStages.data();
-            si.signalSemaphoreCount = static_cast<uint32_t>(frames);
-            si.pSignalSemaphores = slot.synthDone;
-            r = submitOn(dev_.computeQueue, si, slot.fence);
+            if (slot.firstSplit) {
+                // The first generated frame (its present waits synthDone[0])
+                // with the game's semaphores, then the rest behind it.
+                si.signalSemaphoreCount = 1;
+                si.pSignalSemaphores = slot.synthDone;
+                dev_.vt.ResetFences(dev_.device, 1, &slot.firstFence);
+                r = submitOn(dev_.computeQueue, si, slot.firstFence);
+                if (r >= 0) {
+                    VkSubmitInfo rest{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+                    rest.commandBufferCount = 1;
+                    rest.pCommandBuffers = &slot.cmd2;
+                    rest.signalSemaphoreCount = static_cast<uint32_t>(frames - 1);
+                    rest.pSignalSemaphores = slot.synthDone + 1;
+                    r = submitOn(dev_.computeQueue, rest, slot.fence);
+                }
+            } else {
+                si.signalSemaphoreCount = static_cast<uint32_t>(frames);
+                si.pSignalSemaphores = slot.synthDone;
+                r = submitOn(dev_.computeQueue, si, slot.fence);
+            }
             copyWaits.clear();
         }
     } else {
@@ -1384,6 +1413,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     job.pacing = cfg_.pacing;
     if (deferSynthesis) job.synthSlot = static_cast<int>(slotIdx);
     job.slot = static_cast<int>(slotIdx);
+    job.firstReady = slot.firstSplit ? slot.firstFence : VK_NULL_HANDLE;
     job.ready = deferSynthesis ? slot.readyFence : slot.fence;
     job.staging = static_cast<int>(fg_->stagingCount());
     if (dev_.asyncCompute) {
@@ -1559,7 +1589,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     // limiter does. (Holding the present itself, as until 13/10, made each
     // finished frame wait for its slot: +23 ms input to screen at a 40 fps
     // cap, x1 and x2 alike, against the game's own limiter.)
-    if (cfg_.fpsLimit != 0.f) limitFrameRate();  // (without mutex_: never block acquire while sleeping)
+    limitFrameRate();  // (without mutex_: never block acquire while sleeping)
     lastReturnMs_ = msOf(clock::now());
     return pending;  // VK_SUCCESS or VK_SUBOPTIMAL_KHR from an earlier real present
 }

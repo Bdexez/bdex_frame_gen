@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <thread>
 
 namespace bdex {
 
@@ -366,6 +367,24 @@ VkResult DeviceData::allocateCommandBuffer(VkCommandBuffer* cmd, VkCommandPool p
 VkResult DeviceData::submit(const VkSubmitInfo& info, VkFence fence) {
     std::lock_guard<std::mutex> lock(queueMutex(queue));
     return vt.QueueSubmit(queue, 1, &info, fence);
+}
+
+} // namespace bdex
+
+namespace bdex {
+
+void FrameCap::wait(double fps) {
+    if (fps <= 0.0) return;
+    using clock = std::chrono::steady_clock;
+    std::lock_guard<std::mutex> lk(mutex);
+    const auto interval = std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(1.0 / fps));
+    auto now = clock::now();
+    if (next > now) {
+        const auto coarse = next - std::chrono::microseconds(1500);
+        if (coarse > now) std::this_thread::sleep_until(coarse);
+        while ((now = clock::now()) < next) std::this_thread::yield();
+    }
+    next = (next == clock::time_point{} || now - next > interval) ? now + interval : next + interval;
 }
 
 } // namespace bdex
