@@ -35,7 +35,8 @@ CONFIGS = {
 # What Config::autoConfigure turns on by itself on a discrete GPU.
 STRONG_GPU_OFF = {f"BDEX_FG_{k}": v for k, v in {
     "PIXEL_VECTORS": "0", "INTERP_SPLAT": "0", "ROT_WEIGHT": "0", "TEMPORAL_PREDICTION": "0", "ZERO_BIAS": "0.002",
-    "SCENE_CUT_LOCAL": "0", "EXTRAPOLATE_SPLAT": "0", "REVEAL_FILL": "0", "GLOBAL_MOTION": "0"}.items()}
+    "SCENE_CUT_LOCAL": "0", "EXTRAPOLATE_SPLAT": "0", "REVEAL_FILL": "0", "GLOBAL_MOTION": "0",
+    "HUD_MASK": "0"}.items()}
 
 
 def evaluate(build, seq, mode, variant, work):
