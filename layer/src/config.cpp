@@ -319,6 +319,7 @@ const std::vector<OptionDef>& registry() {
     I("max_frame_latency", "frame_latency", &Config::maxFrameLatency, 0, 3, kLive),
     B("latency_limiter", nullptr, &Config::latencyLimiter, kLive),
     F("interp_hold", nullptr, &Config::interpHold, -1.f, 1.f, kLive),
+    B("tight_hold", nullptr, &Config::tightHold, kLive),
     B("skip_fast", nullptr, &Config::skipFast, kLive),
     B("vrr_hold", nullptr, &Config::vrrHold, kLive),
     I("refresh_fill", nullptr, &Config::refreshFill, 0, 2),

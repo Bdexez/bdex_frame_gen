@@ -6,6 +6,26 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### The real frame sooner at x4 on 144 Hz: `tight_hold` (2026-10-20, night)
+
+- **`tight_hold`** (on): a fixed multiplier whose frames fall short of the
+  refresh rate by less than 1.25 refreshes per game frame — 30 fps x4 on
+  144 Hz, 4 frames for 4.8 refreshes — holds a frame a refresh more in most
+  game frames anyway, wherever the even spacing puts it. The generated
+  frames now go one refresh apart and that refresh goes to the real frame,
+  which comes sooner; as many refreshes held, the sharpest frame the one
+  shown longer (`pacing::tightHold`, pacing simulator: real frame lag 33.9 →
+  29.7 ms, holds and motion error unchanged).
+- **Ready margin under Xwayland**: measured, a present goes out with
+  x11_clock's refresh only when sent 1.5 ms or more before it (0.5–1 ms
+  before: 64 % missed). Frames a refresh apart (adaptive, tight_hold) are
+  now planned for the first refresh at least that long after they are
+  usually ready — before, a first frame ready just before its refresh missed
+  it and met the next one there (1.9 frames replaced a second with
+  tight_hold). Bench (headless gamescope 144 Hz, 1440p quality, PRAGMATA
+  replay, x4 at 30 fps): present-to-screen 42.0 → 39.2 ms, median 33.8 →
+  32.5, frames replaced 0.1/s either way, refreshes held 24.0 → 23.2/s.
+
 ### xN is N frames again: `refresh_fill` off by default (2026-10-20)
 
 - **`refresh_fill` defaults to `0`** (user's decision): a multiplier is

@@ -1278,6 +1278,15 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     }
     if (order.hold < 1.f && frameIntervalMs_ > 0.0)
         order.hold = pacing::effectiveHold(order.hold, askHold, displayHz(), mult, frameIntervalMs_, order.real);
+    // tight_hold (pacing::tightHold): on a known refresh grid, when the
+    // screen holds a frame a refresh more in a game frame anyway (30 fps x4
+    // on 144 Hz), the generated frames one refresh apart and that refresh
+    // given to the real frame, which comes sooner.
+    if (cfg_.tightHold && order.hold >= 1.f && mult > 1 && order.real == mult - 1 && !(adaptivePeriodMs_ > 0.0) &&
+        cfg_.pacePlan && !cfg_.hybrid && !cfg_.extrapolate && frameIntervalMs_ > 0.0) {
+        double gridLastMs, gridPeriodMs;
+        if (displayGrid(gridLastMs, gridPeriodMs)) order.hold = pacing::tightHold(gridPeriodMs, mult, frameIntervalMs_, order.real);
+    }
     // A rebuilt output stage has no analysis of the previous frame yet.
     const bool haveHistory = prevIndex_ >= 0 && !historyLost_;
     const bool interpolate = generating_ && haveHistory && mult > 1;
@@ -1405,6 +1414,10 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
                     base[k] = adaptive ? spacing * k : held ? frameIntervalMs_ * order.offset(k) : frameIntervalMs_ * k / mult;
                 pacing::Grid g{true, lastMs, periodMs};
                 g.lead = gridLead;
+                // (frames a refresh apart — adaptive, tight_hold: a first
+                // frame missing its refresh would meet the next one there;
+                // evenly spaced x4 has 1.4 ms to spare and is left as it was)
+                if (gridLead == pacing::kX11Lead && (adaptive || held)) g.readyMarginMs = pacing::kX11ReadyMarginMs;
                 pacing::planLands(now, readyLagMs_.load(std::memory_order_relaxed), base, mult, g, lastPlannedMs_, planned);
                 for (int k = 0; k < mult; ++k) at[k] = planned[k] - now;  // (planned[] again below)
             } else if (adaptive) {
