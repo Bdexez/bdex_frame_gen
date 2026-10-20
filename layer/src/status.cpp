@@ -1,6 +1,7 @@
 #include "status.h"
 #include "platform.h"
 
+#include <cmath>
 #include <chrono>
 #include <cstdlib>
 #include <cstdio>
@@ -212,6 +213,20 @@ std::vector<std::string> statusDescribe(const StatusFile& file, bool english) {
             snprintf(buf, sizeof buf, T(" · affichées %.0f/s, tenues %.0f/s", " · shown %.0f/s, held %.0f/s"),
                      num(v, "shown_fps", -1), num(v, "held_per_s", 0));
             line += buf;
+            // (fewer frames than refreshes: hz - output of them a second hold
+            // a frame whatever the pacing — 30 fps x4 on 144 Hz, 24; as the panel)
+            const double hz = num(v, "refresh_hz", 0), outp = num(v, "output_fps", 0);
+            if (state == "generating" && hz > 0 && outp > 0.5 * hz && outp < 0.97 * hz && hz - outp >= 1.0) {
+                snprintf(buf, sizeof buf, T(" · dont ~%.0f/s inévitables à %.0f i/s sur %.0f Hz", " · of which ~%.0f/s unavoidable at %.0f fps on %.0f Hz"),
+                         hz - outp, outp, hz);
+                line += buf;
+                for (int even : {60, 72, 75, 90, 100, 120, 144, 165})
+                    if (std::fabs(outp - even) <= 0.03 * even) {
+                        snprintf(buf, sizeof buf, T(" · un écran réglé à %d Hz serait régulier", " · a screen set to %d Hz would be even"), even);
+                        line += buf;
+                        break;
+                    }
+            }
         }
         if (num(v, "gpu_budget_level", 0) > 0) {
             snprintf(buf, sizeof buf, T(" · budget GPU : niveau %.0f", " · GPU budget: level %.0f"),
