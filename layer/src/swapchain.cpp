@@ -1129,11 +1129,12 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             if (vgAnchorMs_ <= 0.0) vgAnchorMs_ = fbLastMs_ > 0.0 ? fbLastMs_ : nowMs;
             vgPeriodMs_ = adaptivePeriodMs_;
             if (nowMs - vgCheckMs_ >= 1000.0) {
-                if (vgCheckMs_ > 0.0 && fbReplaced_ - vgReplacedSeen_ >= 3) {
+                const uint64_t missed = fbReplaced_ + fbClose_;
+                if (vgCheckMs_ > 0.0 && missed - vgReplacedSeen_ >= 3) {
                     vgAnchorMs_ += 0.5 * vgPeriodMs_;
-                    BDEX_DBG("virtual grid: %llu frames replaced in a second, phase moved", (unsigned long long)(fbReplaced_ - vgReplacedSeen_));
+                    BDEX_DBG("virtual grid: %llu frames replaced in a second, phase moved", (unsigned long long)(missed - vgReplacedSeen_));
                 }
-                vgReplacedSeen_ = fbReplaced_;
+                vgReplacedSeen_ = missed;
                 vgCheckMs_ = nowMs;
             }
         } else {

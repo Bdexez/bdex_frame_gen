@@ -301,6 +301,7 @@ private:
     // stops, or `timeoutMs` passes (fbIdleCv_).
     void waitDisplayed(uint64_t id, double timeoutMs);
     uint64_t fbReplaced_ = 0;           // fbMutex_: frames replaced before being displayed (mailbox)
+    uint64_t fbClose_ = 0;              // fbMutex_: virtual_grid — displayed within a third of a period of the previous one
     uint64_t statsReplaced_ = 0;
     void waitWorkerSubmitted(std::unique_lock<std::mutex>& lock);
     void waitWorkerIdle(std::unique_lock<std::mutex>& lock);

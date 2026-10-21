@@ -505,6 +505,11 @@ void VirtualSwapchain::feedbackLoop() {
                 if (fbLastMs_ > 0.0 && now - fbLastMs_ < 0.5) {
                     ++fbReplaced_;
                 } else {
+                    // virtual_grid: two frames shown a third of a period
+                    // apart or less fell on one refresh, seen through
+                    // display times too noisy for the 0.5 ms test above
+                    // (an X11 surface on a Wayland compositor).
+                    if (vgPeriodMs_ > 0.0 && fbLastMs_ > 0.0 && now - fbLastMs_ < 0.35 * vgPeriodMs_) ++fbClose_;
                     ++fbDisplayed_;
                     displayClock_.add(now);
                     fbLastMs_ = now;
