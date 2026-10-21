@@ -338,6 +338,7 @@ const std::vector<OptionDef>& registry() {
     B("online_tune", nullptr, &Config::onlineTune),
     F("upscale_temporal", nullptr, &Config::upscaleTemporal, 0.f, 0.95f),
     B("frame_timing", nullptr, &Config::frameTiming, kLive),
+    B("content_clock", nullptr, &Config::contentClock, kLive),
     B("dedup", nullptr, &Config::dedup),
     B("paused", "pause", &Config::paused, kLive),
     B("adaptive", nullptr, &Config::adaptive, kLive),

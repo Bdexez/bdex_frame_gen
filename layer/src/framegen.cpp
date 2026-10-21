@@ -1081,13 +1081,21 @@ void FrameGen::recordFrameState(VkCommandBuffer cmd, const FrameTiming& timing) 
     // A repeat keeps the previous pair's flow: only possible if that flow
     // was computed (not after a frame presented without generation).
     const bool dedup = dedup_ && !reset && flowLastFrame_;
+    // content_clock: frames given the content of their display time take it
+    // within the actual interval between the two real frames, not the
+    // smoothed one — a game frame of 36 ms instead of 33 put them ~1.6 ms of
+    // motion off (14/10, x4 at 30 fps on a refresh grid, frame times +-40 %:
+    // +0.45 dB, flicker -0.9; presents jittered around a fixed timestep
+    // +0.2 dB). (Without display times, frame_timing as before: -0.6 dB on a
+    // fixed-timestep game there.)
+    const bool contentClock = timing.haveDisplay && (*cfgp_).contentClock && !(*cfgp_).extrapolate;
     vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, frameState_.pipeline);
     vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, frameState_.layout, 0, 1, &dsState_, 0, nullptr);
     FrameStatePC pc{{(int32_t)l0.size.width, (int32_t)l0.size.height}, 0, timing.multiplier,
                     float(timing.sinceLastMs), float(timing.intervalMs),
                     (reset ? kStateReset : 0) | (dedup ? kStateDedup : 0) | ((*cfgp_).extrapolate ? kStateExtrap : 0) |
                         (timing.haveDisplay ? kStateDisplay : 0) |
-                        ((*cfgp_).frameTiming || dedup_ ? kStateContent : 0),
+                        ((*cfgp_).frameTiming || dedup_ || contentClock ? kStateContent : 0),
                     static_cast<int32_t>(gateFull_.size() / 4),
                     // A few differing pixels (a blinking cursor, dithering) still count as a repeat.
                     std::max(4u, l0.size.width * l0.size.height / 16384u),

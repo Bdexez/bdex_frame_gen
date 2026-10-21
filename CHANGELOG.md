@@ -37,6 +37,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   dB, flicker −0.04 to −0.51, fewer grossly wrong pixels on every one;
   constant-speed scenes within −0.02 dB; +0.1 ms a game frame at 1440p x4.
 - `latency_log` gains a 4th column: the refresh each frame was planned for.
+- **`content_clock`** (on): frames given the content of their display time
+  (a refresh grid, measured or virtual; adaptive, `refresh_fill`) take it
+  within the actual interval between the two real frames, not the smoothed
+  one. Simulated x4 at 30 fps on a refresh grid with frame times ±40 %:
+  +0.45 to +0.58 dB, flicker −0.5 to −0.9; jittered presents around a fixed
+  timestep +0.2 to +0.3 dB; a steady game unchanged bit for bit.
 - `global_motion` searches a third of the coarsest level, up to 24 pixels
   (was a quarter, up to 16): fast turns in the recorded games, grossly wrong
   pixels −1 to −5 %, flicker down on every one; free in GPU time.
