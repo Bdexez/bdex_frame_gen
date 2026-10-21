@@ -80,8 +80,8 @@ struct Grid {
 // present (a job whose GPU work ended early must not land on the previous
 // frame's refresh), and, with a known grid, 0.3 refresh before the refresh it
 // should show on (a present landing just after a refresh would slip a whole
-// period) and on a refresh of its own — the one planned (planLands) when
-// there is a plan.
+// period) and on a refresh of its own where the frames fit one a refresh —
+// the one planned (planLands) when there is a plan.
 inline double presentTargetMs(double originMs, double intervalMs, int frames, const FrameOrder& order, int k,
                               double lastPresentMs, double lastLandMs, const Grid& grid, double plannedLandMs = 0.0) {
     if (grid.valid && plannedLandMs > 0.0) {  // planLands: for that refresh, or the next one free
@@ -92,10 +92,23 @@ inline double presentTargetMs(double originMs, double intervalMs, int frames, co
     const double slot = intervalMs / std::max(1, frames);
     const bool held = order.hold < 1.f;
     double t = originMs + (held ? intervalMs * order.offset(k) : slot * k);
-    if (lastPresentMs > 0.0) t = std::max(t, lastPresentMs + 0.5 * slot * (held ? order.hold : 1.0));
+    // Frames faster than the refreshes (60 fps x4 on 144 Hz: 240 frames for
+    // 144 refreshes, 4.2 ms apart for 6.9) cannot each have a refresh: there
+    // the frames of a present share them from their own times, the later
+    // replacing the earlier. One a refresh (or half a slot after the
+    // previous present, then moved to its refresh), a present lasted four
+    // refreshes (28 ms of a 17 ms game frame), a backlog that only real-only
+    // catch-ups undid (headless gamescope, 60 fps x4: 24 game frames a
+    // second shown without generated frames, x2.8 instead of x4). A
+    // present's first frame (after the previous present's last one, its real
+    // frame in interpolation, which stays on screen) and the one after its
+    // real frame keep a refresh of their own.
+    const bool share = grid.valid && slot < grid.periodMs && k > 0 && k != order.real + 1;
+    if (lastPresentMs > 0.0 && !share) t = std::max(t, lastPresentMs + 0.5 * slot * (held ? order.hold : 1.0));
     if (grid.valid) {
         double land = grid.land(t);
-        if (lastLandMs > 0.0 && land < lastLandMs + 0.5 * grid.periodMs) land = lastLandMs + grid.periodMs;
+        if (lastLandMs > 0.0 && share) land = std::max(land, lastLandMs);
+        else if (lastLandMs > 0.0 && land < lastLandMs + 0.5 * grid.periodMs) land = lastLandMs + grid.periodMs;
         t = land - grid.lead * grid.periodMs;
     }
     return t;

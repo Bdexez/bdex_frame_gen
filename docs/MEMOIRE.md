@@ -3320,3 +3320,51 @@ générée coûte ~3 ms de latence. Banc gamescope `--gpu-load` : jusqu'à 69 %
 de GPU, 1re générée envoyée 4,7 ms (défauts) contre 3,6 ms (`false_detail`,
 `mosaic_blur`, `hud_layer`, `pixel_vectors`, `interp_splat` coupés) ; au-delà
 (97 %), gamescope sans tête s'affame et le banc ne juge plus.
+### 21/10 (nuit) — ×4 au-delà de la fréquence de l'écran : rattrapages en boucle
+
+Retour : « je bloque mon jeu à 30 i/s, le framegen fait des trucs bizarres,
+~40 i/s au lieu de 120 », puis « même type de problème sur Cyberpunk ».
+Statut en direct de Cyberpunk : le jeu à **60 i/s** (le blocage à 30 n'y
+était pas actif ; deux enregistrements du panneau : 59,5 et 59,9 i/s), ×4,
+143,9 Hz, `display_grid=3` ; multiplicateur effectif qui bascule ×4 ↔ ×1
+chaque seconde, 45 à 115 i/s affichés. Rebloqué à 30 : « c'est mieux ».
+
+Cause : `presentTargetMs` donnait à chaque image un rafraîchissement à elle
+(« jamais deux images sur un rafraîchissement ») dès que la grille était
+connue. À 60 i/s ×4 sur 144 Hz (240 images pour 144 rafraîchissements), une
+présentation durait 4 rafraîchissements (27,8 ms pour une image du jeu de
+16,7 ms) : retard sans fin, que seuls les rattrapages « vraie seule »
+(`catchUp`, attente du worker > ¼ I et 8 jobs en retard) défaisaient. Le
+plan (`pace_plan`) n'est pas en cause : il ne s'applique que si m·P ≤ 1,02 I.
+Ce cas était masqué jusqu'au 20/10 par `refresh_fill=1`, qui plafonnait
+aussi la sortie à l'écran ; le passage à 0 (×N exact, décision utilisateur)
+l'a découvert. **Décision utilisateur (21/10)** : pas de plafond — « les
+fps peuvent dépasser les Hz de l'écran » et « le logiciel ne doit pas
+dépendre d'un plafonnage à un certain nombre de fps même si ça aide ».
+
+Correctif (`pacing::presentTargetMs`) : quand les images vont plus vite que
+les rafraîchissements (I/m < P), celles d'une présentation partagent les
+rafraîchissements à partir de leur heure propre (origine + I·k/m, sans la
+règle « une demi-place après la précédente » qui les repoussait encore au
+rafraîchissement suivant : 40 et 48 i/s gardaient un retard croissant dans
+le simulateur), la plus tardive remplaçant les précédentes. La 1re image
+d'une présentation (après la dernière de la précédente — sa réelle en
+interpolation) et celle qui suit la réelle gardent un rafraîchissement à
+elles : la réelle n'est jamais écrasée. I/m ≥ P : chemin inchangé (30 i/s
+×4 identique). Test `pacing_multiplier_past_the_refresh_rate_no_backlog`
+(40, 48, 60, 90 i/s ×4 : aucun retard, ~144 affichées, toutes les réelles).
+
+Banc (gamescope sans tête 1080p 144 Hz, Xwayland/`x11_clock`, démo, preset
+quality, scratchpad `bench60.sh`) :
+
+| | avant | après |
+|---|---|---|
+| 60 i/s ×4 interp. | ×2,80, 24 rattrapages/s, 43,8 ms prés.→écran | ×4,00, 0, 26,8 ms |
+| 45 i/s ×4 interp. | ×3,33, ~10/s, 49,7 ms, 139 affichées | ×4,00, 0, 30,8 ms, 143,9 |
+| 30 i/s ×4 interp. | ×4,00, 39,1 ms | identique |
+| 60 i/s ×4 extrap. | ×3,00, 10,7 ms | ×4,00, 11,1 ms |
+| 60 i/s ×4 hybride | ×2,40, 27,4 ms | ×4,00, 18,3 ms |
+
+Écran : 144 affichées dans tous les cas au-delà de 36 i/s ; les ~96
+images/s de plus sont remplacées avant l'affichage (inévitable sans
+plafond). Appel `present` du jeu 4,3 → 0,08 ms (il n'attend plus le worker).
