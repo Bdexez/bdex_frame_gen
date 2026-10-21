@@ -32,7 +32,7 @@ shared float partial[256];
 void main() {
     const int W = 2 * pc.radius + 1;
     if (pc.mode == 1) {
-        // (sequential: at most (2 * 16 + 1)^2 candidates, once a frame)
+        // (sequential: at most (2 * 24 + 1)^2 candidates, once a frame)
         if (gl_LocalInvocationID.x != 0u) return;
         int best = (W * W) / 2;  // the zero shift
         float bestCost = costs.cost[best];
