@@ -3,7 +3,7 @@
 presents, the three between are the exact pictures of the moments the
 generated frames show (score with eval_sequence.py --multiplier 4).
 
-    make_game.py DIR turn|walk|dark|strafe [N=97]
+    make_game.py DIR turn|walk|dark|strafe|fps [N=97]
 
 1280x720: a textured world scrolled by the camera, a near layer moving
 faster (parallax), a character moving on its own, a static HUD (a
@@ -12,7 +12,9 @@ HUD stays still), and the game's motion blur: each picture integrates the
 motion over half a 30 fps frame (8 sub-steps), as a 30 fps game blurs.
 `turn` is a fast camera turn (~120 px a game frame), `walk` slow, `dark` the
 turn at a quarter of the brightness (low contrast), `strafe` a sideways move
-where the near layer moves 2.5x the background."""
+where the near layer moves 2.5x the background, `fps` the turn seen in first
+person: a weapon held at the bottom right, nearly still on screen (a slight
+sway, not motion-blurred), the world turning fast behind it."""
 import sys
 from pathlib import Path
 
@@ -60,10 +62,10 @@ def shift(img, x, y):
 
 def main():
     out = Path(sys.argv[1]); kind = sys.argv[2]; n = int(sys.argv[3]) if len(sys.argv) > 3 else 97
-    rng = np.random.default_rng({"turn": 11, "walk": 12, "dark": 13, "strafe": 14}[kind])
+    rng = np.random.default_rng({"turn": 11, "walk": 12, "dark": 13, "strafe": 14, "fps": 15}[kind])
     out.mkdir(parents=True, exist_ok=True)
     # Camera speed in px per 120 Hz frame (x4 on a 30 fps game: 4 of them per game frame).
-    cam = {"turn": (30.0, 3.0), "walk": (6.0, 1.5), "dark": (30.0, 3.0), "strafe": (12.0, 0.0)}[kind]
+    cam = {"turn": (30.0, 3.0), "walk": (6.0, 1.5), "dark": (30.0, 3.0), "strafe": (12.0, 0.0), "fps": (30.0, 2.0)}[kind]
     near_k = 2.5 if kind == "strafe" else 1.6  # the near layer's speed relative to the background
     span = int(abs(cam[0]) * (n + 2) * near_k) + W + 400
     tall = int(abs(cam[1]) * (n + 2) * near_k) + H + 400
@@ -103,6 +105,12 @@ def main():
     hud_a = a3.reshape(H, SS, W, SS).mean((1, 3))
     hud = np.where(hud_a[..., None] > 0, pm / np.maximum(hud_a[..., None], 1e-6), 0.0)
     gain = 0.25 if kind == "dark" else 1.0
+    # fps: the weapon, a textured shape anchored at the bottom right
+    wh, ww = 300, 420
+    weap = texture(wh, ww, rng, (0.45, 0.45, 0.5), rects=25)
+    yy2, xx2 = np.mgrid[0:wh, 0:ww]
+    weap_a = ((yy2 > wh - (xx2 * 0.9) - 40) & (yy2 > 60) & (xx2 > 40)).astype(np.float32)  # a slanted barrel and body
+    weap_a[:, :40] = 0
     sub = 8  # sub-steps over the exposure (half a 30 fps frame = 2 frames at 120 Hz)
     for f in range(n):
         acc = np.zeros((H, W, 3), np.float32)
@@ -124,6 +132,12 @@ def main():
                     img[y0 + sy0:y0 + ey, x0 + sx0:x0 + ex] = img[y0 + sy0:y0 + ey, x0 + sx0:x0 + ex] * (1 - a) + char[sy0:ey, sx0:ex] * a
             acc += img
         img = acc / sub * gain
+        if kind == "fps":  # the sway: a few pixels, slow (not blurred: drawn once at the frame's time)
+            sx, sy = 3.0 * np.sin(f * 0.11), 2.0 * np.sin(f * 0.07 + 1.0)
+            x0, y0 = int(round(W - ww + 20 + sx)), int(round(H - wh + 30 + sy))
+            ex, ey = min(ww, W - x0), min(wh, H - y0)
+            a = weap_a[:ey, :ex, None]
+            img[y0:y0 + ey, x0:x0 + ex] = img[y0:y0 + ey, x0:x0 + ex] * (1 - a) + weap[:ey, :ex] * a
         img = img * (1 - hud_a[..., None]) + hud * hud_a[..., None]
         a8 = (np.clip(img, 0, 1) * 255 + 0.5).astype(np.uint8)
         with open(out / f"f{f:04d}.ppm", "wb") as fh:
