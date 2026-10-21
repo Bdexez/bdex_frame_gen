@@ -1545,6 +1545,26 @@ RTX 3060 Ti, pilote 615.
   - pas d'effet domino sur un raté du plan : l'image écrasée fausserait le
     réglage de phase ;
   - rayon global 32 : moins bon que 24.
+- **`content_clock`** (défaut 1, efac0cc) : images datées par l'affichage
+  → t dans l'intervalle *réel* de la paire (comme `frame_timing`). Simulé
+  ×4 30 i/s sur grille, temps d'image ±40 % : +0,45 à +0,58 dB,
+  scintillement −0,5 à −0,9 ; pas fixe + présents irréguliers +0,2 à +0,3 ;
+  jeu régulier identique bit à bit. (Le −0,6 de `frame_timing` en pas fixe
+  était sans heures d'affichage.)
+- **`tools/cadence_report.py LOG`** : la cadence réelle d'une partie depuis
+  `latency_log` (affichées/s, tenues/s, hors plan, grille) — pour juger le
+  remplissage sur le vrai écran.
+- **Banc des jeux enregistrés** : enregistrés à 30 i/s et notés en ×2, leurs
+  paires ont *deux* images d'écart : le double du déplacement d'une vraie
+  paire à 30 i/s. Le virage flou de `cp2` qui se brise en blocs y reste
+  cohérent entre images consécutives (quelques blocs locaux).
+- **Encore écartés** : `smooth_contrast` (pénalité d'écart plus forte sur
+  bloc peu contrasté : −0,13 à −0,65 dB, `cp2` compris) ;
+  `occlusion_strength=1` sur la base actuelle (−0,01 en moyenne, −0,31) ;
+  `flow_iterations=1` (neutre) ; gain de luminance de l'analyse sur la
+  scène sombre (×2 +0,2, ×4 −0,5) ; préréglages `balanced` / `enhanced`
+  au lieu de `quality` (−0,06 / −0,12 ; mais scène sombre +0,4, et
+  `levels=4` y gagne +0,8 en perdant sur les virages rapides de PRAGMATA).
 - **Piste non faite** : remplir le rafraîchissement manquant *après*
   l'image réelle (extrapolation t ≈ 1,2) → image réelle ~7 ms plus tôt
   qu'avec le remplissage, mais une extrapolation à t = 1,25 vaut une
