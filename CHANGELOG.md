@@ -13,9 +13,9 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   x4 on 144 Hz gives 120 frames for 144 refreshes, a frame held two
   refreshes every fifth, 24 times a second — now gives each game frame `m`
   or `m+1` frames, one per refresh. Headless gamescope at 144 Hz, the demo
-  at 30 fps x4: 144.0 frames a second shown instead of 120, repeats 26/s →
-  0.4/s; the real frame on screen ~6 ms later (31 → 38 ms present to
-  screen; 40 fps x3 +5 ms). `refresh_fill = 2` also at x2 (60 fps x2 on
+  at 30 fps x4 (three runs each): 142–143 frames a second shown instead of
+  120, frames held a refresh more 30/s → 5/s; the real frame on screen ~7 ms
+  later (33 → 40 ms present to screen; 40 fps x3 +5 ms). `refresh_fill = 2` also at x2 (60 fps x2 on
   144 Hz: +7 ms), `0` off; « Remplir chaque rafraîchissement » in the panel
   and the Windows launcher.
 - **`virtual_grid`**: where the screen's refresh grid is not measured
