@@ -37,6 +37,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   dB, flicker −0.04 to −0.51, fewer grossly wrong pixels on every one;
   constant-speed scenes within −0.02 dB; +0.1 ms a game frame at 1440p x4.
 - `latency_log` gains a 4th column: the refresh each frame was planned for.
+- `refresh_fill` also with « Auto » (`target_fps`), which picked the largest
+  whole multiplier under the refresh rate and so left the same hole: 30 fps
+  on 144 Hz 120 → 142 frames shown, held 28.5/s → 4/s (+7.8 ms); 40 fps
+  120 → 144 (+5.6 ms).
 - `tools/cadence_report.py LOG [--hz HZ]`: how a game's frames really
   reached the screen, from its `latency_log` — frames shown and held a
   refresh more per second, frames off their planned refresh, how well the

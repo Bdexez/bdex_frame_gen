@@ -208,9 +208,9 @@ struct Config {
     // Whether the options that size the output stage are equal.
     bool sameOutputSettings(const Config& o) const;
     // refresh_fill may give a game frame one frame more than `multiplier`
-    // (interpolation, fixed multiplier): the most frames a present can have.
+    // (interpolation, fixed multiplier or target_fps): the most frames a present can have.
     int frameCeiling() const {
-        const bool fill = refreshFill > 0 && multiplier >= (refreshFill >= 2 ? 2 : 3) && multiplier < 8 && !extrapolate && !hybrid && !adaptive && targetFps == 0.f;
+        const bool fill = refreshFill > 0 && multiplier >= (refreshFill >= 2 ? 2 : 3) && multiplier < 8 && !extrapolate && !hybrid && !adaptive;
         return multiplier + (fill ? 1 : 0);
     }
     // Same, starting from product defaults instead of Config{} (the capture

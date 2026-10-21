@@ -878,6 +878,18 @@ int VirtualSwapchain::chooseMultiplier() {
         return adaptive_.next(interval, adaptivePeriodMs_, maxMult);
     }
     dynMult_ = dynamicMultiplier(dynMult_, target * frameIntervalMs_ / 1000.0, maxMult);
+    // refresh_fill with target_fps (the panel's « Auto »): the largest whole
+    // multiplier under the target leaves the same hole — 30 fps on 144 Hz
+    // got x4, 120 frames for 144 refreshes; 40 fps x3 — so where one frame
+    // more a game frame fills it, the adaptive pacing (as for a fixed one).
+    const int fillFrom = cfg_.refreshFill >= 2 ? 2 : 3;
+    if (cfg_.refreshFill > 0 && dynMult_ >= fillFrom && dynMult_ < cfg_.frameCeiling() && frameIntervalMs_ > 0.0) {
+        const double r = target * frameIntervalMs_ / 1000.0;
+        if (r > dynMult_ * 1.02 && r <= (dynMult_ + 1) * 1.02) {
+            adaptivePeriodMs_ = 1000.0 / target;
+            return adaptive_.next(frameIntervalMs_, adaptivePeriodMs_, dynMult_ + 1);
+        }
+    }
     return dynMult_;
 }
 
