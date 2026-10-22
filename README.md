@@ -677,6 +677,21 @@ against the real frame rendered at 60 fps):
 | **bdex-framegen**, `quality` | ≈ 31 dB |
 | **bdex-framegen**, `MODE=extrapolate` | ≈ 23 dB |
 
+### Game settings that help
+
+- **Film grain off.** Grain is new noise on every real frame: no generated
+  frame can predict it, and it pulses between the grainy real frames and the
+  smoother generated ones (measured: a 3x3 pre-blur of the analysis does not
+  help — the block matcher already averages it).
+- **Motion blur low or off.** A fast turn with heavy blur leaves the motion
+  search too little texture: blocks of the picture break away (Cyberpunk
+  2077, recorded).
+- **A frame cap that divides the refresh rate, or `refresh_fill`.** 30 fps
+  x4 on 144 Hz is 120 frames for 144 refreshes; `refresh_fill` (on from x3)
+  fills every refresh, a cap of 36 fps does too with no added hold. The
+  game's own cap (or Reflex / Anti-Lag) responds faster than the layer's on
+  Direct3D games under Proton.
+
 ### Latency
 
 Delay between the game's `vkQueuePresentKHR` and the moment the real frame
