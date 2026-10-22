@@ -1615,6 +1615,11 @@ RTX 3060 Ti, pilote 615.
   près du HUD ×2, paire précédente, mouvement nul) ont tous perdu — une
   concordance de couleur trouvée en plus est surtout un faux appariement.
   Ne plus ajouter de candidat jugé sur ce seul critère.
+- **Délai GPU du plan au 90ᵉ centile** (32 derniers) au lieu de la moyenne
+  « vite à la hausse, lente à la baisse » : 3 essais semblaient donner
+  −2,5 ms et moins de ratés ; l'A/B à 5 essais alternés dit l'inverse
+  (latence 41,4 contre 41,1 ms, hors plan 24,7 % contre 11,8 %). Gardé
+  l'original. Leçon : sur ce banc, **toujours** un A/B alterné à 5 essais.
 - **Piste non faite** : remplir le rafraîchissement manquant *après*
   l'image réelle (extrapolation t ≈ 1,2) → image réelle ~7 ms plus tôt
   qu'avec le remplissage, mais une extrapolation à t = 1,25 vaut une
