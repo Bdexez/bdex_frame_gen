@@ -1606,6 +1606,9 @@ RTX 3060 Ti, pilote 615.
   −4 dB). `flow_iterations` 3 neutre, `smoothness` 0,008 −0,23.
   Seuils de `interp_splat` (acceptation 0,9 → 0,75, déclenchement 0,02 →
   0,01) : ±0,004 dB. La synthèse est réglée au plafond de ce banc.
+  Candidat temporel dans la synthèse (flux de la paire précédente essayé
+  comme trajectoire là où celle-ci concorde mal, gardé à 0,8× l'erreur) :
+  Cyberpunk −0,31 / −0,25 dB, corpus `scroll` −1,1 — il concorde par hasard.
 - **Piste non faite** : remplir le rafraîchissement manquant *après*
   l'image réelle (extrapolation t ≈ 1,2) → image réelle ~7 ms plus tôt
   qu'avec le remplissage, mais une extrapolation à t = 1,25 vaut une
