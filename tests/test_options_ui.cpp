@@ -26,7 +26,7 @@ TEST(options_ui_parses_and_fills_from_the_registry) {
     const UiOption& sub = s[0].options[0];
     CHECK(sub.kind == "switch" && sub.def == "0" && sub.gui && sub.launcher);   // default from the registry
     const UiOption& sm = s[0].options[1];
-    CHECK(sm.def == "0.004" && sm.hi == 0.03 && sm.digits == 3 && sm.gui && !sm.launcher);
+    CHECK(sm.def == "0.003" && sm.hi == 0.03 && sm.digits == 3 && sm.gui && !sm.launcher);
     CHECK(s[0].options[2].choices.size() == 2 && s[0].options[2].def == "none");
     const std::string json = optionsUiJson(s);
     CHECK(json.find("\"key\": \"smoothness\"") != std::string::npos && json.find("\"Débogage\"") != std::string::npos);
