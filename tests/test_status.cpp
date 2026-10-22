@@ -30,6 +30,11 @@ TEST(status_format_lists_every_entry) {
     CHECK(s.find("latency_ms=-1.0\n") != std::string::npos);
     CHECK(s.find("passes=hud_mask,subpixel_lk\n") != std::string::npos);
     CHECK(s.find("online_tune=trying pixel_vectors=1 (2 of 5 decided)\n") != std::string::npos);
+    CHECK(s.find("shown_fps=") == std::string::npos);  // (unknown: not written)
+    m[2].shownFps = 143.4;
+    m[2].heldPerS = 4.2;
+    const std::string c = statusFormat("game", 42, 1000, m);
+    CHECK(c.find("shown_fps=143.4\nheld_per_s=4.2\n") != std::string::npos);
 }
 
 TEST(status_key_accepts_pointers_and_integers) {

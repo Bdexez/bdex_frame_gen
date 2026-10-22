@@ -30,6 +30,11 @@ struct StatusEntry {
     std::string capPoint;    // where fps_limit holds the game: "input" (Reflex / Anti-Lag), "present"
     std::string engine;      // the application's engine name (VkApplicationInfo): DXVK, vkd3d...
     double latencyMs = -1.0; // present-to-screen, -1 unknown
+    // From the present feedback, over the last status period: frames that
+    // reached the screen per second, and how many of them stayed a refresh
+    // more (a display interval of 1.5 refreshes or more) — the cadence the
+    // player sees (refresh_fill, virtual_grid). -1 unknown.
+    double shownFps = -1.0, heldPerS = -1.0;
     int budgetLevel = 0;     // gpu_budget quality level
     double uncertainPct = -1.0;  // flow_confidence: share of the flow not trusted, -1 not measured
     uint32_t width = 0, height = 0;

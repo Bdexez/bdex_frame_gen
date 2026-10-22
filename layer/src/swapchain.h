@@ -302,6 +302,10 @@ private:
     void waitDisplayed(uint64_t id, double timeoutMs);
     uint64_t fbReplaced_ = 0;           // fbMutex_: frames replaced before being displayed (mailbox)
     uint64_t fbClose_ = 0;              // fbMutex_: virtual_grid — displayed within a third of a period of the previous one
+    uint64_t fbHeld_ = 0;               // fbMutex_: displayed 1.5 refreshes or more after the previous one (a frame held)
+    std::atomic<double> fbPeriodHintMs_{0.0};  // the refresh period the held count uses (present thread, displayHz)
+    uint64_t statusShownSeen_ = 0, statusHeldSeen_ = 0;  // present thread: counts at the last status rate
+    double statusRateAtMs_ = 0.0;
     uint64_t statsReplaced_ = 0;
     void waitWorkerSubmitted(std::unique_lock<std::mutex>& lock);
     void waitWorkerIdle(std::unique_lock<std::mutex>& lock);

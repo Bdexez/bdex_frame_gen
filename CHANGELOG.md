@@ -37,6 +37,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   dB, flicker −0.04 to −0.51, fewer grossly wrong pixels on every one;
   constant-speed scenes within −0.02 dB; +0.1 ms a game frame at 1440p x4.
 - `latency_log` gains a 4th column: the refresh each frame was planned for.
+- **The panel shows the cadence on screen**: frames shown per second and
+  those held a refresh more (status `shown_fps`, `held_per_s`, from the
+  present feedback) — whether every refresh gets a new frame, at a glance in
+  game (also in `--report` and the text panel).
 - `smoothness` 0.003 (was 0.004): recorded games up to +0.08 dB (Cyberpunk
   +0.08 / +0.06), less flicker; 0.002 gained more (+0.17 on Cyberpunk) but
   lost 1.5 dB on the corpus's near-periodic scroll.

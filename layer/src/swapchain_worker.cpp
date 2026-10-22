@@ -510,6 +510,9 @@ void VirtualSwapchain::feedbackLoop() {
                     // display times too noisy for the 0.5 ms test above
                     // (an X11 surface on a Wayland compositor).
                     if (vgPeriodMs_ > 0.0 && fbLastMs_ > 0.0 && now - fbLastMs_ < 0.35 * vgPeriodMs_) ++fbClose_;
+                    // (status held_per_s: a frame on screen a refresh more)
+                    const double hint = fbPeriodHintMs_.load(std::memory_order_relaxed);
+                    if (hint > 0.0 && fbLastMs_ > 0.0 && now - fbLastMs_ >= 1.5 * hint && now - fbLastMs_ < 200.0) ++fbHeld_;
                     ++fbDisplayed_;
                     displayClock_.add(now);
                     fbLastMs_ = now;
