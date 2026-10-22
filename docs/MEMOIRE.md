@@ -1604,6 +1604,8 @@ RTX 3060 Ti, pilote 615.
   bit) ; `refine_bias` (0,5 ; 0,25 et 0,375 : jeux réels un peu mieux,
   arêtes des scènes de synthèse −0,1 à −0,3 ; 1,0 : corpus `occlude`
   −4 dB). `flow_iterations` 3 neutre, `smoothness` 0,008 −0,23.
+  Seuils de `interp_splat` (acceptation 0,9 → 0,75, déclenchement 0,02 →
+  0,01) : ±0,004 dB. La synthèse est réglée au plafond de ce banc.
 - **Piste non faite** : remplir le rafraîchissement manquant *après*
   l'image réelle (extrapolation t ≈ 1,2) → image réelle ~7 ms plus tôt
   qu'avec le remplissage, mais une extrapolation à t = 1,25 vaut une
