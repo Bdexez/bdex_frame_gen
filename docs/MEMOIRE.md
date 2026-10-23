@@ -3630,3 +3630,11 @@ x86 `c1db8285b8f40542…`, identiques aux builds Release. Anciennes copies
 dans `/tmp/fg-reuse-installed-before`. Relancer le jeu et le panneau pour
 charger cette version. Le retour ressenti en jeu demandé précédemment
 reste à confirmer ; aucun push effectué.
+
+Dernier A/B, sans nos compilations ni tests concurrents : démo légère
+1440p quality, 60 i/s, 10 s par cas. ×4 : 240 sorties/s et zéro saut de
+mouvement des deux côtés ; ×8 : ~479,5 sorties/s et zéro saut des deux
+côtés. Aucun rattrapage ; seuil 2/s passé dans les quatre essais. Retard
+de la réelle : ×4 15,5 → 16,0 ms ; ×8 17,1 → 17,15 ms. Cela confirme le
+coût réduit sans dégradation de cadence dans ce couple isolé, sans annuler
+les limites des autres essais. Logs `/tmp/fg-reuse-quiet-{before,after}`.
