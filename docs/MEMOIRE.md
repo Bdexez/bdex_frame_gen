@@ -1580,6 +1580,20 @@ RTX 3060 Ti, pilote 615.
   correspondance tombe hors de l'image ; le matcher compare au pixel de bord
   répété) — la correction irait dans le matcher (SAD sur la partie dans
   l'image), pas dans la synthèse.
+- **Modèle global de caméra** (`camera_model`, 15/10, essai) : mouvement du
+  décor ajusté sur tout le flux fin (quadratique 5+5 coefficients, approx.
+  de l'homographie d'une rotation ; moindres carrés repondérés Cauchy,
+  3 passes ; texels immobiles exclus), donné aux texels où il explique la
+  fenêtre 8×8 aussi bien (tolérance de SAD). Sans condition : arêtes −0,4 à
+  −0,9 dB (au contour d'un objet le vecteur de la caméra a souvent un SAD
+  brut plus bas que celui retenu par le matcher, qui pénalise l'écart à la
+  prédiction — et l'objet perd son vecteur parmi les candidats de la
+  synthèse) ; seulement si ≥ 6 voisins sur 8 suivent déjà le modèle :
+  −0,02 dB en moyenne, PRAGMATA −0,07. Le matcher suit déjà la caméra ; où
+  il s'en écarte, c'est surtout un objet. Abandonné.
+- **`pixel_vectors` sur 3×3 texels** (au lieu des 4 autour, 15/10, pensé
+  pour le flux à demi-résolution du 1440p) : arêtes −0,4 à −0,9 dB partout
+  — la leçon des candidats jugés sur la concordance des extrémités tient.
 - **`parallax_search`** (15/10, opt-in, passe `passes/parallax_search.cpp`,
   `flow_parallax.comp`, crochet `fineFlow` avant `subpixel_lk`) : nouvelle
   scène `make_game.py fence` (rambarde : poteaux de 3–8 px tous les
