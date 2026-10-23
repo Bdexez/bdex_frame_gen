@@ -133,6 +133,8 @@ python3 tools/framerate_bench.py --output /tmp/fg-rates \
   --fps 23.976 47 59.94 90 200 variable uncapped --multipliers 2 4 8 --check
 python3 tools/framerate_bench.py --output /tmp/fg-heavy \
   --fps 30 60 90 variable uncapped --preset quality --size 2560x1440 --check
+python3 tools/framerate_bench.py --output /tmp/fg-60x4 \
+  --fps 60 --preset quality --size 2560x1440 --seconds 8 --check --max-motion-jumps 2
 ```
 
 `variable` est un rejeu d'images à horloge enregistrée, avec changements de
@@ -145,6 +147,12 @@ apparaissent. Le banc nettoie le groupe de processus isolé si gamescope
 reste bloqué après la fin de la démo. Les fichiers `source.csv` exposent toute surcharge
 du rejeu. Les mesures d'affichage de gamescope sous charge GPU ne prouvent
 pas la fluidité sur l'écran physique.
+La section `cadence` ajoute le rapport de `cadence_report.py` : les sauts de
+temps du contenu, les tenues et les présentations dans le même
+rafraîchissement. `--max-motion-jumps N` échoue au-delà de N sauts/s ; si les
+temps de contenu X ne sont pas disponibles, le contrôle échoue également.
+Choisir le seuil pour un scénario contrôlé, en tenant compte de la charge
+concurrente du GPU et du compositeur.
 Quand `nvidia-smi` est disponible, `gpu_before` et `gpu_after` conservent la
 charge, la mémoire et la fréquence GPU autour de chaque cas : vérifier la
 charge concurrente avant de comparer deux débits.

@@ -29,6 +29,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   constant, recorded variable and genuinely uncapped sources (`--uncapped`
   in the demo), retained logs and optional output-count checks. See
   [`docs/framerate.md`](docs/framerate.md) for the method and limitations.
+- The benchmark also records display-clock motion jumps and can reject
+  them with `--max-motion-jumps N`. A trial that removed pacing above Hz
+  kept x4 and cut latency but introduced 25-35 motion jumps/s; it was
+  rejected. The new check detects that regression even with correct FPS.
 
 ### A multiplier past the refresh rate no longer falls back to real frames only (2026-10-21)
 

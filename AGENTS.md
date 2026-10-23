@@ -406,6 +406,12 @@ Tests : matrice de cadences, source couplée au worker sans limite (pas
 seulement une source à cadence imposée), shader `frame_state` ; banc isolé
 `tools/framerate_bench.py --check` (démo `--uncapped`, sources variables,
 logs conservés). Les prédites devenues obsolètes restent annulables.
+**Ne pas retirer le pacing parce que la source dépasse les Hz** (23/10,
+essai écarté) : les intermédiaires rééchantillonnent aussi une source de
+~180 i/s sur 144 Hz. Les présenter en rafale gagne ~6 ms de latence mais
+introduit 25–35 sauts de mouvement/s, sans gain de débit significatif.
+Le banc garde maintenant le rapport `cadence` et propose
+`--max-motion-jumps N` : vérifier le mouvement, pas seulement le ratio ×N.
 **`tight_hold`** (21/10, défaut 1) : ×m fixe sur grille, quand
 I < (m+1,25)·P, images générées à un rafraîchissement d'écart, la tenue à la
 réelle (−2,8 ms à ×4/30/144). **Marge de prêt X11** (`Grid::readyMarginMs`,
