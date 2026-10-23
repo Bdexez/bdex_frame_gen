@@ -3638,3 +3638,10 @@ côtés. Aucun rattrapage ; seuil 2/s passé dans les quatre essais. Retard
 de la réelle : ×4 15,5 → 16,0 ms ; ×8 17,1 → 17,15 ms. Cela confirme le
 coût réduit sans dégradation de cadence dans ce couple isolé, sans annuler
 les limites des autres essais. Logs `/tmp/fg-reuse-quiet-{before,after}`.
+
+### 23/10 — autorisation de publication
+
+L'utilisateur demande de pousser `main` vers `origin`, y compris la série
+de correctifs de cadence `889ce3c` à `f03e273`. Les validations et limites
+sont détaillées ci-dessus ; aucun changement moteur supplémentaire dans
+cette étape. La version reste 0.5.6, sans nouveau tag de release.
