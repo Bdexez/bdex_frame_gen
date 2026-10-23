@@ -9,10 +9,13 @@
 #include "framegen_internal.h"
 #include "shaders.h"
 
+#include <algorithm>
+#include <cmath>
+
 namespace bdex {
 namespace {
 
-struct FdPC { int32_t size[2]; uint32_t encoding; int32_t mode; float strength; float ratio; float guard; };
+struct FdPC { int32_t size[2]; uint32_t encoding; int32_t mode; float strength; float ratio; float guard; int32_t blur; };
 
 class FalseDetailPass : public FgPass {
 public:
@@ -34,6 +37,10 @@ public:
         cellsMax_ = ctx.createImage(VK_FORMAT_R32_SFLOAT, c, VK_IMAGE_USAGE_STORAGE_BIT);
         tiles_ = ctx.device().createBuffer(4 * VkDeviceSize(fg::divUp(d.width, 16)) * fg::divUp(d.height, 16),
                                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
+        // The average's radius follows the flow's block size on screen: 2 at
+        // the display's resolution, 4 at half (1440p quality: 1440p
+        // recordings +0.20 / +0.13 dB instead of +0.16 / +0.10).
+        blur_ = std::clamp(int(std::lround(2.f * ctx.flowToRender() * float(d.width) / float(ctx.renderExtent().width))), 2, 4);
         n_ = ctx.sourceCount();
         for (uint32_t o = 0; o < ctx.outputs(); ++o)
             for (uint32_t prev = 0; prev < n_; ++prev)
@@ -83,7 +90,7 @@ public:
         const VkExtent2D d = ctx.displayExtent();
         const VkExtent2D c{fg::divUp(d.width, kCell), fg::divUp(d.height, kCell)};
         VkDescriptorSet set = sets_[(size_t(output) * n_ + p.prev) * n_ + p.cur];
-        FdPC pc{{(int32_t)d.width, (int32_t)d.height}, ctx.outputEncoding().encoding, 0, p.strength, 1.5f, kGuard};
+        FdPC pc{{(int32_t)d.width, (int32_t)d.height}, ctx.outputEncoding().encoding, 0, p.strength, 1.5f, kGuard, blur_};
         vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe_.pipeline);
         vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe_.layout, 0, 1, &set, 0, nullptr);
         // The inputs' detail map: once a frame (every output of a frame has
@@ -115,6 +122,7 @@ private:
     uint64_t frame_ = 0, cellsFrame_ = ~0ull;
     uint32_t cellsPrev_ = ~0u, cellsCur_ = ~0u;
     uint32_t n_ = 0;
+    int32_t blur_ = 2;
     std::vector<VkDescriptorSet> sets_;  // [(output * sources + prev) * sources + cur]
     std::vector<Pending> pending_;
     uint32_t next_ = ~0u;
