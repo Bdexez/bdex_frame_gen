@@ -53,6 +53,9 @@
 // position i (1..multiplier-1), plus manifest.txt with one line per generated
 // frame: "<generated file> <ground-truth file> <t> <previous input> <current input>".
 // --verbose prints the engine's per-frame state (repeat flag, t of each slot).
+// --no-output-reuse forces full synthesis even at shared display moments,
+// for byte-for-byte verification of the engine's output-copy optimization.
+// --raw-dumps also writes packed GPU pixels (.ppm.raw), without HDR/8-bit conversion.
 // --score-real lists the real frames in the manifest too, as the engine
 // outputs them (upscaled with --render-scale): scores the upscaler.
 // --dump-flow DIR writes, per input pair k, DIR/flow_<k>.bin: the finest
@@ -234,7 +237,7 @@ int main(int argc, char** argv) {
     bool verbose = false, steadyContent = false, scoreReal = false;
     int benchReps = 1;
     std::string flowDumpDir;
-    bool hudCounter = false, refreshKnown = false;
+    bool hudCounter = false, refreshKnown = false, reuseEqualOutputs = true, rawDumps = false;
     double refreshHz = 0.0;
     std::string fmtName = "rgba8", csName = "srgb";
     float renderScale = 1.f;
@@ -262,6 +265,8 @@ int main(int argc, char** argv) {
         else if (a == "--hud-counter") hudCounter = true;
         else if (a == "--refresh" && i + 1 < argc) refreshHz = atof(argv[++i]);
         else if (a == "--refresh-known") refreshKnown = true;
+        else if (a == "--no-output-reuse") reuseEqualOutputs = false;
+        else if (a == "--raw-dumps") rawDumps = true;
         else if (a == "--limit-shared" && i + 1 < argc) limitShared = uint32_t(atoi(argv[++i])) * 1024u;
         else if (a == "--limit-storage-images" && i + 1 < argc) limitStorage = uint32_t(atoi(argv[++i]));
         else { fprintf(stderr, "unknown argument %s\n", a.c_str()); return 2; }
@@ -469,6 +474,7 @@ int main(int argc, char** argv) {
         uint32_t parity = 0;
         double intervalMs = 0.0;  // the layer's smoothed present interval
         pacing::IntervalFilter intervalFilter;
+        uint64_t reusedOutputs = 0, generatedOutputs = 0;
         Image img;
         for (size_t k = 0; k < sched.size(); ++k) {
             const size_t fi = sched[k].content;
@@ -494,6 +500,7 @@ int main(int argc, char** argv) {
             FrameGen::FrameTiming timing;
             timing.multiplier = generate ? mult : 1;
             timing.reset = !generate;
+            timing.reuseEqualOutputs = reuseEqualOutputs;
             if (generate) {
                 timing.sinceLastMs = (sched[k].time - sched[k - 1].time) * msPerFrame;
                 intervalMs = intervalFilter.update(intervalMs > 0.0 ? intervalMs : timing.sinceLastMs,
@@ -569,6 +576,10 @@ int main(int argc, char** argv) {
                 fg.recordReleaseSources(cmd, prev, cur);
             });
             fg.profileCollect(0);
+            if (generate) {
+                reusedOutputs += fg.reusedOutputCount();
+                generatedOutputs += uint64_t(mult - 1);
+            }
             if (generate && !flowDumpDir.empty()) {
                 FrameGen::FlowDump d;
                 if (fg.readFlowDump(d)) {
@@ -617,6 +628,8 @@ int main(int argc, char** argv) {
                         fprintf(stderr, "bdex_offline: cannot write %s\n", name);
                         status = 1;
                     }
+                    if (rawDumps && !fg.writeRawDump((outDir / (std::string(name) + ".raw")).string(), uint32_t(i - 1)))
+                        status = 1;
                     manifest << name << ' ' << fs::absolute(frames[gt]).string() << ' '
                              << order.t(i - 1) << ' ' << prevPath << ' ' << curPath << '\n';
                 }
@@ -644,6 +657,10 @@ int main(int argc, char** argv) {
             prev = cur;
             parity ^= 1;
         }
+        if (verbose)
+            fprintf(stderr, "bdex_offline: reused %llu of %llu generated outputs (copy supported %d)\n",
+                    static_cast<unsigned long long>(reusedOutputs), static_cast<unsigned long long>(generatedOutputs),
+                    fg.outputReuseSupported() ? 1 : 0);
         if (dev.config.profile)
             fprintf(stderr, "bdex_offline: gpu ms per input%s%s\n", fg.profileReport().c_str() + 9,
                     benchReps > 1 ? " (flow: all --bench repetitions)" : "");

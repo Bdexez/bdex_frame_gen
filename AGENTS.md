@@ -412,6 +412,15 @@ essai écarté) : les intermédiaires rééchantillonnent aussi une source de
 introduit 25–35 sauts de mouvement/s, sans gain de débit significatif.
 Le banc garde maintenant le rapport `cadence` et propose
 `--max-motion-jumps N` : vérifier le mouvement, pas seulement le ratio ×N.
+**Sorties au même instant GPU** (23/10) : `FrameGen` copie une sortie
+finie quand `frame_state` reçoit exactement le même `displayMs`, les mêmes
+sources et le même mode (interpolation ou prédiction). Les images restent
+distinctes et toutes les présentations sont conservées. Aucun partage sans
+horloge GPU d'affichage ; repli si le format n'accepte pas les copies.
+`FgPass::canReuseOutput` doit rendre faux si une passe dépend du `t` nominal
+ou a un effet par sortie indispensable (cas de `learned_correction` actif).
+Test `output_reuse` : comparaison des pixels GPU bruts, y compris FP16/HDR,
+avec `bdex_offline --no-output-reuse --raw-dumps` comme référence.
 **`tight_hold`** (21/10, défaut 1) : ×m fixe sur grille, quand
 I < (m+1,25)·P, images générées à un rafraîchissement d'écart, la tenue à la
 réelle (−2,8 ms à ×4/30/144). **Marge de prêt X11** (`Grid::readyMarginMs`,

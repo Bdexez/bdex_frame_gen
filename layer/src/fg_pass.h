@@ -166,6 +166,10 @@ public:
     virtual const char* name() const = 0;
     // Doing work with these settings (a pass kept for a live toggle may idle).
     virtual bool active(const Config&) const { return true; }
+    // Equal GPU moments with the same sources and mode have equal finished
+    // pixels: the engine may copy an earlier output and omit per-output
+    // hooks. Return false if nominal t or per-output side effects matter.
+    virtual bool canReuseOutput(const Config&) const { return true; }
 
     // After the engine's own resources exist.
     virtual void create(FgContext&) {}

@@ -3560,3 +3560,73 @@ mouvement mesurés 0 / 0 / 0,17 par seconde, réelle retardée de
 14,9 / 14,7 / 15,1 ms. Les deux derniers passent le nouveau contrôle
 `--max-motion-jumps 2` (`/tmp/fg-60x4-final-2`, `...-3`). Le premier est le
 cas 60 de `fg-staging-quality-final`, analysé avec le même rapport.
+
+### 23/10 (suite) — réutiliser les synthèses au même instant GPU
+
+Quand plusieurs sorties reçoivent exactement le même `displayMs` dans
+`frame_state`, avec les mêmes sources et le même mode, leurs pixels finis
+sont identiques. `FrameGen` copie maintenant la première vers les autres
+images de sortie, au lieu de répéter synthèse, CAS et filtres. Les images
+restent distinctes pour le worker ; toutes les présentations de ×N sont
+conservées. Aucun nouveau réglage utilisateur ni nouvelle image allouée.
+Les barrières des copies de présentation/transit couvrent aussi ces écritures
+de transfert. Le cache est invalidé par nouvelle source, analyse, flux,
+état GPU ou modification du HUD.
+
+Repli sur le calcul complet sans grille GPU, à temps différents, entre
+interpolation/prédiction, ou si le format ne permet pas la copie.
+`FgPass::canReuseOutput` exprime le contrat des passes : faux si elles
+utilisent le temps nominal ou ont un effet indispensable par sortie.
+`learned_correction` actif est exclu : son filtre dépend encore du `t`
+nominal, même quand la synthèse lit celui du GPU.
+
+Test `output_reuse` ajouté à CTest (environ 27 s sur lavapipe, 34 s avec
+validation). 24 scénarios : ×4/×8, trois modes, hybride à une prédiction,
+formats 8/10/16 bits, sRGB/scRGB/HDR10, upscale/CAS/temporel, filtres,
+répétitions, gigue, réglage en ligne, limites minimales et cas de repli.
+**800 images comparées octet par octet au calcul complet**, sur NVIDIA
+et lavapipe séparément ; 439 synthèses évitées dans ces cas. Les pixels GPU
+bruts incluent les bits FP16/HDR qu'un export PPM SDR masquerait.
+`bdex_offline --raw-dumps` les exporte ; `--no-output-reuse` force la
+référence complète. Sans grille et avec phases distinctes : zéro copie.
+
+A/B en ligne RTX 3060 Ti, 2560×1440 quality, Xwayland/gamescope headless
+144 Hz, source 60 i/s avec douze dessins de la scène par image réelle
+(`--gpu-load 12`), essais de 10 s :
+
+- ×4 : synthèse médiane **3,97 → 2,97 ms**, flux 0,61 → 0,69 ms ;
+  240 sorties/s, aucun rattrapage ; sauts de mouvement 0,12 → 0/s.
+- ×8 : synthèse **7,10 → 2,99 ms**, flux 0,65 → 0,65 ms ;
+  ~480 sorties/s, aucun rattrapage ; sauts de mouvement 0 → 0/s.
+
+Les fréquences GPU changent automatiquement avec la charge. Sur la démo
+légère à 60 i/s, elles baissent après optimisation : le coût GPU de synthèse
+baisse, mais le retard de la réelle peut augmenter d'environ 1 ms. **Aucun
+gain global de latence ou de ressenti revendiqué**. Sans limite, pas de
+gain notable de débit (×4 ~182 i/s dans les deux versions) : le chemin sans
+plan GPU a des phases distinctes, donc aucune copie. Les essais ×8 sans
+limite montrent encore des sauts de mouvement, avant comme après
+(premier A/B 2,16 → 4/s) ; un essai léger ×8 corrigé atteint aussi 5,1/s
+contre 0/s sur sa référence. Le couple chargé ci-dessus passe le seuil
+2/s des deux côtés ; ces résultats ne prouvent pas une fluidité universelle.
+Logs : `/tmp/fg-reuse-{before,after}-{1,2}` et
+`/tmp/fg-reuse-load-{before,after}`.
+
+Vérifications : 115 tests unitaires natifs ; Docker WERROR, unit,
+frame_state, output_reuse, intégration, validation ×8, stress swapchain,
+acquire tous passés. Le test brut rejette aussi les messages VUID/SYNC
+lorsque la validation est activée. Sur GPU physique, ×8 avec upscale/CAS,
+HUD 6 et filtres, files unique/séparées/compute d'une autre famille :
+1 891 / 2 254 / 2 270 copies exercées, démos terminées correctement,
+**zéro message de validation**. Gamescope plante encore à sa propre
+fermeture, après les démos. MinGW x64 64 fichiers, x86 57, includes
+capture 41 et liaison launcher passent. Logs : `/tmp/fg-final-ci/reuse-*`,
+`/tmp/fg-reuse-copy-validation.log`, `/tmp/fg-reuse-vulkan`,
+`/tmp/fg-reuse-mingw.log`.
+
+Installation locale des bibliothèques 64/32 bits par renommage ; config
+inchangée, copies Flatpak/Snap vérifiées. SHA256 x64 `905471dafa7f3177…`,
+x86 `c1db8285b8f40542…`, identiques aux builds Release. Anciennes copies
+dans `/tmp/fg-reuse-installed-before`. Relancer le jeu et le panneau pour
+charger cette version. Le retour ressenti en jeu demandé précédemment
+reste à confirmer ; aucun push effectué.

@@ -72,6 +72,10 @@ if(Python3_Interpreter_FOUND)
       # Every option gives the same frames twice (races, out-of-bounds reads).
       add_test(NAME determinism COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_determinism.py" "${CMAKE_BINARY_DIR}")
       set_tests_properties(determinism PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)
+      # Equal display moments can share finished pixels, including packed
+      # HDR outputs; full synthesis is the byte-for-byte reference.
+      add_test(NAME output_reuse COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_output_reuse.py" "${CMAKE_BINARY_DIR}")
+      set_tests_properties(output_reuse PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
     endif()
   endif()
   if(TARGET bdex_offline)
