@@ -1568,6 +1568,17 @@ RTX 3060 Ti, pilote 615.
   / −0,05 et scintillement en hausse : pas par défaut (le sous-pixel ne paie
   pas avec le flux à demi-résolution) ; flux pleine résolution en 1440p
   (`flow_scale=1`) −0,05 dB, scintillement +0,3.
+- **Bords de l'écran pendant un virage** (14/10) : sur les scènes ×4 de
+  virage, 37 % de l'erreur est dans les 2 × 6 % de colonnes du bord (×4
+  l'erreur du centre) ; sur les enregistrements Cyberpunk, rien de plus
+  qu'au centre (×0,7–1,0), PRAGMATA ×1,3–1,5. Essai dans la synthèse :
+  trajectoire dont l'autre extrémité sort de l'image gardée seule (pas de
+  mélange ni de repli), celle dont la source sort écartée : −0,1 à −0,4 dB
+  (bord d'entrée mieux, bord de sortie bien pire), chaque moitié seule
+  négative aussi. Cause : le flux des blocs du bord est faux (leur
+  correspondance tombe hors de l'image ; le matcher compare au pixel de bord
+  répété) — la correction irait dans le matcher (SAD sur la partie dans
+  l'image), pas dans la synthèse.
 - **`global_motion` anisotrope** (14/10, rayon x = largeur/3 au lieu de
   min(largeur, hauteur)/3, plafond 24 ou 32 ; essayé pour le pire virage de
   l'enregistrement 1440p PRAGMATA, ~700 px par paire) : neutre (−0,005 à
