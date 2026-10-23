@@ -148,6 +148,7 @@ layout(push_constant) uniform PC {
     int chromaHistory;      // previous pair's flow in prevFlow for the chroma check: 0 none, 1 forward, 2 backward pass
     float zeroBiasCap;      // the zero bias stops growing at this cost (0 = uncapped, the historical path)
     int global;             // coarsest level: global_motion's vector as a second search centre (1 forward, 2 backward; 0 off)
+    int borderPredict;      // a block whose predicted match lies mostly off-screen keeps the prediction (0 off)
 } pc;
 
 #define CHROMA_GATE 0.01   // luma SAD (mean per pixel) within which candidates are re-ranked on chroma
@@ -243,6 +244,27 @@ void main() {
         refBlk[i] = loadRef(origin - 1 + o);
     }
     barrier();
+
+    // border_predict: content entering or leaving the picture (a camera
+    // move) has its match off-screen, where the clamped target repeats the
+    // edge pixels — any candidate found there is wrong. Where the predicted
+    // match lies mostly off-screen, the prediction (the coarser level's
+    // motion; the camera's — global or temporal — at the coarsest) is the
+    // best estimate there is, and the search is skipped. (Requiring the
+    // prediction to agree with its neighbours spared the corpus's menu
+    // popping up over noise, -0.33 -> -0.12 dB, but lost a third of the
+    // camera turns' gain: not done.)
+    if (pc.borderPredict != 0) {  // uniform
+        ivec2 t0 = origin + sBase;
+        ivec2 lo = max(t0, ivec2(0)), hi = min(t0 + BS, pc.size);
+        if (max(hi.x - lo.x, 0) * max(hi.y - lo.y, 0) * 2 < NT) {
+            if (tid == 0) {
+                imageStore(flowOut, blk, vec4(vec2(sBase), 0.0, 0.0));
+                imageStore(costOut, blk, vec4(0.0));
+            }
+            return;
+        }
+    }
 
     // Static block: predicted at zero and identical in both frames, 1-pixel
     // border included (which covers the gradient and census terms). The

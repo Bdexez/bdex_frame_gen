@@ -214,6 +214,14 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
     // scenes +0.03 to +0.21; nothing lower anywhere; ~0.7 ms a generated
     // frame at 1440p).
     if (strong && !(autoOptionsSet & kAutoFalseDetail)) falseDetail = 1.f;
+    // Blocks whose match is off-screen (content entering or leaving the
+    // picture in a camera move) keep the predicted motion instead of a
+    // match against the clamped edge (15/10: camera turns +0.15 to +0.19 dB
+    // at x4, 720p and 1440p; PRAGMATA flicker -0.25 / -0.32, grossly wrong
+    // pixels down; Cyberpunk and Oblivion within 0.02; worst -0.06 on an edge
+    // scene; the corpus's menu popping up over noise -0.33, HUD -0.15; free —
+    // the search is skipped).
+    if (strong && !(autoOptionsSet & kAutoBorderPredict)) borderPredict = true;
     // No bonus for the zero-motion candidate (03/10, on top of everything
     // above, 960x540 corpus + demo): the free bonus won on soft content in
     // fast motion — a ghostly blend instead of the moving picture. The HUD
@@ -308,6 +316,7 @@ const std::vector<OptionDef>& registry() {
     B("crash_log", nullptr, &Config::crashLog),
     B("flow_confidence", nullptr, &Config::flowConfidence),
     F("false_detail", nullptr, &Config::falseDetail, 0.f, 1.f, kLive),
+    B("border_predict", nullptr, &Config::borderPredict, kLive),
     F("learned_correction", nullptr, &Config::learnedCorrection, 0.f, 1.f, kLive),
     F("luma_match", nullptr, &Config::lumaMatch, 0.f, 0.5f, kLive),
     F("learned_flow", nullptr, &Config::learnedFlow, 0.f, 1.f, kLive),
@@ -508,6 +517,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "static_soft") autoOptionsSet |= kAutoStaticSoft;
     if (key == "interp_accel") autoOptionsSet |= kAutoInterpAccel;
     if (key == "false_detail") autoOptionsSet |= kAutoFalseDetail;
+    if (key == "border_predict") autoOptionsSet |= kAutoBorderPredict;
     if (const OptionDef* d = findOption(key)) {
         switch (d->kind) {
         case Kind::Bool:  return parseBool(value, this->*(d->b));
@@ -873,6 +883,7 @@ std::string Config::describe() const {
     if (synthBicubic) o << " synth_bicubic=1";
     if (hudMask > 0) o << " hud_mask=" << hudMask;
     if (falseDetail > 0.f) o << " false_detail=" << falseDetail;
+    if (borderPredict) o << " border_predict=1";
     if (revealFill) o << " reveal_fill=1";
     if (onlineTune) o << " online_tune=1";
     if (upscaleTemporal > 0.f) o << " upscale_temporal=" << upscaleTemporal;

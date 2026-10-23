@@ -354,7 +354,10 @@ croître au-delà de 3 px : panoramique +2,7 dB, balayage +2,4, occlusions
 rapide mais perdait 0,14 dB sur la démo `--speed 2`). Branche uniforme dans
 la variante allégée, l'expression historique dans le `else` : `cap=0` est
 identique bit à bit (vérifié sur NVIDIA ; l'invariant CI le fixe à 0).
-`scene_cut_hist=0.05` (défaut) : la réduction du coût (`reduce_cost.comp`)
+`border_predict` (15/10, auto GPU dédié, `pc.borderPredict`) : un bloc dont
+la correspondance prédite sort à plus de moitié de l'image garde la
+prédiction (bords pendant un virage) ; à 0 le chemin historique est intact
+(l'invariant le fixe à 0). `scene_cut_hist=0.05` (défaut) : la réduction du coût (`reduce_cost.comp`)
 ramène le coût moyen vers `scene_cut_low` tant que l'histogramme de luma
 (`scene_hist.comp`, EMD 1-D sur un niveau grossier) n'a pas bougé — coupures
 ≥ 0,18, grain / mouvement < 0,02 ; placée là pour ne pas toucher la variante

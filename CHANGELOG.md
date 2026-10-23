@@ -37,6 +37,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   dB, flicker −0.04 to −0.51, fewer grossly wrong pixels on every one;
   constant-speed scenes within −0.02 dB; +0.1 ms a game frame at 1440p x4.
 - `latency_log` gains a 4th column: the refresh each frame was planned for.
+- **`border_predict`** (on on a discrete GPU): in a camera move, content
+  entering or leaving the picture has its match off-screen, where the motion
+  search compared against the repeated edge pixels — the edge of the picture
+  smeared. A block whose predicted match lies mostly off-screen now keeps
+  the predicted motion (the camera's) and skips the search. x4 camera turns
+  +0.15 to +0.19 dB at 720p and 1440p; recorded PRAGMATA flicker −0.25 /
+  −0.32; Cyberpunk and Oblivion unchanged; free.
 - **`false_detail`** (on on a discrete GPU): fine detail in a generated
   frame that neither input has within 16 pixels — the edges between
   neighbouring blocks that took different vectors, a mosaic over

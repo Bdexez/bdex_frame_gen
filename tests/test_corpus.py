@@ -36,7 +36,7 @@ CONFIGS = {
 STRONG_GPU_OFF = {f"BDEX_FG_{k}": v for k, v in {
     "PIXEL_VECTORS": "0", "INTERP_SPLAT": "0", "ROT_WEIGHT": "0", "TEMPORAL_PREDICTION": "0", "ZERO_BIAS": "0.002",
     "SCENE_CUT_LOCAL": "0", "EXTRAPOLATE_SPLAT": "0", "REVEAL_FILL": "0", "GLOBAL_MOTION": "0",
-    "HUD_MASK": "0", "STATIC_SOFT": "0", "INTERP_ACCEL": "0", "FALSE_DETAIL": "0"}.items()}
+    "HUD_MASK": "0", "STATIC_SOFT": "0", "INTERP_ACCEL": "0", "FALSE_DETAIL": "0", "BORDER_PREDICT": "0"}.items()}
 
 
 def evaluate(build, seq, mode, variant, work):
