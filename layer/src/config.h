@@ -60,7 +60,7 @@ struct Config {
     float falseDetail = 0.0f;       // generated frames: detail neither input has within 16 px leans to its 5x5 average (false_detail.comp), 0 = off .. 1; packed 8/10-bit SDR or HDR10 without upscaling
     float learnedCorrection = 0.0f; // interpolation: the trained correction network (tools/train_correction.py) over each generated frame, 0 = off .. 1 = as trained; 8-bit formats without upscaling
     bool  crashLog      = true;   // Linux: a crash in the layer writes ~/.cache/bdex-framegen/crash-<game>-<pid>.txt (signal, offsets in the layer, settings); other faults go untouched to the game's handlers
-    bool  skipFast      = true;   // fixed multiplier: no generation while the game already runs at 85 % of the screen's refresh rate or more (back under 75 %): it would add almost no frame to the screen, only GPU work and the interpolation's hold (refresh rate known only)
+    bool  skipFast      = false;  // opt-in: suspend a fixed multiplier near the screen's refresh rate (85 % in, 75 % out); off keeps xN at arbitrary game rates
     bool  pipelineCache = true;   // the passes' compiled shaders kept on disk (~/.cache/bdex-framegen/pipelines-*.bin): faster starts
     bool  threadPriority = true;  // the presentation thread at a higher scheduling priority: real-time round-robin where permitted, else nice -10 from rtkit (as PipeWire's audio threads), else unchanged
     bool  preciseWake   = true;   // the presentation thread drops the kernel's timer slack (50 us by default on Linux): its sleeps until each present's moment end closer to it

@@ -48,6 +48,7 @@ namespace {
 
 struct Options {
     double fps = 30.0;
+    bool uncapped = false;      // run as fast as rendering allows (cadence stress tests)
     long frames = -1;
     int width = 1280, height = 720;
     VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
@@ -886,6 +887,9 @@ void Demo::run() {
             if (opt_.replayTiming)
                 snprintf(title, sizeof(title), "bdex demo - %.1f fps rendered (recorded source timing)",
                          statFrames / std::chrono::duration<double>(now - statT).count());
+            else if (opt_.uncapped)
+                snprintf(title, sizeof(title), "bdex demo - %.1f fps rendered (uncapped)",
+                         statFrames / std::chrono::duration<double>(now - statT).count());
             else
                 snprintf(title, sizeof(title), "bdex demo - %.1f fps rendered (target %.0f)",
                          statFrames / std::chrono::duration<double>(now - statT).count(), opt_.fps);
@@ -894,7 +898,7 @@ void Demo::run() {
             statT = now;
             statFrames = 0;
         }
-        if (!opt_.replayTiming) {
+        if (!opt_.replayTiming && !opt_.uncapped) {
             next += period;
             if (next > clock::now()) std::this_thread::sleep_until(next);
             else next = clock::now();
@@ -951,6 +955,7 @@ Options parseArgs(int argc, char** argv) {
             return argv[++i];
         };
         if (a == "--fps") o.fps = std::max(1.0, atof(value().c_str()));
+        else if (a == "--uncapped") o.uncapped = true;
         else if (a == "--frames") o.frames = atol(value().c_str());
         else if (a == "--deterministic") o.deterministic = true;
         else if (a == "--ignore-resize") o.ignoreResize = true;
@@ -993,7 +998,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--replay-timing") o.replayTiming = true;
         else if (a == "--replay-log") o.replayLog = value();
         else if (a == "-h" || a == "--help") {
-            printf("usage: bdex_demo [--fps N] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]\n"
+            printf("usage: bdex_demo [--fps N | --uncapped] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]\n"
                    "                 [--deterministic] [--ignore-resize] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]\n"
                    "                 [--gpu-load N] [--latency-test [auto]] [--latency-log FILE] [--anti-lag]\n"
                    "                 [--stress resize|recreate|surface|window|fullscreen|minimize:N[,...]] [--stress-until N]\n"

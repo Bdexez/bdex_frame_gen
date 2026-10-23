@@ -110,6 +110,18 @@ TEST(pacing_interval_filter_confirms_rate_changes_and_resets_after_a_pause) {
     CHECK(filter.update(estimate, -1.0) == estimate);
 }
 
+TEST(pacing_interval_filter_counts_short_intervals_in_a_bursty_source) {
+    pacing::IntervalFilter filter;
+    double estimate = 16.6, expected = estimate;
+    for (int i = 0; i < 600; ++i) {
+        const double dt = i % 2 ? 0.1 : 16.5;
+        expected = 0.8 * expected + 0.2 * dt;
+        estimate = filter.update(estimate, dt);
+        CHECK(estimate == expected);
+    }
+    CHECK(estimate < 10.0);  // both halves count, not only the 16.5 ms half
+}
+
 // x2 at 60 fps on 144 Hz, evenly spaced: every frame displayed, generated and
 // real alternating — the base the other cases are measured against.
 TEST(pacing_even_x2_every_frame_displayed) {
@@ -149,6 +161,248 @@ TEST(pacing_multiplier_past_the_refresh_rate_no_backlog) {
         CHECK(realShown == jobs);
         CHECK(shownPerS > 0.97 * std::min(143.912, 4.0 * fps));
     }
+}
+
+// The worker learns a fence's completion time when it waits it. If it was
+// still presenting the previous job, the origin is at least that previous
+// present, not an ideal GPU timestamp in the past. Exercise that feedback
+// loop at arbitrary rates, including a source faster than the screen.
+TEST(pacing_fixed_multiplier_arbitrary_source_rate_no_worker_backlog) {
+    for (double hz : {60.0, 90.0, 120.0, 143.912, 165.0, 240.0}) {
+        const double P = 1000.0 / hz;
+        for (int m = 2; m <= 8; ++m) {
+            for (double fps : {23.976, 30.0, 36.2, 47.0, 59.94, 72.0, 90.0, 119.88, 144.0, 200.0, 300.0}) {
+                const double I = 1000.0 / fps;
+                Screen s(P);
+                const FrameOrder o = orderFor(m, 1.f, 1.f, hz, I);
+                pacing::Grid outputGrid = s.grid();
+                outputGrid.valid = pacing::usesDisplayGrid(I, m, P, 0.0);
+                double lastPlanned = 0.0, base[8] = {}, planned[8] = {};
+                for (int k = 0; k < m; ++k) base[k] = I * k / m;
+                double worstLag = 0.0;
+                for (int f = 1; f <= 300; ++f) {
+                    const double source = f * I;
+                    // No GPU pressure: only the scheduling itself may hold
+                    // the worker back. All chosen outputs must be submitted.
+                    const double origin = std::max(source + 0.2, s.lastPresentMs);
+                    if (outputGrid.valid)
+                        pacing::planLands(source, 0.2, base, m, s.grid(), lastPlanned, planned, I, o.real);
+                    for (int k = 0; k < m; ++k) {
+                        const double target = pacing::presentTargetMs(origin, I, m, o, k, s.lastPresentMs,
+                                                                      s.lastLandMs, outputGrid, planned[k], !outputGrid.valid);
+                        s.present(std::max(origin, target), source - I + I * (k + 1) / m, k == o.real);
+                    }
+                    if (f > 50) worstLag = std::max(worstLag, s.lastPresentMs - source);
+                }
+                if (worstLag >= I + 3.0 * P)
+                    std::printf("backlog: %.3f fps x%d on %.3f Hz: %.3f ms\n", fps, m, hz, worstLag);
+                CHECK(worstLag < I + 3.0 * P);
+                CHECK(s.frames.size() == size_t(300 * m));
+                // When the source fits the screen, the next job must not
+                // overwrite the real frame, even if its generated frames
+                // outnumber the available refreshes.
+                if (I >= P) {
+                    int realShown = 0;
+                    for (const auto& fr : s.frames) realShown += fr.real && fr.displayMs >= 0.0;
+                    CHECK(realShown == 300);
+                }
+            }
+        }
+    }
+}
+
+TEST(pacing_prediction_modes_do_not_reserve_more_refreshes_than_available) {
+    for (double hz : {60.0, 143.912, 240.0}) {
+        const double P = 1000.0 / hz;
+        for (int m : {3, 4, 8}) {
+            for (double sourceRatio : {0.4, 0.5, 0.6, 0.95, 1.0, 1.1, 2.0}) {
+                const double I = P / sourceRatio;
+                for (int mode = 0; mode < 3; ++mode) {
+                    Config c;
+                    c.extrapolate = mode == 0;
+                    c.hybrid = mode != 0;
+                    c.hybridPredict = mode == 2 ? 1 : 0;
+                    const FrameOrder order = FrameOrder::of(c, m);
+                    Screen s(P);
+                    pacing::Grid outputGrid = s.grid();
+                    outputGrid.valid = pacing::sourceFitsGrid(I, P);
+                    double base[8] = {}, planned[8] = {}, lastPlanned = 0.0;
+                    for (int k = 0; k < m; ++k) base[k] = I * order.offset(k);
+                    double worstLag = 0.0;
+                    for (int f = 1; f <= 300; ++f) {
+                        const double source = f * I;
+                        const double origin = std::max(source + 0.2, s.lastPresentMs);
+                        // Extrapolation has no plan; hybrid uses the same
+                        // absolute planning as interpolation in the layer.
+                        if (!c.extrapolate && outputGrid.valid)
+                            pacing::planLands(source, 0.2, base, m, s.grid(), lastPlanned, planned, I, order.real);
+                        for (int k = 0; k < m; ++k) {
+                            // Pure extrapolation presents the real image
+                            // immediately, and cancels a prediction once
+                            // the next real image is ready (runJob).
+                            const double target = c.extrapolate && k == 0 ? origin
+                                : pacing::presentTargetMs(origin, I, m, order, k, s.lastPresentMs,
+                                                          s.lastLandMs, outputGrid, planned[k], !outputGrid.valid);
+                            if (k > order.real && target >= source + I + 0.2) break;
+                            s.present(std::max(origin, target), source, k == order.real);
+                        }
+                        if (f > 50) worstLag = std::max(worstLag, s.lastPresentMs - source);
+                    }
+                    if (worstLag >= I + 3.0 * P)
+                        std::printf("prediction backlog: %.3f Hz, x%d, source/Hz %.2f, mode %d: %.3f ms\n",
+                                    hz, m, sourceRatio, mode, worstLag);
+                    CHECK(worstLag < I + 3.0 * P);
+                }
+            }
+        }
+    }
+}
+
+// Never assume a stable or capped source: ramps, alternating frame times,
+// sustained rate changes and a single slow frame cross the xN/Hz boundary
+// repeatedly. Keep the actual content clock separate from the pacing EMA.
+TEST(pacing_fixed_multiplier_variable_source_keeps_count_and_bounded_latency) {
+    for (double hz : {60.0, 143.912, 240.0}) {
+        const double P = 1000.0 / hz;
+        for (int m = 2; m <= 8; ++m) {
+            Screen s(P);
+            pacing::IntervalFilter filter;
+            double now = 100.0, estimate = 1000.0 / 30, lastPlanned = 0.0;
+            bool tight = false;
+            double worstLag = 0.0;
+            for (int f = 0; f < 1500; ++f) {
+                const double fps = f < 300 ? 24.0 + f * 0.6
+                                 : f < 600 ? (f % 2 ? 45.0 : 115.0)
+                                 : f < 900 ? 23.976
+                                 : f < 1200 ? 144.0 : 300.0;
+                const double dt = f == 650 ? 120.0 : 1000.0 / fps;
+                now += dt;
+                estimate = filter.update(estimate, dt);
+                FrameOrder order = orderFor(m, 1.f, 1.f, hz, estimate);
+                order.hold = pacing::tightHold(P, m, estimate, order.real, tight);
+                tight = order.hold < 1.f;
+                double base[8] = {}, planned[8] = {};
+                for (int k = 0; k < m; ++k) base[k] = estimate * order.offset(k);
+                pacing::Grid outputGrid = s.grid();
+                outputGrid.valid = pacing::usesDisplayGrid(estimate, m, P, 0.0);
+                if (outputGrid.valid)
+                    pacing::planLands(now, 0.2, base, m, s.grid(), lastPlanned, planned, estimate, order.real);
+                else
+                    lastPlanned = 0.0;
+                const double origin = std::max(now + 0.2, s.lastPresentMs);
+                for (int k = 0; k < m; ++k) {
+                    const double target = pacing::presentTargetMs(origin, estimate, m, order, k, s.lastPresentMs,
+                                                                  s.lastLandMs, outputGrid, planned[k], !outputGrid.valid);
+                    s.present(std::max(origin, target), now, k == order.real);
+                }
+                worstLag = std::max(worstLag, s.lastPresentMs - now);
+            }
+            CHECK(s.frames.size() == size_t(1500 * m));
+            CHECK(worstLag < 120.0 + 4.0 * P);
+            CHECK(s.lastPresentMs - now < 1000.0 / 300 + 2.0 * P);
+        }
+    }
+}
+
+TEST(pacing_latency_limiter_at_high_source_rates) {
+    for (double fps : {240.0, 360.0, 1000.0}) {
+        const double I = 1000.0 / fps;
+        pacing::StartLimiter limiter;
+        for (int f = 0; f < 100; ++f) {
+            const double delay = limiter.step(f % 5 ? 0.5 * I : 0.0, I);
+            CHECK(std::isfinite(delay) && delay >= 0.0 && delay <= 0.75 * I);
+            CHECK(limiter.slackMs >= 0.0 && limiter.slackMs <= 0.3 * I);
+        }
+    }
+}
+
+TEST(pacing_sub_refresh_output_does_not_add_a_slot_after_observed_readiness) {
+    const FrameOrder order = orderFor(8, 1.f, 1.f, 144.0, 5.0);
+    const pacing::Grid noGrid;
+    CHECK(pacing::presentTargetMs(10.0, 5.0, 8, order, 0, 9.9, 0.0, noGrid, 0.0, true) == 10.0);
+    CHECK(pacing::presentTargetMs(10.0, 5.0, 8, order, 1, 10.0, 0.0, noGrid, 0.0, true) == 10.625);
+    // Without a known oversupply, keep the historical half-slot guard.
+    CHECK(pacing::presentTargetMs(10.0, 5.0, 8, order, 0, 9.9, 0.0, noGrid) > 10.0);
+}
+
+TEST(pacing_continuous_source_backpressure_keeps_the_fixed_multiplier) {
+    const double I = 1000.0 / 300, P = 1000.0 / 144;
+    CHECK(!pacing::sourceFitsGrid(I, P));
+    // The uncapped producer reaches the worker's throughput; every new job
+    // waits for submissions. Dropping synthesis on those waits oscillated
+    // between x4 and x1 (about x2 overall) despite continuous deadlines.
+    CHECK(!pacing::needsCatchUp(0.8 * I, I, false, false, true));
+    CHECK(!pacing::needsCatchUp(0.8 * I, I, true, false, true));
+    // Automatic modes preserve recovery, including under a Steam display gate.
+    CHECK(pacing::needsCatchUp(0.8 * I, I, false, false, false));
+    CHECK(!pacing::needsCatchUp(0.8 * I, I, false, true, false));
+    CHECK(pacing::needsCatchUp(0.0, I, true, true, false));
+    // Fixed multiplication also keeps synthesis when source < Hz; even a
+    // persistently late display must not silently change the chosen count.
+    CHECK(!pacing::needsCatchUp(0.8 * I, I, false, false, true));
+    CHECK(!pacing::needsCatchUp(0.8 * I, I, true, false, true));
+}
+
+// Model an uncapped producer as well as its worker: the source interval
+// includes the previous present's submission wait. With a refresh plan on
+// every job this could settle at 72/96/144 fps on 144 Hz with an idle GPU.
+// An externally fixed source in the other simulations cannot expose that
+// feedback loop.
+TEST(pacing_uncapped_producer_does_not_lock_to_its_own_refresh_plan) {
+    for (double hz : {60.0, 143.912, 240.0}) {
+        const double P = 1000.0 / hz;
+        for (int m : {3, 4, 8}) {
+            Screen s(P);
+            pacing::IntervalFilter filter;
+            double interval = 16.6, source = 100.0, previousSource = 0.0;
+            pacing::GridPacer gridPacer;
+            double submitted = 0.0, workerEnd = 0.0, readyLag = 1.0, lastPlanned = 0.0;
+            double measuredStart = 0.0;
+            for (int f = 0; f < 600; ++f) {
+                const double prepared = std::max(source, submitted);
+                const double workerWait = prepared - source;
+                interval = filter.update(interval, source - previousSource);
+                previousSource = source;
+                const FrameOrder order = orderFor(m, 1.f, 1.f, hz, interval);
+                pacing::Grid g = s.grid();
+                g.valid = gridPacer.use(interval, m, P, workerWait);
+                double base[8] = {}, planned[8] = {};
+                for (int k = 0; k < m; ++k) base[k] = interval * k / m;
+                if (g.valid)
+                    pacing::planLands(source, workerWait + readyLag, base, m, g, lastPlanned, planned, interval, order.real);
+                else
+                    lastPlanned = 0.0;
+                const double gpuReady = prepared + 0.2;
+                const double origin = std::max(workerEnd, gpuReady);
+                const double lag = origin - prepared;
+                if (g.valid && (gpuReady > workerEnd || lag < readyLag))
+                    readyLag += (lag > readyLag ? 0.5 : 0.05) * (lag - readyLag);
+                for (int k = 0; k < m; ++k) {
+                    const double target = pacing::presentTargetMs(origin, interval, m, order, k, s.lastPresentMs,
+                                                                  s.lastLandMs, g, planned[k], !g.valid);
+                    s.present(std::max(origin, target), source, k == order.real);
+                    if (k == 0) submitted = s.lastPresentMs;  // split synthesis: deferRest
+                }
+                workerEnd = s.lastPresentMs;
+                source = prepared + 0.1;  // game CPU work, without an FPS cap
+                if (f == 499) measuredStart = source;
+            }
+            const double fps = 100000.0 / (source - measuredStart);
+            if (fps <= 1.1 * hz)
+                std::printf("producer locked to its plan: x%d on %.3f Hz, %.3f fps\n", m, hz, fps);
+            CHECK(fps > 1.1 * hz);
+        }
+    }
+    CHECK(pacing::usesDisplayGrid(1000.0 / 30, 4, 1000.0 / 144, 0.0));
+    CHECK(pacing::usesDisplayGrid(1000.0 / 60, 4, 1000.0 / 144, 0.0));
+    CHECK(!pacing::usesDisplayGrid(1000.0 / 60, 4, 1000.0 / 144, 8.0));
+    CHECK(!pacing::usesDisplayGrid(1000.0 / 200, 8, 1000.0 / 144, 0.0));
+    pacing::GridPacer g;
+    CHECK(!g.use(16.6, 4, 6.94, 12.0));
+    for (int i = 0; i < 8; ++i) CHECK(!g.use(16.6, 4, 6.94, 0.0));
+    CHECK(g.use(16.6, 4, 6.94, 0.0));
+    CHECK(!g.use(16.6, 4, 6.94, 12.0));
+    CHECK(g.use(33.3, 4, 6.94, 0.0));  // every output fits: restore immediately
 }
 
 // interp_hold: asked for 0.25 at 60 fps x2 on 144 Hz, the frames would come

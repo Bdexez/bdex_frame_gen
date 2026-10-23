@@ -20,7 +20,10 @@ namespace pacing {
 struct IntervalFilter {
     double previousMs = 0.0;
     double update(double estimateMs, double measuredMs) {
-        if (!(measuredMs > 0.5 && measuredMs < 500.0)) {
+        // An uncapped producer can alternate a very short present with a
+        // long submission wait. Ignoring sub-0.5 ms samples counted only
+        // the long half, overestimated the interval and slowed it further.
+        if (!(measuredMs > 0.0 && measuredMs < 500.0)) {
             previousMs = 0.0;
             return estimateMs;
         }
@@ -74,6 +77,60 @@ struct Grid {
     double land(double ms) const { return lastMs + std::ceil((ms - lastMs) / periodMs) * periodMs; }
 };
 
+// A fixed multiplier can produce more frames than there are refreshes.
+// Preserve the real frame across job boundaries while the source fits the
+// screen; beyond that even consecutive jobs must be allowed to share. A
+// hybrid/extrapolated job can reserve a separate refresh after the real
+// frame only while two refreshes per source frame actually fit.
+inline bool sharesRefresh(double intervalMs, int frames, int real, int k, double periodMs) {
+    if (!(intervalMs / std::max(1, frames) < periodMs)) return false;
+    if (k == 0) return intervalMs < periodMs;
+    if (k == real + 1) return intervalMs < 2.0 * periodMs;
+    return true;
+}
+
+// If the source itself is faster than the screen, waiting for a refresh
+// before handing off every job would throttle the source. Use sub-refresh
+// spacing from GPU readiness; the display naturally replaces surplus.
+inline bool sourceFitsGrid(double intervalMs, double periodMs) {
+    return !(periodMs > 0.0 && intervalMs > 0.0 && intervalMs < periodMs);
+}
+
+// Once outputs exceed Hz, a producer waiting for the worker must not also
+// reserve whole refreshes. Its measured interval includes our own wait: it
+// cannot prove that the producer itself is slower than the screen. Pacing
+// from GPU readiness lets it reach its actual throughput without dropping
+// synthesis.
+inline bool usesDisplayGrid(double intervalMs, int frames, double periodMs, double workerWaitMs) {
+    return sourceFitsGrid(intervalMs, periodMs) &&
+        !(frames > 1 && intervalMs / frames < periodMs && workerWaitMs > 0.25 * intervalMs);
+}
+
+// Submission waits can alternate with a nearly immediate present (two
+// jobs overlap). Do not restore refresh reservations on that one short
+// wait; require several quiet jobs, or outputs slow enough to fit again.
+struct GridPacer {
+    int quietJobs = 0;
+    bool use(double intervalMs, int frames, double periodMs, double workerWaitMs) {
+        if (!usesDisplayGrid(intervalMs, frames, periodMs, workerWaitMs)) {
+            quietJobs = 8;
+            return false;
+        }
+        if (intervalMs / std::max(1, frames) >= periodMs) quietJobs = 0;
+        if (quietJobs > 0) { --quietJobs; return false; }
+        return true;
+    }
+};
+
+// Fixed xN keeps every output, including when the producer reaches the
+// pipeline's throughput. The existing submission/fence waits back-pressure
+// it to the achievable rate; discarding interpolation instead oscillated
+// between xN and x1. Automatic/adaptive modes retain backlog recovery.
+inline bool needsCatchUp(double workerWaitMs, double intervalMs, bool persistentLate,
+                         bool displayGated, bool fixedMultiplier) {
+    return !fixedMultiplier && (persistentLate || (!displayGated && workerWaitMs > 0.25 * intervalMs));
+}
+
 // When frame k of a present goes out (ms): k/m of the frame interval after
 // the origin (when the GPU finished the job's first frame) — interp_hold:
 // FrameOrder::offset —, never less than half a slot after the previous
@@ -83,10 +140,15 @@ struct Grid {
 // period) and on a refresh of its own where the frames fit one a refresh —
 // the one planned (planLands) when there is a plan.
 inline double presentTargetMs(double originMs, double intervalMs, int frames, const FrameOrder& order, int k,
-                              double lastPresentMs, double lastLandMs, const Grid& grid, double plannedLandMs = 0.0) {
+                              double lastPresentMs, double lastLandMs, const Grid& grid, double plannedLandMs = 0.0,
+                              bool continuous = false) {
+    if (!grid.valid && plannedLandMs > 0.0) return plannedLandMs;
     if (grid.valid && plannedLandMs > 0.0) {  // planLands: for that refresh, or the next one free
         double land = plannedLandMs;
-        if (lastLandMs > 0.0 && land < lastLandMs + 0.5 * grid.periodMs) land = lastLandMs + grid.periodMs;
+        if (lastLandMs > 0.0) {
+            if (sharesRefresh(intervalMs, frames, order.real, k, grid.periodMs)) land = std::max(land, lastLandMs);
+            else if (land < lastLandMs + 0.5 * grid.periodMs) land = lastLandMs + grid.periodMs;
+        }
         return land - grid.lead * grid.periodMs;
     }
     const double slot = intervalMs / std::max(1, frames);
@@ -103,7 +165,10 @@ inline double presentTargetMs(double originMs, double intervalMs, int frames, co
     // present's first frame (after the previous present's last one, its real
     // frame in interpolation, which stays on screen) and the one after its
     // real frame keep a refresh of their own.
-    const bool share = grid.valid && slot < grid.periodMs && k > 0 && k != order.real + 1;
+    // With sub-refresh output, a fence observed after the previous job is
+    // already late enough: adding another half slot before its first frame
+    // feeds CPU/driver overhead into the source interval, especially at x8.
+    const bool share = continuous || (grid.valid && sharesRefresh(intervalMs, frames, order.real, k, grid.periodMs));
     if (lastPresentMs > 0.0 && !share) t = std::max(t, lastPresentMs + 0.5 * slot * (held ? order.hold : 1.0));
     if (grid.valid) {
         double land = grid.land(t);
@@ -134,13 +199,22 @@ inline double presentTargetMs(double originMs, double intervalMs, int frames, co
 // (measured, x11_clock: every frame planned 0.6 period off the X server's
 // refreshes for the whole run, 30 to 37 frames a second replaced).
 inline void planLands(double nowMs, double lagMs, const double* baseMs, int frames, const Grid& grid,
-                      double& lastPlannedMs, double* landMs) {
+                      double& lastPlannedMs, double* landMs, double intervalMs = 0.0, int real = -1) {
+    if (!grid.valid || (intervalMs > 0.0 && !sourceFitsGrid(intervalMs, grid.periodMs))) {
+        for (int k = 0; k < frames; ++k) landMs[k] = nowMs + lagMs + baseMs[k];
+        lastPlannedMs = 0.0;
+        return;
+    }
     if (lastPlannedMs > 0.0)
         lastPlannedMs = grid.lastMs + std::round((lastPlannedMs - grid.lastMs) / grid.periodMs) * grid.periodMs;
     if (lastPlannedMs > 0.0 && lastPlannedMs > grid.land(nowMs + lagMs) + 2.0 * grid.periodMs) lastPlannedMs = 0.0;
     for (int k = 0; k < frames; ++k) {
         double land = grid.land(nowMs + lagMs + grid.readyMarginMs + baseMs[k]);
-        if (lastPlannedMs > 0.0 && land < lastPlannedMs + 0.5 * grid.periodMs) land = lastPlannedMs + grid.periodMs;
+        if (lastPlannedMs > 0.0) {
+            const bool share = intervalMs > 0.0 && sharesRefresh(intervalMs, frames, real, k, grid.periodMs);
+            if (share) land = std::max(land, lastPlannedMs);
+            else if (land < lastPlannedMs + 0.5 * grid.periodMs) land = lastPlannedMs + grid.periodMs;
+        }
         landMs[k] = land;
         lastPlannedMs = land;
     }
@@ -300,7 +374,8 @@ struct StartLimiter {
     double slackMs = 0.0;
     double step(double waitedMs, double intervalMs) {
         const bool late = waitedMs < 0.05;
-        slackMs = std::clamp(slackMs * (late ? 1.5 : 0.99), 1.0 + 0.05 * intervalMs, 0.3 * intervalMs);
+        const double maxSlack = 0.3 * intervalMs;
+        slackMs = std::clamp(slackMs * (late ? 1.5 : 0.99), std::min(1.0 + 0.05 * intervalMs, maxSlack), maxSlack);
         if (late) delayMs *= 0.5;
         else delayMs += 0.5 * (waitedMs - slackMs);
         delayMs = std::clamp(delayMs, 0.0, 0.75 * intervalMs);

@@ -212,7 +212,10 @@ void VirtualSwapchain::runJob(const Job& job) {
             const bool early = dev_.vt.GetFenceStatus(dev_.device, first) == VK_NOT_READY;
             waitGpu(first, false, origin);
             if (job.plan) {
-                const double lag = std::chrono::duration<double, std::milli>(origin - job.start).count();
+                // The CPU's submission waits are known when the plan is
+                // recorded. Learn only the remaining GPU/recording delay:
+                // including our own wait would amplify the plan's hold.
+                const double lag = std::chrono::duration<double, std::milli>(origin - job.preparedAt).count();
                 const double est = readyLagMs_.load(std::memory_order_relaxed);
                 if (lag >= 0.0 && lag < 200.0 && (early || lag < est))
                     readyLagMs_.store(est + (lag > est ? 0.5 : 0.05) * (lag - est), std::memory_order_relaxed);
@@ -227,6 +230,7 @@ void VirtualSwapchain::runJob(const Job& job) {
         // frame alone (present()), which gives the refresh back.
         auto noteLateness = [&](int i) {
             if (!paced || i != 0) return;
+            if (!job.gridPacing) { lateJobs_.store(0, std::memory_order_relaxed); planSlip_.reset(); return; }
             pacing::Grid g;
             if (lastLandMs_ <= 0.0 || !displayGrid(g.lastMs, g.periodMs)) { planSlip_.reset(); return; }
             g.valid = true;
@@ -468,9 +472,9 @@ bool VirtualSwapchain::waitGpu(VkFence fence, bool cancellable, clock::time_poin
 // slip a whole period) and on a refresh of its own.
 VirtualSwapchain::clock::time_point VirtualSwapchain::paceTarget(const Job& job, clock::time_point origin, int k) {
     pacing::Grid g;
-    g.valid = displayGrid(g.lastMs, g.periodMs, &g.lead);
+    g.valid = job.gridPacing && displayGrid(g.lastMs, g.periodMs, &g.lead);
     const double t = pacing::presentTargetMs(msOf(origin), job.intervalMs, job.frames, job.order, k, lastPresentMs_,
-                                             lastLandMs_, g, job.plan && k < 8 ? job.planned[k] : 0.0);
+                                             lastLandMs_, g, job.plan && k < 8 ? job.planned[k] : 0.0, !job.gridPacing);
     return clock::time_point(std::chrono::duration_cast<clock::duration>(std::chrono::duration<double, std::milli>(t)));
 }
 

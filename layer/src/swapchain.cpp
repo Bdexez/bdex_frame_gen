@@ -1189,7 +1189,9 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     // backlog to give back.)
     const bool lagging = (lateJobs_.load(std::memory_order_relaxed) >= 8 && !evenActive_) || recoverMiss;
     if (lagging) lateJobs_.store(0, std::memory_order_relaxed);
-    const bool catchUp = !cfg_.lowLatency && ((!gateOnDisplay && workerWaitMs > 0.25 * frameIntervalMs_) || lagging);
+    const bool fixedMultiplier = !cfg_.adaptive && cfg_.targetFps == 0.f && !limitedByGamescope && !cfg_.allowsRefreshFill();
+    const bool catchUp = !cfg_.lowLatency &&
+        pacing::needsCatchUp(workerWaitMs, frameIntervalMs_, lagging, gateOnDisplay, fixedMultiplier);
     int mult = generating_ && !catchUp ? chooseMultiplier() : 1;
     if (catchUp) {
         const double ready = readyLagMs_.load(std::memory_order_relaxed);
@@ -1220,7 +1222,8 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         pacing::Grid g;
         if (displayGrid(g.lastMs, g.periodMs, &g.lead)) {
             g.valid = true;
-            evenFrames = evenClock_.plan(msOf(t0), dt, readyLagMs_.load(std::memory_order_relaxed), g,
+            const double cpuWait = std::chrono::duration<double, std::milli>(clock::now() - t0).count();
+            evenFrames = evenClock_.plan(msOf(t0), dt, cpuWait + readyLagMs_.load(std::memory_order_relaxed), g,
                                          std::min(cfg_.presentCeiling(), int(fg_->outputCount())), lastPlannedMs_,
                                          evenLands, evenRealMs);
         }
@@ -1370,7 +1373,9 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     fg_->collectMeanCost(slotIdx);  // the slot's fence was waited in nextSlot
     double planned[8] = {};  // Job::planned
     double contentMs[8] = {};  // Job::contentMs
+    const auto preparedAt = clock::now();
     bool planActive = false;
+    bool gridPacing = true;
     if (!generating_) motionClock_.reset();
     if (generating_) {
         fg_->recordAcquireSources(cb, prev, static_cast<int>(imageIndex));
@@ -1393,20 +1398,23 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         const double spacing = adaptive ? adaptivePeriodMs_ : frameIntervalMs_ / mult;
         double gridLead = 0.3;
         const bool grid = interpolate && displayGrid(lastMs, periodMs, &gridLead);
+        if (!grid || adaptive) gridPacer_ = {};
+        gridPacing = !grid || adaptive || gridPacer_.use(frameIntervalMs_, mult, periodMs, workerWaitMs);
         // interp_hold: the outputs read their t from these display times too,
         // so frame_timing follows the uneven spacing.
         const bool held = interpolate && order.hold < 1.f;
         if (grid || adaptive || held) {
             const double now = msOf(t0);
             auto land = [&](double ms) {
-                return grid ? lastMs + std::ceil((ms - lastMs) / periodMs) * periodMs : ms;
+                return grid && gridPacing ? lastMs + std::ceil((ms - lastMs) / periodMs) * periodMs : ms;
             };
             double at[8] = {};
             // pace_plan: on a grid, each frame planned for its own refresh
             // from when the first one is usually ready, and presented for it
-            // (pacing::planLands) — where the frames fit at one a refresh.
-            const bool plan = grid && cfg_.pacePlan && !cfg_.extrapolate && mult <= 8 &&
-                              (adaptive || mult * periodMs <= frameIntervalMs_ * 1.02);
+            // (pacing::planLands). Faster fixed outputs share refreshes but
+            // still need an absolute plan: a fence observed after the worker
+            // finished its previous job is not a new GPU completion time.
+            const bool plan = grid && gridPacing && cfg_.pacePlan && !cfg_.extrapolate && mult <= 8;
             if (evenFrames > 0) {
                 for (int k = 0; k < evenFrames; ++k) at[k] = evenLands[k] - now;
                 at[evenFrames] = evenRealMs - now;  // (the real frame's moment, not a refresh)
@@ -1415,15 +1423,25 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
                 for (int k = 1; k < mult; ++k)
                     base[k] = adaptive ? spacing * k : held ? frameIntervalMs_ * order.offset(k) : frameIntervalMs_ * k / mult;
                 pacing::Grid g{true, lastMs, periodMs};
+                g.valid = gridPacing;
                 g.lead = gridLead;
                 // (frames a refresh apart — adaptive, tight_hold: a first
                 // frame missing its refresh would meet the next one there;
                 // evenly spaced x4 has 1.4 ms to spare and is left as it was)
                 if (gridLead == pacing::kX11Lead && (adaptive || held)) g.readyMarginMs = pacing::kX11ReadyMarginMs;
-                pacing::planLands(now, readyLagMs_.load(std::memory_order_relaxed), base, mult, g, lastPlannedMs_, planned);
+                const double cpuWait = std::chrono::duration<double, std::milli>(preparedAt - t0).count();
+                pacing::planLands(now, cpuWait + readyLagMs_.load(std::memory_order_relaxed), base, mult, g, lastPlannedMs_, planned,
+                                  adaptive ? 0.0 : frameIntervalMs_, order.real);
                 for (int k = 0; k < mult; ++k) at[k] = planned[k] - now;  // (planned[] again below)
             } else if (adaptive) {
                 for (int k = 0; k < mult && k < 8; ++k) at[k] = land(now + 1.0 + spacing * k) - now;
+            } else if (!gridPacing) {
+                // Under submission pressure or above Hz, pace from actual
+                // readiness. Feeding a predicted GPU lag into absolute
+                // deadlines here can learn our own presentation waits.
+                for (int k = 0; k < mult && k < 8; ++k)
+                    at[k] = held ? frameIntervalMs_ * order.offset(k) : spacing * k;
+                lastPlannedMs_ = 0.0;
             } else {  // (historical: frame k at the refresh after start + I*k/m, frame 0 right after the GPU)
                 for (int k = 0; k < mult && k < 8; ++k)
                     at[k] = (k == 0 ? land(now + 1.0)
@@ -1630,11 +1648,13 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     job.realIndex = interpolate ? order.real : 0;
     job.order = interpolate ? order : FrameOrder{};
     job.start = t0;
+    job.preparedAt = preparedAt;
     job.frameStartMs = lastReturnMs_;
     job.intervalMs = frameIntervalMs_;
     if (interpolate) std::copy(std::begin(planned), std::end(planned), std::begin(job.planned));
     std::copy(std::begin(contentMs), std::end(contentMs), std::begin(job.contentMs));
     job.plan = interpolate && planActive;
+    job.gridPacing = gridPacing;
     job.smoothCatchup = job.plan && smoothCatchup && mult >= 3 && evenFrames == 0;
     // Adaptive: one output period between the frames (paceTarget spreads
     // intervalMs / frames).
