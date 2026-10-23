@@ -1047,6 +1047,7 @@ dépendances…), appliquée seulement là où un logiciel local a un équivalen
 | Adaptatif | 50 i/s → 144 affichées sur 144 Hz |
 | 30 i/s ×4 sur 144 Hz, `refresh_fill` + `pace_plan` (14/10, trois essais) | 120 → 142–143 affichées/s, répétitions 30 → 5/s, image réelle 33 → 40 ms |
 | `interp_accel` (14/10) | jeux enregistrés +0,03 à +0,17 dB, scintillement jusqu'à −0,5 ; +0,1 ms en 1440p ×4 |
+| `false_detail` (14/10) | enregistrements 1440p +0,14 / +0,07 dB, scintillement −0,39 / −0,18 ; scènes ×4 +0,03 à +0,21 ; aucune perte ; ~0,7 ms par image générée en 1440p |
 | Limite Steam 30 i/s (démo 30 i/s ×2), avant | jeu 15 i/s, 233 ms présentation → écran |
 | Limite Steam 30 i/s, après | jeu 30 i/s, 19 à 66 ms ; ×2 retrouvé après la levée |
 | glibc demandée par l'archive | 2.36 → 2.29 |
@@ -1531,6 +1532,36 @@ RTX 3060 Ti, pilote 615.
   ce test, objets à vitesse constante −0,4 dB). Jeux enregistrés +0,03 à
   +0,17 dB, scintillement jusqu'à −0,5 ; synthétique ≤ −0,02 ; +0,1 ms en
   1440p ×4 (par pixel : +3,8 ms).
+- **`false_detail`** (auto GPU dédié, passe `passes/false_detail.cpp`,
+  `false_detail.comp`, après la synthèse et avant `learned_correction` /
+  le HUD) : diagnostic — sur les scènes ×4 de type jeu, les images générées
+  ont 20 à 33 % de détail fin (|laplacien|) de *plus* que la vérité : la
+  mosaïque des blocs voisins aux vecteurs différents sur du contenu flou
+  (virage avec flou de mouvement) ; `pixel_vectors`, `interp_splat`,
+  `interp_accel` n'en sont pas la cause (le flux lui-même). Règle : détail
+  de l'image générée (moyenne 5×5 du |laplacien| de la luma, unités 8 bits)
+  > 1,5 × la cellule 4×4 la plus détaillée des deux entrées à ±16 px + 2 →
+  vers la moyenne 5×5 ; pas là où les deux entrées ont ce détail au pixel
+  même (3×3, seuil 8 : HUD immobile). Essais : référence non dilatée
+  (moyenne autour de q) −2 à −9 dB sur `edge_bench` (un objet net arrive sur
+  un fond lisse) ; plus grande fenêtre de moyenne : pire (la moyenne dilue) ;
+  remplacement par le fondu : −0,1 à −0,9 ; flou bilatéral : gain perdu (les
+  marches de la mosaïque sont fortes) ; sans le garde HUD : arêtes de la scène
+  sombre −2,7 dB. Seuil 1,0 : −1,4 dB (trop de vrai détail touché) ; rayon 8
+  px : plus de gain mais `eb_fast` −0,07. Coût : la carte des entrées
+  (une fois par image du jeu, un fil par pixel : un fil par cellule
+  lisant 6×6 coûtait 1,3 ms) ; tuile 22×22 en mémoire partagée ; recopie
+  seulement des tuiles changées. Le banc `bdex_offline --bench` varie de
+  ±1 ms d'un lancement à l'autre au début (fréquence du GPU) : comparer les
+  2e et 3e lancements. `test_offline.py` coupe `false_detail` pour juger
+  `scene_cut_local` seul (il relève les deux côtés).
+- **`global_motion` anisotrope** (14/10, rayon x = largeur/3 au lieu de
+  min(largeur, hauteur)/3, plafond 24 ou 32 ; essayé pour le pire virage de
+  l'enregistrement 1440p PRAGMATA, ~700 px par paire) : neutre (−0,005 à
+  +0,002 dB), scintillement et pixels faux en hausse sur ce même
+  enregistrement (+0,2) : plus de fausses correspondances globales ; ce
+  virage échoue pour une autre raison (parallaxe du personnage proche). Pas
+  repris.
 - **`global_motion`** : rayon d'un tiers du niveau grossier jusqu'à 24
   (au lieu d'un quart jusqu'à 16) : pixels faux −1 à −5 % sur les jeux.
 - **Écartés (mesurés)** :

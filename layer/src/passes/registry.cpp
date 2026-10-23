@@ -15,6 +15,7 @@ std::unique_ptr<FgPass> makeExtrapolateSplatPass();
 std::unique_ptr<FgPass> makeFpsHudPass();
 std::unique_ptr<FgPass> makeFlowConfidencePass();
 std::unique_ptr<FgPass> makeLearnedCorrectionPass();
+std::unique_ptr<FgPass> makeFalseDetailPass();
 std::unique_ptr<FgPass> makeLumaMatchPass();
 std::unique_ptr<FgPass> makeLearnedFlowPass();
 
@@ -59,6 +60,9 @@ std::vector<std::unique_ptr<FgPass>> createOptionalPasses(const Config& cfg, Dev
                                                               VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
         passes.push_back(makeTemporalUpscalePass());
     // Over the finished generated frames (8-bit, at render size; it checks).
+    // The generated frame's own false detail (before learned_correction and
+    // the HUD, which read the finished output). Can be switched on live.
+    passes.push_back(makeFalseDetailPass());
     if (cfg.learnedCorrection > 0.f) passes.push_back(makeLearnedCorrectionPass());
     return withHud();
 }

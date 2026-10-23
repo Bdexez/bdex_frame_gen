@@ -312,6 +312,8 @@ interpolation, un test de visibilité par trajectoire a perdu 1 dB dans les
 zones d'occultation, `pixel_vectors` y gagne +1,3 : ne pas y revenir),
 `interp_accel` (14/10, auto GPU dédié : `accel_map.comp` dans la passe
 `extrapolate_accel`, carte au binding 10 de la synthèse, `setAccelMap`),
+`false_detail` (14/10, auto GPU dédié : sur l'image générée finie,
+`afterOutput`, le détail fin qu'aucune entrée n'a à ±16 px → moyenne 5×5),
 `hud_mask` (mesuré 2026-09-25 : le masque dans l'accumulation
 d'`upscale_temporal` — historique sans mouvement sur le HUD — ne change
 rien, HUD opaque ou transparent : le test aller-retour du flux rejette déjà
