@@ -54,6 +54,7 @@ struct Config {
     bool  interpSplat   = false;  // interpolation: both frames forward-splatted to t (the extrapolation's splat map, twice as wide); each output pixel also tries the trajectories of the prev and cur pixels that landed on it (the right layer at an object's edge)
     float learnedFlow   = 0.f;    // the finest flow corrected by tools/train_flow.py's network (share of its correction, 0 = off)
     float lumaMatch     = 0.01f;  // the previous frame's luma brought to the current one's mean and contrast before the flow when the whole picture's mean moved by at least this much (0..1 luma; 0 = off): fades, lighting changes
+    bool  parallaxSearch = false;   // finest flow: multiples of a poorly matching vector tried (thin near structures in parallax: posts, railings)
     bool  borderPredict = false;    // matcher: a block whose predicted match lies mostly off-screen keeps the prediction (camera moves: content entering / leaving the picture)
     float falseDetail = 0.0f;       // interpolation: generated detail neither input has within 16 px leans to its 5x5 average (false_detail.comp), 0 = off .. 1; packed 8/10-bit SDR without upscaling
     float learnedCorrection = 0.0f; // interpolation: the trained correction network (tools/train_correction.py) over each generated frame, 0 = off .. 1 = as trained; 8-bit formats without upscaling

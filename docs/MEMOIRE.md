@@ -1580,6 +1580,24 @@ RTX 3060 Ti, pilote 615.
   correspondance tombe hors de l'image ; le matcher compare au pixel de bord
   répété) — la correction irait dans le matcher (SAD sur la partie dans
   l'image), pas dans la synthèse.
+- **`parallax_search`** (15/10, opt-in, passe `passes/parallax_search.cpp`,
+  `flow_parallax.comp`, crochet `fineFlow` avant `subpixel_lk`) : nouvelle
+  scène `make_game.py fence` (rambarde : poteaux de 3–8 px tous les
+  20–60 px, ×2,5 la vitesse du fond, sans flou de mouvement) : erreur ×19
+  dans la zone de la rambarde ; le flux n'y a **aucun** vecteur à −80 (celui
+  des poteaux), tout à −32 (le fond) : les niveaux grossiers effacent les
+  poteaux, les niveaux fins cherchent à ±3 autour du fond, le médian 3×3
+  effacerait une colonne isolée. Règle : là où la fenêtre 8×8 est mal
+  expliquée (moyenne > 0,015), essayer ×0,5 / ×1,5 / ×2 / ×2,5 / ×3 du
+  vecteur (±1 px le long du mouvement), garder si SAD < 0,7× et si l'autre
+  sens a le candidat opposé autour du point d'arrivée (3×3 texels). Sans
+  l'accord des deux sens : rambarde +0,44 mais virage −0,20, panoramique
+  −0,37 (multiples trouvés par hasard sur du contenu flou) ; accord sur le
+  seul texel d'arrivée : rambarde +0,16. Suite : rambarde +0,32, pixels
+  faux −11 %, latéral +0,02 / +0,03, reste ±0,02. Coût (pente de 20
+  répétitions) ~1 ms par image du jeu sur PRAGMATA 1440p (9×9 candidats et
+  fenêtre pleine : +6 à +11 ms ; damier et 3 décalages par multiple) : sur
+  le chemin de la latence, budget de l'objectif presque atteint → opt-in.
 - **`border_predict`** (15/10, auto GPU dédié, `block_match.comp`) :
   diagnostic — sur les virages ×4, 37 % de l'erreur dans les 2 × 6 % de
   colonnes du bord ; la synthèse n'y peut rien (essai ci-dessus) : le flux
@@ -1599,6 +1617,15 @@ RTX 3060 Ti, pilote 615.
   Complément essayé : SAD des candidats sur la seule partie de la cible
   dans l'image (normalisé par quadrant) : virage −0,10, le reste ±0,03 —
   pas retenu.
+- **Cadence en 1440p** (15/10, banc de cadence en 2560×1440, démo 30 i/s ×4,
+  5 essais alternés avant/après `false_detail` + `border_predict`) : affichées
+  ~144/s des deux côtés, image réelle 40–42 ms des deux côtés, répétitions
+  2–7/s (bruit du banc) — pas de régression. Mais « hors plan » 15 à 92 %
+  selon l'essai, avant comme après : la distribution affichage − plan est
+  bimodale (0 ou +1 rafraîchissement, parfois +½), alors qu'en 720p ~10 %.
+  gamescope sans fenêtre (sans `CAP_SYS_NICE`) rate lui-même des
+  rafraîchissements à 2560×1440 : pas jugeable sur ce banc ; à vérifier
+  sur l'écran de l'utilisateur (`cadence_report.py`, colonne « off plan »).
 - **Banc 1440p ×4** (14/10, scratchpad `hd4/` : scènes `make_game.py`
   agrandies ×2 en Lanczos — la vérité ×4 exacte, flux à demi-résolution
   comme en jeu chez l'utilisateur) : `false_detail` +0,18 / +0,19 / +0,10 dB,

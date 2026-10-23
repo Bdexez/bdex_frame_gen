@@ -37,6 +37,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   dB, flicker −0.04 to −0.51, fewer grossly wrong pixels on every one;
   constant-speed scenes within −0.02 dB; +0.1 ms a game frame at 1440p x4.
 - `latency_log` gains a 4th column: the refresh each frame was planned for.
+- **`parallax_search`** (opt-in, « Recherche de parallaxe » in the panel):
+  in a sideways move, thin near structures — a railing's posts, fences —
+  pass faster than the scenery and took the background's motion (the
+  coarse levels average them away): they broke up. Multiples of the
+  motion are tried where it explains the picture poorly and kept where
+  both directions agree. Railing scene x4 +0.32 dB, flicker −0.21; neutral
+  elsewhere; ~1 ms of GPU a game frame at 1440p, on the latency path, hence
+  off by default. `tools/edge_bench/make_game.py fence`: the railing scene.
 - **`border_predict`** (on on a discrete GPU): in a camera move, content
   entering or leaving the picture has its match off-screen, where the motion
   search compared against the repeated edge pixels — the edge of the picture

@@ -3,7 +3,7 @@
 presents, the three between are the exact pictures of the moments the
 generated frames show (score with eval_sequence.py --multiplier 4).
 
-    make_game.py DIR turn|walk|dark|strafe|fps [N=97]
+    make_game.py DIR turn|walk|dark|strafe|fps|fence [N=97]
 
 1280x720: a textured world scrolled by the camera, a near layer moving
 faster (parallax), a character moving on its own, a static HUD (a
@@ -14,7 +14,11 @@ motion over half a 30 fps frame (8 sub-steps), as a 30 fps game blurs.
 turn at a quarter of the brightness (low contrast), `strafe` a sideways move
 where the near layer moves 2.5x the background, `fps` the turn seen in first
 person: a weapon held at the bottom right, nearly still on screen (a slight
-sway, not motion-blurred), the world turning fast behind it."""
+sway, not motion-blurred), the world turning fast behind it; `fence` a
+sideways move past a railing: the near layer is thin bars (3-8 px, a
+fence, poles, cables' supports) 20-60 px apart, moving 2.5x the background
+— fine structure in parallax, which 8x8 blocks straddle (motion blur off,
+the setting the README advises)."""
 import sys
 from pathlib import Path
 
@@ -62,11 +66,12 @@ def shift(img, x, y):
 
 def main():
     out = Path(sys.argv[1]); kind = sys.argv[2]; n = int(sys.argv[3]) if len(sys.argv) > 3 else 97
-    rng = np.random.default_rng({"turn": 11, "walk": 12, "dark": 13, "strafe": 14, "fps": 15}[kind])
+    rng = np.random.default_rng({"turn": 11, "walk": 12, "dark": 13, "strafe": 14, "fps": 15, "fence": 16}[kind])
     out.mkdir(parents=True, exist_ok=True)
     # Camera speed in px per 120 Hz frame (x4 on a 30 fps game: 4 of them per game frame).
-    cam = {"turn": (30.0, 3.0), "walk": (6.0, 1.5), "dark": (30.0, 3.0), "strafe": (12.0, 0.0), "fps": (30.0, 2.0)}[kind]
-    near_k = 2.5 if kind == "strafe" else 1.6  # the near layer's speed relative to the background
+    cam = {"turn": (30.0, 3.0), "walk": (6.0, 1.5), "dark": (30.0, 3.0), "strafe": (12.0, 0.0), "fps": (30.0, 2.0),
+           "fence": (8.0, 0.0)}[kind]
+    near_k = 2.5 if kind in ("strafe", "fence") else 1.6  # the near layer's speed relative to the background
     span = int(abs(cam[0]) * (n + 2) * near_k) + W + 400
     tall = int(abs(cam[1]) * (n + 2) * near_k) + H + 400
     far = texture(tall, span, rng, (0.7, 0.75, 0.9), rects=int(span * tall / 9000), lights=int(span * 0.03))
@@ -74,7 +79,15 @@ def main():
     # The near layer: pillars and crates (alpha) over the background.
     near_a = np.zeros((tall, span), np.float32)
     x = 0
-    while x < span - 80:
+    if kind == "fence":
+        # a railing: a top rail and thin posts, the lower half of the picture
+        top = tall - int(H * 0.55)
+        near_a[top:top + 6, :] = 1.0
+        while x < span - 10:
+            w = int(rng.integers(3, 9))
+            near_a[top:, x:x + w] = 1.0
+            x += w + int(rng.integers(20, 60))
+    while kind != "fence" and x < span - 80:
         w = int(rng.integers(40, 160)); h = int(rng.integers(200, H + 300))
         near_a[tall - h:, x:x + w] = 1.0
         x += w + int(rng.integers(120, 420))
@@ -112,6 +125,8 @@ def main():
     weap_a = ((yy2 > wh - (xx2 * 0.9) - 40) & (yy2 > 60) & (xx2 > 40)).astype(np.float32)  # a slanted barrel and body
     weap_a[:, :40] = 0
     sub = 8  # sub-steps over the exposure (half a 30 fps frame = 2 frames at 120 Hz)
+    if kind == "fence":
+        sub = 1  # (motion blur off, as advised: the bars stay sharp)
     for f in range(n):
         acc = np.zeros((H, W, 3), np.float32)
         for s in range(sub):
