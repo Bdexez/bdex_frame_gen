@@ -8,6 +8,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed multiplication across changing and uncapped source rates (2026-10-23)
 
+- Normal x8 allocates capacity for seven generated frames plus the real
+  frame. A seven-frame limit intended for `even_motion` also limited normal
+  presentations, leaving one transit image missing on capped surfaces:
+  submitting the next job then waited for the last frame's display time.
 - Fixed xN preserves all N outputs under submission pressure, including
   above the screen's refresh rate. It no longer alternates between xN and
   real-only catch-up frames. `skip_fast` is now opt-in; explicit automatic

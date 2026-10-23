@@ -22,6 +22,38 @@ TEST(config_defaults) {
     CHECK(c.debug == Config::Debug::None);
 }
 
+TEST(config_present_capacity_includes_the_real_frame_at_x8) {
+    for (int m = 2; m <= 8; ++m) {
+        for (int mode = 0; mode < 3; ++mode) {
+            for (bool even : {false, true}) {
+                Config c;
+                c.multiplier = m;
+                c.extrapolate = mode == 1;
+                c.hybrid = mode == 2;
+                c.evenMotion = even;  // inert without refresh_fill
+                CHECK(c.presentCeiling() == m);
+                CHECK(c.outputCeiling() + 1 == c.presentCeiling());
+                // A surface with min=3, max=8 allows six images held at
+                // once. Every other output needs transit storage so that
+                // submitting the whole job does not wait for its pacing.
+                const int acquired = std::min(m, 8 - 3 + 1);
+                const int staged = std::max(0, c.presentCeiling() - acquired);
+                CHECK(acquired + staged == m);
+            }
+        }
+    }
+    Config c;
+    c.multiplier = 8;
+    c.refreshFill = 1;
+    CHECK(c.frameCeiling() == 8 && c.presentCeiling() == 8 && c.outputCeiling() == 7);
+    c.multiplier = 7;
+    CHECK(c.frameCeiling() == 8 && c.presentCeiling() == 8 && c.outputCeiling() == 7);
+    c.evenMotion = true;
+    // even_motion presents only generated images: seven output slots;
+    // the real frame remains the eighth, unpresented timing anchor.
+    CHECK(c.presentCeiling() == 7 && c.outputCeiling() == 7);
+}
+
 TEST(config_apply_values) {
     Config c;
     CHECK(c.apply("multiplier", "3") && c.multiplier == 3);

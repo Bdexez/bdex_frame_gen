@@ -59,6 +59,13 @@ Les défauts restants se trouvent surtout dans leur cadencement :
 7. **Limiteur à plus de 250 i/s.** Les bornes de son `std::clamp` devenaient
    inversées pour un intervalle inférieur à 4 ms. Les bornes sont désormais
    ordonnées, y compris à 360 et 1 000 i/s.
+8. **Une image de transit manquante en ×8.** `presentCeiling` plafonnait
+   toutes les présentations à sept, limite nécessaire seulement quand
+   `even_motion` présente exclusivement des générées. Avec six images
+   acquises à la fois, un transit au lieu de deux était alloué pour un job
+   de huit ; le jeu attendait alors le cadencement de sa dernière image
+   avant de soumettre la synthèse suivante. Les modes normaux gardent
+   désormais les huit positions (sept générées + réelle).
 
 ## Corrections
 

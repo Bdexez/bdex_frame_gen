@@ -232,8 +232,11 @@ struct Config {
     }
     int frameCeiling() const { return multiplier + (allowsRefreshFill() && multiplier < 8 ? 1 : 0); }
     // The most frames a present shows: even_motion may need one more (a long
-    // game frame: 39 ms on 144 Hz is 6 refreshes), all generated.
-    int presentCeiling() const { return std::min(7, frameCeiling() + (evenMotion && allowsRefreshFill() ? 1 : 0)); }
+    // game frame: 39 ms on 144 Hz is 6 refreshes), all generated. Its seven
+    // generated slots do not limit normal x8 (seven generated + the real).
+    int presentCeiling() const {
+        return evenMotion && allowsRefreshFill() ? std::min(7, frameCeiling() + 1) : frameCeiling();
+    }
     // Generated outputs to allocate: one a frame but the real one, or
     // even_motion's, all generated.
     int outputCeiling() const { return evenMotion && allowsRefreshFill() ? presentCeiling() : frameCeiling() - 1; }
