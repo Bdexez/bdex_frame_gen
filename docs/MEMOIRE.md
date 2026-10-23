@@ -1580,6 +1580,9 @@ RTX 3060 Ti, pilote 615.
   correspondance tombe hors de l'image ; le matcher compare au pixel de bord
   répété) — la correction irait dans le matcher (SAD sur la partie dans
   l'image), pas dans la synthèse.
+- **`smoothness` en 1440p** (flux à demi-résolution : vecteurs deux fois plus
+  courts, pénalité relative double) : 0,002 +0,005 dB, 0,004 −0,007 sur les
+  séquences 1440p — 0,003 reste.
 - **Modèle global de caméra** (`camera_model`, 15/10, essai) : mouvement du
   décor ajusté sur tout le flux fin (quadratique 5+5 coefficients, approx.
   de l'homographie d'une rotation ; moindres carrés repondérés Cauchy,

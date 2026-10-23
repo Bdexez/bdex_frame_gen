@@ -694,6 +694,10 @@ against the real frame rendered at 60 fps):
   fills every refresh, a cap of 36 fps does too with no added hold. The
   game's own cap (or Reflex / Anti-Lag) responds faster than the layer's on
   Direct3D games under Proton.
+- **Railings, fences or poles breaking up when you strafe past them:** turn
+  on `PARALLAX_SEARCH` (« Recherche de parallaxe » in the panel): thin near
+  structures pass faster than the scenery and the motion search misses
+  them; it costs about 1 ms of GPU a game frame at 1440p.
 
 ### Latency
 
