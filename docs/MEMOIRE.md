@@ -1587,8 +1587,11 @@ RTX 3060 Ti, pilote 615.
   ont 75–92 % — pas un critère de coupure ; et même là, la synthèse bat la
   répétition et le fondu (14,5 / 12,0 / 13,3 dB). Plusieurs paires (n° 1,
   3, 5, 7) ont une vérité quasi identique à une extrémité (35 dB contre
-  l'image d'avant pour la n° 7) : le jeu a répété une image ; l'éval hors
-  ligne suppose une cadence régulière (en jeu : horodatages, `dedup`).
+  l'image d'avant pour la n° 7) : pas des répétitions (aucune dans les
+  enregistrements : 0 image identique au milieu d'un mouvement) mais des
+  démarrages / arrêts brusques — écarts successifs 1,1 puis 14,6 : le
+  mouvement commence après la vérité, et la vitesse constante place le
+  contenu à mi-chemin trop tôt (paires de 2 images : effet doublé).
 - **`smoothness` en 1440p** (flux à demi-résolution : vecteurs deux fois plus
   courts, pénalité relative double) : 0,002 +0,005 dB, 0,004 −0,007 sur les
   séquences 1440p — 0,003 reste.
