@@ -2,7 +2,7 @@
 // behind them (a railing's posts in a sideways move), which the hierarchical
 // search gives the background's vector — multiples of the finest flow tried
 // where it explains its window poorly (see shaders/flow_parallax.comp).
-// Opt-in: on a fast-moving 1440p game it costs ~1 ms of flow a game frame,
+// Opt-in: on a fast-moving 1440p game it costs ~0.6 ms of flow a game frame,
 // on the generated frames' latency path.
 #include "fg_pass.h"
 #include "framegen_internal.h"
