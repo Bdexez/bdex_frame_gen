@@ -69,7 +69,11 @@ void main() {
     if (w >= 4.0) {
         a = sum / w;
         float coherence = dot(a, a) / max(sq / w, 1e-6);  // 1: all the same
-        float lim = 0.5 * length(B) + 1.0, la = length(a);
+        // (0.75 of the motion, 15/10: recorded games' flicker -0.02 to -0.21,
+        // grossly wrong pixels -1 %, PSNR +0.005 on average — 0.5 held a
+        // motion starting from rest to half its correction; 1.0 and above
+        // lost on Cyberpunk, unbounded 1.3 dB on mouse flicks)
+        float lim = 0.75 * length(B) + 1.0, la = length(a);
         if (la > lim) a *= lim / la;
         a *= smoothstep(pc.flowScale, 2.0 * pc.flowScale, la) * smoothstep(0.85, 0.98, coherence);
     }

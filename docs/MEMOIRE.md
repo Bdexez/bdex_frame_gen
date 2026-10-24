@@ -1602,7 +1602,10 @@ RTX 3060 Ti, pilote 615.
   133 ms avec départ et arrêt en douceur) : base 38,60 dB, 1,0·|B| et
   2,0·|B| 38,61, max(|B|,|a|) 37,59, sans plafond 37,33 — et
   `interp_accel=0` 38,68 : le modèle à accélération constante ne décrit pas
-  un coup de poignet ; le plafond le protège. Départ depuis l'arrêt (paire
+  un coup de poignet ; le plafond le protège. **Adopté : 0,75·|B| + 1**
+  (même jour) : moyenne +0,005, scintillement −0,02 à −0,21 sur 6 des 9
+  enregistrements, pixels faux −1,2 %, pire −0,03 (Cyberpunk cp1) ;
+  scènes synthétiques et coup de poignet ±0,00. Départ depuis l'arrêt (paire
   précédente immobile : a doublé, x = v·t²) : 38,61 — rien ; pendant le coup
   de poignet l'erreur est le flou et l'ampleur, pas la courbe.
 - **`smoothness` en 1440p** (flux à demi-résolution : vecteurs deux fois plus

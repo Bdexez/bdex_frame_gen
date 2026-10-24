@@ -37,6 +37,9 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   dB, flicker −0.04 to −0.51, fewer grossly wrong pixels on every one;
   constant-speed scenes within −0.02 dB; +0.1 ms a game frame at 1440p x4.
 - `latency_log` gains a 4th column: the refresh each frame was planned for.
+- **`interp_accel`'s correction allowed up to 0.75 of the motion** (was
+  0.5): recorded games' flicker −0.02 to −0.21, grossly wrong pixels −1 %,
+  PSNR unchanged on average (Cyberpunk −0.03 / 0.00).
 - **`parallax_search`** (opt-in, « Recherche de parallaxe » in the panel):
   in a sideways move, thin near structures — a railing's posts, fences —
   pass faster than the scenery and took the background's motion (the
