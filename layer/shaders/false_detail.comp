@@ -101,12 +101,25 @@ void main() {
         return;
     }
     if (pc.mode == 1) {
-        // A thread a pixel (neighbouring threads read neighbouring texels),
-        // summed per 4x4 cell in shared memory.
-        const ivec2 q = min(p, pc.size - 1);
+        // A thread a pixel: both inputs' luma over the tile and a pixel
+        // around it read once into shared memory (2 fetches a pixel instead
+        // of 10), the Laplacians from there, summed per 4x4 cell.
         const int li = int(gl_LocalInvocationIndex);
-        sLap[li] = srcLap(prevTex, q);
-        sLum[li] = srcLap(curTex, q);
+        const ivec2 o1 = ivec2(gl_WorkGroupID.xy) * kTile - 1;
+        const int side = kTile + 2;
+        for (int i = li; i < side * side; i += kTile * kTile) {
+            ivec2 q = o1 + ivec2(i % side, i / side);
+            sLum[i] = srcLuma(prevTex, q);  // (srcLuma clamps to the image)
+            sLap[i] = srcLuma(curTex, q);
+        }
+        barrier();
+        const ivec2 lc = ivec2(gl_LocalInvocationID.xy) + 1;
+        const int ci = lc.y * side + lc.x;
+        const float la = abs(4.0 * sLum[ci] - sLum[ci - 1] - sLum[ci + 1] - sLum[ci - side] - sLum[ci + side]);
+        const float lb = abs(4.0 * sLap[ci] - sLap[ci - 1] - sLap[ci + 1] - sLap[ci - side] - sLap[ci + side]);
+        barrier();
+        sLap[li] = la;
+        sLum[li] = lb;
         barrier();
         const ivec2 l = ivec2(gl_LocalInvocationID.xy);
         if (all(equal(l % kCell, ivec2(0)))) {
