@@ -1536,6 +1536,10 @@ RTX 3060 Ti, pilote 615.
 - **`static_soft` en extrapolation** (15/10, vers l'image courante — un fondu
   au-delà extrapolerait la luminosité) : +0,076 dB en moyenne, aucune perte,
   scènes avec HUD +0,05 à +0,42, arêtes +0,6 à +6 ; interpolation identique.
+- **`extrapolate_accel` re-mesuré** (15/10, suite complète en extrapolation) :
+  −0,132 dB, scintillement en hausse sur les scènes synthétiques (+0,1 à
+  +0,7) ; seuls PRAGMATA 3 (+0,34) et Oblivion HD (+0,47) gagnent. Reste
+  opt-in.
 - **Bilan de la nuit du 14 au 15/10** (suite complète, interpolation, base
   `54dc548` → `875c9a6`) : +0,095 dB en moyenne, pixels faux −3,1 % ;
   1440p +0,19 / +0,12, scintillement −0,74 / −0,43 ; PRAGMATA scintillement
