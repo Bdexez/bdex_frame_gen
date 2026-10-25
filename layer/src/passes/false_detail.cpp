@@ -92,7 +92,7 @@ public:
         const VkExtent2D d = ctx.displayExtent();
         const VkExtent2D c{fg::divUp(d.width, kCell), fg::divUp(d.height, kCell)};
         VkDescriptorSet set = sets_[(size_t(output) * n_ + p.prev) * n_ + p.cur];
-        FdPC pc{{(int32_t)d.width, (int32_t)d.height}, ctx.outputEncoding().encoding, 0, p.strength, p.predicted ? kRatioPredicted : kRatio, kGuard, blur_};
+        FdPC pc{{(int32_t)d.width, (int32_t)d.height}, ctx.outputEncoding().encoding, 0, p.strength, p.predicted || blur_ > 2 ? kRatioCoarse : kRatio, kGuard, blur_};
         vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe_.pipeline);
         vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe_.layout, 0, 1, &set, 0, nullptr);
         // The inputs' detail map: once a frame (every output of a frame has
@@ -115,10 +115,11 @@ public:
 
 private:
     static constexpr uint32_t kCell = 4;  // as the shader's
-    // The generated detail must exceed this many times the inputs' (a
-    // predicted frame's mosaic is coarser: 1.25 there, extrapolation +0.023 dB
-    // over 1.5, every sequence up).
-    static constexpr float kRatio = 1.5f, kRatioPredicted = 1.25f;
+    // The generated detail must exceed this many times the inputs' — less
+    // where the mosaic is coarser: predicted frames (extrapolation +0.023 dB
+    // over 1.5) and a flow at half the display's resolution (1440p quality:
+    // +0.016), every sequence up in both.
+    static constexpr float kRatio = 1.5f, kRatioCoarse = 1.25f;
     static constexpr float kGuard = 8.f;  // (mean |Laplacian| over 3x3 in both inputs, 8-bit units)
     struct Pending { uint32_t prev = 0, cur = 0; float strength = 0.f; bool on = false; bool predicted = false; };
     bool usable_ = false;
