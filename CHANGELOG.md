@@ -37,6 +37,9 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   dB, flicker −0.04 to −0.51, fewer grossly wrong pixels on every one;
   constant-speed scenes within −0.02 dB; +0.1 ms a game frame at 1440p x4.
 - `latency_log` gains a 4th column: the refresh each frame was planned for.
+- **`false_detail` on predicted frames too** (extrapolation, the hybrid's
+  predicted frames): every sequence up, +0.15 dB on average, 1440p +0.13 /
+  +0.26 dB with flicker −0.5 / −1.1.
 - **`interp_accel`'s correction allowed up to 0.75 of the motion** (was
   0.5): recorded games' flicker −0.02 to −0.21, grossly wrong pixels −1 %,
   PSNR unchanged on average (Cyberpunk −0.03 / 0.00).

@@ -1,4 +1,4 @@
-// false_detail: over each finished interpolated frame, before the fps HUD,
+// false_detail: over each finished generated frame, before the fps HUD,
 // the fine detail that neither input has anywhere near leans to its local
 // average (shaders/false_detail.comp: the edges between neighbouring blocks
 // that took different vectors). Packed 8- and 10-bit SDR formats, no
@@ -77,8 +77,9 @@ public:
     }
     void beforeSynthesis(FgContext&, VkCommandBuffer, float t, int32_t, bool, const Config& cfg, SynthesisInputs&) override {
         if (usable_ && next_ < pending_.size()) {
-            // Interpolation only (measured there).
-            pending_[next_].on = cfg.falseDetail > 0.f && t <= 1.f;
+            // Interpolated and predicted frames alike (extrapolation, 15/10:
+            // every sequence up, +0.15 dB on average, flicker down to -1.1).
+            pending_[next_].on = cfg.falseDetail > 0.f;
             pending_[next_].strength = cfg.falseDetail;
         }
     }
