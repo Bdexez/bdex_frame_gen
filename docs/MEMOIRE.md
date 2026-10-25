@@ -1533,6 +1533,9 @@ RTX 3060 Ti, pilote 615.
   ce test, objets à vitesse constante −0,4 dB). Jeux enregistrés +0,03 à
   +0,17 dB, scintillement jusqu'à −0,5 ; synthétique ≤ −0,02 ; +0,1 ms en
   1440p ×4 (par pixel : +3,8 ms).
+- **`static_soft` en extrapolation** (15/10, vers l'image courante — un fondu
+  au-delà extrapolerait la luminosité) : +0,076 dB en moyenne, aucune perte,
+  scènes avec HUD +0,05 à +0,42, arêtes +0,6 à +6 ; interpolation identique.
 - **Bilan de la nuit du 14 au 15/10** (suite complète, interpolation, base
   `54dc548` → `875c9a6`) : +0,095 dB en moyenne, pixels faux −3,1 % ;
   1440p +0,19 / +0,12, scintillement −0,74 / −0,43 ; PRAGMATA scintillement
