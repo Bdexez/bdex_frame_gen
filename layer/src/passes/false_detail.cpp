@@ -75,7 +75,7 @@ public:
         }
         return VK_NULL_HANDLE;
     }
-    void beforeSynthesis(FgContext&, VkCommandBuffer, float t, int32_t, bool, const Config& cfg, SynthesisInputs&) override {
+    void beforeSynthesis(FgContext&, VkCommandBuffer, float, int32_t, bool, const Config& cfg, SynthesisInputs&) override {
         if (usable_ && next_ < pending_.size()) {
             // Interpolated and predicted frames alike (extrapolation, 15/10:
             // every sequence up, +0.15 dB on average, flicker down to -1.1).
