@@ -1638,6 +1638,8 @@ RTX 3060 Ti, pilote 615.
   scènes synthétiques et coup de poignet ±0,00. Départ depuis l'arrêt (paire
   précédente immobile : a doublé, x = v·t²) : 38,61 — rien ; pendant le coup
   de poignet l'erreur est le flou et l'ampleur, pas la courbe.
+- **`refine_bias` en 1440p** (15/10) : 0,375 +0,005 (arêtes −0,14), 0,625 −0,034 ;
+  0,5 reste.
 - **`smoothness` en 1440p** (flux à demi-résolution : vecteurs deux fois plus
   courts, pénalité relative double) : 0,002 +0,005 dB, 0,004 −0,007 sur les
   séquences 1440p — 0,003 reste.
