@@ -1645,7 +1645,8 @@ RTX 3060 Ti, pilote 615.
   en mosaïque relus dans les deux images le long du flux moyen des 5×5
   texels voisins : virages −0,12 / −0,39 dB (1440p) ; moitié flou, moitié
   recomposition −0,01 / −0,06. Le flou reste (dans la mosaïque, le flux
-  moyen est lui-même un mélange de vecteurs faux).
+  moyen est lui-même un mélange de vecteurs faux). Flou gaussien (σ = 0,6 ou 1,0 × rayon)
+  au lieu de la boîte : ±0,01, inchangé.
 - **Seuil de frontière de `pixel_vectors`** (0,5 px ; 0,25 et 1,0) : ±0,001 dB,
   inchangé.
 - **`hud_mask` 3** (15/10, au lieu de 4) : virages +0,04 / +0,05, mais faible
