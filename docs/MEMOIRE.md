@@ -1651,6 +1651,9 @@ RTX 3060 Ti, pilote 615.
   inchangé.
 - **`hud_mask` 3** (15/10, au lieu de 4) : virages +0,04 / +0,05, mais faible
   contraste −0,05 ; 4 reste.
+- **`search_fine` 4 en 1440p** (portée fine doublée en pixels d'écran par la
+  demi-résolution) : −0,000 dB ; 3 reste. `false_detail` sans les options du
+  GPU dédié (lavapipe) : +0,01 seulement — pas de test de CI discriminant.
 - **`refine_bias` en 1440p** (15/10) : 0,375 +0,005 (arêtes −0,14), 0,625 −0,034 ;
   0,5 reste.
 - **`smoothness` en 1440p** (flux à demi-résolution : vecteurs deux fois plus
