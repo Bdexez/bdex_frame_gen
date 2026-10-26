@@ -95,6 +95,15 @@ def main():
         if not border > base + 0.2:
             print(f"pan: border_predict {border:.2f} dB does not beat matching against the edge {base:.2f} dB")
             return 1
+        # parallax_search: a railing's thin posts in a sideways move (x4, the
+        # game-like scene, 21 frames: 2 s to make)
+        subprocess.run([sys.executable, str(ROOT / "tools" / "edge_bench" / "make_game.py"), str(d / "fence"), "fence",
+                        "21"], check=True, stdout=subprocess.DEVNULL)
+        base, px = evaluate(build, d / "fence", {"BDEX_FG_MODE": "interpolate", "BDEX_FG_PARALLAX_SEARCH": "0"},
+                            ["--multiplier", "4", "--variant", "PARALLAX_SEARCH=1"])
+        if not px > base + 0.04:  # (+0.26 dB on a discrete GPU, +0.08 under lavapipe without its options)
+            print(f"fence: parallax_search {px:.2f} dB does not beat the hierarchical search alone {base:.2f} dB")
+            return 1
         base, chroma = evaluate(build, d / "chroma", {"BDEX_FG_MODE": "interpolate"}, ["--variant", "CHROMA_WEIGHT=1"])
         if not chroma > base + 3.0:
             print(f"chroma: chroma_weight {chroma:.2f} dB does not beat luma-only matching {base:.2f} dB")
