@@ -1,6 +1,6 @@
 # Roadmap
 
-Status as of 2026-10-05. This page only says where the project stands and
+Status as of 2026-10-15. This page only says where the project stands and
 what is left. The detail lives elsewhere: how each part works, the measured
 numbers and the open problems are in [`docs/MEMOIRE.md`](docs/MEMOIRE.md)
 (§9 for the open problems and the experiments not to redo), and the change
@@ -71,6 +71,17 @@ log is in [`CHANGELOG.md`](CHANGELOG.md).
   front cannot be told reliably from two frames: next step, use frame N−2
   from the history ring (MEMOIRE §9; prototype on branch
   `wip/occlusion-layers`).
+- **x4 on a 30 fps game** (2026-10-13 to 15): the cadence fills every
+  refresh (`refresh_fill`, `virtual_grid`, `pace_plan`), and the synthesis
+  lost its main visible defects on these benches — the block mosaic over
+  blurred content (`false_detail`), the smeared screen edges in camera turns
+  (`border_predict`), thin near structures in parallax (`parallax_search`,
+  opt-in). Still open: the scene in the gaps between HUD elements (three
+  fixes measured negative: do not retry), occlusions at moving objects'
+  edges, mouse flicks (motion blur and 300+ px a pair), a rotating minimap,
+  bloom halos. And the user's own screen: the 1440p cadence bench in
+  headless gamescope cannot tell its missed refreshes from ours
+  (`tools/cadence_report.py` on the real screen can).
 - **Windows**: forward `VK_EXT_full_screen_exclusive` through the virtual
   swapchain; an installer with Authenticode signing; a Desktop Duplication
   fallback for capture; measuring capture latency from the game's present
