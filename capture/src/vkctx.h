@@ -26,6 +26,7 @@
 #include <vulkan/vulkan.h>
 
 #include "device.h"
+#include "pacing.h"
 
 #include <chrono>
 #include <cstdint>
@@ -180,6 +181,7 @@ private:
     bool genEnabled_ = true;                  // frame generation on (global hotkey toggle)
     Job job_;
     clock::time_point lastArrival_{};
+    pacing::IntervalFilter intervalFilter_;
     double intervalMs_ = 16.7;
     double adaptiveAcc_ = 0.0;              // adaptive: fractional frames carried over
     double displayHz_ = 0.0;                // the overlay's monitor refresh rate (0 unknown), for target_fps = auto

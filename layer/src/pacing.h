@@ -13,6 +13,28 @@
 namespace bdex {
 namespace pacing {
 
+// Keep the historical EMA for jitter and isolated slow frames. Two similar
+// intervals on the same side of a large cadence change confirm a new rate:
+// following the old rate for another ~10 frames otherwise overproduces after
+// an FPS rise and builds a display queue that has to discard interpolation.
+struct IntervalFilter {
+    double previousMs = 0.0;
+    double update(double estimateMs, double measuredMs) {
+        if (!(measuredMs > 0.5 && measuredMs < 500.0)) {
+            previousMs = 0.0;
+            return estimateMs;
+        }
+        const bool consistent = previousMs > 0.0 &&
+            std::abs(measuredMs - previousMs) <= 0.1 * std::min(measuredMs, previousMs);
+        const bool changed = (measuredMs < 0.75 * estimateMs && previousMs < 0.75 * estimateMs) ||
+                             (measuredMs > 1.25 * estimateMs && previousMs > 1.25 * estimateMs);
+        const double result = consistent && changed ? 0.5 * (measuredMs + previousMs)
+                                                   : estimateMs * 0.8 + measuredMs * 0.2;
+        previousMs = measuredMs;
+        return result;
+    }
+};
+
 // The display's refresh grid, when the present feedback knows it.
 struct Grid {
     bool valid = false;
@@ -73,6 +95,26 @@ inline void planLands(double nowMs, double lagMs, const double* baseMs, int fram
     }
 }
 
+// Join the previous real frame where it was scheduled, rather than assume
+// it was one content interval before this one. At 30 fps / 144 Hz the real
+// frames alternate four and five refreshes apart. The content interval
+// leaves the phase error in one generated step (up to 5.5 ms); the scheduled
+// span spreads it over the pair. No present moves and no real is replaced.
+struct MotionClock {
+    double previousRealMs = 0.0;
+    void reset() { previousRealMs = 0.0; }
+    double span(double realMs, double intervalMs, bool active) {
+        if (!active || !std::isfinite(realMs) || !std::isfinite(intervalMs) || intervalMs <= 0.5 || intervalMs >= 500.0) {
+            reset();
+            return 0.0;
+        }
+        const double elapsed = realMs - previousRealMs;
+        const bool valid = previousRealMs > 0.0 && elapsed >= 0.5 * intervalMs && elapsed <= 2.0 * intervalMs;
+        previousRealMs = realMs;
+        return valid ? elapsed : 0.0;
+    }
+};
+
 // interp_hold as the screen allows: never closer than a refresh apart (also
 // the fastest a VRR screen shows) — two frames inside one refresh would
 // replace each other —, auto (cfgHold < 0) with a quarter refresh of margin
@@ -95,6 +137,32 @@ inline bool jobLate(double originMs, double lastLandMs, double jobStartDelayMs, 
     const double firstLand = grid.land(ready);
     return lastLandMs - firstLand > 0.9 * grid.periodMs || jobStartDelayMs > 0.9 * grid.periodMs;
 }
+
+// Notice a new whole-refresh slip of a presentation plan. Repeating the
+// same offset is one backlog, not a fresh event on every job. Half-refresh
+// virtual-grid phase changes, pauses and rate changes restart observation.
+// The game can then re-space the next pair over one fewer output, rather
+// than omit an already-generated intermediate and double a movement step.
+struct PlanSlip {
+    double previousSlots = 0.0;
+    double periodMs = 0.0;
+    void reset() { previousSlots = periodMs = 0.0; }
+    bool update(double plannedMs, double landedMs, double period, bool active) {
+        if (!active || !(plannedMs > 0.0) || !std::isfinite(plannedMs) || !std::isfinite(landedMs) ||
+            !std::isfinite(period) || !(period > 0.0)) {
+            reset();
+            return false;
+        }
+        const double delta = (landedMs - plannedMs) / period;
+        const double rounded = std::round(delta);
+        if (std::abs(delta - rounded) > 0.1) { reset(); return false; }
+        const double slots = std::max(0.0, rounded);
+        const bool slipped = periodMs > 0.0 && std::abs(period - periodMs) <= 0.01 * period && slots > previousSlots;
+        previousSlots = slots;
+        periodMs = period;
+        return slipped;
+    }
+};
 
 // latency_limiter: from how long a GPU-bound game waited for its previous
 // frame's GPU work (W, the game's lead on the GPU), the hold before its next
@@ -130,6 +198,28 @@ struct AdaptivePacer {
         return n;
     }
 };
+
+// refresh_fill also caps output when the chosen multiplier meets or exceeds
+// the refresh rate. A hole around an integer ratio (36 fps x4 on 143.912 Hz)
+// otherwise leaves independent GPU origins and occasional replaced frames.
+// Keep at least two outputs per job so the virtual grid need not switch off
+// on single-frame jobs; a slower game still needs more outputs than allocated.
+inline bool refreshFillFits(double refreshesPerFrame, int ceiling) {
+    return ceiling >= 2 && refreshesPerFrame >= 2.0 && refreshesPerFrame <= double(ceiling) * 1.02;
+}
+
+// A persistent display backlog with no worker/GPU pressure needs a refresh
+// back, not an entire real-only job. Keep interpolation and its motion clock
+// while removing one output. Worker pressure, a slow GPU, x2, or an unknown
+// output period keep the immediate real-only recovery.
+inline int catchUpFrames(int nominal, bool persistentLate, double workerWaitMs, double intervalMs,
+                         double outputPeriodMs, double readyLagMs) {
+    if (nominal < 3 || !persistentLate || !(outputPeriodMs > 0.0) || !(intervalMs > 0.0) ||
+        !std::isfinite(workerWaitMs) || !std::isfinite(readyLagMs) ||
+        workerWaitMs > 0.25 * intervalMs || readyLagMs >= 0.5 * intervalMs)
+        return 1;
+    return nominal - 1;
+}
 
 // skip_fast: generation idles while the game runs at 85 % of the refresh
 // rate or more, and resumes under 75 %, either crossing held for half a
