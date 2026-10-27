@@ -995,6 +995,9 @@ void FrameGen::memoryBarrier(VkCommandBuffer cmd) {
 }
 
 void FrameGen::recordAcquireSources(VkCommandBuffer cmd, int prev, int cur) {
+    if (!intervalRecorded_) previousIntervalMs_ = 0.0;
+    intervalRecorded_ = false;
+    flowIntervalRatio_ = 1.f;
     for (auto& p : passes_) p->frameBegin(*this);  // one call per recorded frame, generating or not
     VkImageMemoryBarrier b[2];
     uint32_t n = 0;
@@ -1074,6 +1077,22 @@ void FrameGen::dispatchGated(VkCommandBuffer cmd, uint32_t entry, uint32_t x, ui
 void FrameGen::recordFrameState(VkCommandBuffer cmd, const FrameTiming& timing) {
     timingActive_ = false;
     gate_ = false;
+    // Flow vectors are displacements over a source interval. Acceleration
+    // needs velocities, so unequal intervals must be normalised even when
+    // no GPU timing pass is needed. Dedup's distinct intervals live on the
+    // GPU; keep its existing acceleration path until those are available.
+    flowIntervalRatio_ = 1.f;
+    const double dt = timing.sinceLastMs;
+    const bool validInterval = dt > 0.5 && dt < 500.0;
+    if (!dedup_ && ((*cfgp_).frameTiming || ((*cfgp_).contentClock && timing.haveDisplay))) {
+        flowIntervalRatio_ = !timing.reset && flowLastFrame_ && validInterval && previousIntervalMs_ > 0.5
+                                 ? float(dt / previousIntervalMs_) : 0.f;
+        // Keep nearly equal intervals on the historical path instead of
+        // interpreting sub-percent present/wake jitter as a timing change.
+        if (std::abs(flowIntervalRatio_ - 1.f) <= 0.005f) flowIntervalRatio_ = 1.f;
+    }
+    previousIntervalMs_ = validInterval ? dt : 0.0;
+    intervalRecorded_ = true;
     if (outputs_ == 0 || (!(*cfgp_).frameTiming && !dedup_ && !timing.haveDisplay)) return;
     auto& vt = dev_.vt;
     const Level& l0 = levels_v_[0];
@@ -1101,7 +1120,8 @@ void FrameGen::recordFrameState(VkCommandBuffer cmd, const FrameTiming& timing) 
                     std::max(4u, l0.size.width * l0.size.height / 16384u),
                     {timing.displayMs[0], timing.displayMs[1], timing.displayMs[2], timing.displayMs[3],
                      timing.displayMs[4], timing.displayMs[5], timing.displayMs[6], timing.displayMs[7]},
-                    timing.realPos >= 0 ? timing.realPos : FrameOrder::of(*cfgp_, timing.multiplier).real};
+                    timing.realPos >= 0 ? timing.realPos : FrameOrder::of(*cfgp_, timing.multiplier).real,
+                    float(timing.displaySpanMs)};
     if (dedup) {
         vt.CmdFillBuffer(cmd, stateBuf_.buffer, kStateDiffCount, 4, 0);
         vt.CmdFillBuffer(cmd, stateBuf_.buffer, kStateTileDiff, 64 * 4, 0);
@@ -1407,7 +1427,8 @@ void FrameGen::recordSynthesisImpl(VkCommandBuffer cmd, const Pass& pipe, VkDesc
                 // ones — but sRGB formats' and HDR10's PQ are: x4 HUD scenes in
                 // sRGB +0.09 to +0.28 dB, edges +1.1 to +4.6; in HDR10 +0.05 to
                 // +0.17, edges +0.3 to +1.1; recordings unchanged)
-                enc_.transfer == TRANSFER_PERCEPTUAL || enc_.transfer == TRANSFER_PQ || enc_.srgb ? cfg.staticSoft : 0.f};
+                enc_.transfer == TRANSFER_PERCEPTUAL || enc_.transfer == TRANSFER_PQ || enc_.srgb ? cfg.staticSoft : 0.f,
+                in.accelIntervalRatio};
     // The variant with exactly the opt-ins in use compiled in: the lean one
     // when none is (same results as the full one), else one per set.
     const uint32_t features = (pc.bicubic ? SYNTH_BICUBIC : 0u) | (pc.timing ? SYNTH_TIMING : 0u) |

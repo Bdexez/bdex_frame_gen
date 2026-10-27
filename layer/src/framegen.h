@@ -63,11 +63,12 @@ public:
         // nominal schedule is assumed.
         bool haveDisplay = false;
         float displayMs[8] = {};
+        double displaySpanMs = 0.0;  // pure interpolation: scheduled interval between the real anchors, 0 = content interval
     };
-    // Per-frame state pass (frame_state.comp): duplicate detection (dedup)
-    // and the content-time t of every output (frame_timing, dedup). Call it
-    // after recordAnalysis and before recordFlow; a no-op when neither
-    // option is set, and the outputs then use the fixed t they are given.
+    // Source intervals for acceleration and the per-frame GPU state
+    // (frame_state.comp): duplicate detection and each output's content t.
+    // Call after recordAnalysis and before recordFlow. CPU timing is tracked
+    // even when the GPU pass is off and outputs keep their fixed t.
     void recordFrameState(VkCommandBuffer cmd, const FrameTiming& timing);
     // The state computed by the last recordFrameState, once its submission
     // has completed. Returns false when no state pass was recorded.
@@ -326,6 +327,7 @@ private:
     uint32_t outputs() const override { return outputs_; }
     float flowToRender() const override { return flowScale_; }
     bool flowLastFrame() const override { return flowLastFrame_; }
+    float flowIntervalRatio() const override { return flowIntervalRatio_; }
     bool repeatFlagValid() const override { return timingActive_ && dedup_; }
     VkDescriptorSet synthesisSet(VkImageView prev, VkImageView cur, uint32_t output) override;
     VkDescriptorSet realOutputSet(VkImageView src) override;
@@ -384,6 +386,9 @@ private:
     bool gate_ = false;           // this frame's flow dispatches are gated on the duplicate test
     bool flowThisFrame_ = false;  // recordFlow ran for the frame being recorded
     bool flowLastFrame_ = false;  // ... for the previous frame (its flow may be kept)
+    double previousIntervalMs_ = 0.0;
+    float flowIntervalRatio_ = 1.f;
+    bool intervalRecorded_ = false;
     std::vector<uint32_t> gateFull_;  // 4 words per gated dispatch (x, y, z, only-on-duplicates)
     uint32_t gateReduce_ = 0, gateDupReal_ = 0;  // entry indices (flow levels use 3l .. 3l+2)
     AllocatedBuffer stateReadback_;

@@ -30,6 +30,7 @@ namespace bdex {
 struct SynthesisInputs {
     bool splat = false;  // the splat map holds this synthesis's forward splat
     float accel = 0.f;   // extrapolation: weight of the acceleration term
+    float accelIntervalRatio = 1.f;  // source interval ratio belonging to that acceleration's flow pair
 };
 
 // The fps HUD's figures (FrameGen::setHud).
@@ -109,6 +110,7 @@ public:
 
     // Per frame.
     virtual bool flowLastFrame() const = 0;    // the flow images hold the flow of the previous frame's pair
+    virtual float flowIntervalRatio() const = 0;  // current/previous source interval; 1 legacy, 0 invalid timed history
     virtual bool repeatFlagValid() const = 0;  // the state buffer's repeat flag (dedup) is this frame's
 
     // Descriptor sets of the engine's own passes with other inputs: the
