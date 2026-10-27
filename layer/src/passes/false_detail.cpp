@@ -1,8 +1,8 @@
 // false_detail: over each finished generated frame, before the fps HUD,
 // the fine detail that neither input has anywhere near leans to its local
 // average (shaders/false_detail.comp: the edges between neighbouring blocks
-// that took different vectors). Packed 8- and 10-bit SDR formats, no
-// upscaling. The synthesis's inputs and t are noted before each
+// that took different vectors). Packed 8- and 10-bit formats, SDR or HDR10
+// (PQ), no upscaling. The synthesis's inputs and t are noted before each
 // synthesis (synthesisInputs, beforeSynthesis), the filter runs when the
 // output is done (afterOutput).
 #include "fg_pass.h"
@@ -25,8 +25,9 @@ public:
     void create(FgContext& ctx) override {
         const OutputEncoding enc = ctx.outputEncoding();
         const uint32_t e = enc.encoding & 0xffu;
-        // (an sRGB format's stored bytes are perceptual too: the shader reads them as such)
-        usable_ = !enc.is64 && e <= 3 && (enc.transfer == TRANSFER_PERCEPTUAL || enc.srgb) && !ctx.upscaling();
+        // (an sRGB format's stored bytes are perceptual too, and HDR10's PQ
+        // is a perceptual scale: x4 HDR10 scenes +0.05 to +0.14 dB, nothing lower)
+        usable_ = !enc.is64 && e <= 3 && (enc.transfer == TRANSFER_PERCEPTUAL || enc.transfer == TRANSFER_PQ || enc.srgb) && !ctx.upscaling();
         if (!usable_) return;
         const VkDescriptorType SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                                SB = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;

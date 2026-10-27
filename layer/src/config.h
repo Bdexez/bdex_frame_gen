@@ -56,7 +56,7 @@ struct Config {
     float lumaMatch     = 0.01f;  // the previous frame's luma brought to the current one's mean and contrast before the flow when the whole picture's mean moved by at least this much (0..1 luma; 0 = off): fades, lighting changes
     bool  parallaxSearch = false;   // finest flow: multiples of a poorly matching vector tried (thin near structures in parallax: posts, railings)
     bool  borderPredict = false;    // matcher: a block whose predicted match lies mostly off-screen keeps the prediction (camera moves: content entering / leaving the picture)
-    float falseDetail = 0.0f;       // generated frames: detail neither input has within 16 px leans to its 5x5 average (false_detail.comp), 0 = off .. 1; packed 8/10-bit SDR without upscaling
+    float falseDetail = 0.0f;       // generated frames: detail neither input has within 16 px leans to its 5x5 average (false_detail.comp), 0 = off .. 1; packed 8/10-bit SDR or HDR10 without upscaling
     float learnedCorrection = 0.0f; // interpolation: the trained correction network (tools/train_correction.py) over each generated frame, 0 = off .. 1 = as trained; 8-bit formats without upscaling
     bool  crashLog      = true;   // Linux: a crash in the layer writes ~/.cache/bdex-framegen/crash-<game>-<pid>.txt (signal, offsets in the layer, settings); other faults go untouched to the game's handlers
     bool  skipFast      = true;   // fixed multiplier: no generation while the game already runs at 85 % of the screen's refresh rate or more (back under 75 %): it would add almost no frame to the screen, only GPU work and the interpolation's hold (refresh rate known only)
