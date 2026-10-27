@@ -1403,10 +1403,11 @@ void FrameGen::recordSynthesisImpl(VkCommandBuffer cmd, const Pass& pipe, VkDesc
                 cfg.flowIterations, cfg.occlusionStrength, cfg.staticGuard, in.splat ? 1 : 0, cfg.pixelVectors ? 1 : 0, enc_.transfer,
                 timing, cfg.sceneCutLocal ? (int32_t)kCutTiles : 0, in.accel,
                 cfg.synthBicubic ? 1 : 0, hasStaticMask_ ? float(cfg.hudMask) : 0.f, cfg.revealFill && t > 1.f ? 1 : 0,
-                // (static_soft's thresholds are on perceptual values: not linear
-                // ones; HDR10's PQ is perceptual — x4 HDR10 HUD scenes +0.05 to
-                // +0.17 dB, edges +0.3 to +1.1, recordings unchanged)
-                enc_.transfer == TRANSFER_PERCEPTUAL || enc_.transfer == TRANSFER_PQ ? cfg.staticSoft : 0.f};
+                // (static_soft's evidence is on perceptual values: not linear
+                // ones — but sRGB formats' and HDR10's PQ are: x4 HUD scenes in
+                // sRGB +0.09 to +0.28 dB, edges +1.1 to +4.6; in HDR10 +0.05 to
+                // +0.17, edges +0.3 to +1.1; recordings unchanged)
+                enc_.transfer == TRANSFER_PERCEPTUAL || enc_.transfer == TRANSFER_PQ || enc_.srgb ? cfg.staticSoft : 0.f};
     // The variant with exactly the opt-ins in use compiled in: the lean one
     // when none is (same results as the full one), else one per set.
     const uint32_t features = (pc.bicubic ? SYNTH_BICUBIC : 0u) | (pc.timing ? SYNTH_TIMING : 0u) |
