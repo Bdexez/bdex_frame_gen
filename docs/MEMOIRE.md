@@ -1597,7 +1597,9 @@ RTX 3060 Ti, pilote 615.
   Seuil du garde HUD 8 → 12 (15/10) : arêtes +0,05 à +0,09 sur les virages,
   rien en baisse (6 : −0,002 ; 16 ≈ 12).
   Étendu au HDR10 (PQ, échelle perceptuelle) : scènes ×4 en HDR10 +0,05 à
-  +0,14, scène sombre avec HUD +0,14, scènes d'arêtes inchangées.
+  +0,14, scène sombre avec HUD +0,14, scènes d'arêtes inchangées. `static_soft`
+  aussi en PQ : scènes HUD ×4 en HDR10 +0,05 à +0,17, arêtes +0,3 à +1,1,
+  enregistrements inchangés.
   Rayon de la moyenne à l'échelle des blocs du flux (2 à pleine
   résolution, 4 à la moitié : 1440p « qualité ») : enregistrements 1440p
   +0,03 / +0,01 dB, scintillement −0,10 / −0,04 de plus ; rien ailleurs.
