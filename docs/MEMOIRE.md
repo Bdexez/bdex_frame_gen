@@ -1048,7 +1048,7 @@ dépendances…), appliquée seulement là où un logiciel local a un équivalen
 | 30 i/s ×4 sur 144 Hz, `refresh_fill` + `pace_plan` (14/10, trois essais) | 120 → 142–143 affichées/s, répétitions 30 → 5/s, image réelle 33 → 40 ms |
 | `interp_accel` (14/10) | jeux enregistrés +0,03 à +0,17 dB, scintillement jusqu'à −0,5 ; +0,1 ms en 1440p ×4 |
 | `border_predict` (15/10) | virages ×4 +0,15 à +0,19 dB (720p et 1440p) ; PRAGMATA scintillement −0,25 / −0,32 ; gratuit |
-| `false_detail` (14/10) | enregistrements 1440p +0,14 / +0,07 dB, scintillement −0,39 / −0,18 ; scènes ×4 +0,03 à +0,21 ; aucune perte ; ~1 ms par image générée en 1440p (+0,8 ms par image du jeu) |
+| `false_detail` (14/10) | enregistrements 1440p +0,14 / +0,07 dB, scintillement −0,39 / −0,18 ; scènes ×4 +0,03 à +0,21 ; aucune perte ; ~1 ms par image générée en 1440p (+0,3 ms par image du jeu) |
 | Limite Steam 30 i/s (démo 30 i/s ×2), avant | jeu 15 i/s, 233 ms présentation → écran |
 | Limite Steam 30 i/s, après | jeu 30 i/s, 19 à 66 ms ; ×2 retrouvé après la levée |
 | glibc demandée par l'archive | 2.36 → 2.29 |
