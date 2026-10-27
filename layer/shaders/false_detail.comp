@@ -12,7 +12,8 @@
 // edges, unmoving scenery) is left alone. Four modes over the finished output
 // (packed 8- or 10-bit formats, perceptual encoding, no upscaling), all
 // values in 8-bit units:
-//   1  the inputs' detail per 4x4 cell (the larger of the two)  } once a
+//   1  each input's detail per 4x4 cell — the current input's    } once a
+//      (the previous one's kept from the frame before, when it was current)  }
 //   2  that, dilated: the maximum over +-4 cells                } frame
 //      (1 runs a thread per pixel, 2 a thread per cell)
 //   0  the filtered output into the scratch image (a 16x16 tile and its
@@ -26,11 +27,14 @@ layout(local_size_x = 16, local_size_y = 16) in;
 
 layout(binding = 0, r32ui) uniform uimage2D outImg;   // the output (swapchain storage encoding)
 layout(binding = 1, r32ui) uniform uimage2D scratch;  // its copy
-layout(binding = 2, r32f) uniform image2D cells;      // the inputs' detail per cell
+// each input's detail per cell (buffers: images would exceed the 4 storage
+// images a stage may count on), the previous one's kept from the frame before
+layout(binding = 2, std430) buffer CellsPrev { float cellsPrev[]; };
 layout(binding = 3, r32f) uniform image2D cellsMax;   // ... dilated
 layout(binding = 4) uniform sampler2D prevTex;
 layout(binding = 5) uniform sampler2D curTex;
 layout(binding = 6, std430) buffer Tiles { uint changed[]; } tiles;  // per 16x16 tile: anything filtered
+layout(binding = 7, std430) buffer CellsCur { float cellsCur[]; };
 
 #define ENC_BGRA8       1u
 #define ENC_A2B10G10R10 2u
@@ -48,6 +52,7 @@ layout(push_constant) uniform PC {
     float ratio;     // the generated detail must exceed ratio x the inputs'
     float guard;     // detail at the pixel in both inputs above which it is left alone (0: no test)
     int blur;        // radius of the average (2..4)
+    int both;        // mode 1: the previous input's cells too (not kept from the frame before)
 } pc;
 
 vec4 unpackOut(uint v) {
@@ -96,7 +101,10 @@ void main() {
         float m = 0.0;
         for (int y = -kReach; y <= kReach; ++y)
             for (int x = -kReach; x <= kReach; ++x)
-                m = max(m, imageLoad(cells, clamp(p + ivec2(x, y), ivec2(0), cellsSize - 1)).r);
+            {
+                const ivec2 q = clamp(p + ivec2(x, y), ivec2(0), cellsSize - 1);
+                m = max(m, max(cellsPrev[q.y * cellsSize.x + q.x], cellsCur[q.y * cellsSize.x + q.x]));
+            }
         imageStore(cellsMax, p, vec4(m));
         return;
     }
@@ -109,7 +117,7 @@ void main() {
         const int side = kTile + 2;
         for (int i = li; i < side * side; i += kTile * kTile) {
             ivec2 q = o1 + ivec2(i % side, i / side);
-            sLum[i] = srcLuma(prevTex, q);  // (srcLuma clamps to the image)
+            sLum[i] = pc.both != 0 ? srcLuma(prevTex, q) : 0.0;  // (srcLuma clamps to the image)
             sLap[i] = srcLuma(curTex, q);
         }
         barrier();
@@ -131,7 +139,10 @@ void main() {
                     sb += sLum[i];
                 }
             const ivec2 c = p / kCell;
-            if (all(lessThan(c, cellsSize))) imageStore(cells, c, vec4(max(sa, sb) / float(kCell * kCell)));
+            if (all(lessThan(c, cellsSize))) {
+                if (pc.both != 0) cellsPrev[c.y * cellsSize.x + c.x] = sa / float(kCell * kCell);
+                cellsCur[c.y * cellsSize.x + c.x] = sb / float(kCell * kCell);
+            }
         }
         return;
     }
