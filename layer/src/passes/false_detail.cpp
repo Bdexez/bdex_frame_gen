@@ -30,11 +30,10 @@ public:
         if (!usable_) return;
         const VkDescriptorType SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                                SB = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        pipe_ = ctx.makePipeline(false_detail_comp, false_detail_comp_size, {SI, SI, SB, SI, CIS, CIS, SB, SB});
+        pipe_ = ctx.makePipeline(false_detail_comp, false_detail_comp_size, {SI, SI, SB, CIS, CIS, SB, SB});
         const VkExtent2D d = ctx.displayExtent();
         const VkExtent2D c{fg::divUp(d.width, kCell), fg::divUp(d.height, kCell)};
         scratch_ = ctx.createImage(VK_FORMAT_R32_UINT, d, VK_IMAGE_USAGE_STORAGE_BIT);
-        cellsMax_ = ctx.createImage(VK_FORMAT_R32_SFLOAT, c, VK_IMAGE_USAGE_STORAGE_BIT);
         tiles_ = ctx.device().createBuffer(4 * VkDeviceSize(fg::divUp(d.width, 16)) * fg::divUp(d.height, 16),
                                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
         // The average's radius follows the flow's block size on screen: 2 at
@@ -55,19 +54,17 @@ public:
                     ctx.writeImage(s, 0, SI, ctx.outputView(int(o)));
                     ctx.writeImage(s, 1, SI, scratch_.view);
                     ctx.writeBuffer(s, 2, cells_[prev].buffer);
-                    ctx.writeImage(s, 3, SI, cellsMax_.view);
-                    ctx.writeImage(s, 4, CIS, ctx.sourceView(prev));
-                    ctx.writeImage(s, 5, CIS, ctx.sourceView(cur));
-                    ctx.writeBuffer(s, 6, tiles_.buffer);
-                    ctx.writeBuffer(s, 7, cells_[cur].buffer);
+                    ctx.writeImage(s, 3, CIS, ctx.sourceView(prev));
+                    ctx.writeImage(s, 4, CIS, ctx.sourceView(cur));
+                    ctx.writeBuffer(s, 5, tiles_.buffer);
+                    ctx.writeBuffer(s, 6, cells_[cur].buffer);
                     sets_.push_back(s);
                 }
         pending_.assign(ctx.outputs(), Pending{});
     }
     void destroy(FgContext& ctx) override {
         if (!usable_) return;
-        for (AllocatedImage* img : {&scratch_, &cellsMax_})
-            if (img->image) ctx.device().destroyImage(*img);
+        if (scratch_.image) ctx.device().destroyImage(scratch_);
         for (AllocatedBuffer& b : cells_)
             if (b.buffer) ctx.device().destroyBuffer(b);
         if (tiles_.buffer) ctx.device().destroyBuffer(tiles_);
@@ -99,7 +96,6 @@ public:
         const Pending& p = pending_[size_t(output)];
         auto& vt = ctx.device().vt;
         const VkExtent2D d = ctx.displayExtent();
-        const VkExtent2D c{fg::divUp(d.width, kCell), fg::divUp(d.height, kCell)};
         VkDescriptorSet set = sets_[(size_t(output) * n_ + p.prev) * n_ + p.cur];
         FdPC pc{{(int32_t)d.width, (int32_t)d.height}, ctx.outputEncoding().encoding, 0, p.strength, p.predicted || blur_ > 2 ? kRatioCoarse : kRatio, kGuard, blur_, 1};
         vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe_.pipeline);
@@ -110,11 +106,11 @@ public:
         // (the previous input's map is kept when it was computed the frame
         // before, as that frame's current input: its content since unchanged)
         pc.both = cellsFrameOf_[p.prev] + 1 == frame_ ? 0 : 1;
-        for (int mode : {1, 2, 0, 3}) {
-            if ((mode == 1 || mode == 2) && !fresh) continue;
+        for (int mode : {1, 0, 3}) {
+            if (mode == 1 && !fresh) continue;
             pc.mode = mode;
             vt.CmdPushConstants(cmd, pipe_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
-            const VkExtent2D g = mode == 2 ? c : d;
+            const VkExtent2D g = d;
             vt.CmdDispatch(cmd, fg::divUp(g.width, 16), fg::divUp(g.height, 16), 1);
             ctx.barrier(cmd);
         }
@@ -137,7 +133,7 @@ private:
     struct Pending { uint32_t prev = 0, cur = 0; float strength = 0.f; bool on = false; bool predicted = false; };
     bool usable_ = false;
     FgPipeline pipe_;
-    AllocatedImage scratch_, cellsMax_;
+    AllocatedImage scratch_;
     std::vector<AllocatedBuffer> cells_;  // per input (buffers: a stage may count on 4 storage images only)
     std::vector<uint64_t> cellsFrameOf_;  // the frame each input's map was made (as the current input)
     AllocatedBuffer tiles_;  // per 16x16 tile of the output: anything filtered

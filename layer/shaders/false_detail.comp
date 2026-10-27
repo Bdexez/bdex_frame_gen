@@ -14,10 +14,10 @@
 // values in 8-bit units:
 //   1  each input's detail per 4x4 cell — the current input's    } once a
 //      (the previous one's kept from the frame before, when it was current)  }
-//   2  that, dilated: the maximum over +-4 cells                } frame
-//      (1 runs a thread per pixel, 2 a thread per cell)
+//      (a thread per pixel)                                        } frame
 //   0  the filtered output into the scratch image (a 16x16 tile and its
-//      3-pixel border read once into shared memory)
+//      border read once into shared memory; the inputs' cells around it,
+//      dilated over +-4 cells there)
 //   3  the scratch image back into the output, in the tiles where
 //      anything changed (most have nothing to do)
 #extension GL_GOOGLE_include_directive : require  // #include with glslangValidator too
@@ -30,11 +30,10 @@ layout(binding = 1, r32ui) uniform uimage2D scratch;  // its copy
 // each input's detail per cell (buffers: images would exceed the 4 storage
 // images a stage may count on), the previous one's kept from the frame before
 layout(binding = 2, std430) buffer CellsPrev { float cellsPrev[]; };
-layout(binding = 3, r32f) uniform image2D cellsMax;   // ... dilated
-layout(binding = 4) uniform sampler2D prevTex;
-layout(binding = 5) uniform sampler2D curTex;
-layout(binding = 6, std430) buffer Tiles { uint changed[]; } tiles;  // per 16x16 tile: anything filtered
-layout(binding = 7, std430) buffer CellsCur { float cellsCur[]; };
+layout(binding = 3) uniform sampler2D prevTex;
+layout(binding = 4) uniform sampler2D curTex;
+layout(binding = 5, std430) buffer Tiles { uint changed[]; } tiles;  // per 16x16 tile: anything filtered
+layout(binding = 6, std430) buffer CellsCur { float cellsCur[]; };
 
 #define ENC_BGRA8       1u
 #define ENC_A2B10G10R10 2u
@@ -87,6 +86,8 @@ shared uint sPix[kSide * kSide];      // the output, packed
 shared float sLum[kSide * kSide];     // its luma
 shared float sLap[kSide * kSide];     // |Laplacian| (valid one pixel in from the edge)
 shared uint sChanged;
+shared float sCells[(kTile / 4 + 8) * (kTile / 4 + 8)];  // (kCell 4, kReach 4)
+shared float sDil[(kTile / 4) * (kTile / 4)];
 
 float srcLap(sampler2D tex, ivec2 q) {
     return abs(4.0 * srcLuma(tex, q) - srcLuma(tex, q + ivec2(-1, 0)) - srcLuma(tex, q + ivec2(1, 0)) -
@@ -96,18 +97,6 @@ float srcLap(sampler2D tex, ivec2 q) {
 void main() {
     ivec2 p = ivec2(gl_GlobalInvocationID.xy);
     const ivec2 cellsSize = (pc.size + kCell - 1) / kCell;
-    if (pc.mode == 2) {
-        if (any(greaterThanEqual(p, cellsSize))) return;
-        float m = 0.0;
-        for (int y = -kReach; y <= kReach; ++y)
-            for (int x = -kReach; x <= kReach; ++x)
-            {
-                const ivec2 q = clamp(p + ivec2(x, y), ivec2(0), cellsSize - 1);
-                m = max(m, max(cellsPrev[q.y * cellsSize.x + q.x], cellsCur[q.y * cellsSize.x + q.x]));
-            }
-        imageStore(cellsMax, p, vec4(m));
-        return;
-    }
     if (pc.mode == 1) {
         // A thread a pixel: both inputs' luma over the tile and a pixel
         // around it read once into shared memory (2 fetches a pixel instead
@@ -155,6 +144,24 @@ void main() {
     const ivec2 origin = ivec2(gl_WorkGroupID.xy) * kTile - kBorder;
     const int li = int(gl_LocalInvocationIndex);
     if (li == 0) sChanged = 0u;
+    // The inputs' detail around the tile's cells, dilated here (+-kReach
+    // cells: the tile's 4x4 cells and their reach, 12x12, read once).
+    {
+        const int side = kTile / kCell + 2 * kReach;
+        const ivec2 c0 = ivec2(gl_WorkGroupID.xy) * (kTile / kCell) - kReach;
+        for (int i = li; i < side * side; i += kTile * kTile) {
+            ivec2 c = clamp(c0 + ivec2(i % side, i / side), ivec2(0), cellsSize - 1);
+            sCells[i] = max(cellsPrev[c.y * cellsSize.x + c.x], cellsCur[c.y * cellsSize.x + c.x]);
+        }
+        barrier();
+        if (li < (kTile / kCell) * (kTile / kCell)) {
+            const ivec2 t = ivec2(li % (kTile / kCell), li / (kTile / kCell));
+            float m = 0.0;
+            for (int y = 0; y <= 2 * kReach; ++y)
+                for (int x = 0; x <= 2 * kReach; ++x) m = max(m, sCells[(t.y + y) * side + t.x + x]);
+            sDil[li] = m;
+        }
+    }
     for (int i = li; i < kSide * kSide; i += kTile * kTile) {
         ivec2 q = clamp(origin + ivec2(i % kSide, i / kSide), ivec2(0), pc.size - 1);
         uint v = imageLoad(outImg, q).r;
@@ -174,7 +181,7 @@ void main() {
     const bool inImage = all(lessThan(p, pc.size));
     const ivec2 l = ivec2(gl_LocalInvocationID.xy) + kBorder;
     const int c0 = l.y * kSide + l.x;
-    float hs = imageLoad(cellsMax, min(p / kCell, cellsSize - 1)).r;
+    float hs = sDil[(int(gl_LocalInvocationID.y) / kCell) * (kTile / kCell) + int(gl_LocalInvocationID.x) / kCell];
     float hg = 0.0;  // (outside the image: the clamped border's, unused)
     for (int y = -2; y <= 2; ++y)
         for (int x = -2; x <= 2; ++x) hg += sLap[c0 + y * kSide + x];

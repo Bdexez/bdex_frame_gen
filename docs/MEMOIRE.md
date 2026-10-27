@@ -1556,7 +1556,9 @@ RTX 3060 Ti, pilote 615.
   Carte de détail par entrée gardée d'une image à l'autre (l'entrée courante
   devient la précédente) : moitié du calcul de la carte, mêmes images ; en
   tampons de stockage (5 images de stockage dépassaient les 4 garanties :
-  `min_limits` l'a attrapé en CI).
+  `min_limits` l'a attrapé en CI). Dilatation (±4 cellules) faite dans la tuile même (12×12
+  cellules lues en mémoire partagée) : une étape de moins (~0,2 ms par image
+  du jeu), mêmes images.
   Latence (banc de cadence 720p, 5 essais alternés `54dc548` / fin de nuit) :
   image réelle présentation → écran médiane ~42,0 → ~42,4 ms (+0,4, dans le
   bruit), affichées ~143/s des deux côtés, hors plan 7–34 % → 5–11 %.
