@@ -1869,3 +1869,74 @@ RTX 3060 Ti, pilote 615.
 - **Constat** : les images générées des jeux enregistrés n'ont que 85–88 %
   du détail fin de la vérité (pompage de netteté possible) ; le bicubique
   n'y change rien de mesurable.
+
+### Nuit du 14 au 15/10 — récapitulatif de tous les changements
+
+Demande : « continue d'améliorer le projet toute la nuit » (objectif ×4 sur
+Cyberpunk à 30 i/s, 1440p, ≤ 10 ms de latence ajoutée). 49 commits
+`f4df311` → `bd019f9`, poussés sur GitHub le 15/10 vers 11 h 40 à la
+demande de l'utilisateur (`e170f89..bd019f9`, 75 commits en comptant les
+séances d'avant). Rien n'a été vérifié dans le jeu de l'utilisateur : tout
+est mesuré hors ligne (enregistrements, scènes `make_game.py`, banc 1440p ×4
+`hd4/`) et en gamescope sans fenêtre.
+
+**Adopté, actif par défaut sur GPU dédié**
+- `false_detail` (passe `passes/false_detail.cpp`, `false_detail.comp`) :
+  le faux détail fin (mosaïque de blocs aux vecteurs différents sur du
+  contenu flou) qu'aucune entrée n'a à ±16 px → moyenne locale ; garde HUD
+  (détail présent au pixel dans les deux entrées, seuil 12) ; rayon de la
+  moyenne 2 ou 4 selon l'échelle du flux ; seuil 1,5, 1,25 pour les images
+  prédites et le flux à demi-résolution ; aussi en extrapolation, en HDR10
+  (PQ) et en sRGB ; formats empaquetés 8/10 bits, sans upscaling.
+- `border_predict` (`block_match.comp`) : un bloc dont la correspondance
+  prédite sort à plus de moitié de l'image garde la prédiction (bords
+  pendant un virage). À 0, le chemin historique est intact (l'invariant le
+  fixe à 0).
+- `interp_accel` : plafond de la correction 0,75·|B| + 1 (au lieu de 0,5).
+- `static_soft` : aussi pour les images prédites (vers l'image courante), en
+  HDR10 (PQ) et pour les formats sRGB.
+
+**Opt-in** : `parallax_search` (« Recherche de parallaxe » dans le panneau,
+`passes/parallax_search.cpp`, `flow_parallax.comp`) — multiples du vecteur
+fin là où il explique mal sa fenêtre, accord des deux sens ; rambarde +0,32 dB ;
+~0,3 ms de flux par image du jeu en 1440p (sur la latence) → désactivé.
+
+**Optimisations (mêmes images, vérifié sur toute la suite à 0,00 dB)** :
+carte de détail des entrées lue une fois par pixel en mémoire partagée, puis
+gardée d'une image à l'autre (en tampons de stockage : 5 images de stockage
+dépassaient les 4 garanties), dilatation faite dans la tuile ; fenêtre de
+référence de `parallax_search` lue une fois, multiples exacts puis ±1 px
+(7 fenêtres au lieu de 15).
+
+**Outils et tests** : `make_game.py fence` (rambarde, sans flou de mouvement)
+et `flick` (coups de poignet) ; `test_offline.py` exige le gain de
+`border_predict` (pan du corpus en extrapolation) et de `parallax_search`
+(rambarde courte) ; `test_corpus.py`, `check_matcher_invariant.py`,
+`test_determinism.py`, `validation.sh`, `pending_decisions.py` tenus à jour.
+
+**Chiffres d'ensemble** (interpolation, `54dc548` → `119b609`, avant les
+derniers ajustements) : +0,098 dB, pixels faux −3,2 % ; 1440p +0,21 / +0,13,
+scintillement −0,79 / −0,46 ; virages ×4 +0,18 à +0,28 ; Cyberpunk (853×480)
+−0,01 / +0,02. Extrapolation : +0,15 à +0,25 dB. Latence au banc 720p :
++0,4 ms (dans le bruit) ; estimée ~1,3 ms en 1440p (coût de `false_detail`
+avant la 1re image générée).
+
+**Erreurs de la nuit attrapées par les tests** : paramètre inutilisé
+(`-Werror`, MSVC `/W4 /WX`) ; 5 images de stockage (`min_limits`) ; écart
+HDR10/sRGB (`test_formats`, local seulement : la CI tourne sous lavapipe sans
+les options auto du GPU dédié — toujours lancer les tests locaux complets).
+
+**Écarté (mesuré, ne pas refaire)** : prototype par couches du 05/10 repris ;
+marges de `pixel_vectors` ; `global_motion` anisotrope ; règles de bord dans
+la synthèse ; SAD partiel au bord ; modèle global de caméra ; `pixel_vectors`
+3×3 ; repli adouci / image la plus proche ; plafond d'accélération ≥ 1,0 et
+départ depuis l'arrêt ; `flow_temporal`, `subpixel_lk` + bicubique, flux
+pleine résolution en 1440p, `smoothness` / `refine_bias` / `search_fine` /
+`hud_mask` / seuil de frontière de `pixel_vectors` en 1440p ;
+`chroma_weight`, `static_guard`, `learned_flow`, `extrapolate_accel` ;
+`false_detail` : référence non dilatée, flou bilatéral, fondu, recomposition
+par flux lissé, gaussienne, référence compensée par le mouvement, seuil 1,1.
+
+**Conseils à l'utilisateur** : plafonner Cyberpunk à 36 i/s (×4 = 144 Hz
+exactement, sans `refresh_fill` : ~7 ms de moins, mouvement par image −17 %) ;
+flou de mouvement bas ou coupé.
