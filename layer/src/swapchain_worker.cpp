@@ -432,7 +432,7 @@ bool VirtualSwapchain::waitGpu(VkFence fence, bool cancellable, clock::time_poin
 // slip a whole period) and on a refresh of its own.
 VirtualSwapchain::clock::time_point VirtualSwapchain::paceTarget(const Job& job, clock::time_point origin, int k) {
     pacing::Grid g;
-    g.valid = displayGrid(g.lastMs, g.periodMs);
+    g.valid = displayGrid(g.lastMs, g.periodMs, &g.lead);
     const double t = pacing::presentTargetMs(msOf(origin), job.intervalMs, job.frames, job.order, k, lastPresentMs_,
                                              lastLandMs_, g, job.plan && k < 8 ? job.planned[k] : 0.0);
     return clock::time_point(std::chrono::duration_cast<clock::duration>(std::chrono::duration<double, std::milli>(t)));
@@ -577,11 +577,13 @@ double VirtualSwapchain::displayHz() {
     // to every other refresh: at x1 it stayed at 30 Hz once the limit was
     // lifted.)
     if (const double g = gsHz_.load(); g > 0.0) return g;
+    const double x11 = x11Clock_ ? x11Clock_->refreshHz() : 0.0;
     std::lock_guard<std::mutex> lock(fbMutex_);
     const double measured = displayClock_.refreshHz();
     // Not measurable (no present feedback, or no refresh grid, e.g. KDE with
-    // NVIDIA): the refresh rate the control panel reads from the system.
-    return measured > 0.0 ? measured : cfg_.panelDisplayHz;
+    // NVIDIA): the X server's (x11_clock), else the refresh rate the control
+    // panel reads from the system.
+    return measured > 0.0 ? measured : x11 > 0.0 ? x11 : cfg_.panelDisplayHz;
 }
 
 // Worker thread, after a job (real_ stays put until it goes idle): at most
@@ -620,13 +622,23 @@ void VirtualSwapchain::pollGamescope() {
     if (limited) dev_.gamescopeLimitSeen.store(true, std::memory_order_relaxed);
 }
 
-bool VirtualSwapchain::displayGrid(double& lastMs, double& periodMs) {
-    std::lock_guard<std::mutex> lock(fbMutex_);
-    if (feedback_ && displayClock_.valid()) {
-        lastMs = displayClock_.lastMs();
-        periodMs = displayClock_.periodMs();
+bool VirtualSwapchain::displayGrid(double& lastMs, double& periodMs, double* lead) {
+    if (lead) *lead = 0.3;
+    {
+        std::lock_guard<std::mutex> lock(fbMutex_);
+        if (feedback_ && displayClock_.valid()) {
+            lastMs = displayClock_.lastMs();
+            periodMs = displayClock_.periodMs();
+            return true;
+        }
+    }
+    // x11_clock: the moments the X server handed the window's content over
+    // (Xwayland: to the compositor), the refreshes a present must beat.
+    if (x11Clock_ && x11Clock_->grid(lastMs, periodMs)) {
+        if (lead) *lead = pacing::kX11Lead;
         return true;
     }
+    std::lock_guard<std::mutex> lock(fbMutex_);
     if (vgPeriodMs_ <= 0.0) return false;
     lastMs = vgAnchorMs_;
     periodMs = vgPeriodMs_;

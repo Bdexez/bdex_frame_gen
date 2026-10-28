@@ -38,6 +38,7 @@ struct InstanceData {
     std::atomic<bool> renderScaleAllowed{true};  // disabled if a device needs pass-through present extensions
     std::mutex surfMutex;
     std::unordered_map<VkSurfaceKHR, WaylandSurfaceState> waylandSurfaces;
+    std::unordered_map<VkSurfaceKHR, uint32_t> x11Windows;  // X11 surfaces: the window (XID) each shows (x11_clock)
 };
 
 struct AllocatedImage {

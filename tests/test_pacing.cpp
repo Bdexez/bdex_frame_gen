@@ -251,6 +251,24 @@ TEST(pacing_skip_fast_hysteresis) {
     CHECK(!g.update(false, 1000.0 / 130, 144, now, toggled)); // off
 }
 
+// A plan chained on a grid whose phase then moves (virtual_grid's half
+// period, x11_clock's grid replacing the virtual one) follows the new phase
+// at once, instead of chaining every job on the old one.
+TEST(pacing_plan_follows_a_moved_grid) {
+    const double P = 1000.0 / 144;
+    const double base[4] = {0.0, P, 2 * P, 3 * P};
+    double lastPlanned = 0.0, lands[4];
+    pacing::Grid a{true, 0.0, P};
+    pacing::planLands(100.0, 3.0, base, 4, a, lastPlanned, lands);
+    for (double l : lands) CHECK(std::fabs(std::remainder(l, P)) < 1e-6);
+    // The grid now 0.6 period later; the next job would collide with the last
+    // planned refresh (filling every refresh): still on the new grid.
+    pacing::Grid b{true, 0.6 * P, P};
+    pacing::planLands(lands[3] - 3.0 - 0.5 * P, 3.0, base, 4, b, lastPlanned, lands);
+    for (double l : lands) CHECK(std::fabs(std::remainder(l - 0.6 * P, P)) < 1e-6);
+    for (int k = 1; k < 4; ++k) CHECK(std::fabs(lands[k] - lands[k - 1] - P) < 1e-6);
+}
+
 // A job whose first frame cannot make the first refresh it could once ready
 // counts as late; one on time does not.
 TEST(pacing_late_job) {

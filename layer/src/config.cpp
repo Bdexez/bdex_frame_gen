@@ -312,6 +312,7 @@ const std::vector<OptionDef>& registry() {
     B("phase_smooth", nullptr, &Config::phaseSmooth, kLive),
     B("catchup_smooth", nullptr, &Config::catchupSmooth, kLive),
     B("virtual_grid", nullptr, &Config::virtualGrid, kLive),
+    B("x11_clock", nullptr, &Config::x11Clock),
     B("precise_wake", nullptr, &Config::preciseWake, kLive),
     B("thread_priority", nullptr, &Config::threadPriority),
     B("pipeline_cache", nullptr, &Config::pipelineCache),

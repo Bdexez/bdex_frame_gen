@@ -84,6 +84,7 @@ add_library(bdex_core STATIC
   src/descriptor_planner.cpp
   src/options_ui.cpp
   src/display_clock.cpp
+  src/x11_present_clock.cpp
   src/gamescope.cpp
   src/status.cpp
   src/crash.cpp

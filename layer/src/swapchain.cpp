@@ -68,6 +68,17 @@ VirtualSwapchain::VirtualSwapchain(DeviceData& dev, const VkSwapchainCreateInfoK
         worker_ = std::thread([this] { workerLoop(); });
         feedback_ = dev_.presentFeedback && !throwaway_;
         if (feedback_) fbThread_ = std::thread([this] { feedbackLoop(); });
+        // x11_clock: an X11 window's refresh grid from the X server — under
+        // Xwayland in immediate mode, the only one there is.
+        if (cfg_.x11Clock && !throwaway_ && dev_.inst) {
+            uint32_t window = 0;
+            {
+                std::lock_guard<std::mutex> lk(dev_.inst->surfMutex);
+                auto it = dev_.inst->x11Windows.find(appInfo.surface);
+                if (it != dev_.inst->x11Windows.end()) window = it->second;
+            }
+            if (window) x11Clock_ = X11PresentClock::start(window, cfg_.panelDisplayHz);
+        }
     } catch (...) {
         destroyAll();
         throw;
@@ -111,7 +122,11 @@ void VirtualSwapchain::publishStatus(int multiplier) {
     {
         // (2: virtual_grid — the frames on a grid of our own, one a refresh)
         std::lock_guard<std::mutex> lock(fbMutex_);
-        if (feedback_) e.displayGrid = displayClock_.valid() ? 1 : vgPeriodMs_ > 0.0 ? 2 : fbDisplayed_ >= 120 ? 0 : -1;
+        // (3: x11_clock — the X server's)
+        const bool measured = feedback_ && displayClock_.valid();
+        if (measured) e.displayGrid = 1;
+        else if (x11Grid()) e.displayGrid = 3;
+        else if (feedback_) e.displayGrid = vgPeriodMs_ > 0.0 ? 2 : fbDisplayed_ >= 120 ? 0 : -1;
         else if (vgPeriodMs_ > 0.0) e.displayGrid = 2;
     }
     e.latencyMs = displayLatencyMs();
@@ -120,14 +135,16 @@ void VirtualSwapchain::publishStatus(int multiplier) {
         fbPeriodHintMs_.store(hz > 0.0 ? 1000.0 / hz : 0.0, std::memory_order_relaxed);
         const double nowMs = msOf(clock::now());
         std::lock_guard<std::mutex> lock(fbMutex_);
-        if (feedback_ && statusRateAtMs_ > 0.0 && nowMs - statusRateAtMs_ >= 500.0 && hz > 0.0) {
+        const ShownCounts c = shownCountsLocked();
+        if (c.shown < statusShownSeen_ || c.held < statusHeldSeen_) statusRateAtMs_ = 0.0;  // (the source changed)
+        if ((feedback_ || x11Grid()) && statusRateAtMs_ > 0.0 && nowMs - statusRateAtMs_ >= 500.0 && hz > 0.0) {
             const double secs = (nowMs - statusRateAtMs_) / 1000.0;
-            e.shownFps = double(fbDisplayed_ - statusShownSeen_) / secs;
-            e.heldPerS = double(fbHeld_ - statusHeldSeen_) / secs;
+            e.shownFps = double(c.shown - statusShownSeen_) / secs;
+            e.heldPerS = double(c.held - statusHeldSeen_) / secs;
         }
         if (statusRateAtMs_ <= 0.0 || nowMs - statusRateAtMs_ >= 500.0) {
-            statusShownSeen_ = fbDisplayed_;
-            statusHeldSeen_ = fbHeld_;
+            statusShownSeen_ = c.shown;
+            statusHeldSeen_ = c.held;
             statusRateAtMs_ = nowMs;
         }
     }
@@ -620,6 +637,7 @@ void VirtualSwapchain::retire() {
 void VirtualSwapchain::destroyAll() {
     auto& vt = dev_.vt;
     VkDevice d = dev_.device;
+    x11Clock_.reset();
     if (fbThread_.joinable()) {  // it may be waiting on real_: stop it first
         {
             std::lock_guard<std::mutex> lock(fbMutex_);
@@ -927,15 +945,33 @@ int VirtualSwapchain::chooseMultiplier() {
 // A screen that shows frames when they are presented: the present feedback
 // has seen enough frames displayed, and no fixed refresh grid in them.
 bool VirtualSwapchain::variableRefresh() {
-    if (!feedback_) return false;
+    if (!feedback_ || x11Grid()) return false;
     std::lock_guard<std::mutex> lock(fbMutex_);
     return fbDisplayed_ >= 120 && !displayClock_.valid();
 }
 
+// The present feedback's counts where its clock knows the grid (or where
+// nothing else does), the X server's where only x11_clock does.
+VirtualSwapchain::ShownCounts VirtualSwapchain::shownCountsLocked() {
+    ShownCounts c;
+    if (!displayClock_.valid() && x11Grid()) {
+        const X11PresentClock::Counts x = x11Clock_->counts();
+        c.shown = x.shown;
+        c.held = x.held;
+        c.replaced = x.replaced;
+        return c;
+    }
+    c.shown = fbDisplayed_;
+    c.held = fbHeld_;
+    c.replaced = fbReplaced_;
+    return c;
+}
+
 double VirtualSwapchain::fastGameHz() {
     if (dev_.gamescope) return dev_.gamescopeLimitSeen.load(std::memory_order_relaxed) || gsLimited_.load() ? 0.0 : gsHz_.load();
+    const double x11 = x11Clock_ ? x11Clock_->refreshHz() : 0.0;
     std::lock_guard<std::mutex> lock(fbMutex_);
-    return std::max(displayClock_.refreshHz(), double(cfg_.panelDisplayHz));
+    return std::max({displayClock_.refreshHz(), x11, double(cfg_.panelDisplayHz)});
 }
 
 bool VirtualSwapchain::fastGame(double hz) {
@@ -1067,6 +1103,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     if (const double hint = gsHz_.load() > 0.0 ? gsHz_.load() : ptRefreshHz_.load() > 0.0 ? ptRefreshHz_.load() : cfg_.panelDisplayHz;
         hint != clockHintHz_) {
         clockHintHz_ = hint;
+        if (x11Clock_) x11Clock_->setHint(clockHintHz_);
         std::lock_guard<std::mutex> fbLock(fbMutex_);
         displayClock_.setHint(clockHintHz_);
     }
@@ -1178,9 +1215,10 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         // on 144 Hz, 137 frames a second shown and 7 repeated, 144 and none
         // with it. A grid at the wrong phase (our presents where the
         // compositor latches) gets frames replaced: moved half a period.
+        const bool x11 = x11Grid();
         std::lock_guard<std::mutex> lock(fbMutex_);
         const double nowMs = msOf(t0);
-        if (cfg_.virtualGrid && adaptivePeriodMs_ > 0.0 && !(feedback_ && displayClock_.valid())) {
+        if (cfg_.virtualGrid && adaptivePeriodMs_ > 0.0 && !(feedback_ && displayClock_.valid()) && !x11) {
             if (vgAnchorMs_ <= 0.0) vgAnchorMs_ = fbLastMs_ > 0.0 ? fbLastMs_ : nowMs;
             vgPeriodMs_ = adaptivePeriodMs_;
             if (nowMs - vgCheckMs_ >= 1000.0) {
@@ -1231,15 +1269,16 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         // tells (frames replaced before being displayed do not count), else
         // the nominal game fps x multiplier.
         int outFps = gfps * (interpolate ? mult : 1);
-        if (feedback_) {
+        if (feedback_ || x11Grid()) {
             if (t0 - hudRateAt_ >= std::chrono::seconds(1)) {
                 uint64_t shown;
                 bool ever;
                 {
                     std::lock_guard<std::mutex> fbLock(fbMutex_);
-                    shown = fbDisplayed_;
-                    ever = fbEverDisplayed_;
+                    shown = shownCountsLocked().shown;
+                    ever = fbEverDisplayed_ || x11Grid();
                 }
+                if (shown < hudDisplayed_) hudRateAt_ = {};  // (the source changed)
                 const double secs = std::chrono::duration<double>(t0 - hudRateAt_).count();
                 if (ever && hudRateAt_.time_since_epoch().count() != 0 && secs < 3.0)
                     hudDisplayedFps_ = static_cast<int>(double(shown - hudDisplayed_) / secs + 0.5);
@@ -1314,7 +1353,8 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         double lastMs, periodMs;
         const bool adaptive = interpolate && adaptivePeriodMs_ > 0.0;
         const double spacing = adaptive ? adaptivePeriodMs_ : frameIntervalMs_ / mult;
-        const bool grid = interpolate && displayGrid(lastMs, periodMs);
+        double gridLead = 0.3;
+        const bool grid = interpolate && displayGrid(lastMs, periodMs, &gridLead);
         // interp_hold: the outputs read their t from these display times too,
         // so frame_timing follows the uneven spacing.
         const bool held = interpolate && order.hold < 1.f;
@@ -1333,7 +1373,8 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
                 double base[8] = {};
                 for (int k = 1; k < mult; ++k)
                     base[k] = adaptive ? spacing * k : held ? frameIntervalMs_ * order.offset(k) : frameIntervalMs_ * k / mult;
-                const pacing::Grid g{true, lastMs, periodMs};
+                pacing::Grid g{true, lastMs, periodMs};
+                g.lead = gridLead;
                 pacing::planLands(now, readyLagMs_.load(std::memory_order_relaxed), base, mult, g, lastPlannedMs_, planned);
                 for (int k = 0; k < mult; ++k) at[k] = planned[k] - now;  // (planned[] again below)
             } else if (adaptive) {
@@ -1626,11 +1667,14 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             statsTrimmed_ = 0;
             if (gsLimited_.load() && len < int(sizeof(skip)))
                 len += snprintf(skip + len, sizeof(skip) - size_t(len), ", gamescope frame limit %.0f fps", gsHz_.load());
-            if (feedback_) {
+            const bool x11 = x11Grid();
+            if (feedback_ || x11) {
+                const double x11Hz = x11 ? x11Clock_->refreshHz() : 0.0;
                 std::lock_guard<std::mutex> fbLock(fbMutex_);
-                const double hz = displayClock_.refreshHz();
+                const bool fromX11 = x11 && !displayClock_.valid();  // (shownCountsLocked's choice)
+                const double hz = fromX11 ? x11Hz : displayClock_.refreshHz();
                 char buf[96];
-                const int k = hz > 0.0 ? snprintf(buf, sizeof buf, ", display %.1f Hz", hz)
+                const int k = hz > 0.0 ? snprintf(buf, sizeof buf, fromX11 ? ", display %.1f Hz (X server)" : ", display %.1f Hz", hz)
                                        : snprintf(buf, sizeof buf, ", display without fixed refresh");
                 if (k > 0 && len + k < int(sizeof(skip))) { memcpy(skip + len, buf, size_t(k) + 1); len += k; }
                 if (fbLatencyCount_) {
@@ -1649,14 +1693,20 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
                     fbFrameLatencySum_ = 0.0;
                     fbFrameLatencyCount_ = 0;
                 }
-                if (fbEverDisplayed_) {
+                const ShownCounts c = shownCountsLocked();
+                if (c.shown < statsDisplayed_ || c.replaced < statsReplaced_) statsDisplayed_ = c.shown, statsReplaced_ = c.replaced;
+                if (fbEverDisplayed_ || fromX11) {
                     char shown[48];
-                    const int m = snprintf(shown, sizeof shown, ", displayed %.1f fps", double(fbDisplayed_ - statsDisplayed_) / elapsed);
+                    const int m = snprintf(shown, sizeof shown, ", displayed %.1f fps", double(c.shown - statsDisplayed_) / elapsed);
                     if (m > 0 && len + m < int(sizeof(skip))) { memcpy(skip + len, shown, size_t(m) + 1); len += m; }
                 }
-                statsDisplayed_ = fbDisplayed_;
-                const uint64_t replaced = fbReplaced_ - statsReplaced_;
-                statsReplaced_ = fbReplaced_;
+                if (fromX11 && c.held >= statsHeld_ && len < int(sizeof(skip)))
+                    len += snprintf(skip + len, sizeof(skip) - size_t(len), ", %llu refresh(es) held",
+                                    static_cast<unsigned long long>(c.held - statsHeld_));
+                statsHeld_ = c.held;
+                statsDisplayed_ = c.shown;
+                const uint64_t replaced = c.replaced - statsReplaced_;
+                statsReplaced_ = c.replaced;
                 if (replaced) len += snprintf(skip + len, sizeof(skip) - size_t(len), ", %llu frame(s) replaced before display",
                                              static_cast<unsigned long long>(replaced));
             }

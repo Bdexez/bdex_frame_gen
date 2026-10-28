@@ -6,6 +6,7 @@
 #include "pacing.h"
 #include "framegen.h"
 #include "recorder.h"
+#include "x11_present_clock.h"
 
 #include <atomic>
 #include <chrono>
@@ -244,7 +245,7 @@ private:
     bool variableRefresh();
     void sleepUntilPrecise(clock::time_point target);             // vrr_hold: displayed when presented (no refresh grid)
     double displayHz();                 // measured refresh rate, 0 if unknown (VRR, no feedback)
-    bool displayGrid(double& lastMs, double& periodMs);  // the refresh grid, if known
+    bool displayGrid(double& lastMs, double& periodMs, double* lead = nullptr);  // the refresh grid, if known (pacing::Grid::lead)
     static double msOf(clock::time_point t) {
         return std::chrono::duration<double, std::milli>(t.time_since_epoch()).count();
     }
@@ -286,6 +287,15 @@ private:
     bool fbEverDisplayed_ = false;
     int fbTimeouts_ = 0;
     DisplayClock displayClock_;         // fbMutex_
+    // x11_clock (x11_present_clock.h): an X11 window's refresh grid from the
+    // X server, where the present feedback finds none (Xwayland in immediate
+    // mode reports each present complete at once). Its own lock.
+    std::unique_ptr<X11PresentClock> x11Clock_;
+    bool x11Grid() { return x11Clock_ && x11Clock_->refreshHz() > 0.0; }
+    // What reached the screen: the present feedback's counts, or the X
+    // server's where its grid stands in for the feedback's (fbMutex_ held).
+    struct ShownCounts { uint64_t shown = 0, held = 0, replaced = 0; };
+    ShownCounts shownCountsLocked();
     double clockHintHz_ = 0.0;          // present thread: the refresh rate given to displayClock_ (gamescope's, else the panel's)
     // gamescope (gamescope.h): the refresh cycle its WSI layer reports for
     // the real swapchain — the display's, or with Steam's framerate limit on,
@@ -310,6 +320,7 @@ private:
     uint64_t statusShownSeen_ = 0, statusHeldSeen_ = 0;  // present thread: counts at the last status rate
     double statusRateAtMs_ = 0.0;
     uint64_t statsReplaced_ = 0;
+    uint64_t statsHeld_ = 0;
     void waitWorkerSubmitted(std::unique_lock<std::mutex>& lock);
     void waitWorkerIdle(std::unique_lock<std::mutex>& lock);
 
