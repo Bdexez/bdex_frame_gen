@@ -75,6 +75,41 @@ FrameOrder orderFor(int m, float hold, float cfgHold, double hz, double interval
 
 } // namespace
 
+TEST(pacing_interval_filter_keeps_the_ema_under_jitter) {
+    for (int pattern = 0; pattern < 3; ++pattern) {
+        pacing::IntervalFilter filter;
+        double expected = 1000.0 / 30, estimate = expected;
+        for (int i = 0; i < 600; ++i) {
+            const double dt = pattern == 0 ? 1000.0 / 30 + 2.0 * std::sin(double(i))
+                            : pattern == 1 ? (i % 2 ? 20.0 : 140.0 / 3)
+                            : i % 45 ? 1000.0 / 30 : 80.0;
+            expected = expected * 0.8 + dt * 0.2;
+            estimate = filter.update(estimate, dt);
+            CHECK(estimate == expected);
+        }
+    }
+}
+
+TEST(pacing_interval_filter_confirms_rate_changes_and_resets_after_a_pause) {
+    pacing::IntervalFilter filter;
+    double estimate = 1000.0 / 30;
+    estimate = filter.update(estimate, estimate);
+    estimate = filter.update(estimate, 1000.0 / 60);
+    CHECK(estimate > 29.0);  // one short frame is insufficient
+    estimate = filter.update(estimate, 1000.0 / 60);
+    CHECK(std::abs(estimate - 1000.0 / 60) < 1e-9);
+    estimate = filter.update(estimate, 1000.0 / 30);
+    CHECK(estimate < 21.0);
+    estimate = filter.update(estimate, 1000.0 / 30);
+    CHECK(std::abs(estimate - 1000.0 / 30) < 1e-9);
+    estimate = filter.update(estimate, 1000.0 / 60);
+    CHECK(filter.update(estimate, 500.0) == estimate);
+    estimate = filter.update(estimate, 1000.0 / 60);
+    CHECK(estimate > 25.0);  // the sample before the pause cannot confirm this one
+    CHECK(filter.update(estimate, 0.0) == estimate);
+    CHECK(filter.update(estimate, -1.0) == estimate);
+}
+
 // x2 at 60 fps on 144 Hz, evenly spaced: every frame displayed, generated and
 // real alternating — the base the other cases are measured against.
 TEST(pacing_even_x2_every_frame_displayed) {
@@ -308,12 +343,13 @@ namespace {
 // presented as the worker does, the GPU work done 3 +- 1 ms after the present
 // call. Returns the rms of (content step - display step) between displayed
 // frames — the motion's judder — and counts the frames shown and repeated.
-struct Cadence { double judderMs; double shownPerS; double repeatsPerS; };
-Cadence runCadence(bool adaptive, bool plan, double gridPhase, bool screenGridKnown) {
+struct Cadence { double judderMs; double shownPerS; double repeatsPerS; double worstStepMs; };
+Cadence runCadence(bool adaptive, bool plan, double gridPhase, bool screenGridKnown, bool smooth = false) {
     const double P = 1000.0 / 143.912, I = 1000.0 / 30;
     const pacing::Grid screen{true, 0.0, P};
     const pacing::Grid seen{true, screenGridKnown ? 0.0 : gridPhase * P, P};  // measured, or virtual_grid's
     pacing::AdaptivePacer ap;
+    pacing::MotionClock motion;
     Config c;
     struct F { double display, content; };
     std::vector<F> fr;
@@ -334,12 +370,13 @@ Cadence runCadence(bool adaptive, bool plan, double gridPhase, bool screenGridKn
         } else {  // (the layer before pace_plan)
             for (int k = 0; k < n; ++k) at[k] = seen.land(now + (k == 0 ? 1.0 : base[k] + (adaptive ? 1.0 : 0.0)));
         }
+        const double span = motion.span(at[o.real], I, plan && smooth);
         for (int k = 0; k < n; ++k) {
             double t = pacing::presentTargetMs(now + gpu, interval, n, o, k, lastPresent, lastLand, seen, planned[k]);
             t = std::max({t, now + gpu, lastPresent + 0.01});
             const double d = screen.land(t);
             if (!fr.empty() && fr.back().display == d) fr.back().display = -1.0;  // replaced
-            fr.push_back({d, content + at[k] - at[o.real]});
+            fr.push_back({d, content + (at[k] - at[o.real]) * (span > 0.0 ? I / span : 1.0)});
             lastPresent = t;
             lastLand = seen.land(t);
         }
@@ -348,7 +385,7 @@ Cadence runCadence(bool adaptive, bool plan, double gridPhase, bool screenGridKn
     std::vector<F> v;
     for (const F& x : fr)
         if (x.display > 2000.0) v.push_back(x);
-    double e2 = 0;
+    double e2 = 0, worst = 0;
     int shown = 0, repeats = 0;
     const F* prev = nullptr;
     for (const F& x : v) {
@@ -356,13 +393,14 @@ Cadence runCadence(bool adaptive, bool plan, double gridPhase, bool screenGridKn
         if (prev) {
             const double e = (x.content - prev->content) - (x.display - prev->display);
             e2 += e * e;
+            worst = std::max(worst, std::abs(e));
             repeats += std::round((x.display - prev->display) / P) > 1;
         }
         prev = &x;
         ++shown;
     }
     const double secs = (prev->display - 2000.0) / 1000.0;
-    return {std::sqrt(e2 / std::max(1, shown - 1)), shown / secs, repeats / secs};
+    return {std::sqrt(e2 / std::max(1, shown - 1)), shown / secs, repeats / secs, worst};
 }
 } // namespace
 
@@ -388,4 +426,232 @@ TEST(pacing_virtual_grid_fills_every_refresh) {
         good += c.shownPerS > 143.0 && c.repeatsPerS < 0.5 && c.judderMs < 1.6;
     }
     CHECK(good >= 8);
+}
+
+// The refresh cadence can be perfect while motion jumps at each change
+// between x4 and x5. The previous real's planned refresh is the other end
+// of the interpolation interval: spread its phase error across the pair.
+TEST(pacing_phase_smooth_reduces_motion_jumps_without_delaying_frames) {
+    const Cadence a = runCadence(true, true, 0.0, true);
+    const Cadence b = runCadence(true, true, 0.0, true, true);
+    CHECK(b.judderMs < 0.75 * a.judderMs);
+    CHECK(b.worstStepMs < 0.5 * a.worstStepMs);
+    CHECK(a.shownPerS == b.shownPerS);
+    CHECK(a.repeatsPerS == b.repeatsPerS);
+    std::printf("phase_smooth: motion step RMS %.3f -> %.3f ms, worst %.3f -> %.3f ms\n",
+                a.judderMs, b.judderMs, a.worstStepMs, b.worstStepMs);
+}
+
+TEST(pacing_motion_clock_resets_on_discontinuities) {
+    pacing::MotionClock c;
+    CHECK(c.span(100.0, 30.0, true) == 0.0);  // first pair, no display anchor
+    CHECK(c.span(130.0, 30.0, true) == 30.0);
+    CHECK(c.span(165.0, 30.0, true) == 35.0);
+    CHECK(c.span(200.0, 30.0, false) == 0.0);  // pause, no plan, prediction or dedup
+    CHECK(c.span(230.0, 30.0, true) == 0.0);
+    CHECK(c.span(1000.0, 30.0, true) == 0.0);  // history/grid change or long pause
+    CHECK(c.span(1030.0, 30.0, true) == 30.0);
+    CHECK(c.span(1020.0, 30.0, true) == 0.0);  // clock moved backwards
+    CHECK(c.span(1040.0, 0.0, true) == 0.0);
+}
+
+TEST(pacing_plan_slip_reports_new_whole_refresh_delay_once) {
+    pacing::PlanSlip s;
+    CHECK(!s.update(100.0, 100.0, 10.0, true));
+    CHECK(s.update(140.0, 150.0, 10.0, true));
+    CHECK(!s.update(180.0, 190.0, 10.0, true));
+    CHECK(!s.update(220.0, 230.0, 10.0, true));
+    CHECK(s.update(260.0, 280.0, 10.0, true));
+    CHECK(!s.update(300.0, 300.0, 10.0, true));
+    CHECK(s.update(340.0, 350.0, 10.0, true));
+    CHECK(!s.update(380.0, 395.0, 10.0, true)); // half-period grid phase change
+    CHECK(!s.update(420.0, 430.0, 10.0, true)); // new baseline
+    CHECK(!s.update(460.0, 480.0, 20.0, true)); // a different refresh rate
+    CHECK(!s.update(500.0, 540.0, 20.0, false));
+    CHECK(!s.update(540.0, 580.0, 20.0, true)); // resume, no event
+    CHECK(!s.update(0.0, 620.0, 20.0, true));
+    CHECK(!s.update(620.0, 640.0, 0.0, true));
+    CHECK(!s.update(620.0, 640.0, INFINITY, true));
+}
+
+namespace {
+struct PlanRecovery { double excessMs = 0.0, worstRecoveryStep = 0.0; int lateFrames = 0, trims = 0, outputs = 0; };
+
+// At 36 fps on 144 Hz, one synthesis misses its first refresh. Subsequent
+// jobs keep the added refresh until catch-up: eight late jobs, or a request
+// from the worker as soon as the plan gains that extra refresh. Re-space
+// the next source pair over three outputs; do not drop an existing output.
+PlanRecovery runPlanRecovery(bool prompt) {
+    const double P = 1000.0 / 144, I = 4 * P;
+    Screen screen(P);
+    pacing::MotionClock motion;
+    pacing::PlanSlip slip;
+    Config cfg;
+    double lastPlanned = 0.0, readyLag = 0.3 * P, previousContent = 0.0;
+    int late = 0;
+    bool requested = false;
+    PlanRecovery result;
+    for (int f = 1; f <= 40; ++f) {
+        const double now = f * I;
+        const bool catchup = late >= 8 || (prompt && requested && readyLag < 0.5 * I);
+        requested = false;
+        if (catchup) late = 0;
+        const int n = catchup ? pacing::catchUpFrames(4, true, 0.0, I, P, readyLag) : 4;
+        const FrameOrder order = FrameOrder::of(cfg, n);
+        double base[8] = {}, planned[8] = {};
+        for (int k = 0; k < n; ++k) base[k] = k * P;
+        pacing::planLands(now, readyLag, base, n, screen.grid(), lastPlanned, planned);
+        double span = motion.span(planned[n - 1], I, true);
+        if (!(span > 0.0)) span = I;
+        const double start = std::max(now, screen.lastPresentMs);
+        const double gpu = now + (f == 10 ? 1.6 : 0.3) * P;
+        const double origin = std::max(start, gpu), measured = origin - now;
+        if (start < gpu || measured < readyLag)
+            readyLag += (measured > readyLag ? 0.5 : 0.05) * (measured - readyLag);
+        for (int k = 0; k < n; ++k) {
+            const double target = pacing::presentTargetMs(origin, n * P, n, order, k,
+                screen.lastPresentMs, screen.lastLandMs, screen.grid(), planned[k]);
+            const double content = now + (planned[k] - planned[n - 1]) * I / span;
+            screen.present(std::max(target, origin), content, k == n - 1);
+            if (f > 10 && f < 30)
+                result.worstRecoveryStep = std::max(result.worstRecoveryStep, content - previousContent);
+            previousContent = content;
+            if (k == 0) {
+                if (slip.update(planned[0], screen.lastLandMs, P, true) && measured < 0.5 * I) requested = true;
+                if (pacing::jobLate(origin, screen.lastLandMs, start - now, screen.grid())) ++late;
+                else late = 0;
+            }
+            ++result.outputs;
+        }
+        if (f >= 10 && f < 30) {
+            const double extra = std::max(0.0, screen.lastLandMs - now - I);
+            result.excessMs += extra;
+            result.lateFrames += extra > 0.5 * P;
+            result.trims += catchup;
+        }
+    }
+    return result;
+}
+}
+
+TEST(pacing_new_plan_slip_recovers_without_eight_late_jobs) {
+    const PlanRecovery a = runPlanRecovery(false), b = runPlanRecovery(true);
+    // The conservative detector can reset near its early-present boundary;
+    // its exact delay depends on phase, but never improves on eight jobs.
+    CHECK(a.lateFrames >= 8 && b.lateFrames == 1);
+    CHECK(b.excessMs < 0.2 * a.excessMs);
+    CHECK(b.worstRecoveryStep <= a.worstRecoveryStep + 1e-6);
+    CHECK(a.trims == 1 && b.trims == 1 && a.outputs == b.outputs);
+    std::printf("new plan slip: added refresh persists %d -> %d source frames, recovery step %.3f -> %.3f ms\n",
+                a.lateFrames, b.lateFrames, a.worstRecoveryStep, b.worstRecoveryStep);
+}
+
+TEST(pacing_refresh_fill_covers_integer_ratios_and_caps_output) {
+    for (double fps : {30.0, 36.0, 36.2, 37.0, 40.0, 48.0, 50.0, 60.0})
+        CHECK(pacing::refreshFillFits(143.912 / fps, 5));
+    CHECK(!pacing::refreshFillFits(143.912 / 20.0, 5));  // too few allocated outputs
+    CHECK(!pacing::refreshFillFits(143.912 / 100.0, 5)); // single-frame jobs would lose the virtual grid
+    Config c;
+    c.multiplier = 4;
+    CHECK(c.allowsRefreshFill() && c.frameCeiling() == 5);
+    c.multiplier = 8;
+    CHECK(c.allowsRefreshFill() && c.frameCeiling() == 8);
+    c.refreshFill = 0;
+    CHECK(!c.allowsRefreshFill());
+    c.refreshFill = 1; c.multiplier = 2;
+    CHECK(!c.allowsRefreshFill());
+    c.multiplier = 4; c.hybrid = true;
+    CHECK(!c.allowsRefreshFill());
+    c.hybrid = false; c.extrapolate = true;
+    CHECK(!c.allowsRefreshFill());
+}
+
+namespace {
+// The user's fixed x4, on a compositor without a measurable refresh grid.
+// Before: near/above 36 fps refresh_fill was inactive; each job starts from
+// its own GPU completion. After: the same virtual grid and phase smoothing
+// as the existing 30 fps path, fewer outputs when x4 would exceed the screen.
+Cadence runRefreshCap(double fps, bool cap) {
+    const double P = 1000.0 / 143.912, I = 1000.0 / fps;
+    const bool adaptive = cap ? pacing::refreshFillFits(I / P, 5) : I / P > 4 * 1.02 && I / P <= 5 * 1.02;
+    Screen screen(P, adaptive);
+    pacing::AdaptivePacer pacer;
+    pacing::MotionClock motion;
+    Config cfg;
+    double plannedLast = 0.0;
+    uint32_t random = 12345;
+    for (int f = 1; f <= 1000; ++f) {
+        random = random * 1664525u + 1013904223u;
+        const double now = f * I, ready = now + 2.0 + 2.0 * ((random >> 8) / double(1u << 24));
+        double period = P;
+        const int n = adaptive ? pacer.next(I, period, 5) : 4;
+        const FrameOrder order = FrameOrder::of(cfg, n);
+        const double interval = adaptive ? n * P : I;
+        double base[8] = {}, lands[8] = {};
+        for (int k = 0; k < n; ++k) base[k] = k * interval / n;
+        if (adaptive) pacing::planLands(now, 3.6, base, n, screen.grid(), plannedLast, lands);
+        const double span = motion.span(lands[order.real], I, adaptive);
+        for (int k = 0; k < n; ++k) {
+            const double target = pacing::presentTargetMs(ready, interval, n, order, k,
+                screen.lastPresentMs, screen.lastLandMs, screen.grid(), lands[k]);
+            const double content = adaptive
+                ? now + (lands[k] - lands[order.real]) * I / (span > 0.0 ? span : I)
+                : now + (k - order.real) * I / n;
+            screen.present(std::max(ready, target), content, k == order.real);
+        }
+    }
+    const Screen::Shown* prev = nullptr;
+    double error2 = 0.0, worst = 0.0, start = 0.0, end = 0.0;
+    int shown = 0, repeats = 0;
+    for (const auto& frame : screen.frames) {
+        if (frame.displayMs < 2000.0) continue;
+        if (prev) {
+            const double e = (frame.contentMs - prev->contentMs) - (frame.displayMs - prev->displayMs);
+            error2 += e * e;
+            worst = std::max(worst, std::abs(e));
+            repeats += frame.displayMs - prev->displayMs >= 1.5 * P;
+        } else start = frame.displayMs;
+        prev = &frame; end = frame.displayMs; ++shown;
+    }
+    const double seconds = (end - start) / 1000.0;
+    return {std::sqrt(error2 / (shown - 1)), shown / seconds, repeats / seconds, worst};
+}
+}
+
+TEST(pacing_refresh_fill_near_screen_rate_reduces_motion_judder) {
+    for (double fps : {36.0, 36.2, 37.0, 40.0, 48.0, 50.0}) {
+        const Cadence a = runRefreshCap(fps, false), b = runRefreshCap(fps, true);
+        CHECK(b.judderMs < 0.75 * a.judderMs);
+        CHECK(b.repeatsPerS <= a.repeatsPerS);
+        CHECK(b.shownPerS > 143.0);
+        std::printf("refresh cap %.1f fps: motion RMS %.3f -> %.3f ms, held %.2f -> %.2f/s\n",
+                    fps, a.judderMs, b.judderMs, a.repeatsPerS, b.repeatsPerS);
+    }
+}
+
+TEST(pacing_catchup_keeps_interpolation_only_without_gpu_or_worker_pressure) {
+    const double I = 1000.0 / 36.2, P = 1000.0 / 144;
+    CHECK(pacing::catchUpFrames(4, true, 0.0, I, P, 8.0) == 3);
+    CHECK(pacing::catchUpFrames(5, true, 0.0, I, P, 8.0) == 4);
+    CHECK(pacing::catchUpFrames(3, true, 0.0, I, P, 8.0) == 2);
+    CHECK(pacing::catchUpFrames(2, true, 0.0, I, P, 8.0) == 1);
+    CHECK(pacing::catchUpFrames(4, false, 10.0, I, P, 8.0) == 1);
+    CHECK(pacing::catchUpFrames(4, true, 10.0, I, P, 8.0) == 1);
+    CHECK(pacing::catchUpFrames(4, true, 0.0, I, P, 20.0) == 1);
+    CHECK(pacing::catchUpFrames(4, true, 0.0, I, 0.0, 8.0) == 1);
+    // Four source periods of content, after giving the display one refresh
+    // back: each of the three steps is still forward and far smaller than
+    // the real-only jump; the anchor clock stays valid.
+    pacing::MotionClock motion;
+    CHECK(motion.span(100.0, I, true) == 0.0);
+    const double span = motion.span(100.0 + 3 * P, I, true);
+    CHECK(std::abs(span - 3 * P) < 1e-9);
+    double previous = 0.0;
+    for (int k = 1; k <= 3; ++k) {
+        const double content = k * P * I / span;
+        CHECK(content > previous);
+        CHECK(content - previous < 0.5 * I);
+        previous = content;
+    }
+    CHECK(std::abs(previous - I) < 1e-9);
 }

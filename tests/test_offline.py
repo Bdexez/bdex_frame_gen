@@ -59,17 +59,37 @@ def main():
                 return 1
     with tempfile.TemporaryDirectory() as d:
         d = Path(d)
-        frames(d, n=41, speed=2)
+        frames(d, n=81, speed=4)
         for mode in ("interpolate", "extrapolate"):
             # --hud-counter: a HUD redrawn on every present over the repeating
             # world (the repeat is then partial, detected per tile).
-            for offline, option in (("--jitter 0.4", "FRAME_TIMING=1"), ("--dup 2", "DEDUP=1"),
+            # The interval filter now follows confirmed cadence changes. Use
+            # larger spikes so the content-clock test still needs resampling.
+            for offline, option in (("--jitter 0.6 --seed 2", "FRAME_TIMING=1"), ("--dup 2", "DEDUP=1"),
                                     ("--dup 2 --hud-counter", "DEDUP=1")):
                 base, opt = evaluate(build, d, {"BDEX_FG_MODE": mode},
                                      ["--offline-args", offline, "--variant", option,
                                       "--exclude", "8,8,72,24"])
                 if not opt > base + 0.3:
                     print(f"{mode} {offline}: {option} {opt:.2f} dB does not beat the fixed timing {base:.2f} dB")
+                    return 1
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        frames(d, n=81, w=384, h=256, speed=4)
+        # Constant velocity sampled at irregular times has unequal pair
+        # displacements, but no acceleration. Timing must not bend it.
+        # Equally spaced content with jittered presents must also stay flat.
+        # Include the entering border: acceleration must preserve reveal_fill
+        # even where the measured acceleration is locally zero.
+        for mode, option in (("interpolate", "INTERP_ACCEL=1"), ("extrapolate", "EXTRAPOLATE_ACCEL=1")):
+            for clock in ("", " --steady-content"):
+                base, accel = evaluate(build, d, {"BDEX_FG_MODE": mode, "BDEX_FG_FRAME_TIMING": "1",
+                                                  "BDEX_FG_INTERP_ACCEL": "0", "BDEX_FG_EXTRAPOLATE_ACCEL": "0",
+                                                  "BDEX_FG_REVEAL_FILL": "1"},
+                                       ["--multiplier", "4", "--offline-args", "--jitter 0.6 --spacing 4" + clock,
+                                        "--variant", option])
+                if accel < base - 0.04:
+                    print(f"{mode}{clock}: acceleration bent constant motion: {base:.2f} -> {accel:.2f} dB")
                     return 1
     with tempfile.TemporaryDirectory() as d:
         d = Path(d)
