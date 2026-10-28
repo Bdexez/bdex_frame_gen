@@ -34,7 +34,7 @@ def main():
                 data = tar.extractfile(m).read()
                 if name.endswith(".png"):
                     Image.open(io.BytesIO(data)).convert("RGB").save(dest / (Path(name).stem + ".ppm"))
-                elif name == "meta.json":
+                elif name in ("meta.json", "timestamps.csv"):
                     (dest / name).write_bytes(data)
         print(f"{archive}: {', '.join(sorted(names))}")
 
