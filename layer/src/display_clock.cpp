@@ -7,7 +7,6 @@ namespace bdex {
 
 namespace {
 constexpr size_t kWindow = 96;         // display times kept
-constexpr double kJitterMs = 0.5;      // observer wake-up jitter tolerated (on both ends of an interval)
 constexpr double kMinPeriodMs = 2.5;   // 400 Hz
 constexpr double kMaxPeriodMs = 50.0;  // 20 Hz
 } // namespace
@@ -26,16 +25,16 @@ void DisplayClock::estimate() {
     std::sort(t.begin(), t.end());
     std::vector<double> d;
     for (size_t i = 1; i < t.size(); ++i)
-        if (t[i] - t[i - 1] > kJitterMs) d.push_back(t[i] - t[i - 1]);
+        if (t[i] - t[i - 1] > jitterMs_) d.push_back(t[i] - t[i - 1]);
     periodMs_ = 0.0;
     if (d.size() < 16) return;
     // Whole multiples of `p` within the observer's jitter: the refined period
     // over the fitting intervals, 0 if fewer than 90 % fit.
-    auto fitPeriod = [&d](double p) {
+    auto fitPeriod = [&d, this](double p) {
         // The tolerance also shrinks with the period: with a loose one, a
         // short period "explains" any set of intervals (a variable-refresh
         // display at 120 fps fitted 360 Hz).
-        const double tol = std::min(kJitterMs, 0.08 * p);
+        const double tol = std::min(jitterMs_, jitterShare_ * p);
         double sumD = 0.0, sumN = 0.0;
         size_t fit = 0;
         for (double x : d) {
