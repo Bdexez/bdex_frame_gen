@@ -471,7 +471,15 @@ bool VirtualSwapchain::waitGpu(VkFence fence, bool cancellable, clock::time_poin
 // refresh it should show on (a present landing just after a refresh would
 // slip a whole period) and on a refresh of its own.
 VirtualSwapchain::clock::time_point VirtualSwapchain::paceTarget(const Job& job, clock::time_point origin, int k) {
+    // even_fast's real frame (Job::fallbackFrom): just after the refresh the
+    // frame before it went to (its latch passed), so that it shows on the
+    // next one only if the next present's first frame misses it.
     pacing::Grid g;
+    if (job.fallbackFrom >= 0 && k >= job.fallbackFrom) {
+        if (!(lastLandMs_ > 0.0) || !displayGrid(g.lastMs, g.periodMs)) return origin;
+        return std::max(origin, clock::time_point(std::chrono::duration_cast<clock::duration>(
+                                    std::chrono::duration<double, std::milli>(lastLandMs_ + pacing::kFallbackAfter * g.periodMs))));
+    }
     g.valid = job.gridPacing && displayGrid(g.lastMs, g.periodMs, &g.lead);
     const double t = pacing::presentTargetMs(msOf(origin), job.intervalMs, job.frames, job.order, k, lastPresentMs_,
                                              lastLandMs_, g, job.plan && k < 8 ? job.planned[k] : 0.0, !job.gridPacing);
@@ -972,12 +980,17 @@ VkResult VirtualSwapchain::presentCopied(const Job& job, const Copied& c) {
     }
     if (x11Log && r < 0) x11Clock_->unsent();
     // For the spacing of the next present (paceTarget): when this one went
-    // out, and the refresh it was due to show on.
+    // out, and the refresh it was due to show on — but for even_fast's real
+    // frame, which keeps no refresh to itself (Job::fallbackFrom).
     lastPresentMs_ = msOf(now);
     double lastMs, periodMs;
-    lastLandMs_ = displayGrid(lastMs, periodMs)
-                      ? lastMs + std::ceil((lastPresentMs_ - lastMs) / periodMs) * periodMs
-                      : 0.0;
+    const bool fallback = job.fallbackFrom >= 0 && c.index >= job.fallbackFrom;
+    if (!fallback)
+        lastLandMs_ = displayGrid(lastMs, periodMs)
+                          ? lastMs + std::ceil((lastPresentMs_ - lastMs) / periodMs) * periodMs
+                          : 0.0;
+    else if (!displayGrid(lastMs, periodMs))
+        lastLandMs_ = 0.0;
     // x11_clock in place of the present feedback (which, under Xwayland in
     // immediate mode, reports each present at once): the real frame reaches
     // the compositor at the refresh after its present, and the screen a
@@ -992,12 +1005,16 @@ VkResult VirtualSwapchain::presentCopied(const Job& job, const Copied& c) {
     if (c.real && lastLandMs_ > 0.0 && latencyFromX11_.load(std::memory_order_relaxed)) {
         std::lock_guard<std::mutex> lock(fbMutex_);
         const bool x11 = true;
-        const double latency = lastLandMs_ + periodMs - msOf(job.start);
+        // (even_fast: the real frame is mostly replaced; its content is on
+        // screen at the moment it stands for, Job::planned)
+        const double shownMs = fallback && c.index >= 0 && c.index < 8 && job.planned[c.index] > 0.0
+                                   ? job.planned[c.index] : lastLandMs_;
+        const double latency = shownMs + periodMs - msOf(job.start);
         if (x11 && latency >= 0.0 && latency < 1000.0) {
             fbLatencyMs_ = fbLatencyMs_ < 0.0 ? latency : fbLatencyMs_ * 0.9 + latency * 0.1;
             fbLatencySum_ += latency;
             ++fbLatencyCount_;
-            const double frameLatency = lastLandMs_ + periodMs - job.frameStartMs;
+            const double frameLatency = shownMs + periodMs - job.frameStartMs;
             if (job.frameStartMs > 0.0 && frameLatency >= 0.0 && frameLatency < 1000.0) {
                 fbFrameLatencySum_ += frameLatency;
                 ++fbFrameLatencyCount_;

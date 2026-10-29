@@ -6,6 +6,25 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Even motion between 72 and 137 fps on 144 Hz (2026-10-29)
+
+- `even_fast` (on by default): with a fixed multiplier of x3 and up, pure
+  interpolation and a known refresh grid, a game frame lasting one to two
+  refreshes no longer pins its real frame on a refresh. Pinned, the pairs
+  alternated one and two refreshes (100 fps on 144 Hz: steps of 10, then 5
+  and 5 ms of content): 15 to 54 motion jumps a second even with a perfectly
+  steady game, whatever the multiplier. Every refresh now shows the content
+  of its own moment; the real frame goes out just after, as a fallback that
+  the next present's first frame replaces unless that one is late. Still
+  N frames per game frame. Pacing simulator, x4 with 1 ms of jitter: content
+  step error 1.8-2.3 -> 0.2-0.3 ms rms, jumps -> 0, the motion's delay
+  +0.6 to +1.5 ms (lower at x8). `even_fast = 2` also covers two to three
+  refreshes a frame at x4 and up (48 to 72 fps on 144 Hz), at 2 to 5 ms more
+  latency.
+- `tools/cadence_report.py` reports the content step error per refresh and
+  the motion's mean delay; `tools/framerate_bench.py` replays a real game's
+  recorded frame times (`--trace`) and takes `--gpu-load`.
+
 ### Fixed multiplication across changing and uncapped source rates (2026-10-23)
 
 - Normal x8 allocates capacity for seven generated frames plus the real

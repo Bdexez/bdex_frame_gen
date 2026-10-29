@@ -62,7 +62,7 @@ NOT_FRAMES = {"enabled", "multiplier", "low_latency", "max_frame_latency", "late
               "shared_queue", "stats_interval", "dump_frames", "preset", "fullres", "flow_scale", "mode", "adaptive",
               "upscale", "overlay", "capture_hdr", "log_file", "target_fps", "fps_limit", "dump",
               "present_mode", "debug", "interp_hold", "synth_priority", "skip_fast", "crash_log", "latency_log", "vrr_hold", "precise_wake", "thread_priority", "pipeline_cache",
-              "gpu", "method", "hotkey", "battery_saver", "present_timing", "refresh_fill", "pace_plan", "virtual_grid", "content_clock", "phase_smooth", "even_motion", "tight_hold", "catchup_smooth", "x11_clock", "record_scale"}
+              "gpu", "method", "hotkey", "battery_saver", "present_timing", "refresh_fill", "pace_plan", "virtual_grid", "content_clock", "phase_smooth", "even_motion", "even_fast", "tight_hold", "catchup_smooth", "x11_clock", "record_scale"}
 
 
 def frames_hash(out):

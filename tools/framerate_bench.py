@@ -67,6 +67,39 @@ def variable_sources(directory, seconds):
             index += 1
 
 
+def trace_sources(directory, seconds, csv_path):
+    """A real game's recorded frame times (timestamps.csv), looped to fill
+    the run, on the same moving pattern: the source's own jitter and rate
+    changes, which a capped --fps source does not have."""
+    intervals = []
+    with open(csv_path, newline="") as stream:
+        for row in csv.DictReader(stream):
+            value = float(row["interval_ms"])
+            if 0.5 < value < 500.0:
+                intervals.append(value)
+    if not intervals:
+        raise SystemExit(f"{csv_path}: no frame intervals")
+    directory.mkdir()
+    now = 0.0
+    with (directory / "timestamps.csv").open("w", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(["frame", "present_ms", "interval_ms"])
+        index = 0
+        while now <= seconds * 1000:
+            dt = 0.0 if index == 0 else intervals[(index - 1) % len(intervals)]
+            now += dt
+            name = f"f{index:05d}.ppm"
+            pixels = bytearray()
+            offset = int(now * .09)
+            for y in range(48):
+                for x in range(96):
+                    v = 210 if ((x - offset) // 9 + y // 8) % 2 else 45
+                    pixels.extend((v, 60 + (y * 3) % 150, 255 - v))
+            (directory / name).write_bytes(b"P6\n96 48\n255\n" + pixels)
+            writer.writerow([name, f"{now:.6f}", f"{dt:.6f}"])
+            index += 1
+
+
 def summarize(log):
     rows = []
     for line in log.splitlines():
@@ -115,10 +148,17 @@ def summarize_cadence(log, hz, seconds):
         return {"error": result.stderr.strip() or result.stdout.strip()}
     data = {"report": result.stdout}
     for key, label in {"logged_per_s": "shown/s", "held_per_s": "held/s",
-                       "same_refresh_per_s": "same refresh/s", "motion_jumps_per_s": "motion jumps/s"}.items():
+                       "same_refresh_per_s": "same refresh/s", "motion_jumps_per_s": "motion jumps/s",
+                       "motion_step_rms_ms": "motion step rms"}.items():
         match = re.search(r"^" + re.escape(label) + r"\s+([\d.]+)", result.stdout, re.MULTILINE)
         if match:
             data[key] = float(match[1])
+    match = re.search(r"delay sd ([\d.]+) ms", result.stdout)
+    if match:
+        data["content_delay_sd_ms"] = float(match[1])
+    match = re.search(r"^content delay\s+([\d.]+)", result.stdout, re.MULTILINE)
+    if match:
+        data["content_delay_ms"] = float(match[1])
     return data
 
 
@@ -136,8 +176,11 @@ def child(args):
         env[key if key.startswith("BDEX_FG_") else "BDEX_FG_" + key.upper()] = value
     command = [str(args.demo), "--size", args.size, "--ignore-resize", "--mode", "immediate",
                "--duration", str(args.seconds)]
-    if args.child_fps == "variable":
-        command += ["--replay", str(args.sources), "--replay-timing", "--replay-log", str(args.child / "source.csv")]
+    if args.gpu_load > 0:
+        command += ["--gpu-load", str(args.gpu_load)]
+    if args.child_fps == "variable" or args.child_fps.startswith("trace"):
+        command += ["--replay", str(args.sources if args.child_fps == "variable" else args.sources.parent / args.child_fps),
+                    "--replay-timing", "--replay-log", str(args.child / "source.csv")]
     elif args.child_fps == "uncapped":
         command += ["--uncapped"]
     else:
@@ -195,14 +238,19 @@ def main():
     parser.add_argument("--build", type=Path, default=ROOT / "build")
     parser.add_argument("--layer-dir", type=Path, help="Optional A/B layer; demo still comes from --build")
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--fps", nargs="+", default=["30", "59.94", "90", "variable", "uncapped"])
+    parser.add_argument("--fps", nargs="*", default=["30", "59.94", "90", "variable", "uncapped"],
+                        help="source rates, variable, uncapped (none with --fps alone: only the --trace cases)")
     parser.add_argument("--multipliers", nargs="+", type=int, choices=range(2, 9), default=[4])
     parser.add_argument("--modes", nargs="+", choices=["interpolate", "hybrid", "extrapolate"], default=["interpolate"])
+    parser.add_argument("--trace", action="append", default=[], type=Path, metavar="TIMESTAMPS_CSV",
+                        help="also replay a real game's frame times (a recording's timestamps.csv), looped")
     parser.add_argument("--hz", type=float, default=144)
     parser.add_argument("--size", default="640x360")
     parser.add_argument("--seconds", type=float, default=6)
     parser.add_argument("--preset", default="performance")
     parser.add_argument("--env", action="append", default=[], metavar="KEY=VALUE")
+    parser.add_argument("--gpu-load", type=int, default=0,
+                        help="bdex_demo --gpu-load N: the scene drawn N times a frame (a game bound by its own GPU work)")
     parser.add_argument("--check", action="store_true",
                         help="fail if fixed interpolation loses more than 5%% of outputs or triggers catch-up")
     parser.add_argument("--max-motion-jumps", type=float,
@@ -223,7 +271,7 @@ def main():
     if args.max_motion_jumps is not None and (not math.isfinite(args.max_motion_jumps) or args.max_motion_jumps < 0):
         parser.error("--max-motion-jumps must be finite and >= 0")
     for fps in args.fps:
-        if fps not in ("variable", "uncapped"):
+        if fps not in ("variable", "uncapped") and not fps.startswith("trace"):
             try:
                 if not math.isfinite(float(fps)) or float(fps) < 1:
                     raise ValueError()
@@ -256,6 +304,11 @@ def main():
     sources = output / "sources"
     if "variable" in args.fps:
         variable_sources(sources, args.seconds)
+    for index, trace in enumerate(args.trace):
+        name = f"trace{index}"
+        trace_sources(output / name, args.seconds, trace)
+        (output / name / "origin.txt").write_text(str(trace.resolve()) + "\n")
+        args.fps.append(name)
     summaries = []
     failed = False
     for mode in args.modes:
@@ -267,7 +320,8 @@ def main():
                            "-r", str(args.hz), "--", sys.executable, str(Path(__file__).resolve()),
                            "--child", str(case), "--child-fps", fps, "--child-multiplier", str(mult),
                            "--child-mode", mode, "--demo", str(demo), "--size", args.size,
-                           "--seconds", str(args.seconds), "--preset", args.preset, "--sources", str(sources)]
+                           "--seconds", str(args.seconds), "--preset", args.preset, "--sources", str(sources),
+                           "--gpu-load", str(args.gpu_load)]
                 for setting in args.env:
                     command += ["--env", setting]
                 done = case / "exit.json"
@@ -305,6 +359,8 @@ def main():
                       f"x{data.get('ratio', '?')}, catch-ups {data.get('catchups', '?')}, "
                       f"real delay {data.get('real_delay_ms', '?')} ms, X grid {data.get('x11_grid', False)}, "
                       f"motion jumps {data['cadence'].get('motion_jumps_per_s', '?')}/s, "
+                      f"step rms {data['cadence'].get('motion_step_rms_ms', '?')} ms, "
+                      f"content delay {data['cadence'].get('content_delay_ms', '?')} ms, "
                       f"demo exit {child_exit}", flush=True)
                 for problem in problems:
                     print(f"  FAIL: {problem}", flush=True)

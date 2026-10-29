@@ -121,6 +121,12 @@ private:
         bool plan = false;           // ... and presented for it (pace_plan, pacing::planLands)
         bool gridPacing = true;      // false beyond Hz or under submission pressure: sub-refresh spacing from GPU readiness
         bool smoothCatchup = false;  // a newly missed refresh can request gradual recovery from the game thread
+        // even_fast: the frames from this one on (the real one, realIndex; 0
+        // for a pair that holds no refresh) go out just after the refresh the
+        // frame before them went to, standing in for the next one, and keep no
+        // refresh to themselves (the next present's first frame replaces
+        // them). -1: none.
+        int fallbackFrom = -1;
         int presentMode = -1;        // VkSwapchainPresentModeInfoEXT (-1 = none), applied to every present
         uint64_t presentId = 0;      // VkPresentIdKHR (0 = none), forwarded on the real frame
         VkFence presentFence = VK_NULL_HANDLE;  // VkSwapchainPresentFenceInfoEXT, idem
@@ -222,7 +228,9 @@ private:
     double lastPlannedMs_ = 0.0;
     pacing::MotionClock motionClock_;  // present thread: the previous real frame's scheduled refresh
     pacing::EvenClock evenClock_;      // present thread: even_motion's lag behind the game's presents
-    bool evenActive_ = false;          // present thread: the last present was planned by evenClock_
+    bool evenActive_ = false;          // present thread: the last present was planned by evenClock_ or fastClock_
+    pacing::EvenClock fastClock_;      // present thread: even_fast's lag behind the game's presents (fallback)
+    bool fastOn_ = false;              // present thread: inside even_fast's band (pacing::evenFastBand)
     bool tightOn_ = false;             // present thread: tight_hold spaced the last present (pacing::tightHold's hysteresis)
     pacing::IntervalFilter intervalFilter_;  // present thread: confirmed changes of the game's cadence
     // virtual_grid (fbMutex_): with the adaptive pacing and no measured
