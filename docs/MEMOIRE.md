@@ -2634,3 +2634,14 @@ des synthèses suivant la première jusqu'à une phase choisie de la grille X
 Ce n'est pas où tombe la rafale mais la charge GPU totale (préréglage
 performance : 0) : la refonte « chaque image générée à son heure » ne
 paierait pas. Abandonnée.
+
+**`x11_clock` validé sur le chemin Proton réel** (17/10) : programme D3D11
+de test (`tests/proton/d3d11_probe.cpp`, compilé par MinGW en Docker) sous
+Wine 11 avec le DXVK de Proton 10, GPU NVIDIA, couche de la build, dans
+l'Xwayland de gamescope sans tête à 144 Hz (sans WSI), session du panneau
+émulée : surface Xlib de Wine surveillée (`x11_clock: watching ... window`),
+présentation immediate, « display 144.0 Hz (X server) », 144 images
+affichées/s, 0 tenue, latence 43,7 ms. (Le contrôle CI `proton-check.sh` sur
+lavapipe ne valide que l'accrochage : lavapipe ne présente pas par X
+Present.) Script : `winrun.sh` du scratchpad (préfixe Wine privé, DLL de
+`Proton 10.0/files/lib/wine/dxvk/x86_64-windows`).
