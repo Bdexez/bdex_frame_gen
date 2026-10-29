@@ -2567,3 +2567,12 @@ Scripts dans le scratchpad de la session (`gsrun.sh`, `kwrun.sh`,
   espacement régulier (+7 ms sur la réelle à ×2, voulu : `interp_hold=1`).
   À ×4 avec `refresh_fill` (le cas de l'utilisateur), latence inchangée
   (31–35 ms). Extrapolation : identique.
+- **Le résidu à 1440p vient de notre charge GPU** (gamescope, propre, 4 essais) :
+  préréglage performance 0/0/0/0 incident par seconde, quality 22/12/5/16.
+  **Découper la synthèse en une soumission par image générée** (même travail,
+  sans pause) : 24/6/6/0 contre 1/12/12/18 — rien. Ce n'est pas la forme de
+  la rafale mais le temps GPU et où il tombe dans la période. Piste ouverte :
+  soumettre chaque image générée à son heure (juste après le tic, loin du
+  moment où le compositeur compose), au prix d'une refonte du worker (les
+  copies anticipées attendent les sémaphores de la synthèse) — à juger sur
+  Hyprland, que gamescope représente mal ici.
