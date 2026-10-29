@@ -2626,3 +2626,11 @@ celles du début de la synthèse). `test_formats.py` compare désormais les
 encodages sans l'option (aux bords, le flux hors image et la décision
 dépendent des valeurs de chaque format) et exige qu'elle ne fasse perdre
 nulle part face à la vérité.
+
+**Phase de la rafale, essai direct** (17/10, nuit) : retenir la soumission
+des synthèses suivant la première jusqu'à une phase choisie de la grille X
+(0,1 ou 0,5 période après le tic), 3 essais chacun à 1440p sur gamescope :
+11/16/16 et 13/10/5 incidents par seconde contre 8/18/15 sans — rien de net.
+Ce n'est pas où tombe la rafale mais la charge GPU totale (préréglage
+performance : 0) : la refonte « chaque image générée à son heure » ne
+paierait pas. Abandonnée.
