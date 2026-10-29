@@ -6,6 +6,22 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Edges in camera turns (2026-10-17)
+
+- **`border_fill`** (on with a discrete GPU): in a camera turn, the content
+  entering the picture is in the current frame only and its backward flow
+  is garbage (its match is off-screen), so the synthesis fell to a
+  cross-fade there: a smear along the edge, up to a tenth of the width in a
+  fast PRAGMATA turn (120 px a pair). Where the forward flow at the pixel is
+  a shift of the picture (the same 32 px further in) and puts its content
+  off-screen in the previous frame, it now comes from the current frame along
+  that motion (the mirror for content leaving), unless a trajectory found
+  explains the pixel or the source is a still overlay; continuous weights
+  (no flips between formats or frames). x4 game-like scenes: walk +0.45 dB,
+  turn +0.16, first-person turn +0.12, others +0.01 to +0.04, less flicker;
+  recordings: PRAGMATA +0.02 to +0.05, Oblivion +0.06 / 0, Cyberpunk −0.01;
+  the corpus's HUD pan +2.2 dB in every output format, +1.1 upscaled.
+
 ### The screen's refresh under Xwayland (2026-10-17)
 
 - **`x11_clock`** (on, layer): an X11 window — every Proton game on a

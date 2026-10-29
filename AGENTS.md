@@ -465,7 +465,10 @@ croître au-delà de 3 px : panoramique +2,7 dB, balayage +2,4, occlusions
 rapide mais perdait 0,14 dB sur la démo `--speed 2`). Branche uniforme dans
 la variante allégée, l'expression historique dans le `else` : `cap=0` est
 identique bit à bit (vérifié sur NVIDIA ; l'invariant CI le fixe à 0).
-`border_predict` (15/10, auto GPU dédié, `pc.borderPredict`) : un bloc dont
+`border_fill` (17/10, auto GPU dédié, synthèse, bit 128) : le contenu
+qui entre par un bord pendant un virage vient de cur seul le long du flux
+avant (le flux arrière y est faux) ; poids continus ; gardes « décalage
+uniforme » et « source immobile = HUD ». `border_predict` (15/10, auto GPU dédié, `pc.borderPredict`) : un bloc dont
 la correspondance prédite sort à plus de moitié de l'image garde la
 prédiction (bords pendant un virage) ; à 0 le chemin historique est intact
 (l'invariant le fixe à 0). `scene_cut_hist=0.05` (défaut) : la réduction du coût (`reduce_cost.comp`)

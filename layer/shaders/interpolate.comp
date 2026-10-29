@@ -32,6 +32,7 @@ const bool kAccel = (kFeatures & 8u) != 0u;
 const bool kReveal = (kFeatures & 16u) != 0u;
 const bool kSplat = (kFeatures & 32u) != 0u;
 const bool kPixelVectors = (kFeatures & 64u) != 0u;
+const bool kBorder = (kFeatures & 128u) != 0u;
 const bool kOcclusion = (kFeatures & 256u) != 0u;
 const bool kStaticGuard = (kFeatures & 1024u) != 0u;
 const bool kStaticMask = (kFeatures & 2048u) != 0u;
@@ -104,6 +105,7 @@ layout(push_constant) uniform PC {
     int revealFill;          // extrapolation: a revealed pixel takes the slower-moving (background) of the last two sources
     float staticSoft;        // static_soft: strength of hud_mask's "holds still" evidence (0 = off)
     float flowIntervalRatio; // current / previous source interval (1 legacy, 0 invalid timed history)
+    int borderFill;          // interpolation: content entering (leaving) the picture from cur (prev) alone
 } pc;
 
 // flow_confidence's trust at display pixel p (the map covers the flow's area).
@@ -369,6 +371,7 @@ void main() {
     // motion of whatever lands on q at time t: a few fixed-point iterations
     // of p = q - t*F(p) find that source position.
     F = fwdAt(qa);
+    const vec2 Fq = F;  // (border_fill)
     vec2 pf = qa - t * F;
     for (int i = 0; i < pc.iterations; ++i) { F = fwdAt(pf); pf = qa - t * F; }
     vec4 cf = texture(prevTex, pf / fsize);
@@ -376,6 +379,7 @@ void main() {
     float ef = colourError(cf, cf2);
 
     vec2 B = bwdAt(qa);
+    const vec2 Bq = B;  // (border_fill)
     vec2 pb = qa - (1.0 - t) * B;
     for (int i = 0; i < pc.iterations; ++i) { B = bwdAt(pb); pb = qa - (1.0 - t) * B; }
     vec4 cb = texture(curTex, pb / fsize);
@@ -536,6 +540,55 @@ void main() {
     // newly revealed pixels it avoids blending in the hidden endpoint.
     float bad = smoothstep(0.12, 0.25, min(ef, eb)) * (1.0 - pc.occlusionStrength);
     c = mix(c, mix(texture(prevTex, uv), cur, t), bad);
+
+    if (kBorder && pc.borderFill != 0) {
+        // border_fill: during a camera move, content entering the picture is
+        // in cur only, and its backward flow is garbage (its match is
+        // off-screen: the search settles on some wrong match inside — a fast
+        // PRAGMATA turn, 120 px a pair: the entering strip's backward flow
+        // at 0 +- 15). Both trajectories then look bad and the pixel fell to
+        // the cross-fade above: a smear along the edge, a tenth of the width.
+        // The forward flow at q, still the camera's there, tells instead:
+        // where q's content is in cur (q + (1-t)F) and that it was off-screen
+        // in prev (q - tF). Unless a trajectory found lies wholly inside both
+        // frames and explains q, cur's pixel there. The mirror
+        // for content leaving the picture: the backward flow at q, from prev.
+        const vec2 lo = vec2(0.5), hi = fsize - 0.5;
+        vec2 inCur = qa + (1.0 - t) * Fq, wasPrev = qa - t * Fq;
+        vec2 inPrev = qa + t * Bq, willCur = qa - (1.0 - t) * Bq;
+        // (Weights, not switches: a hard threshold flips between output
+        // formats' quantisations — RGBA16F off RGBA8 by 46 dB — and from
+        // frame to frame.)
+        bool fIn = all(greaterThanEqual(pf, lo)) && all(lessThanEqual(pf, hi)) &&
+                   all(greaterThanEqual(pf + F, lo)) && all(lessThanEqual(pf + F, hi));
+        bool bIn = all(greaterThanEqual(pb, lo)) && all(lessThanEqual(pb, hi)) &&
+                   all(greaterThanEqual(pb + B, lo)) && all(lessThanEqual(pb + B, hi));
+        float found = max(fIn ? 1.0 - smoothstep(0.08, 0.16, ef) : 0.0, bIn ? 1.0 - smoothstep(0.08, 0.16, eb) : 0.0);
+        // How far a position lies off-screen (0 inside), and the share of
+        // the decision it carries (a 2-pixel ramp).
+        #define OFFSCREEN(v) smoothstep(0.0, 2.0, max(max(lo.x - (v).x, (v).x - hi.x), max(lo.y - (v).y, (v).y - hi.y)))
+        #define ONSCREEN(v) (1.0 - OFFSCREEN(v))
+        float entering = ONSCREEN(inCur) * OFFSCREEN(wasPrev);
+        float leaving = (1.0 - entering) * ONSCREEN(inPrev) * OFFSCREEN(willCur);
+        // (The flow 32 px in, read at the edges only.)
+        vec2 inward = 32.0 * sign(0.5 * fsize - qa);
+        if (entering > 0.0)
+            entering *= 1.0 - smoothstep(0.15, 0.25, (length(fwdAt(qa + inward) - Fq) - 1.0) / max(length(Fq), 1.0));
+        if (leaving > 0.0)
+            leaving *= 1.0 - smoothstep(0.15, 0.25, (length(bwdAt(qa + inward) - Bq) - 1.0) / max(length(Bq), 1.0));
+        // (A source pixel unchanged between the frames is an overlay — a
+        // HUD — not content the camera carries: the turn scene's HUD at the
+        // left edge was copied into the entering strip without this test.)
+        if (entering > 0.0 || leaving > 0.0) {
+            const bool fromCur = entering >= leaving;
+            vec2 src = (fromCur ? inCur : inPrev) / fsize;
+            float moving = smoothstep(0.005, 0.02, colourError(texture(prevTex, src), texture(curTex, src)));
+            const vec4 one = fromCur ? sampleC(curTex, src) : sampleC(prevTex, src);
+            c = mix(c, one, max(entering, leaving) * (1.0 - found) * moving);
+        }
+        #undef OFFSCREEN
+        #undef ONSCREEN
+    }
     }
 
     // Interpolation only: an unchanged pixel says nothing about the frame

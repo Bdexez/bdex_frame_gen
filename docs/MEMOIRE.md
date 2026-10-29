@@ -2576,3 +2576,53 @@ Scripts dans le scratchpad de la session (`gsrun.sh`, `kwrun.sh`,
   moment où le compositeur compose), au prix d'une refonte du worker (les
   copies anticipées attendent les sémaphores de la synthèse) — à juger sur
   Hyprland, que gamescope représente mal ici.
+
+### 17/10 (nuit) — revue systématique des captures et bords de l'image : `border_fill`
+
+**Revue des 7 captures du 16/10** (×4 sur chaque paire consécutive, score
+d'excès de détail fin par tuile 16×16 face aux deux entrées, `artscore.py`) :
+PRAGMATA de loin le plus touché (1,6 à 2,0 % de tuiles en excès en moyenne,
+jusqu'à 25 % sur un virage rapide), Cyberpunk 0,3–1,2 %, Oblivion 0,1–1,1 %.
+Trois familles vues : (1) personnage qui pivote (mosaïque, échec du flux,
+cf. plus haut) ; (2) **bord de l'image pendant un virage rapide** : la
+bande qui entre (120 px par paire à 853 px de large) sortait en mélange
+brouillé ; (3) texte du HUD de Cyberpunk cassé — mais les captures sont
+réduites (853×480), le texte y est rééchantillonné et jamais exactement
+fixe : ce banc ne juge pas le HUD (à 1440p, `hud_mask` voit les glyphes).
+
+**Cause de (2), mesurée sur le flux exporté** (`--dump-flow`) : le flux
+avant y est juste (+120 px, la caméra), le flux arrière de la bande qui
+entre vaut 0 ± 15 au lieu de −120 — le contenu n'a pas de correspondance
+dans l'image précédente et la recherche en trouve une fausse à l'intérieur ;
+`border_predict` ne s'y déclenche pas (prédiction grossière ≈ 0 elle
+aussi). Les deux trajectoires paraissent mauvaises → repli en fondu.
+
+**Essai écarté** : dans le matcher, prendre le mouvement global quand son
+appariement sort de l'image et que la prédiction apparie mal — ne joue qu'au
+niveau le plus grossier, dont les blocs (128 px) sont plus larges que la
+bande : presque jamais déclenché.
+
+**Retenu, `border_fill`** (synthèse, bit `SYNTH_BORDER` = 128, auto sur GPU
+dédié) : le flux avant à q (encore celui de la caméra au bord) dit où est le
+contenu de q dans cur (q + (1−t)F) et qu'il était hors de l'image dans prev
+(q − tF) → l'échantillon de cur seul ; miroir pour ce qui sort (flux arrière,
+prev). Gardes, chacune mesurée : (a) seulement où le flux est un décalage
+de l'image (le même 32 px plus vers le centre, à 20 % près) — sans elle la
+marche avant de Cyberpunk (zoom, le sol sortant par le bas) perdait 0,06 dB ;
+(b) une source inchangée entre les deux images est un calque (HUD), pas du
+contenu porté par la caméra — sans elle la scène « turn » perdait 0,03 dB
+(le HUD recopié dans la bande) ; (c) une trajectoire trouvée entièrement
+dans l'image et cohérente garde la main ; (d) **poids continus** (rampe de
+2 px pour « hors de l'image », bandes de seuils) — avec des seuils durs, les
+formats de sortie basculaient différemment (RGBA16F à 46 dB de RGBA8).
+
+**Mesures (option coupée contre activée)** : scènes ×4 type jeu walk
++0,45 dB, turn +0,16, fps +0,12, dark +0,04, strafe/flick +0,02, fence
++0,01, scintillement en baisse ; enregistrements ×2 PRAGMATA +0,02/+0,05/
++0,04, Oblivion +0,06 / 0, Cyberpunk −0,01/−0,01 ; corpus « hud » (bruit
+qui défile) **+2,2 dB dans tous les formats**, +1,1 en rendu réduit. Coût :
+deux lectures de flux en plus, aux bords seulement (les deux autres sont
+celles du début de la synthèse). `test_formats.py` compare désormais les
+encodages sans l'option (aux bords, le flux hors image et la décision
+dépendent des valeurs de chaque format) et exige qu'elle ne fasse perdre
+nulle part face à la vérité.
