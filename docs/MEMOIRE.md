@@ -3719,3 +3719,8 @@ i/s de base pour garder la génération fluide. Détail et chiffres :
   inchangées) ; Windows et Intel sans mesure d'occupation (attentes seules).
   Pas encore essayé dans un vrai jeu.
 
+Vérifications : 120 tests unitaires, tests sans fenêtre, tests d'affichage
+dans gamescope sans tête (9/9, validation Vulkan comprise), MinGW x64/i686.
+Installé en 64/32 bits (`tools/install.sh`), SHA256 identiques aux builds
+(x64 `0c11ad8b1b5cad1f…`, x86 `a602e488a7657d85…`) : relancer le jeu et le
+panneau. Aucun push.
