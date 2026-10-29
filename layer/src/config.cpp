@@ -375,6 +375,7 @@ const std::vector<OptionDef>& registry() {
     I("hud_mask", nullptr, &Config::hudMask, 0, 1000, kLive),
     B("reveal_fill", nullptr, &Config::revealFill, kLive, Tune::SynthExtrapolation, "1", 12),
     B("border_fill", nullptr, &Config::borderFill, kLive),
+    I("record_scale", nullptr, &Config::recordScale, 0, 4),
     B("online_tune", nullptr, &Config::onlineTune),
     F("upscale_temporal", nullptr, &Config::upscaleTemporal, 0.f, 0.95f),
     B("frame_timing", nullptr, &Config::frameTiming, kLive),

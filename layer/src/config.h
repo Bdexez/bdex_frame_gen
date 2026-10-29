@@ -126,6 +126,7 @@ struct Config {
     bool  globalMotion  = false;  // the frame's dominant shift as a second search centre at the coarsest level (global_motion.comp)
     bool  temporalPrediction = false; // coarsest matching level searches around the previous frame pair's motion instead of zero, so sustained fast pans are followed beyond the pyramid's range (opt-in; off = bit-for-bit)
     bool  extrapolateSplat = false; // extrapolation: forward-splat the current frame, backward warp only where nothing lands (opt-in)
+    int   recordScale   = 0;      // the panel's recordings: written at 1/N of the game's size (1 = full), 0 = about 960 pixels wide (a 1440p game's HUD strokes then never stay still)
     bool  borderFill    = false;  // interpolation: content entering (leaving) the picture in a camera move from cur (prev) alone, instead of the cross-fade its off-screen trajectories fell to (opt-in, off = bit-for-bit)
     bool  revealFill    = false;  // extrapolation: revealed areas take the slower-moving of the last two sources (opt-in, off = bit-for-bit)
     int   hudMask       = 0;      // learned static-overlay mask: frames a pixel must stay unchanged while the picture moves to be kept as is (0 = off, bit-for-bit; enabling it is read at start-up)
