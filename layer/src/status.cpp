@@ -196,6 +196,10 @@ std::vector<std::string> statusDescribe(const StatusFile& file, bool english) {
             snprintf(buf, sizeof buf, T(" · limite Steam %.0f i/s (rien au-delà ne s'affiche)",
                                         " · Steam limit %.0f fps (nothing above it is shown)"), num(v, "limit_hz", 0));
             line += buf;
+        } else if (num(v, "refresh_hz", 0) > 0 && num(v, "display_grid", -1) == 3) {  // x11_clock
+            snprintf(buf, sizeof buf, T(" · écran %.0f Hz (cadence lue auprès du serveur X)", " · screen %.0f Hz (timing read from the X server)"),
+                     num(v, "refresh_hz", 0));
+            line += buf;
         } else if (num(v, "refresh_hz", 0) > 0) {
             snprintf(buf, sizeof buf, T(" · écran %.0f Hz", " · screen %.0f Hz"), num(v, "refresh_hz", 0));
             line += buf;

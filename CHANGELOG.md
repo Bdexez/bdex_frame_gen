@@ -25,6 +25,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   even after the grid moved (virtual_grid's half-period shift, a measured
   grid replacing the virtual one). The last planned refresh is now taken on
   the current grid.
+- **Latency and screen timing under Xwayland**: with `x11_clock` in place of
+  the present feedback, the latency figures (HUD, panel, statistics) come
+  from the refresh at which the real frame reaches the compositor, plus one
+  (they measured the layer's own present: ~12 ms too low at x4, 144 Hz). The
+  panel and `--report` say when the screen's timing is read from the X server.
 
 ### Movement across refresh phases (2026-10-16)
 
