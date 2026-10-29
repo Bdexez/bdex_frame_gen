@@ -3689,3 +3689,9 @@ gamescope sans tête (intégration, validation Vulkan avec un nouveau cas
 `interpolate:fast` sans aucun message, stress, acquisition, multithread),
 MinGW x64/i686.
 
+Réplique Docker de la CI Linux (`tools/ci/run.sh`) : 31 tests, 0 échec
+(`multithread_config` sauté, une seule file sous lavapipe). Installation
+locale 64/32 bits par `tools/install.sh` (nouvel inode : le jeu en cours
+garde l'ancienne copie), SHA256 identiques aux builds (x64
+`2592fc1b26d16e20…`, x86 `64467aeeb1212f2f…`). Relancer le jeu et le
+panneau pour charger cette version. Aucun push.
