@@ -79,6 +79,8 @@ struct DeviceData {
     Config config;
 
     VkPhysicalDeviceProperties props{};
+    uint8_t deviceUuid[VK_UUID_SIZE] = {};  // VkPhysicalDeviceIDProperties (Vulkan 1.1), for gpu_load's NVML match
+    bool haveUuid = false;
     VkPhysicalDeviceMemoryProperties memProps{};
     std::vector<VkQueueFamilyProperties> families;
     std::vector<uint32_t> appFamilies;  // unique queue families the application created queues from

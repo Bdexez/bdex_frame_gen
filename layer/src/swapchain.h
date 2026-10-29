@@ -5,6 +5,7 @@
 #include "frame_order.h"
 #include "pacing.h"
 #include "framegen.h"
+#include "gpu_load.h"
 #include "recorder.h"
 #include "x11_present_clock.h"
 
@@ -231,6 +232,8 @@ private:
     bool evenActive_ = false;          // present thread: the last present was planned by evenClock_ or fastClock_
     pacing::EvenClock fastClock_;      // present thread: even_fast's lag behind the game's presents (fallback)
     bool fastOn_ = false;              // present thread: inside even_fast's band (pacing::evenFastBand)
+    pacing::EvenFastGuard fastGuard_;  // present thread: even_fast off while it holds the game up
+    bool fastPlanned_ = false;         // present thread: even_fast planned the previous present
     bool tightOn_ = false;             // present thread: tight_hold spaced the last present (pacing::tightHold's hysteresis)
     pacing::IntervalFilter intervalFilter_;  // present thread: confirmed changes of the game's cadence
     // virtual_grid (fbMutex_): with the adaptive pacing and no measured
@@ -416,6 +419,15 @@ private:
     // caps: DeviceData::capAtSleep), without mutex_.
     FrameCap frameCap_;
     void limitFrameRate();
+    // gpu_headroom (pacing::HeadroomCap; presenting thread, after
+    // max_frame_latency's wait): the cap it holds the game under, the GPU's
+    // busy percent read every 200 ms where NVML / amdgpu tell it.
+    pacing::HeadroomCap headroomCap_;
+    std::unique_ptr<GpuLoad> gpuLoad_;
+    bool gpuLoadTried_ = false;
+    double gpuBusyReadMs_ = 0.0;
+    int gpuBusy_ = -1;
+    void updateHeadroom(bool active, double waitedMs);
     double frameIntervalMs_ = 16.6;
     uint32_t statsRepeats_ = 0;  // repeated-frame counter at the last statistics line (dedup)
     uint32_t statsGen_ = 0;      // presents with generated frames in the statistics window

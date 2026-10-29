@@ -249,7 +249,19 @@ void VirtualSwapchain::runJob(const Job& job) {
                 lateJobs_.store(0, std::memory_order_relaxed);
         };
         for (int i = 0; i < n; ++i) {
-            if (paced) sleepUntilPrecise(paceTarget(job, origin, i));
+            const auto target = paced ? paceTarget(job, origin, i) : origin;
+            // even_fast: the first frame goes out a game frame and more after
+            // the synthesis (its lag); waiting for that present before
+            // submitting the rest held the game's next present all along
+            // (pacing::EvenFastGuard). The rest goes on the queue as soon as
+            // the synthesis is done when that comes first: the first frame's
+            // present then waits for nothing still running.
+            if (!restSubmitted && deferRest && job.fallbackFrom >= 0 && err >= 0 && target > clock::now()) {
+                const int64_t left = std::chrono::duration_cast<std::chrono::nanoseconds>(target - clock::now()).count();
+                if (left > 0 && dev_.vt.WaitForFences(dev_.device, 1, &slotFence, VK_TRUE, uint64_t(left)) == VK_SUCCESS)
+                    submitRest();
+            }
+            if (paced) sleepUntilPrecise(target);
             const VkResult r = presentCopied(job, out[size_t(i)]);
             if (r < 0 && err == VK_SUCCESS) err = r;
             noteLateness(i);

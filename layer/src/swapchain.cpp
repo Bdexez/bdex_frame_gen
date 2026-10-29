@@ -119,6 +119,8 @@ void VirtualSwapchain::publishStatus(int multiplier) {
     e.refreshHz = displayHz();
     e.limitHz = gsLimited_.load() ? gsHz_.load() : 0.0;
     e.fpsLimit = cfg_.fpsLimit;
+    e.autoCapFps = headroomCap_.capFps;
+    e.gpuBusy = gpuBusy_;
     if (cfg_.fpsLimit != 0.f) e.capPoint = dev_.capsAtSleep(msOf(clock::now())) ? "input" : "present";
     if (dev_.inst) e.engine = dev_.inst->engine;
     {
@@ -994,12 +996,51 @@ bool VirtualSwapchain::fastGame(double hz) {
 void VirtualSwapchain::limitFrameRate() {
     // auto: the refresh rate divided by the multiplier (60 on 120 Hz at x2),
     // once the present feedback knows it; no cap until then.
-    const double fps = cfg_.fpsLimit == 0.f ? 0.0
-                       : cfg_.fpsLimit < 0.f ? displayHz() / std::max(1, cfg_.multiplier)
-                                             : double(cfg_.fpsLimit);
+    double fps = cfg_.fpsLimit == 0.f ? 0.0
+                 : cfg_.fpsLimit < 0.f ? displayHz() / std::max(1, cfg_.multiplier)
+                                       : double(cfg_.fpsLimit);
+    // (gpu_headroom: the lower of the two)
+    if (const double cap = headroomCap_.capFps; cap > 0.0) fps = fps > 0.0 ? std::min(fps, cap) : cap;
     dev_.capFps.store(fps, std::memory_order_relaxed);  // (for the game's own sleep point, DeviceData::capAtSleep)
     if (fps <= 0.0 || dev_.capsAtSleep(msOf(clock::now()))) return;
     frameCap_.wait(fps);
+}
+
+// gpu_headroom: generating, a GPU that cannot keep up with the game and the
+// synthesis together gets a little room back — the game held under the rate
+// it reaches (pacing::HeadroomCap), so that the GPU idles a gpu_headroom share
+// of the time: the syntheses then finish on time for their refreshes, and the
+// compositor gets the GPU when it needs it. The GPU's busy percent comes from
+// NVML (NVIDIA, inside Steam's container too) or amdgpu, opened at the first
+// use; without either, the game's waits on the GPU alone decide.
+void VirtualSwapchain::updateHeadroom(bool active, double waitedMs) {
+    if (!active || !(cfg_.gpuHeadroom > 0.f)) {
+        if (headroomCap_.capFps > 0.0) BDEX_INFO("gpu_headroom: game no longer held (generation off)");
+        headroomCap_.reset();
+        return;
+    }
+    const double nowMs = msOf(clock::now());
+    if (!gpuLoadTried_) {
+        gpuLoadTried_ = true;
+        gpuLoad_ = GpuLoad::open(dev_.props.vendorID, dev_.props.deviceID, dev_.haveUuid ? dev_.deviceUuid : nullptr,
+                                 dev_.props.deviceName);
+        BDEX_INFO("gpu_headroom: GPU load from %s", gpuLoad_ ? gpuLoad_->source() : "nowhere (the game's waits on the GPU decide)");
+    }
+    int busy = -1;
+    if (gpuLoad_ && nowMs - gpuBusyReadMs_ >= 200.0) {
+        gpuBusyReadMs_ = nowMs;
+        busy = gpuBusy_ = gpuLoad_->busyPercent();
+    }
+    const double before = headroomCap_.capFps;
+    const double cap = headroomCap_.update(nowMs, waitedMs, frameIntervalMs_, busy, cfg_.gpuHeadroom);
+    if (cap == before) return;
+    if (before <= 0.0)
+        BDEX_INFO("gpu_headroom: GPU saturated (%d %% busy, the game waits for it): game held under %.1f fps from %.1f",
+                  gpuBusy_, cap, frameIntervalMs_ > 0.0 ? 1000.0 / frameIntervalMs_ : 0.0);
+    else if (cap <= 0.0)
+        BDEX_INFO("gpu_headroom: room again (GPU %d %% busy): game no longer held", gpuBusy_);
+    else
+        BDEX_DBG("gpu_headroom: GPU %d %% busy, cap %.1f -> %.1f fps", gpuBusy_, before, cap);
 }
 
 // gpu_budget: about once a second, compare the generation's GPU time with the
@@ -1252,7 +1293,10 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         pacing::Grid g;
         if (displayGrid(g.lastMs, g.periodMs, &g.lead)) {
             fastOn_ = pacing::evenFastBand(frameIntervalMs_, g.periodMs, fastOn_, cfg_.evenFast >= 2 && mult >= 4);
-            if (fastOn_) {
+            const bool allowed = fastOn_ && fastGuard_.allow(msOf(t0), workerWaitMs, frameIntervalMs_, fastPlanned_);
+            if (fastOn_ && !allowed && fastPlanned_)
+                BDEX_INFO("even_fast: the game waited %.2f ms a present for the worker: pinned frames for a while", workerWaitMs);
+            if (allowed) {
                 g.valid = true;
                 if (g.lead == pacing::kX11Lead) g.readyMarginMs = pacing::kX11ReadyMarginMs;
                 fastClock_.fallback = true;
@@ -1269,6 +1313,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         fastOn_ = false;
     }
     if (fastFrames == 0 && !fastSkip) fastClock_.reset();
+    fastPlanned_ = fastFrames > 0 || fastSkip;
     if (fastFrames > 0 || fastSkip) lateJobs_.store(0, std::memory_order_relaxed);
     evenActive_ = evenFrames > 0 || fastFrames > 0 || fastSkip;
     lastPresentFrames_ = evenFrames > 0 ? evenFrames : mult;
@@ -1886,16 +1931,22 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         if (fs.generation == u.generation && fs.submitted) latencyFence = fs.fence;
     }
     lock.unlock();
+    double gpuWaitMs = -1.0;  // (how long the game waited for the GPU: gpu_headroom)
     if (latencyFence) {
         const auto w0 = clock::now();
         dev_.vt.WaitForFences(dev_.device, 1, &latencyFence, VK_TRUE, 100'000'000ull);
+        gpuWaitMs = std::chrono::duration<double, std::milli>(clock::now() - w0).count();
         // (a game with Reflex or Anti-Lag on paces itself through the driver)
         const bool appPaced = dev_.appPacesLatency(msOf(clock::now()));
-        if (cfg_.latencyLimiter && !appPaced) syncFrameStart(std::chrono::duration<double, std::milli>(clock::now() - w0).count());
+        if (cfg_.latencyLimiter && !appPaced) syncFrameStart(gpuWaitMs);
         else limiter_.delayMs = 0.0;
     } else {
         limiter_.delayMs = 0.0;
     }
+    // (held by the worker or by the GPU: a saturated GPU shows as either —
+    // as the worker's wait when the synthesis is slow to deliver its first
+    // frame, which holds the job's submission)
+    updateHeadroom(interpolate && !limitedByGamescope, std::max(gpuWaitMs, workerWaitMs));
     // fps_limit: the frame is already on its way; the game is held here,
     // before it begins the next one and reads its input — what a game's own
     // limiter does. (Holding the present itself, as until 13/10, made each

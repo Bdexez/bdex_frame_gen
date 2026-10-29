@@ -639,6 +639,15 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
         BDEX_INFO("presenting through gamescope's WSI layer: %s", data->gamescope ? "refresh rate and frame limit from gamescope"
                                                                                   : "its refresh cycle is not available");
     inst->vt.GetPhysicalDeviceProperties(physDev, &data->props);
+    if (inst->apiVersion >= VK_API_VERSION_1_1 && data->props.apiVersion >= VK_API_VERSION_1_1 &&
+        inst->vt.GetPhysicalDeviceProperties2) {
+        VkPhysicalDeviceIDProperties id{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
+        VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+        p2.pNext = &id;
+        inst->vt.GetPhysicalDeviceProperties2(physDev, &p2);
+        memcpy(data->deviceUuid, id.deviceUUID, VK_UUID_SIZE);
+        data->haveUuid = true;
+    }
     inst->vt.GetPhysicalDeviceMemoryProperties(physDev, &data->memProps);
     data->config.autoConfigure(data->props, data->memProps);
     if (!data->config.autoTunedTo.empty()) {

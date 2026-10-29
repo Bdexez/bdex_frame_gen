@@ -442,6 +442,18 @@ stats monte par construction. Ne pas relever le délai à chaque raté (ancien
 `EvenClock`) : +2 à 3 ms ; ne pas laisser le délai sans remontée (une coupure
 « sorties épuisées » s'emballait en tenues). Banc : `framerate_bench.py
 --trace` (temps d'un vrai jeu).
+**`even_fast` sur un jeu lourd** : copies restantes soumises dès la fin de
+la synthèse (sinon `deferRest` attendait la 1re présentation, lointaine, et
+le jeu attendait cette soumission : 105 → 86 i/s, 42 ms image→écran) ;
+`pacing::EvenFastGuard` cale les réelles 2 s… 60 s si le jeu attend encore le
+worker. **`gpu_headroom`** (29/10, défaut 0,1, `pacing::HeadroomCap`,
+`gpu_load.{h,cpp}`) : GPU saturé (jeu qui attend GPU ou worker sur 60 % des
+images + occupation > 94 % par NVML `dlopen` / amdgpu sysfs, UUID Vulkan
+pour le bon GPU) → `limitFrameRate()` bride le jeu à cible/occupation (90 %),
+pas −10/+8 %, zone morte 84–94, baisse seulement si attente **et** au-dessus
+(sinon oscillation 61–76 i/s mesurée, l'attente du worker existe sans
+saturation), plancher 80 % du débit GPU courant / 50 % du premier ; sans
+mesure : attentes seules + sondages. Banc N = 30 : image→écran −6 à −8 ms.
 **`tight_hold`** (21/10, défaut 1) : ×m fixe sur grille, quand
 I < (m+1,25)·P, images générées à un rafraîchissement d'écart, la tenue à la
 réelle (−2,8 ms à ×4/30/144). **Marge de prêt X11** (`Grid::readyMarginMs`,

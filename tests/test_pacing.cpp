@@ -1387,3 +1387,97 @@ TEST(pacing_even_fast_clock_fallback) {
     historical.plan(now, I, 2.0 + 3.0 * P, g, 3, chain, lands, realMs);
     CHECK(historical.lagMs > before + P);
 }
+
+namespace {
+// gpu_headroom against a modelled game: each frame takes gpuMs of GPU time
+// (its rendering and our synthesis) and cpuMs of its own; it runs at the
+// slower of the two, or of the cap. The GPU's busy share is gpuMs over the
+// frame interval (read every 200 ms where `known`); the game waits for the GPU
+// (max_frame_latency) whenever the GPU, not its CPU or the cap, sets the pace.
+struct HeadroomRun { double fps, busy, minFps, maxBusy, capFps; };
+HeadroomRun runHeadroom(const std::vector<std::pair<double, double>>& phases, double seconds, bool known,
+                        double headroom = 0.1) {
+    pacing::HeadroomCap cap;
+    pacing::IntervalFilter filter;
+    double now = 0.0, interval = 0.0, lastRead = -1000.0;
+    HeadroomRun r{0.0, 0.0, 1e9, 0.0, 0.0};
+    double sumFps = 0.0, sumBusy = 0.0;
+    int n = 0;
+    const double phaseMs = seconds * 1000.0 / phases.size();
+    while (now < seconds * 1000.0) {
+        const auto& [gpuMs, cpuMs] = phases[std::min(phases.size() - 1, size_t(now / phaseMs))];
+        const double capMs = cap.capFps > 0.0 ? 1000.0 / cap.capFps : 0.0;
+        const double frame = std::max({gpuMs, cpuMs, capMs});
+        now += frame;
+        interval = filter.update(interval, frame);
+        const double busy = 100.0 * gpuMs / frame;
+        int read = -1;
+        if (known && now - lastRead >= 200.0) {
+            read = int(std::round(busy));
+            lastRead = now;
+        }
+        const double waited = gpuMs > std::max(cpuMs, capMs) ? gpuMs - std::max(cpuMs, capMs) : 0.0;
+        cap.update(now, waited, interval, read, headroom);
+        // (the last phase's last 5 s)
+        if (now > seconds * 1000.0 - 5000.0) {
+            sumFps += 1000.0 / frame, sumBusy += busy, ++n;
+            r.minFps = std::min(r.minFps, 1000.0 / frame);
+            r.maxBusy = std::max(r.maxBusy, busy);
+        }
+    }
+    r.fps = sumFps / n;
+    r.busy = sumBusy / n;
+    r.capFps = cap.capFps;
+    return r;
+}
+} // namespace
+
+// A GPU-bound game generating x4 (11 ms of GPU work a frame: 91 fps, the GPU
+// always busy): held at about 90 % of that, the GPU idle a tenth of the time.
+// Heavier, the cap follows it down; lighter, back up; a game held by its own
+// CPU is never capped; headroom 0 changes nothing.
+TEST(pacing_gpu_headroom_holds_a_saturated_game_under_the_gpu) {
+    for (bool known : {true, false}) {
+        const HeadroomRun steady = runHeadroom({{11.0, 3.0}}, 20.0, known);
+        std::printf("gpu_headroom %s: 90.9 -> %.1f fps, GPU %.0f %% busy (max %.0f)\n", known ? "NVML" : "waits only",
+                    steady.fps, steady.busy, steady.maxBusy);
+        CHECK(steady.fps > 78.0 && steady.fps < 88.5);
+        CHECK(steady.busy < 95.0);
+        if (known) CHECK(steady.busy > 83.0 && steady.busy < 95.0);
+        CHECK(steady.minFps > 0.8 * 90.9 - 0.1);
+        // Heavier (14 ms): under 71 fps, the GPU not saturated for good.
+        const HeadroomRun heavier = runHeadroom({{11.0, 3.0}, {14.0, 3.0}}, 40.0, known);
+        CHECK(heavier.fps < 70.0 && heavier.fps > 0.8 * 1000.0 / 14.0 - 0.1);
+        if (known) CHECK(heavier.busy < 95.0);
+        // Lighter (7 ms): the cap rises with it (up to 128 fps at 90 %).
+        const HeadroomRun lighter = runHeadroom({{11.0, 3.0}, {7.0, 3.0}}, 40.0, known);
+        std::printf("  heavier %.1f fps %.0f %%, lighter %.1f fps %.0f %%\n", heavier.fps, heavier.busy, lighter.fps, lighter.busy);
+        CHECK(lighter.fps > 115.0);
+        if (known) CHECK(lighter.busy > 83.0 && lighter.busy < 95.0);
+        // Held by its own CPU (15 ms a frame, 8 of GPU): never capped.
+        const HeadroomRun cpu = runHeadroom({{8.0, 15.0}}, 20.0, known);
+        CHECK(cpu.capFps == 0.0 && std::abs(cpu.fps - 1000.0 / 15.0) < 0.5);
+        // CPU-bound again after a saturated phase: the cap goes away.
+        const HeadroomRun later = runHeadroom({{11.0, 3.0}, {6.0, 15.0}}, 40.0, known);
+        CHECK(later.capFps == 0.0);
+        // Off.
+        const HeadroomRun off = runHeadroom({{11.0, 3.0}}, 10.0, known, 0.0);
+        CHECK(off.capFps == 0.0 && std::abs(off.fps - 1000.0 / 11.0) < 0.5);
+    }
+    // Capped, then another program keeps the GPU busy while the game's
+    // frames still finish in time: the cap holds instead of walking down.
+    pacing::HeadroomCap cap;
+    double now = 0.0;
+    while (!(cap.capFps > 0.0) && now < 2000.0) cap.update(now += 11.0, 8.0, 11.0, 100, 0.1);
+    const double held = cap.capFps;
+    CHECK(held > 80.0 && held < 90.0);
+    for (int f = 0; f < 2000; ++f) cap.update(now += 1000.0 / held, 0.0, 1000.0 / held, 100, 0.1);
+    CHECK(cap.capFps == held);
+    // Waiting for good while held by the cap (the GPU shared with another
+    // game that takes all it gets): it stops at half the rate it first capped.
+    for (int f = 0; f < 4000; ++f) {
+        const double rate = std::min(cap.capFps, 0.95 * cap.capFps);
+        cap.update(now += 1000.0 / rate, 5.0, 1000.0 / rate, 100, 0.1);
+    }
+    CHECK(cap.capFps >= 0.5 * 1000.0 / 11.0 - 0.01 && cap.capFps < 0.5 * 1000.0 / 11.0 + 1.0);
+}

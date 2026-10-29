@@ -103,6 +103,11 @@ std::string statusFormat(const std::string& process, long pid, long long unixTim
             o << "fps_limit=" << (e.fpsLimit < 0.0 ? std::string("auto") : std::string(buf)) << "\n";
             if (!e.capPoint.empty()) o << "cap_point=" << e.capPoint << "\n";
         }
+        if (e.autoCapFps > 0.0) {
+            fixed1(buf, sizeof buf, e.autoCapFps);
+            o << "auto_cap_fps=" << buf << "\n";
+        }
+        if (e.gpuBusy >= 0) o << "gpu_busy=" << e.gpuBusy << "\n";
         if (!e.engine.empty()) o << "engine=" << e.engine << "\n";
         fixed1(buf, sizeof buf, e.latencyMs);
         o << "latency_ms=" << buf << "\n";
@@ -193,6 +198,12 @@ std::vector<std::string> statusDescribe(const StatusFile& file, bool english) {
                  num(v, "output_fps", 0), get(v, "multiplier").c_str(),
                  mode == "extrapolate" ? "extrapolation" : mode == "hybrid" ? T("hybride", "hybrid") : "interpolation");
         std::string line = (state == "paused" ? T("En pause — ", "Paused — ") : "") + who + buf;
+        if (num(v, "auto_cap_fps", 0) > 0) {
+            snprintf(buf, sizeof buf, T(" · GPU saturé : jeu tenu sous %.0f i/s pour garder la génération fluide",
+                                        " · GPU saturated: game held under %.0f fps to keep the generation smooth"),
+                     num(v, "auto_cap_fps", 0));
+            line += buf;
+        }
         if (num(v, "limit_hz", 0) > 0) {
             snprintf(buf, sizeof buf, T(" · limite Steam %.0f i/s (rien au-delà ne s'affiche)",
                                         " · Steam limit %.0f fps (nothing above it is shown)"), num(v, "limit_hz", 0));

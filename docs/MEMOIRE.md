@@ -3695,3 +3695,27 @@ locale 64/32 bits par `tools/install.sh` (nouvel inode : le jeu en cours
 garde l'ancienne copie), SHA256 identiques aux builds (x64
 `2592fc1b26d16e20…`, x86 `64467aeeb1212f2f…`). Relancer le jeu et le
 panneau pour charger cette version. Aucun push.
+
+### 29/10 (suite) — GPU saturé : `gpu_headroom` ; `even_fast` sur les jeux lourds
+
+Deuxième demande : quand le GPU sature (×4 à 100 i/s), baisser un peu les
+i/s de base pour garder la génération fluide. Détail et chiffres :
+[`framerate.md`](framerate.md), sections « GPU saturé ».
+
+- **`gpu_headroom`** (défaut 0,1) : saturation = le jeu attend le GPU ou le
+  worker sur 60 % des images et le GPU est occupé à plus de 94 % (NVML, lu
+  dans le conteneur Steam ; amdgpu) → limite `cible/occupation` dans
+  `limitFrameRate()`. Baisse seulement si le jeu attend encore et le GPU
+  dépasse la cible (sinon oscillation mesurée 61–76 i/s), plancher 80 % du
+  débit GPU courant, retrait quand elle ne contraint plus. Banc GPU-lourd
+  (N = 30) : image→écran 30,7 → 23–25 ms, mouvement plus régulier.
+- **Régression d'`even_fast` trouvée et corrigée** : sur un jeu dont le rendu
+  prend le GPU longtemps après son `present()`, la soumission des copies
+  attendait la 1re présentation (lointaine) et bloquait le jeu : 105 → 86 i/s,
+  42 ms image→écran. Copies soumises à la fin de la synthèse + garde
+  (`EvenFastGuard`) : 130 i/s, 22,5 ms, mouvement régulier.
+- **Limites** : le banc à 12 ms de rendu d'un bloc (N = 60) affame le
+  compositeur de gamescope quoi qu'on fasse (latence −5 à −10 ms, tenues
+  inchangées) ; Windows et Intel sans mesure d'occupation (attentes seules).
+  Pas encore essayé dans un vrai jeu.
+

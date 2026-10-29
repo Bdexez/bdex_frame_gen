@@ -351,6 +351,7 @@ const std::vector<OptionDef>& registry() {
     B("phase_smooth", nullptr, &Config::phaseSmooth, kLive),
     B("even_motion", nullptr, &Config::evenMotion),
     I("even_fast", nullptr, &Config::evenFast, 0, 2, kLive),
+    F("gpu_headroom", nullptr, &Config::gpuHeadroom, 0.f, 0.5f, kLive),
     B("catchup_smooth", nullptr, &Config::catchupSmooth, kLive),
     B("virtual_grid", nullptr, &Config::virtualGrid, kLive),
     B("x11_clock", nullptr, &Config::x11Clock),
