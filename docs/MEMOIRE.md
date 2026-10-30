@@ -2813,3 +2813,40 @@ le 17/10. `bdex_demo --gpu-load` vaut désormais aussi en `--replay`.
 virages, puis `tools/cadence_report.py ~/fg-lat.log --hz 143.912` : viser
 « motion jumps/s » < 1. Les ratés propres au compositeur (Hyprland qui
 manque un vblank sous charge GPU) restent invisibles au serveur X.
+
+**Test en jeu (20/10, 1re build) : « rien n'a changé ».** Son `latency_log`
+(exact, Hyprland, PRAGMATA) le dit : sur ~88 s, les lignes manquent par
+moments — elles ne s'écrivent que grille X valide — et ses tics ne passent
+le test de validité (90 % des intervalles à 1 ms) que sur 68 fenêtres de
+96 tics sur 209. Les rappels de trame d'Hyprland sous charge : 79 % à
+±0,25 ms de la grille, 82 % à 0,5 ms, une queue jusqu'à ±3,5 ms. À chaque
+perte, `displayGrid` passe au faux retour d'affichage d'Xwayland (avance
+0,3) ou à la grille virtuelle (phase arbitraire) : un job entier décalé
+d'un rafraîchissement. Le banc gamescope (tics à ±0,2 ms) ne pouvait pas
+le montrer.
+
+**Grille collante** (`DisplayClock::setSticky`, seulement pour
+`PresentTimeline`) : une période apprise reste tant que 65 % des intervalles
+tombent à 1,5 ms d'un multiple (et revient ainsi après une rafale de
+retards, `learnedMs_`) ; la période est réaffinée par la médiane des pentes
+entre tics distants de 8 puis d'une demi-fenêtre (la moyenne des intervalles
+retenus errait de 6,86 à 7,01 ms pour 6,95 : la phase dérivait de plusieurs
+ms sur la fenêtre) ; `lastMs()` rend le point de grille le plus proche du
+dernier tic, phase = médiane des écarts des 96 derniers tics. Ses tics
+rejoués dans la vraie classe : valide 45 % → 100 % des estimations, 34 → 1
+bascule ; phase déplacée de plus de 1 ms à 12,5 % → 0,5 % des tics (p99 3,2
+→ 0,09 ms). Intervalles aléatoires (VRR) : 0 accepté sur 40 000 à 65 % (un
+à 60 %). Banc : pas de régression (0,23 saut/s). Tests :
+`present_timeline_keeps_the_grid_under_late_callbacks`,
+`present_timeline_sticky_grid_rejects_variable_refresh`,
+`display_clock_late_tail_fails_the_plain_test`.
+
+**Piste de l'utilisateur (« ×4 donne ~144 au lieu de 120, le problème vient
+de là »)** : vrai en partie. Ses secondes complètes : paires de réelles à 5
+rafraîchissements (22/s) et 4 (6/s) ; contenu montré par rafraîchissement
+5 à 10 ms (idéal 6,95) — +25 % de vitesse sur les paires de 4, plus la
+gigue du jeu. À 120 i/s (sans remplissage), une image sur cinq tenue deux
+rafraîchissements (24/s). Aucun des deux n'est régulier ; le seul rythme
+régulier est que chaque rafraîchissement montre le contenu de son instant
+(des générées à t quelconque, la réelle seulement quand elle tombe juste) —
+à faire si son ressenti confirme ce rythme.

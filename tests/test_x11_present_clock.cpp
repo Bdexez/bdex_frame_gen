@@ -70,3 +70,42 @@ TEST(present_timeline_restarts_on_a_counter_reset) {
     t.add(6, 2000.0 + kP);
     CHECK(t.shown == 2 && t.replaced == 0 && t.held == 0);
 }
+
+// A compositor's frame callbacks under GPU load (Hyprland, PRAGMATA at
+// 1440p, measured: 84 % within 0.4 ms of the grid, the rest spread up to
+// half a period). The 90 % test alone lost the grid two estimates in three
+// (the layer then paced on other grids, at other phases); once learned (a
+// calmer moment) it now stays, and its phase is the median of the recent
+// callbacks, not the last one — late or not.
+TEST(present_timeline_keeps_the_grid_under_late_callbacks) {
+    PresentTimeline t;
+    t.setHint(143.912);
+    uint32_t s = 17;
+    int checks = 0, valid = 0;
+    double worstPhase = 0.0;
+    for (uint64_t msc = 1; msc <= 3000; ++msc) {
+        const double grid = 1000.0 + double(msc) * kP;
+        const double u = (jitter(s, 1.0) + 1.0) * 0.5;  // [0, 1]
+        const double off = msc <= 200 || u < 0.84 ? jitter(s, 0.4) : jitter(s, 3.4);
+        t.add(msc, grid + off);
+        if (msc > 200 && msc % 16 == 0) {
+            ++checks;
+            if (t.valid()) {
+                ++valid;
+                worstPhase = std::max(worstPhase, std::fabs(std::remainder(t.lastMs() - 1000.0, kP)));
+            }
+        }
+    }
+    CHECK(valid == checks);
+    CHECK(worstPhase < 0.5);
+}
+
+// ...while a variable-refresh display (any interval) still has no grid.
+TEST(present_timeline_sticky_grid_rejects_variable_refresh) {
+    PresentTimeline t;
+    t.setHint(143.912);
+    uint32_t s = 5;
+    double ust = 1000.0;
+    for (uint64_t msc = 1; msc <= 400; ++msc) t.add(msc, ust += 7.0 + std::fabs(jitter(s, 6.0)));
+    CHECK(!t.valid());
+}

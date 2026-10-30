@@ -359,7 +359,12 @@ présentation. Ne pas remettre de travail qui attend la synthèse devant une
 présentation. `latency_log` sous `x11_clock` : une ligne par complétion X
 (tic réel, MSC, temps de contenu `Job::contentMs`, UST, mode, envoi) ;
 `cadence_report.py` en tire « motion jumps/s ». Le MSC d'Xwayland ne compte
-que les rappels demandés : compter les tics par l'UST.
+que les rappels demandés : compter les tics par l'UST. **Grille X collante**
+(`DisplayClock::setSticky`, `PresentTimeline`) : sous charge, les rappels
+d'Hyprland ont une queue en retard qui faisait perdre la grille 2 fois sur 3
+(repli sur d'autres grilles = sauts) ; une période apprise reste à 65 % /
+1,5 ms, période par médiane des pentes, phase par médiane des tics. Ne
+jamais redonner la phase du dernier tic.
 **Latence, 2026-10-02.** `interp_hold` (défaut 1, bit à bit) : en
 interpolation, les positions jusqu'à la réelle espacées de h/m
 (`FrameOrder::offset`, champ `Job::order`, `paceTarget`), `t` = 1 −

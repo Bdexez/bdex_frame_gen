@@ -28,13 +28,14 @@ void DisplayClock::estimate() {
         if (t[i] - t[i - 1] > jitterMs_) d.push_back(t[i] - t[i - 1]);
     periodMs_ = 0.0;
     if (d.size() < 16) return;
-    // Whole multiples of `p` within the observer's jitter: the refined period
-    // over the fitting intervals, 0 if fewer than 90 % fit.
-    auto fitPeriod = [&d, this](double p) {
+    // Whole multiples of `p` within the observer's jitter (times `loose`):
+    // the refined period over the fitting intervals, 0 if fewer than
+    // `share` of them fit (90 %).
+    auto fitPeriod = [&d, this](double p, double loose = 1.0, double share = 0.9) {
         // The tolerance also shrinks with the period: with a loose one, a
         // short period "explains" any set of intervals (a variable-refresh
         // display at 120 fps fitted 360 Hz).
-        const double tol = std::min(jitterMs_, jitterShare_ * p);
+        const double tol = loose * std::min(jitterMs_, jitterShare_ * p);
         double sumD = 0.0, sumN = 0.0;
         size_t fit = 0;
         for (double x : d) {
@@ -45,12 +46,26 @@ void DisplayClock::estimate() {
                 sumN += n;
             }
         }
-        return fit >= d.size() * 9 / 10 ? sumD / sumN : 0.0;
+        const size_t need = share >= 0.9 ? d.size() * 9 / 10 : size_t(std::ceil(double(d.size()) * share));
+        return fit >= need ? sumD / sumN : 0.0;
     };
+    // (Hyprland's callbacks under load, a minute and a half replayed: valid
+    // 45 % of the estimates and 34 switches; sticky, 100 % and one, the
+    // grid's phase moving over 1 ms at 0.5 % of the callbacks instead of
+    // 12.5 %. Random intervals — a variable-refresh display — never keep
+    // it: 0 in 40 000.)
+    if (sticky_ && learnedMs_ > 0.0) {  // (also to take it back after a burst of late ones)
+        if (const double p = fitPeriod(learnedMs_, 1.5, 0.65); p > 0.0) {
+            periodMs_ = p;
+            setPhase(t);
+            return;
+        }
+    }
     if (hintMs_ >= kMinPeriodMs && hintMs_ <= kMaxPeriodMs) {
         const double p = fitPeriod(hintMs_);
         if (p > 0.0) {
             periodMs_ = p;
+            setPhase(t);
             return;
         }
     }
@@ -64,15 +79,46 @@ void DisplayClock::estimate() {
         if (p < kMinPeriodMs || p > kMaxPeriodMs) continue;
         if (const double fitted = fitPeriod(p); fitted > 0.0) {
             periodMs_ = fitted;  // refined over every fitting interval
+            setPhase(t);
             return;
         }
     }
 }
 
+// Sticky: the period again, from the median slope between times half the
+// window apart (the mean of the fitting intervals, with late callbacks among
+// them, wandered from 6.86 to 7.01 ms for 6.95 — the phase over the window
+// then off by milliseconds), and the grid's phase from the median offset of
+// the recent times to the last one — late outliers, the last one included,
+// do not move it.
+void DisplayClock::setPhase(const std::vector<double>& t) {
+    if (!sticky_ || t.size() < 16) return;
+    // (Times 8 apart first: the refreshes between them are counted right
+    // from a period several percent off; then half the window.)
+    for (const size_t h : {size_t(8), t.size() / 2}) {
+        std::vector<double> slopes;
+        for (size_t i = 0; i + h < t.size(); ++i) {
+            const double n = std::round((t[i + h] - t[i]) / periodMs_);
+            if (n >= 1.0) slopes.push_back((t[i + h] - t[i]) / n);
+        }
+        if (slopes.empty()) break;
+        std::nth_element(slopes.begin(), slopes.begin() + long(slopes.size() / 2), slopes.end());
+        const double p = slopes[slopes.size() / 2];
+        if (std::fabs(p - periodMs_) < 0.05 * periodMs_) periodMs_ = p;
+    }
+    learnedMs_ = periodMs_;
+    std::vector<double> r;
+    r.reserve(t.size());
+    for (double x : t) r.push_back(std::remainder(x - last_, periodMs_));
+    std::nth_element(r.begin(), r.begin() + long(r.size() / 2), r.end());
+    phaseMs_ = last_ + r[r.size() / 2];
+}
+
 double DisplayClock::nextRefresh(double ms) const {
     if (!valid()) return ms;
-    const double k = std::ceil((ms - last_) / periodMs_);
-    return last_ + std::max(k, 0.0) * periodMs_;
+    const double last = lastMs();
+    const double k = std::ceil((ms - last) / periodMs_);
+    return last + std::max(k, 0.0) * periodMs_;
 }
 
 } // namespace bdex

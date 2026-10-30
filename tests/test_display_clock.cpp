@@ -86,6 +86,23 @@ TEST(display_clock_ignores_a_wrong_hint) {
     CHECK(!vrr.valid());
 }
 
+// Without sticky (the present feedback's clock), the same late tail loses
+// the grid — the reason x11_clock's is sticky.
+TEST(display_clock_late_tail_fails_the_plain_test) {
+    DisplayClock plain;
+    plain.setJitter(1.0, 0.15);
+    plain.setHint(143.912);
+    const double p = 1000.0 / 143.912;
+    uint32_t s = 17;
+    int invalid = 0;
+    for (int i = 1; i <= 3000; ++i) {
+        const double u = (jitter(s, 1.0) + 1.0) * 0.5;
+        plain.add(1000.0 + i * p + (i <= 200 || u < 0.84 ? jitter(s, 0.4) : jitter(s, 3.4)));
+        if (i > 200 && i % 16 == 0) invalid += !plain.valid();
+    }
+    CHECK(invalid > 20);
+}
+
 // target_fps: the output never goes above the target (the refresh rate), where
 // a mailbox display drops frames unevenly; hysteresis at the boundaries.
 TEST(dynamic_multiplier_stays_under_the_target) {
