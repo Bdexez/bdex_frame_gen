@@ -2644,4 +2644,6 @@ présentation immediate, « display 144.0 Hz (X server) », 144 images
 affichées/s, 0 tenue, latence 43,7 ms. (Le contrôle CI `proton-check.sh` sur
 lavapipe ne valide que l'accrochage : lavapipe ne présente pas par X
 Present.) Script : `winrun.sh` du scratchpad (préfixe Wine privé, DLL de
-`Proton 10.0/files/lib/wine/dxvk/x86_64-windows`).
+`Proton 10.0/files/lib/wine/dxvk/x86_64-windows`). Idem en D3D12
+(`d3d12_probe.cpp`, VKD3D-Proton de Proton 10 : le chemin de PRAGMATA) :
+144 affichées/s, 0 tenue, latence 42 ms.
