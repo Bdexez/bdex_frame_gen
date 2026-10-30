@@ -116,6 +116,7 @@ private:
         double frameStartMs = 0.0;   // when the application's previous present returned (it began this frame then)
         double intervalMs = 16.6;    // frame interval estimate for pacing
         double planned[8] = {};      // the refresh (steady ms) each frame was given its content for, 0 = none
+        double contentMs[8] = {};    // the content time each frame shows (game present clock, as frame_state's t), for latency_log
         bool plan = false;           // ... and presented for it (pace_plan, pacing::planLands)
         bool smoothCatchup = false;  // a newly missed refresh can request gradual recovery from the game thread
         int presentMode = -1;        // VkSwapchainPresentModeInfoEXT (-1 = none), applied to every present
@@ -291,9 +292,10 @@ private:
     // X server, where the present feedback finds none (Xwayland in immediate
     // mode reports each present complete at once). Its own lock.
     std::unique_ptr<X11PresentClock> x11Clock_;
-    std::atomic<bool> latencyFromX11_{false};
-    std::string latencyLogPath_;  // cfg_.latency_log at creation (the worker writes it with x11_clock)  // the latency figures come from x11_clock's refreshes (presentCopied)
+    std::atomic<bool> latencyFromX11_{false};  // the latency figures come from x11_clock's refreshes (presentCopied)
+    std::string latencyLogPath_;  // cfg_.latency_log at creation (x11_clock's completions write it: logX11Completions)
     bool x11Grid() { return x11Clock_ && x11Clock_->refreshHz() > 0.0; }
+    void logX11Completions();  // latency_log from x11_clock's completions (swapchain_worker.cpp)
     // What reached the screen: the present feedback's counts, or the X
     // server's where its grid stands in for the feedback's (fbMutex_ held).
     struct ShownCounts { uint64_t shown = 0, held = 0, replaced = 0; };

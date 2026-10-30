@@ -8,7 +8,11 @@ display log.
 
 The log (latency_log) has a line per displayed frame: "<game's present ms>
 <display ms> <real 0/1> <planned ms>" (steady clock, from the present
-feedback; the planned refresh is pace_plan's, 0 without one). Reported:
+feedback; the planned refresh is pace_plan's, 0 without one). Under Xwayland
+(x11_clock), a line per present once the X server reports it executed — the
+display time is then the refresh it went to the compositor at — followed by
+"<msc> <content ms> <ust ms> <mode> <sent ms>": the content time the frame
+shows on the game's present clock gives the motion line below. Reported:
 
   shown/s         frames that reached the screen per second
   held/s          a frame on screen for more than one refresh (a repeat):
@@ -16,6 +20,9 @@ feedback; the planned refresh is pace_plan's, 0 without one). Reported:
   same refresh/s  two frames shown within a third of a refresh: one replaced
   off plan        frames shown more than half a refresh from the refresh
                   their content was made for (their motion off by that much)
+  motion jumps/s  (x11_clock) content steps over 1.6 times the usual one in
+                  a refresh: the picture moving on twice as far at once,
+                  usually right after a refresh held
   refresh grid    how well the display times sit on a grid of the refresh
                   period: the share within 1 ms of it (feedback precise
                   enough for the layer to measure the grid: most above 90 %)
@@ -41,7 +48,8 @@ def main():
             p = line.split()
             if len(p) >= 3:
                 try:
-                    rows.append((float(p[0]), float(p[1]), p[2] == "1", float(p[3]) if len(p) >= 4 else 0.0))
+                    rows.append((float(p[0]), float(p[1]), p[2] == "1", float(p[3]) if len(p) >= 4 else 0.0,
+                                 float(p[5]) if len(p) >= 6 else None))
                 except ValueError:
                     pass
     if len(rows) < 20:
@@ -81,6 +89,18 @@ def main():
         print(f"off plan          {100 * off:.1f} % (display - plan: mean {statistics.mean(planned):+.2f} ms)")
     else:
         print("off plan          (no plan: no refresh grid, or extrapolation)")
+    if all(r[4] is not None for r in rows):
+        # the frame each refresh showed: the last presented for it
+        last = {}
+        for r in rows:
+            last[round(r[1] / period)] = r[4]
+        ticks = sorted(last)
+        steps = [(b - a, last[b] - last[a]) for a, b in zip(ticks, ticks[1:]) if 0 < b - a <= 8]
+        per = sorted(dc / n for n, dc in steps if dc > 0)
+        if per:
+            usual = per[len(per) // 2]
+            jumps = sum(1 for n, dc in steps if n == 1 and dc > 1.6 * usual)
+            print(f"motion jumps/s    {jumps / secs:.2f} (usual step {usual:.2f} ms of content a refresh)")
     print(f"refresh grid      {100 * on_grid:.0f} % of display times within 1 ms of it")
     real = [r[1] - r[0] for r in rows if r[2]]
     if real:

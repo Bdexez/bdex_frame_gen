@@ -79,6 +79,7 @@ VirtualSwapchain::VirtualSwapchain(DeviceData& dev, const VkSwapchainCreateInfoK
                 if (it != dev_.inst->x11Windows.end()) window = it->second;
             }
             if (window) x11Clock_ = X11PresentClock::start(window, cfg_.panelDisplayHz);
+            if (x11Clock_ && !latencyLogPath_.empty()) logX11Completions();
         }
     } catch (...) {
         destroyAll();
@@ -1332,6 +1333,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     fg_->profileBegin(cb, slotIdx);
     fg_->collectMeanCost(slotIdx);  // the slot's fence was waited in nextSlot
     double planned[8] = {};  // Job::planned
+    double contentMs[8] = {};  // Job::contentMs
     bool planActive = false;
     if (!generating_) motionClock_.reset();
     if (generating_) {
@@ -1392,6 +1394,22 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         }
         timing.displaySpanMs = motionClock_.span(planActive ? planned[order.real] : 0.0, dt,
             cfg_.phaseSmooth && planActive && !cfg_.hybrid && !cfg_.extrapolate && !cfg_.dedup && !timing.reset);
+        // latency_log: the content time each frame shows, as frame_state
+        // gives it (display times in pure interpolation; else the fixed t).
+        const double contentInterval = timing.haveDisplay && cfg_.contentClock && !cfg_.extrapolate && dt > 0.5 ? dt
+                                                                                                           : frameIntervalMs_;
+        for (int k = 0; k < (interpolate ? mult : 1) && k < 8; ++k) {
+            double t = 1.0;
+            if (interpolate && k != order.real) {
+                const int o = k < order.real ? k : k - 1;
+                t = order.t(o);
+                if (timing.haveDisplay && order.real == mult - 1) {
+                    const double span = timing.displaySpanMs > 0.0 ? timing.displaySpanMs : contentInterval;
+                    t = std::clamp(1.0 + (timing.displayMs[o] - timing.displayMs[7]) / span, 0.0, 1.0);
+                }
+            }
+            contentMs[k] = msOf(t0) - (1.0 - t) * contentInterval;
+        }
         fg_->recordFrameState(cb, timing);
         fg_->profileMark(cb, slotIdx, FrameGen::StageAnalysis);
         if (interpolate) {
@@ -1568,6 +1586,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     job.frameStartMs = lastReturnMs_;
     job.intervalMs = frameIntervalMs_;
     if (interpolate) std::copy(std::begin(planned), std::end(planned), std::begin(job.planned));
+    std::copy(std::begin(contentMs), std::end(contentMs), std::begin(job.contentMs));
     job.plan = interpolate && planActive;
     job.smoothCatchup = job.plan && smoothCatchup && mult >= 3;
     // Adaptive: one output period between the frames (paceTarget spreads

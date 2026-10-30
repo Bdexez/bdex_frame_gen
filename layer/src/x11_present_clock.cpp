@@ -187,8 +187,24 @@ void X11PresentClock::run() {
                 uint64_t ust, msc;
                 memcpy(&ust, b + 24, 8);
                 memcpy(&msc, b + 36, 8);
-                std::lock_guard<std::mutex> lock(mutex_);
-                timeline_.add(msc, double(ust) / 1000.0);  // (µs, CLOCK_MONOTONIC: the steady clock's)
+                const double ustMs = double(ust) / 1000.0;  // (µs, CLOCK_MONOTONIC: the steady clock's)
+                Sink sink;
+                Sent s;
+                double period = 0.0;
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    timeline_.add(msc, ustMs);
+                    if (sink_ && !sent_.empty()) {
+                        s = sent_.front();
+                        sent_.pop_front();
+                        // (until the grid is learned, the present feedback writes the log)
+                        if (timeline_.valid()) {
+                            sink = sink_;
+                            period = timeline_.periodMs();
+                        }
+                    }
+                }
+                if (sink) sink(s, ustMs + period, msc, ustMs, b[11]);
             }
             free(ev);
         }
@@ -233,6 +249,24 @@ double X11PresentClock::refreshHz() {
 X11PresentClock::Counts X11PresentClock::counts() {
     std::lock_guard<std::mutex> lock(mutex_);
     return {timeline_.presents, timeline_.shown, timeline_.replaced, timeline_.held};
+}
+
+void X11PresentClock::logTo(Sink sink) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    sink_ = std::move(sink);
+    sent_.clear();
+}
+
+void X11PresentClock::sent(const Sent& s) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!sink_) return;
+    if (sent_.size() >= 256) sent_.pop_front();  // (completions lost: keep the newest)
+    sent_.push_back(s);
+}
+
+void X11PresentClock::unsent() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!sent_.empty()) sent_.pop_back();
 }
 
 } // namespace bdex

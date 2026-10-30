@@ -23,6 +23,8 @@
 
 #include <atomic>
 #include <cstdint>
+#include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -70,6 +72,18 @@ public:
     struct Counts { uint64_t presents = 0, shown = 0, replaced = 0, held = 0; };
     Counts counts();
 
+    // latency_log: each present's line written once the X server reports
+    // it executed — the refresh it really went out with, not the one the
+    // pacing aimed at. `sent` before the present (its completion may come
+    // back first), `unsent` when it failed (none will).
+    struct Sent { double presentMs = 0.0, plannedMs = 0.0, contentMs = 0.0, sentMs = 0.0; bool real = false; };
+    // handoverMs: the tick after the one it executed at (when Xwayland hands
+    // it to the compositor); msc and mode (0 copy, 1 flip, 2 skip) as reported.
+    using Sink = std::function<void(const Sent&, double handoverMs, uint64_t msc, double ustMs, int mode)>;
+    void logTo(Sink sink);
+    void sent(const Sent& s);
+    void unsent();
+
 private:
     X11PresentClock() = default;
     void run();
@@ -79,6 +93,8 @@ private:
     int stopPipe_[2] = {-1, -1};
     std::mutex mutex_;
     PresentTimeline timeline_;  // mutex_
+    Sink sink_;                 // mutex_ (called outside it)
+    std::deque<Sent> sent_;     // mutex_
 };
 
 } // namespace bdex

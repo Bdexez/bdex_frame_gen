@@ -349,6 +349,17 @@ synthèse retarde le compositeur (1440p quality : 1 à 10 rafraîchissements
 sautés/s sur gamescope). **Ne jamais tester dans la session Hyprland de
 l'utilisateur** (sorties, fenêtres) : KWin `--virtual --xwayland` ou
 gamescope sans tête ; vérité terrain = MSC des `CompleteNotify`.
+**20/10 — rien sur la file de présentation devant la 1re image** : le
+pilote signale le point d'acquisition du compositeur (synchronisation
+explicite) depuis la file où l'on présente ; des copies soumises d'avance
+qui attendent `cmd2` y retenaient la 1re image générée, prête (16 sauts/s
+→ 0,1–0,4 sur Xwayland 144 Hz, 1440p). Synthèse découpée en cours :
+`deferRest` (`runJob`) ne soumet que la copie 0, le reste après sa
+présentation. Ne pas remettre de travail qui attend la synthèse devant une
+présentation. `latency_log` sous `x11_clock` : une ligne par complétion X
+(tic réel, MSC, temps de contenu `Job::contentMs`, UST, mode, envoi) ;
+`cadence_report.py` en tire « motion jumps/s ». Le MSC d'Xwayland ne compte
+que les rappels demandés : compter les tics par l'UST.
 **Latence, 2026-10-02.** `interp_hold` (défaut 1, bit à bit) : en
 interpolation, les positions jusqu'à la réelle espacées de h/m
 (`FrameOrder::offset`, champ `Job::order`, `paceTarget`), `t` = 1 −

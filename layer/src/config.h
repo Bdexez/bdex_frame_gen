@@ -107,7 +107,7 @@ struct Config {
     std::string gpu;
     int method = 0;
     std::string hotkey;
-    std::string latencyLog;      // latency_log: every displayed frame as "<game's present ms> <display ms> <real 0/1> <planned ms, 0 none>" (steady clock, present feedback), for tools/latency_report.py
+    std::string latencyLog;      // latency_log: every displayed frame as "<game's present ms> <display ms> <real 0/1> <planned ms, 0 none>" (steady clock, present feedback), for tools/latency_report.py and cadence_report.py; with x11_clock every present as the X server executed it, + "<msc> <content ms> <ust ms> <mode> <sent ms>"
     float sceneCutLow   = 0.05f;  // mean matching cost above which we start fading to the real frame
     float sceneCutHigh  = 0.09f;  // ... and above which the generated frame is a plain duplicate
     bool  sceneCutLocal = false;  // scene-cut test per region (8x8 grid) instead of on the frame mean (opt-in)
