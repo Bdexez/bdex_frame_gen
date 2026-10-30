@@ -2647,3 +2647,26 @@ Present.) Script : `winrun.sh` du scratchpad (préfixe Wine privé, DLL de
 `Proton 10.0/files/lib/wine/dxvk/x86_64-windows`). Idem en D3D12
 (`d3d12_probe.cpp`, VKD3D-Proton de Proton 10 : le chemin de PRAGMATA) :
 144 affichées/s, 0 tenue, latence 42 ms.
+
+### 17/10 (fin) — la mosaïque du personnage qui pivote : `mosaic_blur` (opt-in)
+
+Simulation d'abord (Python sur le flux exporté) : flouter la sortie là où le
+flux avant est incohérent. **Incohérence simple** (un voisin 3×3 à plus de
+~1 % de la largeur) : enregistrements +0,07 à +0,22 dB mais scène « walk »
+−0,9 (le flux d'un zoom varie sans être faux). **Densité** (plus de la moitié
+des texels 5×5 incohérents) + flou 3×3 : tout positif en PSNR global
+(scènes +0,01 à +0,09, enregistrements +0,06 à +0,16).
+
+Implémenté (`passes/mosaic_blur.cpp`, `shaders/mosaic_blur.comp` : densité
+une fois par image au pas du flux, puis moyenne locale — rayon d'un bloc du
+flux — là où elle dépasse 0,5, par une image intermédiaire) : le PSNR global
+suit la simulation, mais **les arêtes en mouvement des scènes nettes
+baissent** (turn −0,79, fps −0,50, dark −0,51 avec « un voisin loin »). Critère
+du voisinage, essais : « aucun voisin d'accord » (min) — ne se déclenche
+jamais (les texels 4×4 viennent de blocs 8×8, deux sont toujours égaux),
+même à pas de 2 ; « moins de K voisins d'accord sur 8 » : K ≤ 5 presque
+jamais, K = 6 PRAGMATA +0,09 / arêtes jusqu'à −0,21, **K = 7** PRAGMATA
++0,14 (scintillement −0,17), Oblivion +0,07, Cyberpunk +0,03, arêtes des
+scènes jusqu'à −0,49 ; densité 0,6/0,7/0,85 : gains réduits d'autant. À
+l'œil sur PRAGMATA : la mosaïque reste, un peu plus douce. **Laissé en
+option (0 par défaut)**, au panneau et dans `pending_decisions.py`.

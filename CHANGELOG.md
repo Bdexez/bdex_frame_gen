@@ -8,6 +8,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Edges in camera turns (2026-10-17)
 
+- **`mosaic_blur`** (opt-in, panel « Atténuer les mosaïques »): where the
+  finest flow is chaos (over half the flow texels around a pixel agree with
+  fewer than 7 of their 8 neighbours — a character turning on itself in a
+  fast turn), the generated frame leans to its local average. Recordings:
+  PRAGMATA +0.14 dB and flicker −0.17, Oblivion +0.07, Cyberpunk +0.03;
+  game-like scenes +0.01 to +0.02 dB overall but sharp self-moving edges
+  down to −0.5 dB: off by default, listed in `pending_decisions.py`.
 - **`record_scale`**: the panel's recordings at 1/N of the game's size (`1` =
   full). The default (~960 px wide, a third at 1440p) resamples the HUD's
   thin strokes, so HUD handling cannot be judged on such recordings.
