@@ -637,7 +637,6 @@ void VirtualSwapchain::retire() {
 void VirtualSwapchain::destroyAll() {
     auto& vt = dev_.vt;
     VkDevice d = dev_.device;
-    x11Clock_.reset();
     if (fbThread_.joinable()) {  // it may be waiting on real_: stop it first
         {
             std::lock_guard<std::mutex> lock(fbMutex_);
@@ -655,6 +654,7 @@ void VirtualSwapchain::destroyAll() {
         workerCv_.notify_all();
         worker_.join();
     }
+    x11Clock_.reset();  // (after the threads that read it: the worker's pacing, the feedback's counts)
     // Both queues idle before any slot's semaphores go: unfenced batches (the
     // semaphore-consuming ones) and the async compute queue may still refer
     // to them.
