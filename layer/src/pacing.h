@@ -141,6 +141,58 @@ struct MotionClock {
     }
 };
 
+// even_motion: every refresh shows the content of its own moment. The
+// display runs `lagMs` behind the game's present clock; a present covers
+// the refreshes whose moment falls after the previous present (nowMs - dtMs)
+// and up to this one, each a generated frame, t = (refresh - lag - previous)
+// / dt, and the real frame only stands for its moment (`realMs`), never on
+// a refresh of its own. Pinned on refreshes (pace_plan, phase_smooth), the
+// real frames of a 30 fps game on 144 Hz make pairs of 5 and 4 refreshes:
+// the motion a quarter faster through one pair in five, and a game's present
+// jitter on top (PRAGMATA: 5 to 10 ms of content a 6.95 ms refresh). The lag
+// must let the job's first refresh — just after the previous present's
+// moment — come after its first frame is ready: lag >= dt + ready + lead.
+// It follows a slowly decaying high mark of the game's frame times (faster,
+// each new long frame gave a refresh up); a refresh the job cannot make is
+// given up and the lag grows by as much (the picture holds one refresh; its
+// motion does not jump). A long frame needs a refresh more than the
+// multiplier's usual ceiling (39 ms on 144 Hz: 6): the outputs are sized so.
+struct EvenClock {
+    double lagMs = 0.0;
+    double highDtMs = 0.0;  // the game's frame time, high mark (decays 0.002 ms a frame: 2 ms in 30 s at 30 fps)
+    void reset() { lagMs = highDtMs = 0.0; }
+    // The frames of this present (0: none fits, nothing planned) and their
+    // refreshes; lastPlannedMs chains the presents as planLands does.
+    int plan(double nowMs, double dtMs, double readyLagMs, const Grid& g, int maxFrames, double& lastPlannedMs,
+             double* landMs, double& realMs) {
+        const double P = g.periodMs;
+        if (!(P > 0.0) || !(dtMs > 0.5 && dtMs < 500.0) || maxFrames < 1) {
+            reset();
+            return 0;
+        }
+        highDtMs = std::max(dtMs, highDtMs - 0.002);
+        const double target = highDtMs + std::max(readyLagMs, 0.0) + g.lead * P + 0.5;
+        const double earliest = g.land(nowMs + std::max(readyLagMs, 0.0) + g.lead * P);
+        double first = earliest;
+        if (lastPlannedMs > 0.0 && lagMs > 0.0) {
+            const double next = g.lastMs + std::round((lastPlannedMs - g.lastMs) / P) * P + P;
+            // (Never restarted ahead of the chain: the motion would go back.)
+            if (next >= earliest) first = next;
+            else lagMs += earliest - next;  // refreshes given up: the picture holds
+        }
+        const double previous = nowMs - dtMs;
+        if (!(lagMs > 0.0)) lagMs = std::max(target, first - previous - 0.5 * P);  // (start: half a refresh into the pair)
+        else if (lagMs > target) lagMs = std::max(target, lagMs - 0.05);
+        int n = 0;
+        for (double land = first; land <= nowMs + lagMs + 1e-6 && n < maxFrames; land += P) landMs[n++] = land;
+        if (n == 0) return 0;
+        if (landMs[n - 1] + P <= nowMs + lagMs) lagMs = landMs[n - 1] - nowMs;  // (past the outputs: the rest skipped)
+        lastPlannedMs = landMs[n - 1];
+        realMs = nowMs + lagMs;
+        return n;
+    }
+};
+
 // interp_hold as the screen allows: never closer than a refresh apart (also
 // the fastest a VRR screen shows) — two frames inside one refresh would
 // replace each other —, auto (cfgHold < 0) with a quarter refresh of margin

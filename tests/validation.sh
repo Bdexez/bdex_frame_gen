@@ -58,7 +58,8 @@ k=-1
 # "probe": online_tune's synthesis probe (flow copies, composed flows, a
 # synthesis of its own, the comparison), from the primed cache above.
 for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hybrid:state extrapolate:direct \
-           interpolate:async extrapolate:async interpolate:probe extrapolate:probe hybrid:adaptive interpolate:x8 interpolate:hold hybrid:hold; do
+           interpolate:async extrapolate:async interpolate:probe extrapolate:probe hybrid:adaptive interpolate:x8 interpolate:hold hybrid:hold \
+           interpolate:even; do
   k=$((k + 1))
   [ $((k % shard_n)) -eq "$shard_i" ] || continue
   mode=${run%%:*}
@@ -88,6 +89,13 @@ for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hy
     state="$state BDEX_FG_LEARNED_CORRECTION=1 BDEX_FG_FALSE_DETAIL=1"  # (two passes over the finished output)
     state="$state BDEX_FG_INTERP_SPLAT=1 BDEX_FG_PIXEL_VECTORS=1"
     state="$state BDEX_FG_ROT_WEIGHT=1"  # (the matcher's rotation-only variant)
+  elif [ "${run#*:}" = even ]; then
+    # even_motion: refresh fill (x4-x5 at 30 fps), every frame presented a
+    # generated one, the real frame only standing for its moment — on a
+    # refresh grid (x11_clock: an X server with Present; Xvfb has none, the
+    # usual plan is checked there).
+    state="BDEX_FG_EVEN_MOTION=1 BDEX_FG_STATS=1 BDEX_FG_STATS_INTERVAL=2"; mult=4
+    demo_args="--frames 90 --duration 40 --size 640x360"
   elif [ "${run#*:}" = async ]; then
     state="BDEX_FG_ASYNC_COMPUTE=1 BDEX_FG_DEDUP=1 BDEX_FG_FLOW_TEMPORAL=1 BDEX_FG_ONLINE_TUNE=1 BDEX_FG_CACHE_DIR= BDEX_FG_HUD_MASK=24 BDEX_FG_SUBPIXEL_LK=2"; demo_args="--repeat 2 --frames 90 --duration 40"; output="BDEX_FG_HUD=0"
   elif [ "$run" != "$mode" ]; then
@@ -107,6 +115,7 @@ for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hy
   rc=$?
   n=$(grep -E "VUID-|SYNC-" "$LOG" | grep -cvE "$IGNORE")
   echo "$run: demo exit $rc, $n validation message(s)"
+  if [ "${run#*:}" = even ]; then grep -q "even motion" "$LOG" && echo "$run: planned by even_motion" || echo "$run: no refresh grid, usual plan"; fi
   if [ "$n" -gt 0 ]; then grep -E "VUID-|SYNC-" "$LOG" | grep -vE "$IGNORE" | head -20; status=1; fi
   if [ "$rc" -ne 0 ]; then tail -20 "$LOG"; status=1; fi
   # The rebuild levels exist only if the flow is not already at 1/4.

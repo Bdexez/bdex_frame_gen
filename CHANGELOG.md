@@ -6,6 +6,26 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Every refresh its own moment: `even_motion` (2026-10-20)
+
+- **`even_motion`** (opt-in, panel « Mouvement parfaitement régulier »):
+  with refresh fill, the real frames were pinned on refreshes — at 30 fps on
+  144 Hz pairs of 5 and 4 refreshes, the motion a quarter faster through one
+  pair in five, and the game's present jitter on top (PRAGMATA, measured in
+  game: 5 to 10 ms of content per 6.95 ms refresh). Now the display can run
+  a constant lag behind the game's presents and each refresh shows the
+  content of its own moment, every frame presented a generated one, the
+  real frame only standing for its moment (`pacing::EvenClock`: the lag
+  follows a slowly decaying high mark of the game's frame times, plus the
+  first frame's usual GPU delay and the present lead; a refresh a job cannot
+  make is given up and the lag grows by as much — the picture holds, the
+  motion never jumps). One output more is allocated (a 39 ms game frame
+  covers 6 refreshes). Pacing simulator, PRAGMATA-like jitter: content step
+  error 0.76 → 0.001 ms rms, worst 2.7 → 0.04, no refresh held, latency
+  +5 ms. Bench (1440p quality, PRAGMATA replay, Hyprland's late callbacks
+  replayed into x11_clock): 0.74 → 0.18 ms rms, p99 1.86 → 0.07 ms,
+  present-to-screen 45.9 → 52.1 ms; validation (sync) clean.
+
 ### The screen's grid kept under a loaded compositor (2026-10-20)
 
 - **`x11_clock`'s grid is sticky**: under GPU load a compositor's frame

@@ -364,7 +364,11 @@ que les rappels demandés : compter les tics par l'UST. **Grille X collante**
 d'Hyprland ont une queue en retard qui faisait perdre la grille 2 fois sur 3
 (repli sur d'autres grilles = sauts) ; une période apprise reste à 65 % /
 1,5 ms, période par médiane des pentes, phase par médiane des tics. Ne
-jamais redonner la phase du dernier tic.
+jamais redonner la phase du dernier tic. **`even_motion`** (opt-in,
+`pacing::EvenClock`) : chaque rafraîchissement son instant, toutes les
+images générées, la réelle en position m−1 non présentée (la dernière du
+job porte ses métadonnées) ; +1 sortie allouée (`presentCeiling`,
+`outputCeiling`) ; « 8 jobs en retard » et `PlanSlip` neutralisés.
 **Latence, 2026-10-02.** `interp_hold` (défaut 1, bit à bit) : en
 interpolation, les positions jusqu'à la réelle espacées de h/m
 (`FrameOrder::offset`, champ `Job::order`, `paceTarget`), `t` = 1 −
