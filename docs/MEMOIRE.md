@@ -2693,3 +2693,14 @@ entre les éléments du HUD » visait deux approches (vecteur de la caméra
 près du HUD, combler le HUD dans la luma d'analyse). Rejeter les
 trajectoires qui vont de calque à calque est une autre approche, et elle
 paie.
+
+### 17/10 — bilan de la journée en qualité d'image
+
+Matin (`e03970b`, Codex) contre fin de journée, mêmes séquences, PSNR moyen
+(quality) : scènes ×4 type jeu walk 41,53 → 43,02 dB, strafe 31,21 → 31,84,
+turn 30,48 → 30,92, fps 29,14 → 29,44, dark 39,17 → 39,46, flick et fence
+inchangés ; arêtes en mouvement +0,6 à +2,3 dB, scintillement en baisse.
+Enregistrements ×2 : PRAGMATA +0,02 à +0,05 (scintillement −0,06 à −0,11),
+Oblivion 152621 +0,06, Cyberpunk et l'autre Oblivion ±0,01. Apports :
+`border_fill` (bords dans les virages), `hud_avoid` (trous du HUD) ;
+`mosaic_blur` reste en option. Côté cadence (le plus important) : `x11_clock`.
