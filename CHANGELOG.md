@@ -54,6 +54,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   moments Xwayland hands the window to the compositor: 0.3 to 1.5 a second
   on Hyprland at 1440p. Status `display_grid=3`; the shown / held counts now
   come from the X server there (they counted the layer's own presents).
+- **X server clock before the present feedback**: under Xwayland the
+  present feedback times the layer's own presents; once those are paced on
+  the X server's grid, their times form a grid too, which took over now and
+  then (another phase, another lead): about one job in ten planned a refresh
+  early (20.8 % of frames off plan, 0 % after). `latency_log` writes the
+  refresh the compositor takes each frame at, so `cadence_report.py` reads
+  true under Xwayland.
 - **Plan phase**: a presentation plan that fills every refresh chained each
   job on the previous one and kept the phase of the grid it started on,
   even after the grid moved (virtual_grid's half-period shift, a measured

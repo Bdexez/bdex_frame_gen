@@ -2704,3 +2704,18 @@ Enregistrements ×2 : PRAGMATA +0,02 à +0,05 (scintillement −0,06 à −0,11)
 Oblivion 152621 +0,06, Cyberpunk et l'autre Oblivion ±0,01. Apports :
 `border_fill` (bords dans les virages), `hud_avoid` (trous du HUD) ;
 `mosaic_blur` reste en option. Côté cadence (le plus important) : `x11_clock`.
+
+**`x11_clock` avant le retour d'affichage** (17/10, soir) : sous Xwayland en
+immediate, le retour Vulkan date nos propres présentations ; une fois
+celles-ci cadencées sur la grille X, leurs heures *forment* une grille et la
+`DisplayClock` du retour devenait valide par moments — elle passait alors
+devant la grille X (à une autre phase, avec l'avance d'un écran, 0,3) : un
+job sur dix environ planifié un rafraîchissement trop tôt, toutes ses
+images décalées (cadence_report : 20,8 % « hors plan »). Ordre inversé : la
+grille X d'abord (displayGrid, displayHz, statut, comptes). Après : 0 %
+hors plan à 720p, 0 à 1,4 % à 1440p. `latency_log` écrit désormais, avec
+l'horloge X, le rafraîchissement où le compositeur prend l'image (au lieu
+de l'heure de la présentation) : `cadence_report.py` redevient lisible
+sous Xwayland. Note de banc : l'outil `mscwatch`, même passif, perturbait le
+banc à 1 Hz (cascades de décalages toutes les 1 000 ms pile) ; les compteurs
+de la couche (statistiques « N refresh(es) held ») suffisent.
