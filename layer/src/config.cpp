@@ -230,6 +230,12 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
     // -0.02 to +0.06, PRAGMATA's fast turns up and less flicker; one flow
     // lookup more, at the edges only).
     if (strong && !(autoOptionsSet & kAutoBorderFill)) borderFill = true;
+    // With hud_mask: the scene between still HUD elements no longer copies
+    // their colour through trajectories that run from overlay to overlay
+    // (17/10: x4 game-like scenes walk +1.03 dB, strafe +0.61, turn +0.28,
+    // dark +0.25, fps +0.18, their HUD icons 18-29 -> 26-36 dB; 8 recorded
+    // games within 0.005; four mask lookups a pixel).
+    if (strong && !(autoOptionsSet & kAutoHudAvoid)) hudAvoid = true;
     // No bonus for the zero-motion candidate (03/10, on top of everything
     // above, 960x540 corpus + demo): the free bonus won on soft content in
     // fast motion — a ghostly blend instead of the moving picture. The HUD
@@ -375,6 +381,7 @@ const std::vector<OptionDef>& registry() {
     I("hud_mask", nullptr, &Config::hudMask, 0, 1000, kLive),
     B("reveal_fill", nullptr, &Config::revealFill, kLive, Tune::SynthExtrapolation, "1", 12),
     B("border_fill", nullptr, &Config::borderFill, kLive),
+    B("hud_avoid", nullptr, &Config::hudAvoid, kLive),
     I("record_scale", nullptr, &Config::recordScale, 0, 4),
     F("mosaic_blur", nullptr, &Config::mosaicBlur, 0.f, 1.f, kLive),
     B("online_tune", nullptr, &Config::onlineTune),
@@ -534,6 +541,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "false_detail") autoOptionsSet |= kAutoFalseDetail;
     if (key == "border_predict") autoOptionsSet |= kAutoBorderPredict;
     if (key == "border_fill") autoOptionsSet |= kAutoBorderFill;
+    if (key == "hud_avoid") autoOptionsSet |= kAutoHudAvoid;
     if (const OptionDef* d = findOption(key)) {
         switch (d->kind) {
         case Kind::Bool:  return parseBool(value, this->*(d->b));

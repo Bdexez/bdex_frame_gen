@@ -8,6 +8,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Edges in camera turns (2026-10-17)
 
+- **`hud_avoid`** (on with a discrete GPU, with `hud_mask`): the scene
+  between still HUD elements moves behind them, and trajectories running
+  from overlay pixel to overlay pixel (consistent, so they won) copied the
+  icons' colour into the gaps as bars. Where the pixel is not an overlay
+  pixel itself, such a trajectory now counts as broken. x4 game-like scenes:
+  walk +1.03 dB, strafe +0.61, turn +0.28, dark +0.25, first-person +0.18,
+  their HUD icons from 18–29 to 26–36 dB; recorded games unchanged.
 - **`mosaic_blur`** (opt-in, panel « Atténuer les mosaïques »): where the
   finest flow is chaos (over half the flow texels around a pixel agree with
   fewer than 7 of their 8 neighbours — a character turning on itself in a

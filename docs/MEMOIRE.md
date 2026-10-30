@@ -2670,3 +2670,26 @@ jamais, K = 6 PRAGMATA +0,09 / arêtes jusqu'à −0,21, **K = 7** PRAGMATA
 scènes jusqu'à −0,49 ; densité 0,6/0,7/0,85 : gains réduits d'autant. À
 l'œil sur PRAGMATA : la mosaïque reste, un peu plus douce. **Laissé en
 option (0 par défaut)**, au panneau et dans `pending_decisions.py`.
+
+### 17/10 (fin) — les trous entre les éléments du HUD : `hud_avoid`
+
+Mesuré sur les scènes `make_game.py` (HUD pleine résolution, vérité exacte,
+×4) par région : les **icônes opaques** du HUD sortaient à 18–29 dB contre
+~30 sur l'image (panneau translucide 25–39). À l'œil : les icônes restent
+en place (`hud_mask`), mais **les trous entre elles se remplissent de barres
+de leur couleur** — un pixel du décor y suit la caméra, et sa trajectoire va
+d'un pixel d'icône à un autre (cohérente, donc retenue).
+
+**`hud_avoid`** (synthèse, sous `kStaticMask`, auto GPU dédié) : si q n'est
+pas un pixel immobile appris, une trajectoire dont **les deux** extrémités
+le sont compte comme cassée (erreur ≥ 0,3) ; l'autre trajectoire ou le
+repli décide. Scènes : walk +1,03 dB, strafe +0,61, turn +0,28, dark +0,25,
+fps +0,18, icônes 26–36 dB ; 8 enregistrements à ±0,005. **Une seule
+extrémité** : mêmes gains, mais PRAGMATA −0,03 à −0,05 et scintillement
++0,1 à +0,17 (du décor sombre immobile appris comme calque) — écarté.
+
+Leçon corrigée : la note « ne plus jamais essayer de corriger le décor
+entre les éléments du HUD » visait deux approches (vecteur de la caméra
+près du HUD, combler le HUD dans la luma d'analyse). Rejeter les
+trajectoires qui vont de calque à calque est une autre approche, et elle
+paie.
