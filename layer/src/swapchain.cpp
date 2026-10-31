@@ -126,6 +126,8 @@ void VirtualSwapchain::publishStatus(int multiplier) {
     e.limitHz = gsLimited_.load() ? gsHz_.load() : 0.0;
     e.fpsLimit = cfg_.capsThisGame() ? cfg_.fpsLimit : 0.f;  // (an armed game the panel has not started: none)
     e.autoCapFps = headroomCap_.capFps;
+    e.reflexSimToPresentMs = dev_.reflexSimToPresentMs.load(std::memory_order_relaxed);
+    e.reflexSimToGpuMs = dev_.reflexSimToGpuMs.load(std::memory_order_relaxed);
     e.gpuBusy = gpuBusy_;
     if (e.fpsLimit != 0.0) {
         const double nowMs = msOf(clock::now());

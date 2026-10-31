@@ -40,6 +40,8 @@ printf 'zero_bias_contrast 0.1 dropped 0 0\ntemporal_prediction 1 dropped 0 0\ns
   > "$TUNE_CACHE/online-tune-bdex_demo-extrapolate.txt"
 trap 'rm -rf "$LOG" "$BDEX_LAYER_XDG" "$TUNE_CACHE"' EXIT
 status=0
+# (captured first: under pipefail, `vulkaninfo | grep -q` fails when grep finds it)
+DEVICES="$(vulkaninfo 2>/dev/null || true)"
 # BDEX_VALIDATION_SHARD=i/n: only the runs k with k mod n = i - 1 (the panel
 # run in shard 1), so that CI spreads them over parallel jobs (each run of the
 # demo under sync validation on a software renderer takes tens of seconds).
@@ -59,7 +61,7 @@ k=-1
 # synthesis of its own, the comparison), from the primed cache above.
 for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hybrid:state extrapolate:direct \
            interpolate:async extrapolate:async interpolate:probe extrapolate:probe hybrid:adaptive interpolate:x8 interpolate:hold hybrid:hold \
-           interpolate:even hybrid:predict1 interpolate:fast interpolate:waitcap; do
+           interpolate:even hybrid:predict1 interpolate:fast interpolate:waitcap interpolate:reflexcap; do
   k=$((k + 1))
   [ $((k % shard_n)) -eq "$shard_i" ] || continue
   # BDEX_VALIDATION_RUNS="run ...": only those (while working on one path).
@@ -116,6 +118,14 @@ for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hy
     # the present, as before).
     state="BDEX_FG_FPS_LIMIT=40"; mult=2
     demo_args="--present-thread 3 --mode immediate --uncapped --frames 90 --duration 40 --size 640x360"
+  elif [ "${run#*:}" = reflexcap ]; then
+    # The layer's limit as Reflex's own (vkSetLatencySleepModeNV from within
+    # the game's sleep), the demo making its Reflex calls as VKD3D-Proton
+    # does: a game thread, the sleep and every marker under one lock.
+    # Where the driver has VK_NV_low_latency2.
+    if ! grep -q VK_NV_low_latency2 <<<"$DEVICES"; then echo "$run: no VK_NV_low_latency2 here, skipped"; continue; fi
+    state="BDEX_FG_FPS_LIMIT=40"; mult=2
+    demo_args="--present-thread 3 --mode immediate --uncapped --sim-thread --reflex --reflex-lock --frames 90 --duration 40 --size 640x360"
   elif [ "${run#*:}" = async ]; then
     state="BDEX_FG_ASYNC_COMPUTE=1 BDEX_FG_DEDUP=1 BDEX_FG_FLOW_TEMPORAL=1 BDEX_FG_ONLINE_TUNE=1 BDEX_FG_CACHE_DIR= BDEX_FG_HUD_MASK=24 BDEX_FG_SUBPIXEL_LK=2"; demo_args="--repeat 2 --frames 90 --duration 40"; output="BDEX_FG_HUD=0"
   elif [ "$run" != "$mode" ]; then
@@ -138,6 +148,7 @@ for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hy
   if [ "${run#*:}" = even ]; then grep -q "even motion" "$LOG" && echo "$run: planned by even_motion" || echo "$run: no refresh grid, usual plan"; fi
   if [ "${run#*:}" = fast ]; then grep -q "even motion (even_fast)" "$LOG" && echo "$run: planned by even_fast" || echo "$run: no refresh grid, usual plan"; fi
   if [ "${run#*:}" = waitcap ]; then grep -q "held where it waits" "$LOG" && echo "$run: fps_limit at the present wait" || echo "$run: no present wait on this driver, fps_limit at the present"; fi
+  if [ "${run#*:}" = reflexcap ] && ! grep -q "Reflex's own limiter" "$LOG"; then echo "$run: fps_limit not handed to Reflex"; status=1; fi
   if [ "$n" -gt 0 ]; then grep -E "VUID-|SYNC-" "$LOG" | grep -vE "$IGNORE" | head -20; status=1; fi
   if [ "$rc" -ne 0 ]; then tail -20 "$LOG"; status=1; fi
   # The rebuild levels exist only if the flow is not already at 1/4.

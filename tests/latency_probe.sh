@@ -58,12 +58,15 @@ if grep -q VK_NV_low_latency2 <<<"$devices"; then
   sim="$pt --sim-thread"
   simown="$("$ROOT/tools/latency_bench.sh" --fps 40 --seconds 6 --demo-args "$sim" simown=BDEX_FG_MULTIPLIER=1)" || exit $?
   echo "$simown"
-  reflex="$("$ROOT/tools/latency_bench.sh" --fps 1000 --seconds 6 --demo-args "$sim --reflex" \
+  # (--reflex-lock: VKD3D-Proton makes the sleep holding the lock its every
+  # marker takes, the render thread's too — a sleep of the layer's in it held
+  # that thread: until 31/10, a frame more from the simulation to the present)
+  reflex="$("$ROOT/tools/latency_bench.sh" --fps 1000 --seconds 6 --demo-args "$sim --reflex --reflex-lock" \
     simreflex=BDEX_FG_MULTIPLIER=1,BDEX_FG_FPS_LIMIT=40)" || exit $?
   echo "$reflex"
   # With Reflex on, Unreal hands its own frame rate limit to Reflex (the
   # driver's limiter, minimumIntervalUs): the reference of its in-game limit.
-  rlimit="$("$ROOT/tools/latency_bench.sh" --fps 40 --seconds 6 --demo-args "$sim --reflex --reflex-limit" \
+  rlimit="$("$ROOT/tools/latency_bench.sh" --fps 40 --seconds 6 --demo-args "$sim --reflex --reflex-limit --reflex-lock" \
     simrlimit=BDEX_FG_MULTIPLIER=1)" || exit $?
   echo "$rlimit"
   simownreal="$(grep "^simown " <<<"$simown" | awk '{ print $10 }')"

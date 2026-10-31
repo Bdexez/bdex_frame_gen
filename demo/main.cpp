@@ -5,7 +5,7 @@
 //   bdex_demo [--fps N] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]
 //             [--deterministic] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]
 //             [--gpu-load N] [--latency-test [auto]] [--latency-log FILE]
-//             [--present-thread L [--engine NAME] [--sim-thread [--reflex [--reflex-limit]]]]
+//             [--present-thread L [--engine NAME] [--sim-thread [--reflex [--reflex-limit] [--reflex-lock]]]]
 //             [--stress KIND:N[,KIND:N...]] [--stress-until N]
 //             [--replay DIR [--replay-step N] [--replay-start N]
 //              [--replay-timing [--replay-log FILE]]]
@@ -91,10 +91,13 @@ struct Options {
     // NVIDIA Reflex's sleep (VK_NV_low_latency2's vkLatencySleepNV, with its
     // markers), which a game turns on in its settings; --reflex-limit: the
     // cap (--fps) is Reflex's own (minimumIntervalUs, the driver's limiter),
-    // as Unreal hands it its frame rate limit with Reflex on.
+    // as Unreal hands it its frame rate limit with Reflex on; --reflex-lock:
+    // the sleep and every marker under one lock, as VKD3D-Proton's
+    // (low_latency_swapchain_lock: the sleep's wait outside it).
     bool simThread = false;
     bool reflex = false;
     bool reflexLimit = false;
+    bool reflexLock = false;
     // --stress: what games do to their swapchain, every N frames (tests/
     // swapchain_stress.sh): resize (the window to another size), recreate
     // (a new swapchain from the old one, same size, another present mode and
@@ -254,6 +257,7 @@ private:
     uint64_t renderDone_ = 0;          // ptMutex_: the last frame the render thread finished
     // --reflex
     VkSemaphore reflexSem_ = VK_NULL_HANDLE;  // timeline, signalled by vkLatencySleepNV
+    std::mutex reflexLock_;                   // --reflex-lock
     uint64_t reflexValue_ = 0;
     uint32_t reflexTimeouts_ = 0;
     PFN_vkLatencySleepNV latencySleep_ = nullptr;
@@ -1068,6 +1072,8 @@ void Demo::reflexMarker(VkLatencyMarkerNV marker, uint64_t id) {
     VkSetLatencyMarkerInfoNV mi{VK_STRUCTURE_TYPE_SET_LATENCY_MARKER_INFO_NV};
     mi.presentID = id;
     mi.marker = marker;
+    std::unique_lock<std::mutex> lk(reflexLock_, std::defer_lock);
+    if (opt_.reflexLock) lk.lock();
     setMarker_(device_, swapchain_, &mi);
 }
 
@@ -1084,7 +1090,11 @@ void Demo::simLoop() {
             VkLatencySleepInfoNV si{VK_STRUCTURE_TYPE_LATENCY_SLEEP_INFO_NV};
             si.signalSemaphore = reflexSem_;
             si.value = ++reflexValue_;
-            latencySleep_(device_, swapchain_, &si);
+            {
+                std::unique_lock<std::mutex> lk(reflexLock_, std::defer_lock);
+                if (opt_.reflexLock) lk.lock();
+                latencySleep_(device_, swapchain_, &si);
+            }
             VkSemaphoreWaitInfo wi{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
             wi.semaphoreCount = 1;
             wi.pSemaphores = &reflexSem_;
@@ -1211,6 +1221,11 @@ void Demo::ptQueueLoop() {
         VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
         si.commandBufferCount = 1;
         si.pCommandBuffers = &ptRender_[f.slot];
+        // (--reflex: the frame's GPU work tagged with its id, as VKD3D-Proton does,
+        // for the driver's reports)
+        VkLatencySubmissionPresentIdNV tag{VK_STRUCTURE_TYPE_LATENCY_SUBMISSION_PRESENT_ID_NV};
+        tag.presentID = f.id;
+        if (setMarker_ && f.id) si.pNext = &tag;
         VK_CHECK(vkQueueSubmit(queue_, 1, &si, ptRenderFence_[f.slot]));
         uint32_t img = 0;
         uint64_t id = 0;
@@ -1511,6 +1526,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--sim-thread") o.simThread = true;
         else if (a == "--reflex") o.reflex = true;
         else if (a == "--reflex-limit") o.reflexLimit = true;
+        else if (a == "--reflex-lock") o.reflexLock = true;
         else if (a == "--size") {
             std::string v = value();
             if (sscanf(v.c_str(), "%dx%d", &o.width, &o.height) != 2) throw std::runtime_error("bad --size");
@@ -1542,7 +1558,7 @@ Options parseArgs(int argc, char** argv) {
             printf("usage: bdex_demo [--fps N | --uncapped] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]\n"
                    "                 [--deterministic] [--ignore-resize] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]\n"
                    "                 [--gpu-load N] [--latency-test [auto]] [--latency-log FILE] [--anti-lag]\n"
-                   "                 [--present-thread L [--engine NAME] [--sim-thread [--reflex [--reflex-limit]]]]\n"
+                   "                 [--present-thread L [--engine NAME] [--sim-thread [--reflex [--reflex-limit] [--reflex-lock]]]]\n"
                    "                 [--stress resize|recreate|surface|window|fullscreen|minimize:N[,...]] [--stress-until N]\n"
                    "                 [--replay DIR [--replay-step N] [--replay-start N]\n"
                    "                  [--replay-timing [--replay-log FILE]]]\n");
@@ -1555,6 +1571,7 @@ Options parseArgs(int argc, char** argv) {
     if ((o.simThread || o.reflex) && !o.presentThread) throw std::runtime_error("--sim-thread, --reflex need --present-thread");
     if (o.reflex && !o.simThread) throw std::runtime_error("--reflex needs --sim-thread (Reflex sleeps on the game thread)");
     if (o.reflexLimit && (!o.reflex || o.uncapped)) throw std::runtime_error("--reflex-limit needs --reflex and a cap (--fps)");
+    if (o.reflexLock && !o.reflex) throw std::runtime_error("--reflex-lock needs --reflex");
     if (o.presentThread && (!o.replayDir.empty() || o.repeat > 1 || o.antiLag))
         throw std::runtime_error("--present-thread does not go with --replay, --repeat or --anti-lag");
     for (long every : o.stressEvery)

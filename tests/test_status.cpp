@@ -178,3 +178,20 @@ TEST(status_anticheat_warning) {
 #endif
     CHECK(!platformAntiCheatException("cs2"));
 }
+
+TEST(status_reflex_reports) {
+    // The game's own Reflex reports (vkGetLatencyTimingsNV): written once read.
+    std::map<uint64_t, StatusEntry> m;
+    StatusEntry c;
+    c.kind = "swapchain";
+    c.state = "generating";
+    c.mode = "interpolate";
+    c.multiplier = 3;
+    m[1] = c;
+    CHECK(statusFormat("game", 1, 1, m).find("reflex_") == std::string::npos);
+    m[1].reflexSimToPresentMs = 4.1;
+    m[1].reflexSimToGpuMs = 12.0;
+    const std::string s = statusFormat("game", 1, 1, m);
+    CHECK(s.find("reflex_sim_present_ms=4.1\n") != std::string::npos);
+    CHECK(s.find("reflex_sim_gpu_ms=12.0\n") != std::string::npos);
+}

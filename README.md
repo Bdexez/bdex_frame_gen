@@ -833,8 +833,14 @@ presents (**Unreal Engine**, **RE Engine**: Oblivion Remastered, PRAGMATA)
 still read it a frame early when the present wait holds them — the game
 thread is only held a frame later. Their own limiter, and **NVIDIA Reflex**'s
 sleep, are on the game thread: with Reflex on in the game (Proton enables
-NVAPI on NVIDIA by default), the layer's limit holds the game at Reflex's
-sleep (`cap_point=input`), before its input. Same demo with such a game
+NVAPI on NVIDIA by default), the layer hands its limit to Reflex's own
+limiter (`cap_point=input`), which holds the game before its input, as the
+game's own limit does — never a sleep of the layer's inside the Reflex
+call: VKD3D-Proton makes it holding a lock its render and present threads
+need for every latency marker (in Oblivion Remastered at 30 fps, 66.7 ms
+from a frame's simulation to its present, two frames, against 12.5–13.2
+through Reflex's limiter and 13.8–15.5 with the game's own limit: the
+game's Reflex reports, `reflex_sim_present_ms` in its status). Same demo with such a game
 thread (`--sim-thread`), 40 fps cap at x2, input to the real frame: the
 game's own limiter 27.3 ms, the layer at the present wait 46.9 ms, at
 Reflex's sleep 26.2 ms (the old present hold: 96.9 ms). Unreal hands its

@@ -3981,3 +3981,37 @@ Oblivion et PRAGMATA.
   la marge monte à ½ rafraîchissement — la moyenne d'une phase au hasard.
   Retiré entièrement. Ne pas refaire sans une gigue mesurée basse (matériel
   réel, autre compositeur).
+
+### 31/10 (fin, 5) — Oblivion : la limite dormait sous le verrou de VKD3D
+
+L'utilisateur, après tout cela : « sur oblivion remastered j'ai encore un
+écart entre le limiteur du jeu et le limiteur du logiciel ».
+
+- **Mesure dans le jeu même** : la couche lit les rapports Reflex du jeu
+  (`vkGetLatencyTimingsNV`, une fois par seconde depuis son sommeil) et les
+  écrit dans son statut (`reflex_sim_present_ms`, `reflex_sim_gpu_ms`).
+  Oblivion ×3 à 30 i/s, Reflex activé : limiteur du jeu — simulation →
+  présent 13,8–15,5 ms, présent → écran 46,5 ; limiteur de la couche
+  (`cap_point=input`) — **66,7 ms** (deux images tout juste), présent →
+  écran 38–40. Ressenti : « comme si mon personnage était plus lourd ».
+  (`reflex_sim_gpu_ms` est faussé à travers la couche — 46 à 133 ms, même à
+  ×1 dans la démo : le pilote y compte plus que le travail du jeu.)
+- **Cause** (sources de VKD3D-Proton, `libs/vkd3d/swapchain.c`) :
+  `vkLatencySleepNV` est appelé sous `low_latency_swapchain_lock`, que prend
+  aussi chaque `vkSetLatencyMarkerNV` — les marqueurs du fil de rendu et de
+  la présentation. VKD3D attend le sémaphore du sommeil **après** avoir
+  rendu le verrou : l'appel ne doit pas bloquer. Notre limite y dormait
+  jusqu'à une image : le rendu et la présentation du jeu attendaient la fin
+  de ce sommeil. La démo n'avait pas ce verrou, d'où des mesures égales.
+  `bdex_demo --reflex-lock` le reproduit : 20,9 ms contre 4,1 (48 i/s).
+- **Correctif** : plus de sommeil dans `vkLatencySleepNV` ; la limite est
+  confiée au limiteur de Reflex lui-même, `minimumIntervalUs` = le plus
+  long de celui du jeu et du nôtre, renvoyé par `vkSetLatencySleepModeNV`
+  depuis les appels Reflex du jeu (sous son verrou) quand il change ou que
+  la swapchain réelle change. Démo avec le verrou : 4,1 ms, 47,8 i/s pour
+  48. **Oblivion** : 12,5–13,2 ms, présent → écran 45–46, 30 i/s.
+  L'utilisateur : « c'est incroyable je ne vois aucune diff avec le
+  limiteur du jeu […] peut-être quelques ms mais imperceptible ».
+- Anti-Lag (AMD) inchangé : VKD3D appelle `vkAntiLagUpdateAMD` sans ce
+  verrou. `latency_probe` utilise `--reflex-lock` (un sommeil revenu dans
+  l'appel y coûterait une image) ; validation : course `reflexcap`.
