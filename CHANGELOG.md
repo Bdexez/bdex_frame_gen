@@ -6,6 +6,16 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### xN is N frames again: `refresh_fill` off by default (2026-10-20)
+
+- **`refresh_fill` defaults to `0`** (user's decision): a multiplier is
+  exactly that many frames per game frame — 30 fps x4 is 120 fps, not the
+  130–144 the fill reached by giving one game frame in five a fifth frame.
+  On a fixed 144 Hz screen 120 fps holds one frame in five a refresh more
+  (24 a second): the panel's « Remplir chaque rafraîchissement » (`1`, from
+  x3) brings the fill back, and `even_motion` applies only with it. Measured
+  live in PRAGMATA: x4.8 → x4, 150.9 → 120.2 fps output at 30.0 fps.
+
 ### Every refresh its own moment: `even_motion` (2026-10-20)
 
 - **`even_motion`** (opt-in, panel « Mouvement parfaitement régulier »):

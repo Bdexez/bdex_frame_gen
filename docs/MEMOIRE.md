@@ -2880,3 +2880,14 @@ toutes les 2 s sans génération, 80 ms de présentation à l'écran — identiq
 avec et sans `deferRest` : `vkQueuePresentKHR` y bloque, c'est le banc, pas
 le report des copies (qui ne retient le jeu qu'au plus jusqu'à la 1re image
 du job précédent). Banc inutilisable pour juger la cadence, comme le 17/10.
+
+**Test en jeu de la grille collante (20/10, 02:34) : « ça ne change rien ».**
+Son journal en jeu : 133 à 144 présentations par seconde, régulières (la
+grille tient, plus de trous). **Décision de l'utilisateur** : « quand tu fais
+du ×4 tu fasses réellement du ×4 : à 30 i/s je dois avoir 120 i/s, pas 130 à
+140 ». `refresh_fill` passe à **0 par défaut** (actif par défaut depuis le
+14/10) ; appliqué à chaud dans sa partie (`refresh_fill = 0` dans sa config) :
+statut ×4, 30,0 → 120,2 i/s, journal 119–123 présentations/s pour 30 réelles.
+Sur un écran fixe 144 Hz, 120 i/s tient une image sur cinq un rafraîchissement
+de plus (24/s) — dit à l'utilisateur ; son choix. `even_motion` n'agit
+qu'avec le remplissage.
