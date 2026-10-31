@@ -330,6 +330,7 @@ const std::vector<OptionDef>& registry() {
     B("latency_limiter", nullptr, &Config::latencyLimiter, kLive),
     F("interp_hold", nullptr, &Config::interpHold, -1.f, 1.f, kLive),
     B("tight_hold", nullptr, &Config::tightHold, kLive),
+    I("hybrid_predict", nullptr, &Config::hybridPredict, 0, 6),
     B("skip_fast", nullptr, &Config::skipFast, kLive),
     B("vrr_hold", nullptr, &Config::vrrHold, kLive),
     I("refresh_fill", nullptr, &Config::refreshFill, 0, 2),
