@@ -44,6 +44,7 @@ bool presentModeSupported(DeviceData& dev, VkSurfaceKHR surface, VkPresentModeKH
 
 VirtualSwapchain::VirtualSwapchain(DeviceData& dev, const VkSwapchainCreateInfoKHR& appInfo) : dev_(dev) {
     dev_.snapshotConfig(cfg_, cfgVersion_);
+    appPresentMode_ = appInfo.presentMode;
     format_ = appInfo.imageFormat;
     colorSpace_ = appInfo.imageColorSpace;
     extent_ = appInfo.imageExtent;
@@ -101,6 +102,11 @@ VirtualSwapchain::VirtualSwapchain(DeviceData& dev, const VkSwapchainCreateInfoK
 
 VirtualSwapchain::~VirtualSwapchain() {
     statusRemove(statusKey(this));
+    {
+        std::lock_guard<std::mutex> lk(pwMutex_);
+        pwRetired_ = true;
+    }
+    pwCv_.notify_all();
     destroyAll();
 }
 
@@ -121,7 +127,10 @@ void VirtualSwapchain::publishStatus(int multiplier) {
     e.fpsLimit = cfg_.fpsLimit;
     e.autoCapFps = headroomCap_.capFps;
     e.gpuBusy = gpuBusy_;
-    if (cfg_.fpsLimit != 0.f) e.capPoint = dev_.capsAtSleep(msOf(clock::now())) ? "input" : "present";
+    if (cfg_.fpsLimit != 0.f) {
+        const double nowMs = msOf(clock::now());
+        e.capPoint = dev_.capsAtSleep(nowMs) ? "input" : capsAtWait(nowMs) ? "wait" : "present";
+    }
     if (dev_.inst) e.engine = dev_.inst->engine;
     {
         // (2: virtual_grid — the frames on a grid of our own, one a refresh)
@@ -191,6 +200,25 @@ void VirtualSwapchain::createReal(const VkSwapchainCreateInfoKHR& appInfo) {
     ci.queueFamilyIndexCount = 0;
     ci.pQueueFamilyIndices = nullptr;
 
+    // fps_limit_wait offered this surface FIFO alone (a frame limit was set):
+    // the game's FIFO is ours, not its choice. The real swapchain takes what
+    // DXVK and VKD3D-Proton pick from the full list for a game that does not
+    // wait for vertical sync — immediate, else mailbox — which keeps the
+    // refresh grid the layer reads from the X server (x11_clock) as it was.
+    bool fifoOurs = false;
+    if (dev_.inst && dev_.inst->presentWaitOffered && fifoLike(ci.presentMode) && cfg_.presentMode < 0) {
+        std::lock_guard<std::mutex> lk(dev_.inst->surfMutex);
+        fifoOurs = dev_.inst->fifoSurfaces.count(appInfo.surface) != 0;
+        if (fifoOurs) dev_.inst->fifoAsked.erase(appInfo.surface);  // (a request for this swapchain, answered)
+    }
+    if (fifoOurs) {
+        const VkPresentModeKHR want = presentModeSupported(dev_, appInfo.surface, VK_PRESENT_MODE_IMMEDIATE_KHR) ? VK_PRESENT_MODE_IMMEDIATE_KHR
+                                      : presentModeSupported(dev_, appInfo.surface, VK_PRESENT_MODE_MAILBOX_KHR) ? VK_PRESENT_MODE_MAILBOX_KHR
+                                                                                                                 : ci.presentMode;
+        BDEX_INFO("fps_limit_wait: the game was offered FIFO only (it waits for each present there, where the frame limit "
+                  "holds it); presenting with %s", presentModeName(want));
+        ci.presentMode = want;
+    }
     // The pNext chain is forwarded unchanged (format lists, scaling, present
     // modes...): it describes the surface-side behaviour which stays the same.
     if (cfg_.presentMode >= 0 &&
@@ -200,7 +228,7 @@ void VirtualSwapchain::createReal(const VkSwapchainCreateInfoKHR& appInfo) {
         auto mode = static_cast<VkPresentModeKHR>(cfg_.presentMode);
         if (presentModeSupported(dev_, appInfo.surface, mode)) ci.presentMode = mode;
         else BDEX_WARN("present mode %s not supported by the surface, keeping %s", presentModeName(mode), presentModeName(appInfo.presentMode));
-    } else if (cfg_.presentMode == -2 && fifoLike(ci.presentMode)) {
+    } else if (cfg_.presentMode == -2 && fifoLike(ci.presentMode) && !fifoOurs) {
         // Never present the real swapchain in FIFO: our worker presents
         // asynchronously, and a FIFO present hard-hangs Direct3D translation
         // layers (DXVK/VKD3D) after one frame. FIFO also queues our extra
@@ -630,6 +658,11 @@ void VirtualSwapchain::waitIdle() {
 }
 
 void VirtualSwapchain::retire() {
+    {
+        std::lock_guard<std::mutex> lk(pwMutex_);
+        pwRetired_ = true;  // (its present waits return: VK_ERROR_OUT_OF_DATE_KHR)
+    }
+    pwCv_.notify_all();
     std::lock_guard<std::mutex> lock(mutex_);
     retired_ = true;
     acquireCv_.notify_all();
@@ -993,7 +1026,14 @@ bool VirtualSwapchain::fastGame(double hz) {
 // rate (60 -> 120, 72 -> 144). Sleeps until ~1.5 ms before the deadline, then
 // spins briefly for precision; after a late frame the schedule restarts from
 // now instead of letting the game burst to catch up.
-void VirtualSwapchain::limitFrameRate() {
+// Where the game itself waits before its next frame, the limit holds it
+// there instead: Reflex's sleep or Anti-Lag's input stage (DeviceData::
+// capAtSleep), or — DXVK, VKD3D-Proton (fps_limit_wait) — its wait for this
+// present, which then returns at the slot (the value returned here). Their
+// present comes from a thread of their own, which the game runs up to three
+// frames ahead of: holding it queued the frames behind it, each read its
+// input a frame earlier.
+double VirtualSwapchain::limitFrameRate() {
     // auto: the refresh rate divided by the multiplier (60 on 120 Hz at x2),
     // once the present feedback knows it; no cap until then.
     double fps = cfg_.fpsLimit == 0.f ? 0.0
@@ -1002,8 +1042,22 @@ void VirtualSwapchain::limitFrameRate() {
     // (gpu_headroom: the lower of the two)
     if (const double cap = headroomCap_.capFps; cap > 0.0) fps = fps > 0.0 ? std::min(fps, cap) : cap;
     dev_.capFps.store(fps, std::memory_order_relaxed);  // (for the game's own sleep point, DeviceData::capAtSleep)
-    if (fps <= 0.0 || dev_.capsAtSleep(msOf(clock::now()))) return;
+    const double nowMs = msOf(clock::now());
+    if (fps <= 0.0 || dev_.capsAtSleep(nowMs)) {
+        waitCap_.reset();
+        return 0.0;
+    }
+    if (capsAtWait(nowMs)) {
+        if (!capAtWaitLogged_) {
+            capAtWaitLogged_ = true;
+            BDEX_INFO("fps_limit: the game is held where it waits for its earlier frames (its present wait), before it "
+                      "reads its input");
+        }
+        return waitCap_.release(nowMs, 1000.0 / fps);
+    }
+    waitCap_.reset();
     frameCap_.wait(fps);
+    return 0.0;
 }
 
 // gpu_headroom: generating, a GPU that cannot keep up with the game and the
@@ -1207,8 +1261,11 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     }
     frameIntervalMs_ = intervalFilter_.update(frameIntervalMs_, dt);
     lastAppPresent_ = t0;
-    if (lastReturnMs_ > 0.0) {
-        const double own = msOf(t0) - lastReturnMs_;
+    // When the game began this frame: our present returned — or, a game
+    // waiting for its presents (fps_limit_wait), the last of those waits.
+    const double frameStartMs = std::max(lastReturnMs_, pwReturnedMs_.load(std::memory_order_relaxed));
+    if (frameStartMs > 0.0) {
+        const double own = msOf(t0) - frameStartMs;
         if (own > 0.1 && own < 500.0) gameOwnMs_ = gameOwnMs_ > 0.0 ? gameOwnMs_ * 0.8 + own * 0.2 : own;
     }
 
@@ -1738,7 +1795,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     job.order = interpolate ? order : FrameOrder{};
     job.start = t0;
     job.preparedAt = preparedAt;
-    job.frameStartMs = lastReturnMs_;
+    job.frameStartMs = frameStartMs;
     job.intervalMs = frameIntervalMs_;
     if (interpolate) std::copy(std::begin(planned), std::end(planned), std::begin(job.planned));
     std::copy(std::begin(contentMs), std::end(contentMs), std::begin(job.contentMs));
@@ -1759,9 +1816,13 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         job.asyncSlot = static_cast<int>(slotIdx);
         job.synthWaits = std::move(copyWaits);  // deferred: the synthesis the worker submits waits them
     }
+    // fps_limit_wait: the game's present id is answered here (waitPresent),
+    // never passed to the driver.
+    PresentWait pw;
+    pw.fence = job.ready;
     if (info.swapchainCount == 1) {
         if (auto* pid = findChain<VkPresentIdKHR>(info.pNext, VK_STRUCTURE_TYPE_PRESENT_ID_KHR))
-            if (pid->pPresentIds) job.presentId = pid->pPresentIds[0];
+            if (pid->pPresentIds) (dev_.gamePresentWait ? pw.id : job.presentId) = pid->pPresentIds[0];
         if (auto* pf = findChain<VkSwapchainPresentFenceInfoEXT>(info.pNext, VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_EXT))
             if (pf->pFences) job.presentFence = pf->pFences[0];
         if (auto* pm = findChain<VkSwapchainPresentModeInfoEXT>(info.pNext, VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODE_INFO_EXT))
@@ -1951,10 +2012,83 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     // before it begins the next one and reads its input — what a game's own
     // limiter does. (Holding the present itself, as until 13/10, made each
     // finished frame wait for its slot: +23 ms input to screen at a 40 fps
-    // cap, x1 and x2 alike, against the game's own limiter.)
-    limitFrameRate();  // (without mutex_: never block acquire while sleeping)
+    // cap, x1 and x2 alike, against the game's own limiter.) A game that
+    // waits for its presents (DXVK, VKD3D-Proton in FIFO) is held in that
+    // wait instead: this call returns at once.
+    pw.releaseMs = limitFrameRate();  // (without mutex_: never block acquire while sleeping)
+    if (pw.id) notePresentWait(pw);
     lastReturnMs_ = msOf(clock::now());
+    // fps_limit_wait: a limit set while the game's swapchain did not take
+    // FIFO (made before, with every mode offered) — it is asked to make a new
+    // one (DXVK and VKD3D-Proton do on VK_SUBOPTIMAL_KHR), from the modes now
+    // offered: once per surface, until a swapchain takes the FIFO offered
+    // (createReal), so that a game that does not follow is not asked again.
+    if (pending == VK_SUCCESS && dev_.gamePresentWait && cfg_.fpsLimit != 0.f && !fifoLike(appPresentMode_) &&
+        dev_.inst->fifoOnly.load(std::memory_order_relaxed)) {
+        bool ask = false;
+        {
+            std::lock_guard<std::mutex> lk(dev_.inst->surfMutex);
+            ask = dev_.inst->fifoAsked.insert(surface_).second;
+        }
+        if (ask) {
+            BDEX_INFO("fps_limit_wait: a frame limit is set; asking the game for a new swapchain, in FIFO (where it waits "
+                      "for each present: the limit then holds it there)");
+            pending = VK_SUBOPTIMAL_KHR;
+        }
+    }
     return pending;  // VK_SUCCESS or VK_SUBOPTIMAL_KHR from an earlier real present
+}
+
+void VirtualSwapchain::notePresentWait(const PresentWait& w) {
+    {
+        std::lock_guard<std::mutex> lk(pwMutex_);
+        pwRecent_.push_back(w);
+        while (pwRecent_.size() > 32) pwRecent_.pop_front();  // (the older ones are long done)
+        pwPresented_ = std::max(pwPresented_, w.id);
+    }
+    pwCv_.notify_all();
+}
+
+// The wait for a present the game has not handed over yet (another of its
+// threads is presenting it) is bounded: the game never stalls on an id it
+// will not present (an error, a swapchain made again).
+VkResult VirtualSwapchain::waitPresent(uint64_t presentId, uint64_t timeoutNs) {
+    const auto start = clock::now();
+    pwWaitedMs_.store(msOf(start), std::memory_order_relaxed);
+    const bool infinite = timeoutNs == UINT64_MAX;
+    const auto deadline = infinite ? clock::time_point::max()
+                                   : start + std::chrono::duration_cast<clock::duration>(std::chrono::nanoseconds(
+                                                 std::min<uint64_t>(timeoutNs, uint64_t(INT64_MAX) / 2)));
+    PresentWait w;
+    {
+        std::unique_lock<std::mutex> lk(pwMutex_);
+        const auto bound = std::min(deadline, start + std::chrono::milliseconds(250));
+        if (!pwCv_.wait_until(lk, bound, [&] { return pwRetired_ || pwPresented_ >= presentId; }))
+            return bound == deadline ? VK_TIMEOUT : VK_SUCCESS;
+        if (pwRetired_) return VK_ERROR_OUT_OF_DATE_KHR;
+        auto it = std::find_if(pwRecent_.begin(), pwRecent_.end(), [&](const PresentWait& p) { return p.id >= presentId; });
+        if (it == pwRecent_.end()) return VK_SUCCESS;  // (long done)
+        w = *it;
+    }
+    // The GPU done with that frame: the game's rendering and our synthesis
+    // (bounded: a slot made again since was done before).
+    if (w.fence) {
+        const auto left = std::chrono::duration_cast<std::chrono::nanoseconds>(deadline - clock::now()).count();
+        const uint64_t ns = std::clamp<int64_t>(left, 0, 100'000'000);
+        const VkResult r = dev_.vt.WaitForFences(dev_.device, 1, &w.fence, VK_TRUE, ns);
+        if (r == VK_TIMEOUT && ns < 100'000'000u) return VK_TIMEOUT;
+        if (r < 0) return r;
+    }
+    // fps_limit's slot: the game begins its next frame there.
+    if (w.releaseMs > 0.0) {
+        if (!infinite && msOf(deadline) < w.releaseMs) {
+            sleepUntilSteadyMs(msOf(deadline));
+            return VK_TIMEOUT;
+        }
+        sleepUntilSteadyMs(w.releaseMs);
+    }
+    pwReturnedMs_.store(msOf(clock::now()), std::memory_order_relaxed);  // (the game begins a frame now)
+    return VK_SUCCESS;
 }
 
 // latency_limiter, after max_frame_latency's wait: the GPU has just finished

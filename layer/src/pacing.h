@@ -468,6 +468,23 @@ struct StartLimiter {
     }
 };
 
+// fps_limit's cadence: when a frame handed over at `nowMs` lets the game
+// begin its next one — the next slot of the cadence, or at once when the
+// frame is late; one more than an interval late restarts the cadence from
+// itself instead of letting the game burst to catch up. FrameCap sleeps
+// until that moment at the end of the game's present; the game's present
+// wait (fps_limit_wait: VirtualSwapchain::waitPresent) returns at it instead,
+// the present itself going on at once.
+struct CapSchedule {
+    double nextMs = 0.0;  // the next slot, 0: none yet
+    double release(double nowMs, double intervalMs) {
+        const double at = std::max(nowMs, nextMs);
+        nextMs = nextMs <= 0.0 || at - nextMs > intervalMs ? at + intervalMs : nextMs + intervalMs;
+        return at;
+    }
+    void reset() { nextMs = 0.0; }
+};
+
 // gpu_headroom: a game the GPU cannot keep up with (its rendering and our
 // synthesis together) leaves the generation no room: the synthesis queues
 // behind the game's next frame, its frames miss their refreshes, the

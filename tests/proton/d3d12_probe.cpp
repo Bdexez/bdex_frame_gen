@@ -2,12 +2,20 @@
 // path, the one that deadlocked before hide_present_ext): a flip-model
 // swapchain on a command queue, a moving bar drawn by clearing rectangles of
 // the back buffer, a fence per frame, 30 fps for a few seconds.
+//   d3d12_probe.exe [SECONDS] [uncapped]
+// uncapped: no limit of its own (the layer's fps_limit then holds it); it
+// also reports how long after a frame began (its input read) the GPU had
+// done it — what a limit holding VKD3D-Proton's present thread adds: the
+// frames queued behind the held present reach the GPU late.
 //   x86_64-w64-mingw32-g++ -O2 -static d3d12_probe.cpp -ld3d12 -ldxgi -o d3d12_probe.exe
 #include <windows.h>
 #include <d3d12.h>
 #include <dxgi1_4.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <vector>
 
 static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     if (m == WM_DESTROY) PostQuitMessage(0);
@@ -23,8 +31,36 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         }                                                                     \
     } while (0)
 
+static double qpcMs() {
+    static LARGE_INTEGER freq{};
+    if (!freq.QuadPart) QueryPerformanceFrequency(&freq);
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    return 1000.0 * double(t.QuadPart) / double(freq.QuadPart);
+}
+
+// uncapped: the moment each frame's GPU work completed, from a fence of its own.
+struct Watch {
+    ID3D12Fence* fence;
+    std::vector<double>* doneMs;
+};
+static DWORD WINAPI watchFrames(void* p) {
+    auto* w = static_cast<Watch*>(p);
+    HANDLE ev = CreateEventA(nullptr, FALSE, FALSE, nullptr);
+    for (size_t f = 0; f < w->doneMs->size(); ++f) {
+        if (w->fence->GetCompletedValue() < f + 1) {
+            w->fence->SetEventOnCompletion(f + 1, ev);
+            if (WaitForSingleObject(ev, 5000) != WAIT_OBJECT_0) break;
+        }
+        (*w->doneMs)[f] = qpcMs();
+    }
+    CloseHandle(ev);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     const int seconds = argc > 1 ? atoi(argv[1]) : 8;
+    const bool uncapped = argc > 2 && strcmp(argv[2], "uncapped") == 0;
     constexpr UINT kBuffers = 3;
     WNDCLASSA wc{};
     wc.lpfnWndProc = wndProc;
@@ -87,12 +123,22 @@ int main(int argc, char** argv) {
     UINT64 fenceValue[kBuffers] = {}, nextValue = 1;
 
     const int frames = seconds * 30;
+    std::vector<double> startMs(frames, 0.0), doneMs(frames, 0.0);
+    ID3D12Fence* frameFence = nullptr;
+    HANDLE watcher = nullptr;
+    Watch watch{nullptr, &doneMs};
+    if (uncapped) {
+        CHECK(dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, __uuidof(ID3D12Fence), reinterpret_cast<void**>(&frameFence)));
+        watch.fence = frameFence;
+        watcher = CreateThread(nullptr, 0, watchFrames, &watch, 0, nullptr);
+    }
     LARGE_INTEGER freq, start, now;
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&start);
     for (int f = 0; f < frames; ++f) {
         MSG msg;
         while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE)) DispatchMessageA(&msg);
+        startMs[f] = qpcMs();  // (where a game reads its input)
         const UINT i = swap->GetCurrentBackBufferIndex();
         if (fence->GetCompletedValue() < fenceValue[i]) {
             fence->SetEventOnCompletion(fenceValue[i], event);
@@ -118,9 +164,11 @@ int main(int argc, char** argv) {
         list->Close();
         ID3D12CommandList* lists[] = {list};
         queue->ExecuteCommandLists(1, lists);
+        if (frameFence) queue->Signal(frameFence, UINT64(f) + 1);
         CHECK(swap->Present(0, 0));
         fenceValue[i] = nextValue++;
         queue->Signal(fence, fenceValue[i]);
+        if (uncapped) continue;
         const LONGLONG due = start.QuadPart + (LONGLONG)(f + 1) * freq.QuadPart / 30;  // 30 fps
         for (;;) {
             QueryPerformanceCounter(&now);
@@ -131,6 +179,20 @@ int main(int argc, char** argv) {
     queue->Signal(fence, nextValue);
     fence->SetEventOnCompletion(nextValue, event);
     WaitForSingleObject(event, 5000);
+    if (watcher) {
+        WaitForSingleObject(watcher, 10000);
+        // (the second half: past the start, the limit in force)
+        std::vector<double> lat;
+        for (int f = frames / 2; f < frames; ++f)
+            if (doneMs[f] > 0.0) lat.push_back(doneMs[f] - startMs[f]);
+        std::sort(lat.begin(), lat.end());
+        double mean = 0.0;
+        for (double v : lat) mean += v;
+        if (!lat.empty())
+            printf("d3d12 probe: %.1f fps, frame start to GPU done: median %.1f ms, mean %.1f ms (%zu frames)\n",
+                   (frames - 1) * 1000.0 / (startMs[frames - 1] - startMs[0]), lat[lat.size() / 2], mean / lat.size(),
+                   lat.size());
+    }
     printf("d3d12 probe: %d frames presented\n", frames);
     return 0;
 }

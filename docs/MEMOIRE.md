@@ -3724,3 +3724,83 @@ dans gamescope sans tête (9/9, validation Vulkan comprise), MinGW x64/i686.
 Installé en 64/32 bits (`tools/install.sh`), SHA256 identiques aux builds
 (x64 `0c11ad8b1b5cad1f…`, x86 `a602e488a7657d85…`) : relancer le jeu et le
 panneau. Aucun push.
+
+### 31/10 — la limite d'images sans latence pour les jeux Direct3D (`fps_limit_wait`)
+
+Demande : faire fonctionner la limite d'images (avant la génération) sans la
+latence qu'elle ajoute, « diminuer drastiquement » cette latence.
+
+- **Cause** (lecture de DXVK 2.4–2.7 et VKD3D-Proton 2.12–3.1, confirmée par
+  le simulateur et les mesures) : la limite dormait à la fin de notre
+  `vkQueuePresentKHR`. Pour un jeu Vulkan natif mono-fil, c'est l'endroit du
+  limiteur du jeu (entre la remise de l'image et la lecture des entrées
+  suivantes). Mais DXVK et VKD3D-Proton présentent depuis un fil à eux, et
+  laissent le jeu prendre jusqu'à `L` images d'avance sur ce fil (latence
+  DXGI ; VKD3D-Proton : borne interne de 3 images sans swapchain
+  « waitable »). Retenir notre présent retient ce fil : les images suivantes
+  attendent derrière, chacune a lu ses entrées `L − 1` images trop tôt
+  (DXVK : `Present(N)` attend l'image `N − L`, donc `L + 1` dans le modèle).
+- **Le bon endroit** : DXVK (fil `dxvk-frame`) et VKD3D-Proton (fil
+  `vkd3d-swapchain-sync`) libèrent le jeu — son attente de latence, au début
+  de l'image, avant la lecture des entrées — après `vkWaitForPresentKHR` de
+  l'image correspondante, **en FIFO seulement** (ailleurs : fin GPU de la
+  copie). Leurs propres limiteurs (`DXVK_FRAME_RATE`, `VKD3D_FRAME_RATE`)
+  dorment là, pas dans la présentation.
+- **`fps_limit_wait`** (défaut 1, lu au lancement) : pour un moteur DXVK /
+  vkd3d (`pEngineName`), la couche ne cache plus `VK_KHR_present_id` /
+  `VK_KHR_present_wait` (si le pilote les a) et y répond elle-même pour ses
+  swapchains (`VirtualSwapchain::waitPresent` : présent remis, fence de sa
+  tranche — rendu du jeu + synthèse —, puis le créneau de la limite,
+  `pacing::CapSchedule`, la même cadence que `FrameCap`) ; les identifiants
+  du jeu ne vont jamais au pilote (le retour d'affichage garde les siens).
+  Tant qu'une limite est réglée, les surfaces ne proposent que FIFO
+  (`InstanceData::fifoOnly`, `GetPhysicalDeviceSurfacePresentModesKHR`) ; la
+  vraie swapchain prend ce que le jeu aurait pris sans vsync : immediate,
+  sinon mailbox (`fifoSurfaces`, `createReal`) — la grille X du poste
+  (x11_clock en immediate) reste la même. `limitFrameRate()` choisit le point :
+  Reflex / Anti-Lag (`capAtSleep`) > attente du jeu (`capsAtWait` : une
+  attente depuis moins d'une seconde) > fin de `present()` comme avant. Une
+  limite réglée en cours de partie sur une swapchain non FIFO :
+  `VK_SUBOPTIMAL_KHR` une fois par surface (`fifoAsked`), DXVK / VKD3D
+  refont leur swapchain avec les modes proposés. Statut `cap_point=wait`.
+- **Reflex** : DXVK n'active `VK_NV_low_latency2` qu'avec present_id → masqué
+  pour DXVK (comme avant, puisque present_id l'était). VKD3D-Proton l'active
+  sans present_id : inchangé. Ses marqueurs nomment des présents que le
+  pilote ne voit pas — déjà le cas avant.
+- **Mesures** :
+  - simulateur (`pacing_fps_limit_wait_holds_a_translated_game_before_its_input`) :
+    à 30 i/s, entrée → remise à la couche 4 ms (attente, comme le limiteur du
+    jeu) contre 33 / 67 / 100 ms (présent retenu, latence modèle 2 / 3 / 4) ;
+    sous charge GPU, rien de pire que sans limite ;
+  - démo `--present-thread L` (fil de présentation + fil d'attente comme
+    eux), gamescope sans tête 144 Hz, limite 40 i/s ×2, image réelle à
+    l'écran : L = 3 (VKD3D sans waitable) 72,3 → 23,3 ms, L = 4 (DXVK par
+    défaut) 98,2 → 23,4, L = 2 (DXVK latence 1) 48,3 → 23,4, L = 1 22,0 →
+    22,7 (rien à gagner) ; ×1 L = 3 56,6 → 7,3 ms ; limiteur du jeu 22,3 ;
+  - vrais DXVK / VKD3D-Proton sous Wine 11 (préfixe neuf, gamescope sans
+    tête, RTX 3060 Ti, pilote 615), sondes `tests/proton/*_probe.cpp
+    uncapped`, limite 30 i/s, début d'image → fin GPU : DXVK 2.5.3 34,4 →
+    0,8 ms, DXVK de Proton 10 34,5 → 0,8, VKD3D-Proton 3.0.1 66,7 → 0,8 ;
+    VKD3D-Proton de Proton 10 0,7 → 0,8 (cette sonde n'y file rien même
+    retenue au présent : sa gestion de latence a changé depuis 3.0.1).
+- **Limites** : sans present_wait dans le pilote (lavapipe des conteneurs
+  CI, vieux pilotes), le jeu ne peut pas l'activer : la limite reste au
+  présent (message `fps_limit_wait: the game did not enable ...`) ;
+  `proton-check.sh` le constate et vérifie seulement le débit. La requête
+  `vkGetPhysicalDeviceSurfacePresentModes2EXT` (plein écran exclusif,
+  Windows) n'est pas filtrée : un DXVK Windows qui l'utilise garde l'ancien
+  point. Le vrai jeu (Cyberpunk, PRAGMATA, Oblivion) reste à confirmer sur
+  l'écran de l'utilisateur.
+- **Plantage à la sortie trouvé en chemin (préexistant)** : sonde D3D11 sous
+  Wine (DXVK 2.5.3 et Proton 10) qui quitte sans détruire sa swapchain, avec
+  la limite **au présent** : SIGSEGV dans le pilote appelé par
+  `presentCopied` (fil worker, `vkQueuePresentKHR` pendant le démontage du
+  processus). 3/3 avec le code d'avant (HEAD 1208423), 3/3 avec
+  `fps_limit_wait=0` ; 0/3 limite à l'attente, 0/2 sans limite. Piste :
+  arrêter les workers au début de la sortie (un `atexit` enregistré après
+  le chargement du pilote passe avant ses destructeurs), attente bornée.
+- **Outils** : `bdex_demo --present-thread L [--engine NAME]` (moteur
+  « vkd3d » par défaut ; refait sa swapchain sur SUBOPTIMAL sauf
+  `--ignore-resize`) ; `latency_probe` vérifie ce cas (≤ limiteur du jeu
+  + 4 ms) ; `validation` : cas `interpolate:waitcap` (0 message) ;
+  `proton-check.sh` : sondes sans limite propre sous la limite de la couche.

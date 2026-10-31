@@ -67,5 +67,37 @@ check() {  # check NAME EXE
 }
 check "Direct3D 11 (DXVK $dxvk_ver)" /tmp/d3d11.exe
 check "Direct3D 12 (VKD3D-Proton $vkd3d_ver)" /tmp/d3d12.exe
+# fps_limit on a game without a limit of its own (fps_limit_wait): DXVK and
+# VKD3D-Proton are offered FIFO alone and present wait, and the layer holds
+# the game in that wait, before it reads its input — not in their present
+# thread, behind which frames queued (VKD3D-Proton: three). The D3D12 probe
+# tells how long after a frame began the GPU had done it. (Where the driver
+# has no present wait — lavapipe here — the limit stays at the present, as
+# before: checked to hold the rate.)
+limit() {  # limit NAME EXE FPS_LIMIT_WAIT
+  local out fps
+  out="$(XDG_DATA_HOME=/tmp/xdg VK_ICD_FILENAMES=$icd BDEX_FG=1 BDEX_FG_CONFIG=/dev/null BDEX_FG_LOG=2 BDEX_FG_FPS_LIMIT=30 \
+    BDEX_FG_FPS_LIMIT_WAIT=$3 BDEX_FG_STATS_INTERVAL=3 DXVK_LOG_LEVEL=warn VKD3D_DEBUG=err timeout 90 "$wine" "$2" 8 uncapped 2>&1 || true)"
+  grep -q "frames presented" <<<"$out" || { echo "$1: the program did not finish:"; tail -30 <<<"$out"; exit 1; }
+  grep -E "fps_limit|probe: [0-9.]+ fps" <<<"$out" | sed "s/^/  /"
+  fps=$(sed -n "s/.*probe: \([0-9.]*\) fps.*/\1/p" <<<"$out" | tail -1)
+  awk -v f="${fps:-0}" "BEGIN { exit !(f > 28.5 && f < 31.5) }" || { echo "$1: not held at 30 fps (${fps:-?})"; exit 1; }
+  if grep -q "game did not enable VK_KHR_present_id" <<<"$out"; then
+    # (lavapipe has no present wait: the limit holds the present thread, as before fps_limit_wait)
+    echo "$1: no present wait on this driver — the limit stays at the present"
+    nowait=1
+  elif [ "$3" = 1 ]; then
+    grep -q "held where it waits" <<<"$out" || { echo "$1: fps_limit not at the present wait:"; grep -E "fps_limit|FIFO" <<<"$out"; exit 1; }
+  fi
+  sed -n "s/.*GPU done: median \([0-9.]*\) ms.*/\1/p" <<<"$out" | tail -1 >"/tmp/latency-$3"
+  "$(command -v wineserver || echo /usr/lib/wine/wineserver)" -k 2>/dev/null || true
+}
+limit "Direct3D 11 limit at the wait (DXVK $dxvk_ver)" /tmp/d3d11.exe 1
+limit "Direct3D 12 limit at the wait (VKD3D-Proton $vkd3d_ver)" /tmp/d3d12.exe 1
+limit "Direct3D 12 limit at the present (VKD3D-Proton $vkd3d_ver)" /tmp/d3d12.exe 0
+echo "VKD3D-Proton, frame start to GPU done (median): $(cat /tmp/latency-0) ms held at the present, $(cat /tmp/latency-1) ms at the wait"
+[ "${nowait:-0}" = 1 ] ||
+  awk -v p="$(cat /tmp/latency-0)" -v w="$(cat /tmp/latency-1)" "BEGIN { exit !(w > 0 && w + 20 < p) }" ||
+  { echo "fps_limit_wait gained no latency on VKD3D-Proton"; exit 1; }
 echo "proton OK"
 '

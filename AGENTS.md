@@ -119,6 +119,7 @@ tools/run_eval.sh                                       # éval qualité (PSNR)
 tools/make_corpus.py DIR                                # corpus synthétique (HUD, panoramique doux, sous-pixel, fondu)
 tools/tune.py SEQ...                                    # réglage automatique (descente par coordonnées)
 bdex-framegen --toggle | --report                       # pause à chaud (raccourci) | rapport de diagnostic
+build/demo/bdex_demo --present-thread 3 --mode immediate --uncapped  # présente comme DXVK / VKD3D-Proton (fil de présentation, latence L) : banc de fps_limit_wait
 bdex-framegen --tuned-profile [JEU] [--apply]           # décisions d'online_tune -> section [JEU] de config
 bdex-framegen --record DIR [N] -- <jeu>                 # enregistre N images réelles (corpus)
 tools/corpus_pack.py DIR out.tar.gz --name X            # séquence -> archive (release GitHub "corpus", notée en CI)
@@ -666,7 +667,15 @@ perdait, 17–20 % de pixels grossièrement faux en plus sur un vrai jeu).
 recherche des blocs grossiers) auto sur GPU dédié. `fps_limit` dort à la
 **fin** de `present()` (jamais avant la remise de l'image : +23 ms mesurés).
 Avec Reflex / Anti-Lag dans le jeu, elle dort dans `vkLatencySleepNV` /
-l'étape input d'Anti-Lag (`DeviceData::capAtSleep`). ×3+ à deux files : la
+l'étape input d'Anti-Lag (`DeviceData::capAtSleep`). **DXVK / VKD3D-Proton
+(`fps_limit_wait`, 31/10)** : leur fil de présentation laisse le jeu prendre
+1 à 3 images d'avance — retenir notre présent filait ces images (VKD3D :
+72 → 23 ms, DXVK par défaut : 98 → 23 ms à 40 i/s). La couche leur laisse
+`present_id`/`present_wait` (pilote requis), y répond (`waitPresent` :
+fence de la tranche puis créneau `pacing::CapSchedule`), et pendant une
+limite leurs surfaces ne proposent que FIFO (le seul mode où ils attendent
+chaque présent ; vraie swapchain : immediate, sinon mailbox) ; ordre des
+points : Reflex/Anti-Lag > attente (`capsAtWait`) > fin de `present()`. ×3+ à deux files : la
 synthèse de la 1re image générée est une soumission à part (`FrameSlot::cmd2`,
 `firstFence` → `Job::firstReady`, origine du cadencement) — tout ce qui
 suit la 1re sortie va dans `cmd2`. Voir `Config` dans `layer/src/config.h` pour la liste
@@ -748,7 +757,11 @@ réintroduire) :
 
 - `hide_present_ext=1` (défaut) : cacher `swapchain_maintenance1` / present_id
   au jeu, sinon VKD3D-Proton se bloque (la sémantique vise la vraie swapchain
-  qu'on virtualise).
+  qu'on virtualise). Exception `fps_limit_wait` : DXVK / VKD3D voient
+  `present_id`/`present_wait`, **répondus par la couche** — ne jamais passer
+  leurs identifiants au pilote ni leur `vkWaitForPresentKHR` sur nos
+  swapchains (le blocage d'origine) ; `VK_NV_low_latency2` masqué pour DXVK
+  seul (il ne l'active qu'avec present_id ; VKD3D l'active déjà sans).
 - **Un test de script qui isole `HOME` doit aussi isoler `XDG_CONFIG_HOME`,
   `XDG_CACHE_HOME`, `XDG_DATA_HOME`** : le poste de dev les définit, et les
   scripts les suivent. Vécu le 2026-10-02 : `uninstall.sh --purge` testé

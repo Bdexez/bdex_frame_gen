@@ -343,6 +343,7 @@ void DeviceData::pollConfig() {
     }
     config.panelDisplayHz = panelHz;
     ++configVersion;
+    setFrameLimitHint();
     BDEX_INFO("%s%s", fileChanged ? "config file changed: live settings reloaded" : "control panel: generation target changed",
               config.paused != wasPaused ? (config.paused ? " (frame generation paused)" : " (frame generation resumed)") : "");
 }
@@ -373,18 +374,20 @@ VkResult DeviceData::submit(const VkSubmitInfo& info, VkFence fence) {
 
 namespace bdex {
 
+void sleepUntilSteadyMs(double ms) {
+    using clock = std::chrono::steady_clock;
+    const auto until = clock::time_point(std::chrono::duration_cast<clock::duration>(std::chrono::duration<double, std::milli>(ms)));
+    const auto now = clock::now();
+    if (until <= now) return;
+    const auto coarse = until - std::chrono::microseconds(1500);
+    if (coarse > now) std::this_thread::sleep_until(coarse);
+    while (clock::now() < until) std::this_thread::yield();
+}
+
 void FrameCap::wait(double fps) {
     if (fps <= 0.0) return;
-    using clock = std::chrono::steady_clock;
     std::lock_guard<std::mutex> lk(mutex);
-    const auto interval = std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(1.0 / fps));
-    auto now = clock::now();
-    if (next > now) {
-        const auto coarse = next - std::chrono::microseconds(1500);
-        if (coarse > now) std::this_thread::sleep_until(coarse);
-        while ((now = clock::now()) < next) std::this_thread::yield();
-    }
-    next = (next == clock::time_point{} || now - next > interval) ? now + interval : next + interval;
+    sleepUntilSteadyMs(schedule.release(steadyMs(), 1000.0 / fps));
 }
 
 } // namespace bdex

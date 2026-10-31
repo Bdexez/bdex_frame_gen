@@ -280,15 +280,18 @@ std::vector<std::string> statusDescribe(const StatusFile& file, bool english) {
         // game queue frames ahead (its maximum frame latency, 1 to 3), so
         // holding that thread fills the queue and the game reads its input a
         // frame or two before the screen needs it. Its own limiter, Reflex or
-        // Anti-Lag (the layer then holds the game there) do not queue.
+        // Anti-Lag, or its present wait (fps_limit_wait: cap_point "wait"),
+        // where the layer then holds the game, do not queue.
         {
             std::string eng = get(v, "engine");
             for (char& c : eng) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
             if (get(v, "cap_point") == "present" && (eng.find("dxvk") != std::string::npos || eng.find("vkd3d") != std::string::npos))
-                out.push_back(T("   limite d'images sur un jeu Direct3D (DXVK / VKD3D) : le jeu garde une à deux images d'avance — "
-                                "la limite d'images du jeu (ou Reflex / Anti-Lag activé dans le jeu) est plus réactive",
-                                "   frame rate cap on a Direct3D game (DXVK / VKD3D): the game keeps one or two frames ahead — "
-                                "the game's own frame cap (or Reflex / Anti-Lag on in the game) responds faster"));
+                out.push_back(T("   limite d'images sur un jeu Direct3D (DXVK / VKD3D) retenu à sa présentation (pilote sans "
+                                "present_wait, ou fps_limit_wait coupé) : le jeu garde une à trois images d'avance — la limite "
+                                "d'images du jeu (ou Reflex / Anti-Lag activé dans le jeu) est plus réactive",
+                                "   frame rate cap on a Direct3D game (DXVK / VKD3D) held at its present (a driver without present "
+                                "wait, or fps_limit_wait off): the game keeps one to three frames ahead — the game's own frame "
+                                "cap (or Reflex / Anti-Lag on in the game) responds faster"));
         }
         if (!get(v, "passes").empty()) {
             std::string p = get(v, "passes");
