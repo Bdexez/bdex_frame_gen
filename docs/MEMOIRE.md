@@ -2872,3 +2872,11 @@ rejeu PRAGMATA, retards de tics d'Hyprland rejoués dans `x11_clock` par un
 crochet de banc non committé, `bench_hooks.patch` du scratchpad) : 0,74 →
 0,18 ms rms, p99 1,86 → 0,07, tenues 0,27 → 0,11/s, latence 45,9 → 52,1
 ms. Validation (sync) propre, run `interpolate:even` ajouté.
+
+**Contrôle KWin virtuel** (20/10) : `kwin_wayland --virtual --xwayland`
+(60 Hz, scratchpad `kwbench.sh`, sous `dbus-run-session`), rejeu PRAGMATA
+sans charge : le jeu attend la couche ~5 ms par `present`, 7 à 11 images
+toutes les 2 s sans génération, 80 ms de présentation à l'écran — identique
+avec et sans `deferRest` : `vkQueuePresentKHR` y bloque, c'est le banc, pas
+le report des copies (qui ne retient le jeu qu'au plus jusqu'à la 1re image
+du job précédent). Banc inutilisable pour juger la cadence, comme le 17/10.
