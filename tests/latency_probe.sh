@@ -61,13 +61,21 @@ if grep -q VK_NV_low_latency2 <<<"$devices"; then
   reflex="$("$ROOT/tools/latency_bench.sh" --fps 1000 --seconds 6 --demo-args "$sim --reflex" \
     simreflex=BDEX_FG_MULTIPLIER=1,BDEX_FG_FPS_LIMIT=40)" || exit $?
   echo "$reflex"
+  # With Reflex on, Unreal hands its own frame rate limit to Reflex (the
+  # driver's limiter, minimumIntervalUs): the reference of its in-game limit.
+  rlimit="$("$ROOT/tools/latency_bench.sh" --fps 40 --seconds 6 --demo-args "$sim --reflex --reflex-limit" \
+    simrlimit=BDEX_FG_MULTIPLIER=1)" || exit $?
+  echo "$rlimit"
   simownreal="$(grep "^simown " <<<"$simown" | awk '{ print $10 }')"
   reflexreal="$(grep "^simreflex " <<<"$reflex" | awk '{ print $10 }')"
-  for v in "$simownreal" "$reflexreal"; do
+  rlimitreal="$(grep "^simrlimit " <<<"$rlimit" | awk '{ print $10 }')"
+  for v in "$simownreal" "$reflexreal" "$rlimitreal"; do
     [[ "$v" =~ ^[0-9.]+$ ]] || { echo "FAIL: game thread: no displayed flash"; exit 1; }
   done
   awk -v c="$reflexreal" -v x="$simownreal" 'BEGIN { exit !(c <= x + 4.0) }' ||
     { echo "FAIL: fps_limit at Reflex's sleep adds latency: $reflexreal ms against $simownreal ms with the game's own cap"; exit 1; }
+  awk -v c="$reflexreal" -v x="$rlimitreal" 'BEGIN { exit !(c <= x + 4.0) }' ||
+    { echo "FAIL: fps_limit at Reflex's sleep adds latency: $reflexreal ms against $rlimitreal ms with Reflex's own limit"; exit 1; }
 else
   echo "no VK_NV_low_latency2: the Reflex case skipped"
 fi

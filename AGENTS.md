@@ -120,7 +120,7 @@ tools/make_corpus.py DIR                                # corpus synthétique (H
 tools/tune.py SEQ...                                    # réglage automatique (descente par coordonnées)
 bdex-framegen --toggle | --report                       # pause à chaud (raccourci) | rapport de diagnostic
 build/demo/bdex_demo --present-thread 3 --mode immediate --uncapped  # présente comme DXVK / VKD3D-Proton (fil de présentation, latence L) : banc de fps_limit_wait
-build/demo/bdex_demo --present-thread 3 --sim-thread [--reflex] ...  # + fil « jeu » une image en avance (Unreal, RE Engine), Reflex sur ce fil
+build/demo/bdex_demo --present-thread 3 --sim-thread [--reflex [--reflex-limit]] ...  # + fil « jeu » une image en avance (Unreal, RE Engine), Reflex sur ce fil ; --reflex-limit : sa limite à lui (minimumIntervalUs, celle d'Unreal avec Reflex)
 bdex-framegen --tuned-profile [JEU] [--apply]           # décisions d'online_tune -> section [JEU] de config
 bdex-framegen --record DIR [N] -- <jeu>                 # enregistre N images réelles (corpus)
 tools/corpus_pack.py DIR out.tar.gz --name X            # séquence -> archive (release GitHub "corpus", notée en CI)
@@ -687,7 +687,12 @@ le rendu passe par nous) — à l'attente, encore +1 image ; Reflex activé dans
 le jeu (NVAPI actif par défaut sous Proton) met la limite sur ce fil
 (`bdex_demo --sim-thread --reflex` : 26,2 ms contre 46,9 à l'attente).
 Retour utilisateur 31/10 : « beaucoup mieux qu'avant », State of Decay 2
-parfait, Oblivion / PRAGMATA encore moins bons que leur limiteur. ×3+ à deux files : la
+parfait, Oblivion / PRAGMATA encore moins bons que leur limiteur. Limite au sommeil Reflex = limiteur Reflex du pilote (`--reflex-limit`,
+`latency_probe` les compare). **Calage de la limite sur les rafraîchissements
+essayé et écarté** (31/10, MEMOIRE) : la phase d'une limite qui divise la
+fréquence est tirée à chaque lancement (jusqu'à un rafraîchissement d'écart),
+mais une boucle qui la cale n'a rien gagné (gigue de la synthèse et du
+compositeur ≈ ½ rafraîchissement) ; ne pas refaire sans gigue mesurée basse. ×3+ à deux files : la
 synthèse de la 1re image générée est une soumission à part (`FrameSlot::cmd2`,
 `firstFence` → `Job::firstReady`, origine du cadencement) — tout ce qui
 suit la 1re sortie va dans `cmd2`. Voir `Config` dans `layer/src/config.h` pour la liste

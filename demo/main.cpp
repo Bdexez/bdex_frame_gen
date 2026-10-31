@@ -5,7 +5,7 @@
 //   bdex_demo [--fps N] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]
 //             [--deterministic] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]
 //             [--gpu-load N] [--latency-test [auto]] [--latency-log FILE]
-//             [--present-thread L [--engine NAME] [--sim-thread [--reflex]]]
+//             [--present-thread L [--engine NAME] [--sim-thread [--reflex [--reflex-limit]]]]
 //             [--stress KIND:N[,KIND:N...]] [--stress-until N]
 //             [--replay DIR [--replay-step N] [--replay-start N]
 //              [--replay-timing [--replay-log FILE]]]
@@ -89,9 +89,12 @@ struct Options {
     // with one frame of lag), RE Engine's. Its own cap (--fps) sleeps there,
     // before the input, as those engines' limiters do; --reflex: so does
     // NVIDIA Reflex's sleep (VK_NV_low_latency2's vkLatencySleepNV, with its
-    // markers), which a game turns on in its settings.
+    // markers), which a game turns on in its settings; --reflex-limit: the
+    // cap (--fps) is Reflex's own (minimumIntervalUs, the driver's limiter),
+    // as Unreal hands it its frame rate limit with Reflex on.
     bool simThread = false;
     bool reflex = false;
+    bool reflexLimit = false;
     // --stress: what games do to their swapchain, every N frames (tests/
     // swapchain_stress.sh): resize (the window to another size), recreate
     // (a new swapchain from the old one, same size, another present mode and
@@ -561,6 +564,7 @@ void Demo::createSwapchain() {
     if (setSleepMode_) {
         VkLatencySleepModeInfoNV lm{VK_STRUCTURE_TYPE_LATENCY_SLEEP_MODE_INFO_NV};
         lm.lowLatencyMode = VK_TRUE;
+        if (opt_.reflexLimit) lm.minimumIntervalUs = uint32_t(1e6 / opt_.fps);
         setSleepMode_(device_, swapchain_, &lm);
     }
     ptFifo_ = mode == VK_PRESENT_MODE_FIFO_KHR || mode == VK_PRESENT_MODE_FIFO_RELAXED_KHR;
@@ -1506,6 +1510,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--engine") o.engine = value();
         else if (a == "--sim-thread") o.simThread = true;
         else if (a == "--reflex") o.reflex = true;
+        else if (a == "--reflex-limit") o.reflexLimit = true;
         else if (a == "--size") {
             std::string v = value();
             if (sscanf(v.c_str(), "%dx%d", &o.width, &o.height) != 2) throw std::runtime_error("bad --size");
@@ -1537,7 +1542,7 @@ Options parseArgs(int argc, char** argv) {
             printf("usage: bdex_demo [--fps N | --uncapped] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]\n"
                    "                 [--deterministic] [--ignore-resize] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]\n"
                    "                 [--gpu-load N] [--latency-test [auto]] [--latency-log FILE] [--anti-lag]\n"
-                   "                 [--present-thread L [--engine NAME] [--sim-thread [--reflex]]]\n"
+                   "                 [--present-thread L [--engine NAME] [--sim-thread [--reflex [--reflex-limit]]]]\n"
                    "                 [--stress resize|recreate|surface|window|fullscreen|minimize:N[,...]] [--stress-until N]\n"
                    "                 [--replay DIR [--replay-step N] [--replay-start N]\n"
                    "                  [--replay-timing [--replay-log FILE]]]\n");
@@ -1549,6 +1554,7 @@ Options parseArgs(int argc, char** argv) {
     if (o.replayTiming && o.replayDir.empty()) throw std::runtime_error("--replay-timing needs --replay DIR");
     if ((o.simThread || o.reflex) && !o.presentThread) throw std::runtime_error("--sim-thread, --reflex need --present-thread");
     if (o.reflex && !o.simThread) throw std::runtime_error("--reflex needs --sim-thread (Reflex sleeps on the game thread)");
+    if (o.reflexLimit && (!o.reflex || o.uncapped)) throw std::runtime_error("--reflex-limit needs --reflex and a cap (--fps)");
     if (o.presentThread && (!o.replayDir.empty() || o.repeat > 1 || o.antiLag))
         throw std::runtime_error("--present-thread does not go with --replay, --repeat or --anti-lag");
     for (long every : o.stressEvery)

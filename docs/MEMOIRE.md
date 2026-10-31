@@ -3945,3 +3945,39 @@ le jeu suit la limite de gamescope comme DXVK ≥ 2.3 / VKD3D ≥ 2.12) échouai
   gamescope l'ait envoyé ou non, et garde le cycle de la surface si la
   précédente n'a pas lu 16,67 avant sa destruction. Piste si ça apparaît :
   un cycle retenu par état du limiteur.
+
+### 31/10 (fin, 4) — l'écart restant avec Reflex : mesures, calage écarté
+
+Les deux correctifs précédents (dae49e2, 0c96c9c) sont poussés sur
+`origin/main` avec l'accord de l'utilisateur et installés. Décision de
+l'utilisateur : un jeu démarré mis en pause par le raccourci **garde** sa
+limite. Il a demandé d'étudier « le léger écart » restant avec Reflex sur
+Oblivion et PRAGMATA.
+
+- **Référence juste** : avec Reflex, Unreal (Streamline) confie sa limite
+  d'images à Reflex (`minimumIntervalUs`, limiteur du pilote). Démo
+  `--reflex-limit` ajoutée. 40 i/s, deux essais : ×1 — limiteur de la démo
+  8,8–10,1 ms, Reflex 9,8–10,1, couche au sommeil 9,7–10,4 ; ×3 — 23,9–26,5,
+  25,7–26,4, 25,4–26,5 (image réelle, médianes). Aucun écart systématique.
+  `latency_probe` compare aussi la couche au limiteur Reflex.
+- **La loterie de la phase** : une limite qui divise la fréquence (48 i/s
+  sur 144 Hz) garde ses images prêtes au même moment du cycle d'affichage
+  pendant tout un lancement, mais ce moment est tiré à chaque lancement,
+  quel que soit le limiteur (ni le jeu ni le pilote ne savent quand nos
+  images partent). Cinq lancements à ×1 : premier photon 7,6 / 11,2 / 8,4 /
+  11,9 / 8,6 ms (p95 = médiane dans un lancement). Explication probable de
+  l'écart ressenti « très léger » : d'un lancement à l'autre, jusqu'à un
+  rafraîchissement.
+- **Calage essayé et écarté** : une boucle (`CapPhase`) déplaçait les
+  créneaux de la limite d'une part de l'attente mesurée par le worker pour
+  la 1re image de chaque présentation (`paceTarget − origin` quand le worker
+  attendait la fence), marge ×2 quand l'attente saute d'un demi-rafraîchissement,
+  ×0,999 sinon, aux trois points de limite (`CapSchedule::shift`).
+  Simulateur : 6,25 → 0,79 ms d'attente. Banc (gamescope sans tête, Reflex,
+  cinq essais alternés) : ×3, 48 i/s, 144 Hz — image réelle 25,7 ms en
+  moyenne avec ou sans, p95 +3 ms avec ; ×2, 30 i/s, 60 Hz — 35,2 sans,
+  35,6 avec (le pire lancement 42 → 35, les bons 30–32 → 34–35). Trace :
+  l'attente saute de ±2 à 4 ms par moments (fin de synthèse, compositeur),
+  la marge monte à ½ rafraîchissement — la moyenne d'une phase au hasard.
+  Retiré entièrement. Ne pas refaire sans une gigue mesurée basse (matériel
+  réel, autre compositeur).
