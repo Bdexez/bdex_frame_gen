@@ -99,8 +99,9 @@ _EN = {
  "Limite sans latence ajoutée (jeux Direct3D sous Proton)": 'Frame limit without added latency (Direct3D games under Proton)',
  "Retient le jeu là où il attend ses images précédentes, avant qu'il lise ses entrées, au lieu du fil de présentation de DXVK / VKD3D-Proton : 1 à 2 images de latence en moins. Pris en compte au lancement du jeu":
      "Holds the game where it waits for its earlier frames, before it reads its input, instead of DXVK's / VKD3D-Proton's present thread: one to two frames of latency less. Applies when the game starts",
- "Limite d'images retenue dans l'attente du jeu, avant qu'il lise ses entrées : pas de latence ajoutée":
-     "Frame limit held in the game's wait, before it reads its input: no latency added",
+ "Limite d'images retenue dans l'attente du jeu, avant qu'il lise ses entrées : pas de latence ajoutée (jeux Unreal, RE Engine : activer NVIDIA Reflex dans le jeu place la limite sur leur fil de jeu, une image de latence en moins)":
+     "Frame limit held in the game's wait, before it reads its input: no latency added (Unreal, RE Engine games: "
+     "NVIDIA Reflex on in the game puts the limit on their game thread, a frame of latency less)",
  "Limite d'images retenue au sommeil Reflex / Anti-Lag du jeu, avant qu'il lise ses entrées":
      "Frame limit held at the game's Reflex / Anti-Lag sleep, before it reads its input",
  "Limite d'images sur un jeu Direct3D (DXVK / VKD3D) retenu à sa présentation (pilote sans present_wait, ou fps_limit_wait coupé) : le jeu garde une à trois images d'avance — la limite d'images du jeu (ou Reflex / Anti-Lag activé dans le jeu) est plus réactive":
@@ -2131,7 +2132,8 @@ def describe_entry(e):
     if e.get("cap_point") == "wait":
         # (as statusDescribe in status.cpp: fps_limit_wait in force)
         lines.append(tr("Limite d'images retenue dans l'attente du jeu, avant qu'il lise ses entrées : "
-                        "pas de latence ajoutée"))
+                        "pas de latence ajoutée (jeux Unreal, RE Engine : activer NVIDIA Reflex dans le jeu place la "
+                        "limite sur leur fil de jeu, une image de latence en moins)"))
     elif e.get("cap_point") == "input":
         lines.append(tr("Limite d'images retenue au sommeil Reflex / Anti-Lag du jeu, avant qu'il lise ses entrées"))
     if e.get("cap_point") == "present" and ("dxvk" in eng or "vkd3d" in eng):

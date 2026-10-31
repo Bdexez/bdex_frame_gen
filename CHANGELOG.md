@@ -15,6 +15,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   (screen ÷ multiplier) is a switch of its own; *Limite sans latence ajoutée*
   (`fps_limit_wait`) sits under it, and a game's status says where the cap
   holds it. The text mode takes a typed rate as well.
+- Unreal Engine and RE Engine games (Oblivion Remastered, PRAGMATA) read
+  their input on a game thread a frame ahead of the one that presents: held
+  at their present wait they keep a frame of latency their own limiter does
+  not have (40 fps: 46.9 ms against 27.3). With NVIDIA Reflex on in the game,
+  the layer's limit holds them at Reflex's sleep, on that game thread:
+  26.2 ms. The game's status suggests it; `bdex_demo --sim-thread [--reflex]`
+  and `latency_probe` check it.
 
 ### The frame limit adds no latency to Direct3D games under Proton (2026-10-31)
 

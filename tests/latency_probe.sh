@@ -46,4 +46,29 @@ for v in "$ownreal" "$waitreal"; do
 done
 awk -v c="$waitreal" -v x="$ownreal" 'BEGIN { exit !(c <= x + 4.0) }' ||
   { echo "FAIL: fps_limit on a present thread adds latency: $waitreal ms against $ownreal ms with the game's own cap"; exit 1; }
+# A game thread one frame ahead of the one that presents (Unreal, RE Engine:
+# --sim-thread): held at its present wait the game still reads its input a
+# frame early; NVIDIA Reflex's sleep is on the game thread, where the limit
+# then holds it as its own limiter does (--reflex). Where the driver has
+# VK_NV_low_latency2.
+# (the output captured first: under pipefail, `vulkaninfo | grep -q` fails
+# when grep finds it — SIGPIPE)
+devices="$(vulkaninfo 2>/dev/null || true)"
+if grep -q VK_NV_low_latency2 <<<"$devices"; then
+  sim="$pt --sim-thread"
+  simown="$("$ROOT/tools/latency_bench.sh" --fps 40 --seconds 6 --demo-args "$sim" simown=BDEX_FG_MULTIPLIER=1)" || exit $?
+  echo "$simown"
+  reflex="$("$ROOT/tools/latency_bench.sh" --fps 1000 --seconds 6 --demo-args "$sim --reflex" \
+    simreflex=BDEX_FG_MULTIPLIER=1,BDEX_FG_FPS_LIMIT=40)" || exit $?
+  echo "$reflex"
+  simownreal="$(grep "^simown " <<<"$simown" | awk '{ print $10 }')"
+  reflexreal="$(grep "^simreflex " <<<"$reflex" | awk '{ print $10 }')"
+  for v in "$simownreal" "$reflexreal"; do
+    [[ "$v" =~ ^[0-9.]+$ ]] || { echo "FAIL: game thread: no displayed flash"; exit 1; }
+  done
+  awk -v c="$reflexreal" -v x="$simownreal" 'BEGIN { exit !(c <= x + 4.0) }' ||
+    { echo "FAIL: fps_limit at Reflex's sleep adds latency: $reflexreal ms against $simownreal ms with the game's own cap"; exit 1; }
+else
+  echo "no VK_NV_low_latency2: the Reflex case skipped"
+fi
 echo "latency probe OK"

@@ -3855,3 +3855,31 @@ x86 `53997536b48a43ea…`) : relancer le jeu et le panneau. Aucun push.
   du 20/10 (quality, ×4, overlay 2). Ne jamais lancer le panneau sur l'hôte
   pendant qu'un jeu tourne : tests du panneau par `panel-check.sh` seulement.
 - Poussé sur `origin/main` le 31/10 avec l'accord de l'utilisateur.
+
+### 31/10 (fin) — moteurs à fil « jeu » en avance : Reflex
+
+Retour de l'utilisateur après essai : « c'est beaucoup mieux qu'avant »,
+State of Decay 2 parfait, mais Oblivion Remastered (Unreal 5) et PRAGMATA
+(RE Engine) restent moins réactifs qu'avec leur limiteur intégré.
+
+- **Cause** : ces moteurs lisent les entrées sur un fil « jeu » qui garde
+  une image d'avance sur le fil de rendu (Unreal : `FFrameEndSync` avec une
+  image de décalage) ; seul le rendu passe par DXVK / VKD3D et par nous.
+  Retenu à l'attente de présentation, le rendu ne retient le fil « jeu »
+  qu'une image plus tard : une image de latence que leur limiteur, qui dort
+  sur le fil « jeu », n'a pas. Aucune fonction Vulkan n'est appelée sur ce
+  fil… sauf le sommeil Reflex (NVAPI → VKD3D → `vkLatencySleepNV`), où la
+  couche applique déjà la limite (`capAtSleep`, `cap_point=input`).
+- **Mesuré** (démo `--present-thread 3 --sim-thread`, fil « jeu » une image
+  en avance, 4 ms de simulation, 40 i/s, ×2, 144 Hz, image réelle à
+  l'écran) : limiteur du jeu 27,3 ms, couche à l'attente 46,9 ms, couche
+  au sommeil Reflex (`--reflex`) **26,2 ms**, ancien point 96,9 ms. Le
+  sommeil Reflex fonctionne à travers la couche avec le pilote NVIDIA 615
+  (aucun sommeil sans réponse en 200 ms).
+- **Conseil** : activer NVIDIA Reflex dans ces jeux (NVAPI présent dans les
+  préfixes d'Oblivion, PRAGMATA, Cyberpunk, State of Decay 2 : Proton
+  l'active par défaut sur NVIDIA). L'état du jeu le suggère quand la limite
+  est à l'attente. `latency_probe` vérifie le cas Reflex là où le pilote a
+  `VK_NV_low_latency2` (piège : `vulkaninfo | grep -q` sous pipefail).
+- Reflex reste masqué pour DXVK (D3D11) : pas de jeu D3D11 concerné chez
+  l'utilisateur ; à revoir si un jeu D3D11 Unreal avec Reflex le demande.

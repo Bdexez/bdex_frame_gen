@@ -120,6 +120,7 @@ tools/make_corpus.py DIR                                # corpus synthétique (H
 tools/tune.py SEQ...                                    # réglage automatique (descente par coordonnées)
 bdex-framegen --toggle | --report                       # pause à chaud (raccourci) | rapport de diagnostic
 build/demo/bdex_demo --present-thread 3 --mode immediate --uncapped  # présente comme DXVK / VKD3D-Proton (fil de présentation, latence L) : banc de fps_limit_wait
+build/demo/bdex_demo --present-thread 3 --sim-thread [--reflex] ...  # + fil « jeu » une image en avance (Unreal, RE Engine), Reflex sur ce fil
 bdex-framegen --tuned-profile [JEU] [--apply]           # décisions d'online_tune -> section [JEU] de config
 bdex-framegen --record DIR [N] -- <jeu>                 # enregistre N images réelles (corpus)
 tools/corpus_pack.py DIR out.tar.gz --name X            # séquence -> archive (release GitHub "corpus", notée en CI)
@@ -675,7 +676,13 @@ l'étape input d'Anti-Lag (`DeviceData::capAtSleep`). **DXVK / VKD3D-Proton
 fence de la tranche puis créneau `pacing::CapSchedule`), et pendant une
 limite leurs surfaces ne proposent que FIFO (le seul mode où ils attendent
 chaque présent ; vraie swapchain : immediate, sinon mailbox) ; ordre des
-points : Reflex/Anti-Lag > attente (`capsAtWait`) > fin de `present()`. ×3+ à deux files : la
+points : Reflex/Anti-Lag > attente (`capsAtWait`) > fin de `present()`.
+Unreal / RE Engine : un fil « jeu » une image en avance sur le rendu (seul
+le rendu passe par nous) — à l'attente, encore +1 image ; Reflex activé dans
+le jeu (NVAPI actif par défaut sous Proton) met la limite sur ce fil
+(`bdex_demo --sim-thread --reflex` : 26,2 ms contre 46,9 à l'attente).
+Retour utilisateur 31/10 : « beaucoup mieux qu'avant », State of Decay 2
+parfait, Oblivion / PRAGMATA encore moins bons que leur limiteur. ×3+ à deux files : la
 synthèse de la 1re image générée est une soumission à part (`FrameSlot::cmd2`,
 `firstFence` → `Job::firstReady`, origine du cadencement) — tout ce qui
 suit la 1re sortie va dans `cmd2`. Voir `Config` dans `layer/src/config.h` pour la liste
