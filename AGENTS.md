@@ -651,7 +651,12 @@ swapchain reconstruit `FrameGen` (`rebuildOutput`, comme `applyGpuBudget`) ;
 les réglages de création (`keepingCreationSettings` : render_scale, present
 mode…) restent ceux du lancement — render_scale seulement si le panneau
 était ouvert au lancement du jeu. Images réelles dimensionnées pour
-x4 (2 + 4) pour permettre x4 à chaud. Hors `require_app`, chemin inchangé. `BDEX_FG=1` contourne. Presets : `enhanced` (balanced + opt-ins mesurés positifs ensemble, dont
+x4 (2 + 4) pour permettre x4 à chaud. Hors `require_app`, chemin inchangé. `BDEX_FG=1` contourne.
+**La limite d'images ne retient que le jeu ciblé** (31/10, `Config::capsThisGame()`
+= `!requireApp || appTargeted`) : `fps_limit`, plafond `gpu_headroom`, offre FIFO
+de `fps_limit_wait`, statut — un jeu armé non démarré, arrêté ou laissé par un
+panneau fermé tourne libre (test `limit_session`). Toute nouvelle retenue du
+jeu doit passer par `capsThisGame`. Presets : `enhanced` (balanced + opt-ins mesurés positifs ensemble, dont
 `zero_bias_contrast=0.02` — à 0,1 il perd 1,2 dB sur le replay de la démo
 avec `pixel_vectors`), `balanced` (défaut),
 `quality` (flow_scale −1 : pleine résolution jusqu'à ~1080p, levels 5, iterations 2, search_fine 3 depuis le 14/10), `performance` (flow_scale 4,

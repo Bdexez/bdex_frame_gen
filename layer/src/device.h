@@ -157,10 +157,12 @@ struct DeviceData {
     // presents of our swapchains, which the layer answers.
     bool gamePresentWait = false;
     // fps_limit_wait: the instance's surfaces offer FIFO alone while a frame
-    // limit is set (InstanceData::fifoOnly), from these live settings
-    // (configMutex held, or before the device is published).
+    // limit holds this game (InstanceData::fifoOnly; Config::capsThisGame),
+    // from these live settings (configMutex held, or before the device is
+    // published).
     void setFrameLimitHint() {
-        if (inst && inst->presentWaitOffered) inst->fifoOnly.store(config.fpsLimit != 0.f, std::memory_order_relaxed);
+        if (inst && inst->presentWaitOffered)
+            inst->fifoOnly.store(config.fpsLimit != 0.f && config.capsThisGame(), std::memory_order_relaxed);
     }
     VkQueue computeQueue = VK_NULL_HANDLE;
     uint32_t computeFamily = 0;
