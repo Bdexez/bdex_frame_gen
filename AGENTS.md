@@ -371,6 +371,11 @@ jamais redonner la phase du dernier tic. **`even_motion`** (opt-in,
 images générées, la réelle en position m−1 non présentée (la dernière du
 job porte ses métadonnées) ; +1 sortie allouée (`presentCeiling`,
 `outputCeiling`) ; « 8 jobs en retard » et `PlanSlip` neutralisés.
+**`tight_hold`** (21/10, défaut 1) : ×m fixe sur grille, quand
+I < (m+1,25)·P, images générées à un rafraîchissement d'écart, la tenue à la
+réelle (−2,8 ms à ×4/30/144). **Marge de prêt X11** (`Grid::readyMarginMs`,
+1,5 ms) pour les images à un rafraîchissement d'écart : en deçà, le tic est
+raté. Mesures GPU hors ligne : 5 entrées au plus (le GPU décroche ensuite).
 **Latence, 2026-10-02.** `interp_hold` (défaut 1, bit à bit) : en
 interpolation, les positions jusqu'à la réelle espacées de h/m
 (`FrameOrder::offset`, champ `Job::order`, `paceTarget`), `t` = 1 −

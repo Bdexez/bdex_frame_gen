@@ -2899,3 +2899,44 @@ saccade ressentie venait du remplissage ×4 → ×4,8 (paires de 4 et 5
 rafraîchissements, mouvement +25 % une paire sur cinq), aggravée par la
 grille X perdue sous la charge d'Hyprland (corrigée, `cf59591`) et par les
 copies en file devant la 1re image (`396ca22`). `even_motion` reste en option.
+
+### Nuit du 20 au 21/10 — améliorations en continu (qualité, artefacts, latence)
+
+Demande (/goal) : réfléchir toute la nuit aux axes d'amélioration et les
+implémenter, en boucle. Nouveaux enregistrements (×4 strict) : PRAGMATA,
+Cyberpunk, Oblivion, trois chacun (`*-20261020-02*`, `-03*`). Harnais du
+scratchpad : `harness.py` (eval_sequence, préréglage quality, ×2 et ×4,
+variantes contre défaut), `cost.sh` (coût GPU à 1440p sur Cyberpunk agrandi).
+
+**Analyse des enregistrements** : les pires images (×2 hors ligne = deux
+images du jeu d'écart) sont des virages extrêmes où le flux s'effondre ; les
+images médianes portent l'erreur au **personnage** (bras, arme, sac :
+mouvement articulé, occultation — mosaïque de blocs, décor qui bave) et en
+liseré sur les arêtes fines. Journal de sa partie ×4 strict : 2,2 images
+écrasées/s (surtout l'image réelle, ou la 1re générée, envoyée à l'heure)
+et ~1 écart de 3 tics/s — des rafraîchissements qu'Hyprland rate sous la
+charge GPU, sans phase privilégiée par rapport au job : le levier est notre
+coût GPU total.
+
+**Piège de mesure** : `bdex_offline` écrit des PPM de 11 Mo entre deux
+entrées à 1440p ; le GPU au repos descend à 300–500 MHz (P5) et les mesures
+longues gonflent ×5 (interp 4,7 → 47 ms). Mesurer sur 5 entrées
+(`--max-inputs 5`, avant la baisse) : stable à ±0,05 ms.
+
+**Coût des options auto du GPU dédié à 1440p ×4** (flux 1,64 + interp 4,73
+ms par image du jeu) : `false_detail` 1,71, `pixel_vectors` 0,92,
+`rot_weight` 0,69 (flux), `hud_mask` 0,54, `interp_splat` 0,48 ; en option
+`synth_bicubic` +2,1, `mosaic_blur` +0,9, `subpixel_lk=2` +0,19. **Valeur**
+(PSNR moyen si coupée, ×2/×4, 9 séquences) : false_detail −0,026/−0,024,
+rot_weight −0,015/−0,021, pixel_vectors −0,003/−0,012 (scintillement
++0,06/+0,08), interp_splat −0,013/−0,010, hud_mask ≈ 0 (HUD non jugeable à
+853×480). Options en attente sur ces jeux : seuls `subpixel_lk=2,
+synth_bicubic=1` (+0,04 à +0,28 dB) et `mosaic_blur` (+0,03 à +0,09, moins
+de scintillement) gagnent ; chroma, flow_temporal, occlusion, parallax ≈ 0 ;
+learned_flow jusqu'à −0,49.
+
+**`tight_hold`** (défaut 1) + **marge de prêt sous Xwayland** : voir
+CHANGELOG ; banc 1440p ×4 : latence 42,0 → 39,2 ms, écrasées 0,1/s, tenues
+24,0 → 23,2/s. L'échéance mesurée : envoyée ≥ 1,5 ms avant le tic, toujours
+prise ; 0,5–1 ms, ratée 64 %. Sans la marge, `tight_hold` écrasait 1,9
+images/s (la 1re générée en retard rejoint la 2e).

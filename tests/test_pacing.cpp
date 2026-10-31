@@ -770,3 +770,80 @@ TEST(pacing_even_motion_steps_every_refresh_alike) {
     CHECK(even.holdsPerS <= pinned.holdsPerS + 0.1);
     CHECK(even.latencyMs < pinned.latencyMs + 10.0);
 }
+
+namespace {
+// Fixed x4 at 30 fps (presents jittered like PRAGMATA's) on a 143.912 Hz
+// grid, pace_plan, each frame the content of its display time: the real
+// frame's lag behind its content, refreshes held, frames replaced, content
+// steps against display steps.
+struct Hold { double realLagMs, holdsPerS, replacedPerS, stepRmsMs; };
+Hold runHold(bool tight) {
+    const double P = 1000.0 / 143.912, I = 1000.0 / 30.0;
+    pacing::Grid g{true, 0.0, P};
+    g.lead = pacing::kX11Lead;
+    pacing::IntervalFilter filter;
+    pacing::MotionClock motion;
+    Config c;
+    struct F { double display, content; bool real; };
+    std::vector<F> shown;
+    double lastPresent = 0.0, lastLand = 0.0, lastPlanned = 0.0, lag = 4.0, interval = I, prevNow = 0.0;
+    uint32_t rng = 4242;
+    auto uniform = [&] { rng = rng * 1664525u + 1013904223u; return (rng >> 8) / double(1 << 24); };
+    int replaced = 0;
+    for (int f = 1; f <= 1200; ++f) {
+        const double now = f * I + 1.6 * 2.0 * (uniform() + uniform() + uniform() - 1.5);
+        const double dt = prevNow > 0.0 ? now - prevNow : I;
+        prevNow = now;
+        interval = filter.update(interval, dt);
+        FrameOrder o = FrameOrder::of(c, 4);
+        if (tight) o.hold = pacing::tightHold(P, 4, interval, o.real);
+        double base[8] = {}, planned[8] = {};
+        for (int k = 1; k < 4; ++k) base[k] = o.hold < 1.f ? interval * o.offset(k) : interval * k / 4;
+        pacing::planLands(now, lag, base, 4, g, lastPlanned, planned);
+        double span = motion.span(planned[3], dt, true);
+        if (!(span > 0.0)) span = dt;
+        const double gpu = 3.0 + 3.0 * uniform(), origin = now + gpu;
+        for (int k = 0; k < 4; ++k) {
+            double t = pacing::presentTargetMs(origin, interval, 4, o, k, lastPresent, lastLand, g, planned[k]);
+            t = std::max({t, origin, lastPresent + 0.01});
+            const double d = g.land(t);
+            const double content = now + (planned[k] - planned[3]) * dt / span;
+            if (!shown.empty() && shown.back().display == d) { shown.back() = {d, content, k == 3}; ++replaced; }
+            else shown.push_back({d, content, k == 3});
+            lastPresent = t;
+            lastLand = d;
+        }
+        lag += (gpu > lag ? 0.5 : 0.05) * (gpu - lag);
+    }
+    double realLag = 0.0, e2 = 0.0;
+    int reals = 0, holds = 0, steps = 0;
+    for (size_t i = 1; i < shown.size(); ++i) {
+        if (shown[i].display < 100 * I) continue;
+        if (shown[i].real) realLag += shown[i].display - shown[i].content, ++reals;
+        const double gap = shown[i].display - shown[i - 1].display;
+        holds += int(std::round(gap / P)) - 1;
+        const double e = (shown[i].content - shown[i - 1].content) - gap;
+        e2 += e * e, ++steps;
+    }
+    const double secs = (shown.back().display - 100 * I) / 1000.0;
+    return {realLag / std::max(1, reals), holds / secs, replaced / secs, std::sqrt(e2 / std::max(1, steps))};
+}
+} // namespace
+
+// tight_hold, 30 fps x4 on 144 Hz: the generated frames one refresh apart,
+// the real one sooner by about 4 ms; as many refreshes held (the screen has
+// 4.8 for 4 frames), none replaced, the motion as even.
+TEST(pacing_tight_hold_real_frame_sooner_same_holds) {
+    const Hold even = runHold(false), tight = runHold(true);
+    std::printf("tight_hold: real frame lag %.2f -> %.2f ms, held %.1f -> %.1f /s, replaced %.2f -> %.2f /s, "
+                "content step error rms %.3f -> %.3f ms\n", even.realLagMs, tight.realLagMs, even.holdsPerS,
+                tight.holdsPerS, even.replacedPerS, tight.replacedPerS, even.stepRmsMs, tight.stepRmsMs);
+    CHECK(even.realLagMs - tight.realLagMs > 3.0);
+    CHECK(tight.holdsPerS <= even.holdsPerS + 1.0);
+    CHECK(tight.replacedPerS <= even.replacedPerS + 0.1);
+    CHECK(tight.stepRmsMs <= even.stepRmsMs + 0.1);
+    // (nothing to give: x4 at 36 fps fills 144 Hz; x2 at 30 fps would hold the real frame 3.8 refreshes)
+    CHECK(pacing::tightHold(1000.0 / 143.912, 4, 1000.0 / 36.0, 3) == 1.f);
+    CHECK(pacing::tightHold(1000.0 / 143.912, 2, 1000.0 / 30.0, 1) == 1.f);
+    CHECK(pacing::tightHold(1000.0 / 143.912, 3, 1000.0 / 40.0, 2) < 1.f);
+}

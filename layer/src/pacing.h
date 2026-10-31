@@ -48,6 +48,15 @@ struct IntervalFilter {
 // Hyprland (1440p): 1.5 and 0.3 a second, against 9 and 15 for the virtual
 // grid at the phase it happened to take.
 constexpr double kX11Lead = 0.6;
+// ...and a present must be done that long before x11_clock's refresh to go
+// out with it (Xwayland's handling): measured on gamescope's Xwayland at
+// 144 Hz, first frames of a job sent 1.5 ms or more before their refresh all
+// made it, 0.5 to 1 ms before 64 % missed it (then two frames met in the
+// next refresh with tight_hold). pace_plan plans a frame for the first
+// refresh at least this long after it is usually ready, where frames go a
+// refresh apart (adaptive, tight_hold: x4 at 30 fps on 144 Hz, replaced 1.9
+// a second -> 0.1, the real frame still 2.7 ms sooner than evenly spaced).
+constexpr double kX11ReadyMarginMs = 1.5;
 
 // The display's refresh grid, when the present feedback knows it.
 struct Grid {
@@ -58,6 +67,9 @@ struct Grid {
     // a display's refresh (a present just after it would slip a whole
     // period); kX11Lead for x11_clock's.
     double lead = 0.3;
+    // How long before its refresh a frame must be ready to make it
+    // (kX11ReadyMarginMs for x11_clock's, 0 otherwise): pace_plan's margin.
+    double readyMarginMs = 0.0;
     // The first refresh at or after `ms`.
     double land(double ms) const { return lastMs + std::ceil((ms - lastMs) / periodMs) * periodMs; }
 };
@@ -114,7 +126,7 @@ inline void planLands(double nowMs, double lagMs, const double* baseMs, int fram
         lastPlannedMs = grid.lastMs + std::round((lastPlannedMs - grid.lastMs) / grid.periodMs) * grid.periodMs;
     if (lastPlannedMs > 0.0 && lastPlannedMs > grid.land(nowMs + lagMs) + 2.0 * grid.periodMs) lastPlannedMs = 0.0;
     for (int k = 0; k < frames; ++k) {
-        double land = grid.land(nowMs + lagMs + baseMs[k]);
+        double land = grid.land(nowMs + lagMs + grid.readyMarginMs + baseMs[k]);
         if (lastPlannedMs > 0.0 && land < lastPlannedMs + 0.5 * grid.periodMs) land = lastPlannedMs + grid.periodMs;
         landMs[k] = land;
         lastPlannedMs = land;
@@ -171,7 +183,7 @@ struct EvenClock {
             return 0;
         }
         highDtMs = std::max(dtMs, highDtMs - 0.002);
-        const double target = highDtMs + std::max(readyLagMs, 0.0) + g.lead * P + 0.5;
+        const double target = highDtMs + std::max(readyLagMs, 0.0) + std::max(g.lead * P, g.readyMarginMs) + 0.5;
         const double earliest = g.land(nowMs + std::max(readyLagMs, 0.0) + g.lead * P);
         double first = earliest;
         if (lastPlannedMs > 0.0 && lagMs > 0.0) {
@@ -205,6 +217,23 @@ inline float effectiveHold(float hold, float cfgHold, double hz, int mult, doubl
     const double savedMs = (1.0 - hold) * real * intervalMs / std::max(1, mult);
     if (cfgHold < 0.f && (hz <= 0.0 || savedMs < 2.0)) hold = 1.f;
     return hold;
+}
+
+// tight_hold: a fixed multiplier whose frames fall short of the refresh rate
+// by less than a refresh and a quarter per game frame (30 fps x4 on 144 Hz:
+// 4.8 refreshes for 4 frames) holds a frame a refresh more in most game
+// frames anyway — wherever the even spacing happens to put it. With the
+// generated frames one refresh apart, that refresh goes to the real frame,
+// which comes (m - 1) * (I/m - P) sooner (x4 at 30 fps on 144 Hz: 4.2 ms;
+// x3 at 40 fps: 2.8): as many refreshes held, the sharpest frame the one
+// shown longer. The hold that spaces them so (FrameOrder::hold), or 1 —
+// at most one frame a refresh, more than that or under 2 ms saved: unchanged.
+inline float tightHold(double periodMs, int mult, double intervalMs, int real) {
+    if (!(periodMs > 0.0) || !(intervalMs > 0.0) || mult < 2 || real < 1) return 1.f;
+    const double perFrame = intervalMs / mult;
+    if (perFrame <= periodMs || intervalMs > (mult + 1.25) * periodMs) return 1.f;
+    const double savedMs = real * (perFrame - periodMs);
+    return savedMs >= 2.0 ? float(periodMs * mult / intervalMs) : 1.f;
 }
 
 // A job that started too late for its first frame to make the first refresh
