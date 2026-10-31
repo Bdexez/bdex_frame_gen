@@ -2955,3 +2955,14 @@ Toutes tuiles sautées : interp 4,72 → 3,55 ms à 1440p (mode 0 = 1,17 ms des
 un texel de marge) restent à 1, 2, 4 ou 8 px d'écran les uns des autres sont
 presque absentes d'une scène 3D en mouvement (parallaxe) : 4,69 / 4,62 / 4,57
 / 4,59 ms. Retiré sans commit.
+
+**`mosaic_blur` auto sur GPU dédié** (21/10) : les 9 enregistrements de la
+nuit, préréglage quality : +0,045 dB en ×2, +0,059 en ×4, **chaque séquence
+en hausse** (pire +0,01), scintillement −0,05 / −0,135 ; à l'œil, en ×4
+entre images consécutives (séquence où chaque image enregistrée est une
+entrée : `ingame/` du scratchpad), la jambe et le bras du personnage
+deviennent un flou doux au lieu d'une mosaïque. `false_detail` gardé (sans
+lui −0,02). `subpixel_lk=2` + `mosaic_blur` : même moyenne mais pertes
+locales (−0,05 / −0,14 sur le mouvement) ; bicubique : scintillement +0,12
+en ×4 — non retenus. Coût ~0,9 ms par image du jeu à 1440p ×4. Coupée dans
+les tests de référence (corpus, invariant, hors ligne, formats).
