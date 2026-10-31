@@ -26,7 +26,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   with the game's own limiter (22 ms). Real DXVK and VKD3D-Proton under Wine
   on an RTX 3060 Ti, 30 fps cap: frame start to GPU done 34.4 -> 0.8 ms
   (DXVK 2.5.3), 34.5 -> 0.8 ms (Proton 10's DXVK), 66.7 -> 0.8 ms
-  (VKD3D-Proton 3.0.1).
+  (VKD3D-Proton 3.0.1). Under Proton Experimental in Steam Linux Runtime
+  4.0, as Steam runs games: Direct3D 12 66.6 -> 0.7 ms (33.4 -> 0.7 ms with a
+  waitable swapchain at latency 2; at latency 1 nothing queued before, 0.6 ms
+  more now), Direct3D 11 34.4 -> 0.7 ms.
 - Without present wait in the driver (lavapipe), or with `fps_limit_wait = 0`,
   the limit holds the present as before. Reflex stays as it was (still off
   for DXVK, whose markers would name presents the driver never sees).
