@@ -3001,3 +3001,6 @@ retenue inhérente (25 ms à ×4/30) domine ; priorité haute de la synthèse
 refusée au processus (`synth_priority` inutilisable sans privilège). Piège
 de banc : sous zsh, `$X` non protégé ne se découpe pas (`${=X}`) — deux
 réglages devenaient une ligne ignorée.
+`tight_hold` étendu à l'hybride (`hybrid_predict=1`, ×4) : réelle remise à
+26,0 ms dans les deux cas — deux images avant la réelle ne gagnent que
+2 × 1,4 ms, que la marge de prêt X11 (1,5 ms) reprend. Non retenu.
