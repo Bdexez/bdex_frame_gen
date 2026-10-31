@@ -338,6 +338,15 @@ apply live; **Arrêter**, or closing the panel, stops it. Every Vulkan game is
 armed meanwhile (the layer passes its frames through), desktop programs
 excepted (browsers, Steam, gamescope, GTK 4 applications).
 
+**Limite d'images du jeu** (the game's frame cap, before generation): a
+slider from 0 (none) to 240 fps, with a field for an exact rate, applied live
+to the running game (written once the slider rests). Marks at the usual
+rates and, unlabelled, at the caps that fill the screen (144 Hz: 72, 48, 36);
+*Limite automatique* caps at screen ÷ multiplier instead. *Limite sans latence
+ajoutée* (`FPS_LIMIT_WAIT`, on) holds Direct3D games under Proton where they
+wait for their earlier frames, not in DXVK's / VKD3D-Proton's present thread;
+the game's status then says « Limite d'images retenue dans l'attente du jeu ».
+
 **GPU calibration** (*Calibration du GPU*, measured by itself at the first
 start; `bdex-framegen --calibrate [--apply]` from a terminal): `bdex-calibrate`
 runs the engine on synthetic frames at the screen's size and refresh, for the

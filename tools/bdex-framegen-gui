@@ -96,11 +96,26 @@ _EN = {
  'fenêtre choisie': 'window picked',
  'Clique sur la fenêtre du jeu': "Click the game's window",
  'Méthode': 'Method',
+ "Limite sans latence ajoutée (jeux Direct3D sous Proton)": 'Frame limit without added latency (Direct3D games under Proton)',
+ "Retient le jeu là où il attend ses images précédentes, avant qu'il lise ses entrées, au lieu du fil de présentation de DXVK / VKD3D-Proton : 1 à 2 images de latence en moins. Pris en compte au lancement du jeu":
+     "Holds the game where it waits for its earlier frames, before it reads its input, instead of DXVK's / VKD3D-Proton's present thread: one to two frames of latency less. Applies when the game starts",
+ "Limite d'images retenue dans l'attente du jeu, avant qu'il lise ses entrées : pas de latence ajoutée":
+     "Frame limit held in the game's wait, before it reads its input: no latency added",
+ "Limite d'images retenue au sommeil Reflex / Anti-Lag du jeu, avant qu'il lise ses entrées":
+     "Frame limit held at the game's Reflex / Anti-Lag sleep, before it reads its input",
  "Limite d'images sur un jeu Direct3D (DXVK / VKD3D) retenu à sa présentation (pilote sans present_wait, ou fps_limit_wait coupé) : le jeu garde une à trois images d'avance — la limite d'images du jeu (ou Reflex / Anti-Lag activé dans le jeu) est plus réactive":
      "Frame rate cap on a Direct3D game (DXVK / VKD3D) held at its present (a driver without present wait, or fps_limit_wait off): the game keeps one to three frames ahead — the game's own frame cap (or Reflex / Anti-Lag on in the game) responds faster",
  "Cadence de l'écran non mesurée : hors VRR, en ×3 et plus les images tombent entre deux rafraîchissements — « Limite d'images du jeu » sur Auto, ou un écran à un multiple exact du jeu (30 i/s ×4 → 120 Hz)":
      'Screen timing not measured: without VRR, at x3 and above frames fall between refreshes — set « Game frame rate cap » to Auto, or the screen to an exact multiple of the game (30 fps x4 -> 120 Hz)',
  "Limite d'images du jeu :": 'Game frame rate cap:',
+ "Limite d'images du jeu (ou tape une valeur en i/s, ex. 58) :": 'Game frame rate cap (or type a rate in fps, e.g. 58):',
+ 'Avant la génération : une base régulière donne une image fluide. Glisser pour choisir, 0 = aucune limite':
+     'Before generation: an even base rate gives smooth motion. Drag to choose, 0 = no cap',
+ 'Limite automatique : écran ÷ multiplicateur': 'Automatic cap: screen ÷ multiplier',
+ 'Une image du jeu tous les N rafraîchissements (écran à fréquence fixe) ; le curseur ne sert plus':
+     'One game frame every N refreshes (fixed-refresh screens); the slider is not used',
+ 'aucune': 'none',
+ 'i/s': 'fps',
  ' · jeu limité à {} i/s': ' · game capped at {} fps',
  " · jeu limité à l'écran ÷ multiplicateur": ' · game capped at screen ÷ multiplier',
  "l limite d'images du jeu (avant la génération)": 'l game frame rate cap (before generation)',
@@ -991,8 +1006,12 @@ def _combo_index(table, value, default=0):
 
 # Options with a control of their own in the main groups, not repeated in
 # « Réglages avancés » (their value still lives in Options.values).
-PROMOTED = {"fps_limit"}
+PROMOTED = {"fps_limit", "fps_limit_wait"}
 LIMIT_STEPS = (30, 36, 40, 45, 48, 50, 60, 72, 90, 120)
+# « Limite d'images du jeu »: a slider over 0 (none) .. LIMIT_MAX i/s, marks
+# at the usual rates (and, unlabelled, at the caps that fill the screen).
+LIMIT_MAX = 240
+LIMIT_MARKS = (30, 60, 90, 120, 180, 240)
 
 
 def limit_choices(current="0"):
@@ -2109,6 +2128,12 @@ def describe_entry(e):
     prefix = tr("En pause — ") if state == "paused" else ""
     lines = [prefix + " · ".join(parts)]
     eng = e.get("engine", "").lower()
+    if e.get("cap_point") == "wait":
+        # (as statusDescribe in status.cpp: fps_limit_wait in force)
+        lines.append(tr("Limite d'images retenue dans l'attente du jeu, avant qu'il lise ses entrées : "
+                        "pas de latence ajoutée"))
+    elif e.get("cap_point") == "input":
+        lines.append(tr("Limite d'images retenue au sommeil Reflex / Anti-Lag du jeu, avant qu'il lise ses entrées"))
     if e.get("cap_point") == "present" and ("dxvk" in eng or "vkd3d" in eng):
         # (as statusDescribe in status.cpp: DXVK / VKD3D queue frames ahead of a held present — where
         # fps_limit_wait cannot hold them at their present wait)
@@ -2616,17 +2641,61 @@ class Window(Adw.ApplicationWindow):
         self.mult_row.connect("notify::selected", self.on_change)
         g.add(self.mult_row)
         # The game's own rate, capped before generation: an even base gives
-        # evenly spaced generated frames (fps_limit, applied live).
-        self.limit_choices = limit_choices(self.opt.values.get("fps_limit", "0"))
-        hint = limit_hint(display_hz())
-        self.limit_row = Adw.ComboRow(
+        # evenly spaced generated frames (fps_limit, applied live). A slider
+        # for any rate (0 = none) with a field for an exact one; « Auto »:
+        # screen ÷ multiplier. Its moves are written once it rests
+        # (_on_limit_moved): a game reloads the file at each write.
+        cur = limit_value(self.opt.values.get("fps_limit", "0"))
+        hz = display_hz()
+        hint = limit_hint(hz)
+        manual = 0 if cur == "auto" else int(cur)
+        self.limit_adj = Gtk.Adjustment(lower=0, upper=max(LIMIT_MAX, manual), step_increment=1, page_increment=10,
+                                        value=manual)
+        self.limit_scale = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=self.limit_adj, digits=0,
+                                     draw_value=False, hexpand=True, valign=Gtk.Align.CENTER)
+        self.limit_scale.set_round_digits(0)
+        for v in LIMIT_MARKS:
+            self.limit_scale.add_mark(v, Gtk.PositionType.BOTTOM, str(v))
+        for m in (2, 3, 4):   # (the caps that fill this screen, as the hint lists them)
+            if hz > 0 and 25 <= hz / m <= LIMIT_MAX and round(hz / m) not in LIMIT_MARKS:
+                self.limit_scale.add_mark(round(hz / m), Gtk.PositionType.TOP, None)
+        self.limit_spin = Gtk.SpinButton(adjustment=self.limit_adj, digits=0, numeric=True, valign=Gtk.Align.CENTER,
+                                         width_chars=4)
+        self.limit_label = Gtk.Label(valign=Gtk.Align.CENTER, width_chars=7, xalign=0)
+        self.limit_row = Adw.ActionRow(
             title=tr("Limite d'images du jeu"),
             subtitle=tr("Avant la génération : une base régulière donne une image fluide. "
-                        "Auto = écran ÷ multiplicateur") + ("\n" + hint if hint else ""),
-            model=Gtk.StringList.new([c[0] for c in self.limit_choices]))
-        self.limit_row.set_selected(_combo_index(self.limit_choices, limit_value(self.opt.values.get("fps_limit"))))
-        self.limit_row.connect("notify::selected", self.on_change)
+                        "Glisser pour choisir, 0 = aucune limite") + ("\n" + hint if hint else ""))
+        for w in (self.limit_spin, self.limit_label):
+            self.limit_row.add_suffix(w)
         g.add(self.limit_row)
+        # (the slider on a line of its own, the row's whole width)
+        self.limit_slider_row = Gtk.ListBoxRow(activatable=False, selectable=False)
+        box = Gtk.Box(margin_start=12, margin_end=12, margin_top=4, margin_bottom=10)
+        box.append(self.limit_scale)
+        self.limit_slider_row.set_child(box)
+        g.add(self.limit_slider_row)
+        self._limit_timer = 0
+        self._show_limit()
+        self.limit_adj.connect("value-changed", self._on_limit_moved)
+        self.limit_auto_row = Adw.SwitchRow(
+            title=tr("Limite automatique : écran ÷ multiplicateur"),
+            subtitle=tr("Une image du jeu tous les N rafraîchissements (écran à fréquence fixe) ; "
+                        "le curseur ne sert plus"),
+            active=cur == "auto")
+        self.limit_auto_row.connect("notify::active", self.on_change)
+        g.add(self.limit_auto_row)
+        # fps_limit_wait: where the limit holds a Direct3D game under Proton
+        # (DXVK, VKD3D-Proton) — its wait for its earlier frames, not their
+        # present thread (frames queued behind it).
+        self.limit_wait_row = Adw.SwitchRow(
+            title=tr("Limite sans latence ajoutée (jeux Direct3D sous Proton)"),
+            subtitle=tr("Retient le jeu là où il attend ses images précédentes, avant qu'il lise ses entrées, "
+                        "au lieu du fil de présentation de DXVK / VKD3D-Proton : 1 à 2 images de latence en moins. "
+                        "Pris en compte au lancement du jeu"),
+            active=self.opt.values.get("fps_limit_wait", "1") == "1")
+        self.limit_wait_row.connect("notify::active", self.on_change)
+        g.add(self.limit_wait_row)
         self.mode_row = Adw.ComboRow(title="Mode",
                                      subtitle=tr("L'extrapolation supprime la latence ajoutée"),
                                      model=Gtk.StringList.new([m[0] for m in MODES]))
@@ -2770,7 +2839,10 @@ class Window(Adw.ApplicationWindow):
         i = self.gpu_row.get_selected()
         o.gpu = self.gpus[i - 1] if 0 < i <= len(self.gpus) else ""
         if "fps_limit" in o.values:
-            o.values["fps_limit"] = self.limit_choices[self.limit_row.get_selected()][1]
+            o.values["fps_limit"] = "auto" if self.limit_auto_row.get_active() else \
+                str(int(round(self.limit_adj.get_value())))
+        if "fps_limit_wait" in o.values:
+            o.values["fps_limit_wait"] = "1" if self.limit_wait_row.get_active() else "0"
         for key, (spec, row) in self.opt_rows.items():
             if spec["kind"] == "spin":
                 v = row.get_value()
@@ -2782,8 +2854,27 @@ class Window(Adw.ApplicationWindow):
             else:
                 o.values[key] = row.get_text().strip()
 
+    def _show_limit(self):
+        n = int(round(self.limit_adj.get_value()))
+        self.limit_label.set_text(tr("aucune") if n == 0 else tr("i/s"))
+
+    def _on_limit_moved(self, *_):
+        self._show_limit()
+        if self._loading:
+            return
+        if self._limit_timer:
+            GLib.source_remove(self._limit_timer)
+        self._limit_timer = GLib.timeout_add(300, self._limit_settled)
+
+    def _limit_settled(self):
+        self._limit_timer = 0
+        self.on_change()
+        return False
+
     def refresh_sensitivity(self):
         o = self.opt
+        for r in (self.limit_scale, self.limit_spin, self.limit_label):
+            r.set_sensitive(not self.limit_auto_row.get_active())
         for r in (self.preset_row, self.mult_row, self.mode_row):
             r.set_sensitive(o.generate)
         for r in (self.scale_row, self.filter_row, self.sharp_row):
@@ -2896,7 +2987,9 @@ def _text_options(opt):
             + (tr(" · mode Jeu : tous les jeux sans le panneau") if opt.without_panel else ""))
 
 
-def _text_pick(title, table, current):
+def _text_pick(title, table, current, free=None):
+    """A value of `table` by its number; `free(n)`: a number past the table's
+    end that is a value of its own (a frame rate typed in) where it holds."""
     print(title)
     for i, (label, value) in enumerate(table, 1):
         print(f"  {i}) {label}{tr('   ← actuel') if value == current else ''}")
@@ -2906,6 +2999,8 @@ def _text_pick(title, table, current):
         return current
     if answer.isdigit() and 1 <= int(answer) <= len(table):
         return table[int(answer) - 1][1]
+    if free and answer.isdigit() and free(int(answer)):
+        return answer
     return current
 
 
@@ -3116,7 +3211,8 @@ def text_main():
                 if hint:
                     print(hint)
                 cur = limit_value(opt.values["fps_limit"])
-                opt.values["fps_limit"] = _text_pick(tr("Limite d'images du jeu :"), limit_choices(cur), cur)
+                opt.values["fps_limit"] = _text_pick(tr("Limite d'images du jeu (ou tape une valeur en i/s, ex. 58) :"),
+                                                     limit_choices(cur), cur, free=lambda n: 15 <= n <= 1000)
                 save()
             elif cmd == "o":
                 opt.mode = _text_pick(tr("Mode :"), MODES, opt.mode)

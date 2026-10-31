@@ -6,6 +6,16 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### A slider for the game's frame cap in the panel (2026-10-31)
+
+- « Limite d'images du jeu » is now a slider from 0 (none) to 240 fps with a
+  field for an exact rate, instead of a list of fixed caps; marks at the
+  usual rates and, unlabelled, at the caps that fill the screen. Applied live
+  to the running game, written once the slider rests. *Limite automatique*
+  (screen ÷ multiplier) is a switch of its own; *Limite sans latence ajoutée*
+  (`fps_limit_wait`) sits under it, and a game's status says where the cap
+  holds it. The text mode takes a typed rate as well.
+
 ### The frame limit adds no latency to Direct3D games under Proton (2026-10-31)
 
 - `fps_limit` held DXVK's and VKD3D-Proton's present thread, which the game
