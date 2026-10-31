@@ -3833,3 +3833,25 @@ débit tenu). Activation, retrait et remise de la limite en cours de partie
 vérifiés (une seule demande de swapchain). Installé en 64/32 bits
 (`tools/install.sh`), SHA256 identiques aux builds (x64 `14cfbdd99ce789f3…`,
 x86 `53997536b48a43ea…`) : relancer le jeu et le panneau. Aucun push.
+
+### 31/10 (suite) — curseur de limite, confirmation en vrai jeu
+
+- **Panneau** : « Limite d'images du jeu » devient un curseur de 0 (aucune)
+  à 240 i/s avec un champ pour une valeur exacte, écrit une fois le curseur
+  arrêté ; « Limite automatique » (écran ÷ multiplicateur) est un
+  interrupteur ; « Limite sans latence ajoutée » (`fps_limit_wait`) passe sur
+  la page principale (elle était repliée dans « Compatibilité » : la
+  demande de l'utilisateur était « je ne trouve pas la feature »). L'état
+  d'un jeu dit où la limite le retient (`cap_point` wait / input).
+- **Confirmé dans un vrai jeu** : State of Decay 2 (DXVK, Proton
+  Experimental, RTX 3060 Ti), limite 60 i/s au curseur, ×3 : statut
+  `generating`, `fps_limit=60.0`, **`cap_point=wait`**. Le jeu tournait à
+  52,8 i/s : `gpu_headroom` l'avait plafonné à 52,7 (GPU occupé à 88 %),
+  par le même point d'attente.
+- **Incident** : un panneau lancé pour une capture (config et cache privés,
+  gamescope sans tête) a vu le jeu en cours et `mirror_config()` a recopié
+  sa config de test sur la vraie `~/.config/bdex-framegen.conf` (aucune
+  sauvegarde). Restaurée, avec l'accord de l'utilisateur, depuis le rapport
+  du 20/10 (quality, ×4, overlay 2). Ne jamais lancer le panneau sur l'hôte
+  pendant qu'un jeu tourne : tests du panneau par `panel-check.sh` seulement.
+- Poussé sur `origin/main` le 31/10 avec l'accord de l'utilisateur.
