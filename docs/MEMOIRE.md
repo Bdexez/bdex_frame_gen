@@ -2948,3 +2948,10 @@ identiques octet pour octet (PRAGMATA et Cyberpunk, ×2 et ×4,
 `rot_weight=1`) ; flux à 1440p 1,64–1,73 → 1,60 ms seulement : le coût de
 `rot_weight` (0,69 ms) est le reclassement lui-même (beaucoup de blocs
 ambigus sur ces images agrandies), pas l'occupation.
+
+**Écarté : sauter les tuiles « une seule motion » dans `false_detail`** (21/10).
+Toutes tuiles sautées : interp 4,72 → 3,55 ms à 1440p (mode 0 = 1,17 ms des
+1,69 ; modes 1 et 3 ≈ 0,5). Mais les tuiles dont les vecteurs (deux sens,
+un texel de marge) restent à 1, 2, 4 ou 8 px d'écran les uns des autres sont
+presque absentes d'une scène 3D en mouvement (parallaxe) : 4,69 / 4,62 / 4,57
+/ 4,59 ms. Retiré sans commit.
