@@ -4015,3 +4015,8 @@ L'utilisateur, après tout cela : « sur oblivion remastered j'ai encore un
 - Anti-Lag (AMD) inchangé : VKD3D appelle `vkAntiLagUpdateAMD` sans ce
   verrou. `latency_probe` utilise `--reflex-lock` (un sommeil revenu dans
   l'appel y coûterait une image) ; validation : course `reflexcap`.
+- **PRAGMATA** (RE Engine, VKD3D, Reflex, ×3 à 30 i/s), même protocole :
+  limiteur du jeu — simulation → présent 4,8–6,0 ms, présent → écran
+  48–49 ; limite de la couche (`cap_point=input`) — 6,0–7,8 ms, 48–50.
+  Environ 1,5 ms de plus avant le présent (4 % d'une image), rien après ;
+  l'utilisateur : « pareil que le jeu ».
