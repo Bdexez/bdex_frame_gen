@@ -3804,3 +3804,17 @@ latence qu'elle ajoute, « diminuer drastiquement » cette latence.
   `--ignore-resize`) ; `latency_probe` vérifie ce cas (≤ limiteur du jeu
   + 4 ms) ; `validation` : cas `interpolate:waitcap` (0 message) ;
   `proton-check.sh` : sondes sans limite propre sous la limite de la couche.
+
+Vérifications : 121 tests unitaires (dont le scénario « jeu traduit »),
+tests sans fenêtre (`determinism` : `fps_limit_wait` sans effet sur les
+images), tests d'affichage dans gamescope sans tête (intégration, validation
+avec le nouveau cas `interpolate:waitcap` sans aucun message, stress,
+acquisition, multithread, `latency_probe` avec le cas fil de présentation,
+`gamescope_limit` — instable une fois sur trois relances, chemin natif
+inchangé), réplique Docker de la CI Linux (31 tests, 0 échec, invariant du
+matcher identique, PSNR 29,53 / 23,72 dB), MinGW x64/i686,
+`proton-check.sh` (lavapipe sans present wait : la limite reste au présent,
+débit tenu). Activation, retrait et remise de la limite en cours de partie
+vérifiés (une seule demande de swapchain). Installé en 64/32 bits
+(`tools/install.sh`), SHA256 identiques aux builds (x64 `14cfbdd99ce789f3…`,
+x86 `53997536b48a43ea…`) : relancer le jeu et le panneau. Aucun push.
