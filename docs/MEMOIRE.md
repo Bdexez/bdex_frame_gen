@@ -3917,3 +3917,31 @@ framegen le limiteur continue son application ».
 - Piège de banc : une copie du script hors du dépôt ne trouve plus
   `tools/layer_env.sh` (chemin relatif) et charge la couche **installée**
   sans le dire — le premier essai donnait 20/20/20/20 avec le correctif.
+
+### 31/10 (fin, 3) — limite Steam lue à 60 i/s sous gamescope (course)
+
+Trouvé en vérifiant le correctif précédent : `gamescope_limit` (cas « aware »,
+le jeu suit la limite de gamescope comme DXVK ≥ 2.3 / VKD3D ≥ 2.12) échouait
+3 fois sur 8, avec ou sans ce correctif (commit poussé 9044435 : 1 sur 4).
+
+- **Symptôme** : sous la limite Steam à 30, la couche annonçait « frame
+  limit on (…, 60 fps) » ; l'adaptatif visait 60, le jeu tombait à 17 i/s,
+  140 à 160 ms du present à l'écran.
+- **Cause** : le fichier du limiteur bascule avant que le nouveau cycle
+  (33,33 ms) n'atteigne la swapchain A, qui lit encore 16,67 ms ; la couche
+  WSI fait recréer la swapchain (B), qui reçoit 33,33 ms dès sa création.
+  La première lecture d'une swapchain passait pour le défaut de la couche
+  WSI : le cycle retenu pour la surface (16,67 ms, lu par A juste avant)
+  l'emportait, pour toujours (B ne change plus).
+- **Correctif** : `pacing::GamescopeCycle` — une lecture autre que le défaut
+  (16 666 666 ns, `movq $0xfe502a` à la création de chaque swapchain dans
+  `libVkLayer_FROG_gamescope_wsi_x86_64.so`) vient de gamescope : c'est
+  celle de la swapchain. `followSurface` (swapchain réelle recréée sous la
+  même surface) repart du défaut. Test `pacing_gamescope_cycle_…`.
+- **Mesuré** : 8 essais sur 8 réussis, la course vue dans 3 (A lit 60 à la
+  bascule, B prend 30 dès sa première lecture).
+- Non traité (jamais observé, 16 levées de limite justes) : la levée de la
+  limite dans l'autre sens — la swapchain recréée lit 16,67 ms, que
+  gamescope l'ait envoyé ou non, et garde le cycle de la surface si la
+  précédente n'a pas lu 16,67 avant sa destruction. Piste si ça apparaît :
+  un cycle retenu par état du limiteur.

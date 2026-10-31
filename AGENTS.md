@@ -1100,7 +1100,11 @@ x2/x3/x4), sauf le correctif HDR (les chemins SDR restent identiques).
   chaque bascule. `refresh_cycle` = celui de la limite. **Bug gamescope** :
   il n'envoie le cycle d'une surface que s'il change → une swapchain
   recréée garde le défaut de la couche WSI (16,67 ms) → cycle retenu par
-  surface (`DeviceData::gamescopeCycles`).
+  surface (`DeviceData::gamescopeCycles`). Une lecture autre que ce défaut
+  (16 666 666 ns, posé sur chaque swapchain : `movq $0xfe502a` dans la
+  couche) vient de gamescope : celle de la swapchain (`pacing::GamescopeCycle`)
+  — la swapchain recréée pour la limite la reçoit dès sa création, et la
+  prendre pour le défaut gardait 60 i/s sous une limite à 30 (31/10).
 - Sous la limite : multiplicateur adaptatif visant la limite (quel que soit
   le multiplicateur), le worker présente une image une fois la précédente
   affichée (`waitDisplayed`, `fbDoneId_`), un jeu sans image générée attend

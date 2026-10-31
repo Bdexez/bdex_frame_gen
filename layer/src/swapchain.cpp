@@ -520,6 +520,7 @@ void VirtualSwapchain::followSurface() {
     real_ = fresh;
     realNow_ = real_;
     realOutOfDate_ = VK_NULL_HANDLE;  // (the worker is idle)
+    gsCycle_ = {};                    // (gamescope's WSI layer starts it at its default again)
     fg_ = std::move(fg);
     fg_->setQualityLevel(budget_.level());
     generating_ = generating;

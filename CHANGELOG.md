@@ -6,6 +6,22 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Steam's frame limit is read right when a game re-creates its swapchain (2026-10-31)
+
+- Under gamescope (SteamOS Game Mode), when Steam's framerate limit came on
+  in a game that follows it (DXVK ≥ 2.3, VKD3D-Proton ≥ 2.12: gamescope has
+  it re-create its swapchain), the layer could keep the display's refresh
+  rate as the limit: 60 fps under a 30 fps limit, the frame generation
+  targeting 60, the game held at 17 fps with 140–160 ms from present to
+  screen (`gamescope_limit`, 3 runs in 8). The new swapchain gets the limit's
+  cycle from gamescope right away, but its first reading was taken for the
+  WSI layer's default (60 Hz), and the cycle the previous swapchain had read
+  just before the limit's reached it stood instead. A cycle other than that
+  default (16,666,666 ns, which the WSI layer sets on each swapchain) is now
+  the swapchain's own (`pacing::GamescopeCycle`). With it, 8 runs in 8 pass,
+  the race seen in 3 of them. A real swapchain re-created underneath (a
+  resized surface) starts over from the default as well.
+
 ### The frame cap holds only the game the panel started (2026-10-31)
 
 - Under the control panel's model (`require_app`), `fps_limit` held every

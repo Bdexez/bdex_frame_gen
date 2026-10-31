@@ -683,15 +683,11 @@ void VirtualSwapchain::pollGamescope() {
         return;
     }
     uint64_t ns = cycle.refreshDuration;
-    if (gsFirstCycle_ == 0) gsFirstCycle_ = ns;
-    else if (ns != gsFirstCycle_) gsCycleChanged_ = true;
     {
         // A value of its own once gamescope sent one; until then, the
         // surface's last (DeviceData::gamescopeCycles).
         std::lock_guard<std::mutex> lock(dev_.gamescopeMutex);
-        uint64_t& known = dev_.gamescopeCycles[statusKey(realInfo_.surface)];
-        if (gsCycleChanged_ || known == 0) known = ns;
-        else ns = known;
+        ns = gsCycle_.take(ns, dev_.gamescopeCycles[statusKey(realInfo_.surface)]);
     }
     gsHz_ = 1e9 / double(ns);
     gsLimited_ = limited;

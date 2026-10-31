@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 namespace bdex {
 namespace pacing {
@@ -483,6 +484,32 @@ struct CapSchedule {
         return at;
     }
     void reset() { nextMs = 0.0; }
+};
+
+// The refresh cycle of one of our swapchains under gamescope
+// (VirtualSwapchain::pollGamescope), from what its WSI layer answers: its
+// default (60 Hz) until gamescope sends the swapchain one, and gamescope sends
+// a surface's cycle only when it changes — a swapchain re-created on the
+// surface (the WSI layer forces that when Steam's framerate limit goes on or
+// off) can keep the default, the surface's last cycle (`knownNs`,
+// DeviceData::gamescopeCycles) then stands.
+struct GamescopeCycle {
+    static constexpr uint64_t kWsiDefaultNs = 16'666'666;  // (the WSI layer sets it on each swapchain)
+    uint64_t firstNs = 0;  // this swapchain's first reading
+    bool own = false;      // gamescope sent this swapchain a cycle: its readings stand
+    // The cycle in force from a reading; the surface's last updated.
+    uint64_t take(uint64_t readNs, uint64_t& knownNs) {
+        if (firstNs == 0) firstNs = readNs;
+        // A changed cycle, or any but the default, is one gamescope sent. A
+        // swapchain re-created when the limit came on can have the limit's
+        // from its first reading: taken for the default, it gave way to the
+        // surface's last, the display's — the previous swapchain had read it
+        // just before the limit's cycle reached it (until 31/10: 60 fps kept
+        // under a 30 fps limit, the game held at 17, in 3 runs of 8).
+        if (readNs != firstNs || readNs != kWsiDefaultNs) own = true;
+        if (own || knownNs == 0) knownNs = readNs;
+        return knownNs;
+    }
 };
 
 // gpu_headroom: a game the GPU cannot keep up with (its rendering and our
