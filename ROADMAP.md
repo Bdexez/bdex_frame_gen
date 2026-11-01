@@ -62,8 +62,9 @@ log is in [`CHANGELOG.md`](CHANGELOG.md).
   objects moving on their own**, on 2–4 % of the pixels. Sub-pixel
   refinement, bicubic synthesis, the learned flow, more pyramid levels and
   more iterations change nothing there. Other weak spots: particles
-  (17.7 dB), brightness pulses (worse than the plain cross-fade), and
-  rotation / zoom (each block carries a translation only).
+  (17.7 dB) and rotation / zoom (each block carries a translation only);
+  brightness pulses are now better than the plain cross-fade (corpus
+  `pulse` 35.3 dB against 28.7, 2026-10-21).
   **Measured on 2026-10-05 (`tools/edge_bench/`): it is occlusion.** Pixels
   visible in only one of the two frames hold 51–78 % of all the error; the
   flow's resolution is not the cause (`flow_scale=1` is worse). Picking the
@@ -71,7 +72,18 @@ log is in [`CHANGELOG.md`](CHANGELOG.md).
   front cannot be told reliably from two frames: next step, use frame N−2
   from the history ring (MEMOIRE §9; prototype on branch
   `wip/occlusion-layers`).
-- **x4 on a 30 fps game** (2026-10-13 to 15): the cadence fills every
+- **x4 on a 30 fps game** (2026-10-13 to 21): x4 is again exactly 4 frames a
+  game frame by default (the player's choice, 2026-10-20: `refresh_fill`
+  off); on 144 Hz that leaves ~24 refreshes a second held whatever the
+  pacing (the panel says so and names the even refresh rate: 120 Hz).
+  `tight_hold` gives that refresh to the real frame (−2.8 ms), the Xwayland
+  grid holds under a loaded compositor, `mosaic_blur` softens the moving
+  character's mosaics, and `hybrid_predict=1` halves the latency for one
+  short prediction (−0.4 dB). Still open there: subtitles and HUD text over
+  a moving semi-transparent box (text-line blocks take the zero vector; a
+  masked re-match moved the letters' anti-aliased edges with the scene,
+  −1 dB: judge on `record_scale = 1` recordings), near objects leaving the
+  picture in a turn, whip pans. Earlier: the cadence fills every
   refresh (`refresh_fill`, `virtual_grid`, `pace_plan`), and the synthesis
   lost its main visible defects on these benches — the block mosaic over
   blurred content (`false_detail`), the smeared screen edges in camera turns
