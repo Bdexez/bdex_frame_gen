@@ -3099,3 +3099,11 @@ Options en attente à vitesse réelle (`make_game.py` ×4, 21/10) :
 `flow_temporal` +0,002, `synth_bicubic` +0,003, `subpixel_lk=2` + bicubique
 +0,007 : neutres ; `static_guard` −0,063, `occlusion_strength=1` −0,283 :
 négatifs.
+Suite de la revue à vitesse réelle (`make_game.py` ×4, gain si l'option est
+coupée) : `hud_mask` −0,89 dB (arêtes −2,1), `global_motion` −0,60,
+`hud_avoid` −0,50, `border_fill` −0,20, `temporal_prediction` −0,17,
+`border_predict` −0,10, `static_soft` −0,10 (arêtes −1,1) — tous utiles ;
+`scene_cut_local` ±0 ; `interp_accel` +0,017 (le compromis connu : jeux
+enregistrés +0,03 à +0,17 et moins de scintillement, 0,1 ms — gardé) ;
+`zero_bias=0` → biais standard +0,021, arêtes +0,35, mais −0,06 sur `fps`
+et `strafe` — gardé (décision du 03/10 sur de vrais jeux).
