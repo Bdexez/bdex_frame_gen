@@ -3086,3 +3086,9 @@ enregistrements ×2 +0,067 / ×4 +0,089, prédites : extrapolation +0,043
 par image du jeu à 1440p ×4 (la carte des immobiles 0,1–0,2). **Règle :
 toute option de synthèse se juge aussi sur `make_game.py` ×4**, pas sur les
 seuls enregistrements (à 30 i/s, leur ×4 simule un jeu à 7,5 i/s).
+Les options automatiques du GPU dédié vues sur `make_game.py` ×4 (21/10) :
+les couper perd partout en moyenne — `false_detail` −0,041 dB,
+`interp_splat` −0,085 (mais arêtes en mouvement +0,155 sans lui),
+`rot_weight` −0,020, `pixel_vectors` −0,015 (arêtes −0,089). Défauts
+inchangés. (Enregistrements, même jour : `false_detail` vaut encore +0,017 /
++0,013 dB par-dessus le nouveau `mosaic_blur`.)
