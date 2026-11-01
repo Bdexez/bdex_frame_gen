@@ -126,6 +126,7 @@ public:
     // every synthesis keeps pixels at or above hud_mask's threshold as they
     // are (a 1x1 zero image until a pass provides one).
     virtual void setStaticMask(VkImageView view) = 0;
+    virtual VkImageView staticMask() const = 0;  // the one bound now (hud_mask's, created before the later passes)
     // The forward-splat map (r32ui, display size) every synthesis reads when
     // SynthesisInputs::splat is set (a 1x1 image until a pass provides one).
     virtual void setSplatMap(VkBuffer map) = 0;
