@@ -17,6 +17,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   nine recordings: +0.072 dB at x2, +0.117 at x4 (the previous average:
   +0.045 / +0.059), every sequence up, flicker −0.03 / −0.18. Same cost as
   before (~0.85 ms a game frame at 1440p x4).
+- Predicted frames too (extrapolation, the hybrid's predictions): their
+  chaos areas averaged the same way (the warp along the smoothed flow added
+  nothing there). Extrapolation x2: +0.062 dB, flicker −0.13 (nothing
+  before); hybrid x4 with `hybrid_predict=1`: +0.101 instead of +0.071,
+  flicker −0.21 instead of −0.11; every sequence up.
 
 ### The panel names the unavoidable holds (2026-10-21)
 

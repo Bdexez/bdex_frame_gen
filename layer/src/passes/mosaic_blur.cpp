@@ -88,7 +88,7 @@ public:
     }
     void beforeSynthesis(FgContext&, VkCommandBuffer, float t, int32_t timing, bool, const Config& cfg, SynthesisInputs&) override {
         if (usable_ && next_ < pending_.size()) {
-            pending_[next_].on = cfg.mosaicBlur > 0.f && t <= 1.f;  // (interpolated frames: measured there only)
+            pending_[next_].on = cfg.mosaicBlur > 0.f;  // (predicted frames too: hybrid_predict, extrapolation)
             pending_[next_].strength = cfg.mosaicBlur;
             pending_[next_].t = t;
             pending_[next_].timing = timing;

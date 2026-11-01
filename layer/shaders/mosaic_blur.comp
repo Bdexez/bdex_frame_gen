@@ -16,7 +16,8 @@
 //      median of the rows' medians: the true median's gain to 0.002 dB, a
 //      count over 25 values cost 0.4 ms a frame at 1440p)
 //   1  near chaos: the output mixed half and half with both inputs warped
-//      along the smoothed flow, into the scratch image
+//      along the smoothed flow (interpolated frames; predicted ones as
+//      they are), into the scratch image
 //   2  the average (radius `radius`) of the scratch image into the output,
 //      where the density is past `threshold`
 #extension GL_GOOGLE_include_directive : require  // #include with glslangValidator too
@@ -171,13 +172,18 @@ void main() {
     if (sAny == 0u) return;
     if (pc.mode == 1) {
         if (!inside || w <= 0.0) return;
-        float t = pc.timing > 0 ? st.t[pc.timing - 1] : pc.t;
-        vec2 q = vec2(p) + 0.5, pf = q, pb = q;
-        for (int i = 0; i < 3; ++i) pf = q - t * smoothAt(pf, false);
-        for (int i = 0; i < 3; ++i) pb = q - (1.0 - t) * smoothAt(pb, true);
-        vec3 s = mix(sourceAt(prevTex, pf), sourceAt(curTex, pb), t);
         vec4 c = unpackOut(imageLoad(outImg, p).r);
-        imageStore(scratch, p, uvec4(packOut(vec4(0.5 * (c.rgb + s), c.a)), 0u, 0u, 0u));
+        // (a predicted frame: its own pixels averaged — the current input
+        // warped along the smoothed flow added nothing there)
+        if (pc.t <= 1.0) {
+            float t = pc.timing > 0 ? st.t[pc.timing - 1] : pc.t;
+            vec2 q = vec2(p) + 0.5, pf = q, pb = q;
+            for (int i = 0; i < 3; ++i) pf = q - t * smoothAt(pf, false);
+            for (int i = 0; i < 3; ++i) pb = q - (1.0 - t) * smoothAt(pb, true);
+            vec3 s = mix(sourceAt(prevTex, pf), sourceAt(curTex, pb), t);
+            c.rgb = 0.5 * (c.rgb + s);
+        }
+        imageStore(scratch, p, uvec4(packOut(c), 0u, 0u, 0u));
         return;
     }
     // Mode 2: the tile and its border (radius <= kBorder) into shared
