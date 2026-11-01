@@ -28,7 +28,7 @@ jobs:
     outputs:
       run: ${{ steps.check.outputs.run }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: check
         run: |
           run=true
@@ -51,7 +51,7 @@ jobs:
       matrix:
         image: [ubuntu:22.04, debian:12, fedora:latest, archlinux:latest, opensuse/tumbleweed, alpine:latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build and test (${{ matrix.image }})
         run: tools/ci/distro-check.sh "${{ matrix.image }}"
 
@@ -69,7 +69,7 @@ jobs:
       matrix:
         check: [srpm-check, debsrc-check, gentoo-check, void-check, flatpak-check, lib32-check, proton-check, proton-wayland-check, wine-layer-check, wayland-capture-check]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: ${{ matrix.check }}
         run: tools/ci/${{ matrix.check }}.sh
 
@@ -82,7 +82,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Options description (options_ui.json)
         run: |
           tools/ci/runner-apt.sh cmake g++ glslc libvulkan-dev
@@ -99,8 +99,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     steps:
-      - uses: actions/checkout@v4
-      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24  # v31.11.1 (third party: pinned)
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b  # v31.11.1 (third party: pinned)
       - name: Build
         run: |
           nix build .#default .#layer32 -L
@@ -126,7 +126,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Package
         run: |
           version=""
@@ -137,7 +137,7 @@ jobs:
           # The Steam Deck's quick access menu (Decky Loader plugin).
           tools/ci/decky-check.sh dist
           (cd dist && sha256sum *.tar.gz *.deb *.rpm *.zip | tee SHA256SUMS-linux.txt)
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bdex-framegen-linux
           path: |
@@ -160,7 +160,7 @@ jobs:
           tools/ci/archive-check.sh dist/bdex-framegen-*.x86_64.rpm fedora:latest opensuse/tumbleweed
       - name: Attach to the release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2.6.2 (third party, with write access: pinned)
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v2.6.2 (third party, with write access: pinned)
         with:
           files: |
             dist/*.tar.gz

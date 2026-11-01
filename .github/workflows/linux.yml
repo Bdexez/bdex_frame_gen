@@ -59,10 +59,10 @@ jobs:
             ctest: "-R '^validation$'"
             shard: 3/3
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # The last build before the census term: the default matcher path must
       # stay byte-identical to it (AGENTS.md, invariant n°1).
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: matrix.extras
         with:
           ref: f2cec5f29d90775a3d1a847620058ffaccca19af
@@ -214,7 +214,7 @@ jobs:
             env: "TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1:suppressions=$GITHUB_WORKSPACE/tests/tsan.supp"
     name: sanitizers (${{ matrix.name }})
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Dependencies
         run: |
           tools/ci/runner-apt.sh \
@@ -246,7 +246,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Dependencies
         run: |
           tools/ci/runner-apt.sh cmake clang libclang-rt-18-dev glslc libvulkan-dev
@@ -254,7 +254,7 @@ jobs:
         run: tools/ci/fuzz.sh 60
       - name: Failing inputs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-failures
           path: tests/fuzz/corpus/*/crash-*
@@ -268,7 +268,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Dependencies
         run: |
           tools/ci/runner-apt.sh \
@@ -284,7 +284,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: gitleaks

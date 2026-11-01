@@ -34,13 +34,13 @@ jobs:
       matrix:
         arch: [x64, Win32]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The SDK (download + installer: minutes) is cached by version; the
       # checksum is checked when it is downloaded.
       - name: Vulkan SDK cache
         id: vksdk
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: C:\VulkanSDK\1.4.357.0
           key: vulkan-sdk-1.4.357.0-${{ runner.os }}
@@ -175,7 +175,7 @@ jobs:
           }
           Get-ChildItem -Recurse $out
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bdex-framegen-windows-${{ matrix.arch }}
           path: dist/bdex-framegen-windows-${{ matrix.arch }}
@@ -188,7 +188,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
       - name: Bundle
@@ -199,7 +199,7 @@ jobs:
           mkdir -p "$out/x86"
           cp dist/bdex-framegen-windows-Win32/VkLayer_bdex_framegen.dll "$out/x86/"
           ls -R "$out"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bdex-framegen-windows-complete
           path: dist/bdex-framegen-windows-complete
@@ -213,8 +213,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: dist
       - name: Zip
@@ -228,7 +228,7 @@ jobs:
         run: python3 tools/fetch_translation_layers.py --source dist
       - name: Checksums
         run: cd dist && sha256sum *.zip vkd3d-proton-*-source.tar.gz | tee SHA256SUMS-windows.txt
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2.6.2 (third party, with write access: pinned)
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v2.6.2 (third party, with write access: pinned)
         with:
           files: |
             dist/*.zip
