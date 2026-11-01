@@ -4,16 +4,21 @@
 // blocks that took unrelated motions: a mosaic (a character turning on
 // itself in a fast camera move, content the block search cannot follow).
 // No vector there is right; the pieces' edges are the synthesis's own. The
-// generated frame leans to its local average there, the position kept (a
-// fallback to the cross-fade, measured before, ghosts instead). A lone
-// discontinuity — an object's edge in parallax — is not chaos: the density
-// test leaves it sharp. Three modes:
-//   0  the chaos density per flow texel (once a frame): the share, over 5x5
-//      texels, of vectors with fewer than `agree` of their 8 neighbours
-//      within `deviation` (a lone edge between two motions keeps most)
-//   1  the average (radius `radius`) where the density is past `threshold`,
-//      into the scratch image (the output itself is only read)
-//   2  the scratch image back into the output there
+// generated frame leans there to the local average of its mix with a warp
+// along the smoothed flow (the median of 5x5 vectors: the region's overall
+// motion, whole shapes instead of fragments) — a fallback to the cross-fade,
+// measured before, ghosts instead. A lone discontinuity — an object's edge
+// in parallax — is not chaos: the density test leaves it sharp. Modes:
+//   0  per flow texel (once a frame): the chaos density, the share over 5x5
+//      texels of vectors with fewer than `agree` of their 8 neighbours within
+//      `deviation` (a lone edge between two motions keeps most), and the
+//      medians of the forward and backward vectors over the same 5x5 (the
+//      median of the rows' medians: the true median's gain to 0.002 dB, a
+//      count over 25 values cost 0.4 ms a frame at 1440p)
+//   1  near chaos: the output mixed half and half with both inputs warped
+//      along the smoothed flow, into the scratch image
+//   2  the average (radius `radius`) of the scratch image into the output,
+//      where the density is past `threshold`
 #extension GL_GOOGLE_include_directive : require  // #include with glslangValidator too
 #include "common.glsl"
 
@@ -23,10 +28,19 @@ layout(binding = 0, r32ui) uniform uimage2D outImg;   // the output (swapchain s
 layout(binding = 1, r32ui) uniform uimage2D scratch;  // the filtered pixels
 layout(binding = 2, r32f) uniform image2D density;    // per flow texel (mode 0 writes it)
 layout(binding = 3) uniform sampler2D flowFwd;        // the finest forward flow (flow units)
+layout(binding = 4) uniform sampler2D flowBwd;        // ... backward
+layout(binding = 5, rgba32f) uniform image2D smoothFlow;  // per flow texel: median forward (xy), backward (zw)
+layout(binding = 6) uniform sampler2D prevTex;        // the synthesis's inputs
+layout(binding = 7) uniform sampler2D curTex;
+layout(std430, binding = 8) readonly buffer State {  // frame_state.comp: the outputs' content times
+    float meanCost; uint dup; uint diffCount; float ageLast; float agePrev; float interval; uint repeats; float histDiff;
+    float t[8];
+} st;
 
 #define ENC_BGRA8       1u
 #define ENC_A2B10G10R10 2u
 #define ENC_A2R10G10B10 3u
+#define ENC_SRGB_FLAG   0x100u
 
 layout(push_constant) uniform PC {
     ivec2 size;        // the output (display pixels); mode 0: the flow texels
@@ -38,6 +52,10 @@ layout(push_constant) uniform PC {
     int radius;        // of the average
     vec2 toFlow;       // display pixel -> flow texel
     int agree;         // a vector with fewer neighbours (of 8) within `deviation` is chaos
+    float flowScale;   // flow units -> display pixels
+    vec2 flowInvSize;  // 1 / (display pixels covered by the flow textures)
+    float t;           // the output's moment between the inputs
+    int timing;        // > 0: the moment is st.t[timing - 1] (as the synthesis's)
 } pc;
 
 vec4 unpackOut(uint v) {
@@ -72,6 +90,38 @@ bool chaotic(ivec2 t, ivec2 fs) {
     return agree < pc.agree;
 }
 
+const int kBorder = 4, kSide = 16 + 2 * kBorder;  // mode 2: the average's largest radius
+shared uint sTile[kSide * kSide];  // the scratch image, packed
+shared vec4 sRows[kSide * 16];     // its row sums
+shared uint sAny;
+
+// Medians per component: of 3, of 5 (the lowest and the highest of a..d
+// cannot be the median: the median of the other two and e).
+vec4 median3(vec4 x, vec4 y, vec4 z) { return max(min(x, y), min(max(x, y), z)); }
+vec4 median5(vec4 a, vec4 b, vec4 c, vec4 d, vec4 e) { return median3(e, max(min(a, b), min(c, d)), min(max(a, b), max(c, d))); }
+
+// The smoothed flow at a display position (bilinear over the texel centres),
+// display pixels: forward (at previous-frame positions) or backward.
+vec2 smoothAt(vec2 pos, bool backward) {
+    ivec2 fs = imageSize(smoothFlow);
+    vec2 c = pos * pc.flowInvSize * vec2(fs) - 0.5;
+    ivec2 i = ivec2(floor(c));
+    vec2 f = c - vec2(i);
+    vec4 a = imageLoad(smoothFlow, clamp(i, ivec2(0), fs - 1));
+    vec4 b = imageLoad(smoothFlow, clamp(i + ivec2(1, 0), ivec2(0), fs - 1));
+    vec4 d = imageLoad(smoothFlow, clamp(i + ivec2(0, 1), ivec2(0), fs - 1));
+    vec4 e = imageLoad(smoothFlow, clamp(i + ivec2(1, 1), ivec2(0), fs - 1));
+    vec4 v = mix(mix(a, b, f.x), mix(d, e, f.x), f.y);
+    return (backward ? v.zw : v.xy) * pc.flowScale;
+}
+
+vec3 sourceAt(sampler2D tex, vec2 pos) {
+    vec3 c = texture(tex, pos / vec2(pc.size)).rgb;
+    // (an sRGB view samples decoded light: back to the stored values)
+    if ((pc.encoding & ENC_SRGB_FLAG) != 0u) c = linearToSrgb(c);
+    return c;
+}
+
 float weightAt(ivec2 p) {
     ivec2 ds = imageSize(density);
     float k = imageLoad(density, min(ivec2((vec2(p) + 0.5) * pc.toFlow), ds - 1)).r;
@@ -84,22 +134,68 @@ void main() {
         ivec2 fs = textureSize(flowFwd, 0);
         if (any(greaterThanEqual(p, fs))) return;
         float n = 0.0;
-        for (int y = -2; y <= 2; ++y)
-            for (int x = -2; x <= 2; ++x) n += chaotic(p + ivec2(x, y), fs) ? 1.0 : 0.0;
+        vec4 rows[5];
+        for (int y = -2; y <= 2; ++y) {
+            vec4 v[5];
+            for (int x = -2; x <= 2; ++x) {
+                n += chaotic(p + ivec2(x, y), fs) ? 1.0 : 0.0;
+                ivec2 q = clamp(p + ivec2(x, y), ivec2(0), fs - 1);
+                v[x + 2] = vec4(texelFetch(flowFwd, q, 0).xy, texelFetch(flowBwd, q, 0).xy);
+            }
+            rows[y + 2] = median5(v[0], v[1], v[2], v[3], v[4]);
+        }
         imageStore(density, p, vec4(n / 25.0));
+        imageStore(smoothFlow, p, median5(rows[0], rows[1], rows[2], rows[3], rows[4]));
         return;
     }
-    if (any(greaterThanEqual(p, pc.size))) return;
-    float w = weightAt(p);
-    if (w <= 0.0) return;
-    if (pc.mode == 1) {
-        vec4 sum = vec4(0.0);
-        int r = pc.radius;
-        for (int y = -r; y <= r; ++y)
-            for (int x = -r; x <= r; ++x) sum += unpackOut(imageLoad(outImg, clamp(p + ivec2(x, y), ivec2(0), pc.size - 1)).r);
-        vec4 c = unpackOut(imageLoad(outImg, p).r);
-        imageStore(scratch, p, uvec4(packOut(mix(c, sum / float((2 * r + 1) * (2 * r + 1)), w)), 0u, 0u, 0u));
-    } else {
-        imageStore(outImg, p, imageLoad(scratch, p));
+    // Modes 1 and 2: a 16x16 tile with no chaos around leaves at once (the
+    // whole group: the barriers below need it).
+    const bool inside = all(lessThan(p, pc.size));
+    const int r = pc.radius;
+    const ivec2 lp = ivec2(gl_LocalInvocationID.xy);
+    if (lp == ivec2(0)) sAny = 0u;
+    barrier();
+    float w = 0.0;
+    if (inside) {
+        if (pc.mode == 1) {
+            // (every pixel the average of mode 2 reads: a texel is at least
+            // `radius` pixels wide, the 3x3 probes see each one around)
+            for (int y = -1; y <= 1; ++y)
+                for (int x = -1; x <= 1; ++x) w = max(w, weightAt(clamp(p + r * ivec2(x, y), ivec2(0), pc.size - 1)));
+        } else {
+            w = weightAt(p);
+        }
+        if (w > 0.0) atomicOr(sAny, 1u);
     }
+    barrier();
+    if (sAny == 0u) return;
+    if (pc.mode == 1) {
+        if (!inside || w <= 0.0) return;
+        float t = pc.timing > 0 ? st.t[pc.timing - 1] : pc.t;
+        vec2 q = vec2(p) + 0.5, pf = q, pb = q;
+        for (int i = 0; i < 3; ++i) pf = q - t * smoothAt(pf, false);
+        for (int i = 0; i < 3; ++i) pb = q - (1.0 - t) * smoothAt(pb, true);
+        vec3 s = mix(sourceAt(prevTex, pf), sourceAt(curTex, pb), t);
+        vec4 c = unpackOut(imageLoad(outImg, p).r);
+        imageStore(scratch, p, uvec4(packOut(vec4(0.5 * (c.rgb + s), c.a)), 0u, 0u, 0u));
+        return;
+    }
+    // Mode 2: the tile and its border (radius <= kBorder) into shared
+    // memory, the average as row sums then column sums.
+    const ivec2 base = ivec2(gl_WorkGroupID.xy) * 16 - kBorder;
+    for (int i = int(gl_LocalInvocationIndex); i < kSide * kSide; i += 256)
+        sTile[i] = imageLoad(scratch, clamp(base + ivec2(i % kSide, i / kSide), ivec2(0), pc.size - 1)).r;
+    barrier();
+    for (int i = int(gl_LocalInvocationIndex); i < kSide * 16; i += 256) {
+        int row = i / 16, col = i % 16 + kBorder;
+        vec4 h = vec4(0.0);
+        for (int x = -r; x <= r; ++x) h += unpackOut(sTile[row * kSide + col + x]);
+        sRows[i] = h;
+    }
+    barrier();
+    if (!inside || w <= 0.0) return;
+    vec4 sum = vec4(0.0);
+    for (int y = -r; y <= r; ++y) sum += sRows[(lp.y + kBorder + y) * 16 + lp.x];
+    vec4 c = unpackOut(imageLoad(outImg, p).r);
+    imageStore(outImg, p, uvec4(packOut(mix(c, sum / float((2 * r + 1) * (2 * r + 1)), w)), 0u, 0u, 0u));
 }

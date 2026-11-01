@@ -6,6 +6,18 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Whole shapes instead of fragments on a character in a fast turn: `mosaic_blur` (2026-10-21)
+
+- Where the flow is chaos, `mosaic_blur` no longer only averages the
+  generated frame: it mixes it half and half with both inputs warped along
+  the area's smoothed flow (the median of 5x5 vectors), then averages over
+  half a flow block each side. A character rolling during a camera turn stays
+  one soft shape moving with its surroundings instead of breaking into
+  fragments and dark grains, alike in the three frames of x4. The night's
+  nine recordings: +0.072 dB at x2, +0.117 at x4 (the previous average:
+  +0.045 / +0.059), every sequence up, flicker −0.03 / −0.18. Same cost as
+  before (~0.85 ms a game frame at 1440p x4).
+
 ### The panel names the unavoidable holds (2026-10-21)
 
 - With fewer frames than refreshes (30 fps x4 = 120 fps on 144 Hz), the

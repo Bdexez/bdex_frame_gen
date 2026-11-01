@@ -3004,3 +3004,54 @@ réglages devenaient une ligne ignorée.
 `tight_hold` étendu à l'hybride (`hybrid_predict=1`, ×4) : réelle remise à
 26,0 ms dans les deux cas — deux images avant la réelle ne gagnent que
 2 × 1,4 ms, que la marge de prêt X11 (1,5 ms) reprend. Non retenu.
+
+**Ce que vaut l'éval ×4 des enregistrements** (21/10) : les 26 enregistrements
+du panneau sont à 30 i/s (853×480). L'éval prend une image sur m comme
+entrée : en ×4, elle simule un jeu à **7,5 i/s** (133 ms entre entrées), en
+×2 à 15 i/s. Les comparaisons relatives tiennent, pas les valeurs absolues
+du ×4 (Oblivion ×4 : la synthèse y fait à peine mieux que le fondu, sur des
+virages de 133 ms). Pour juger le vrai ×4 à 30 i/s : enregistrer à 120 i/s
+sans génération. Par position (×4, PRAGMATA) : t = 0,5 le pire (27,3 dB),
+0,25 / 0,75 à 28,3.
+
+**Écarté : redonner du piqué aux images générées** (21/10). Énergie du
+laplacien des générées / vérité à t = 0,5 : 0,55 à 0,79 (sans
+`mosaic_blur`/`false_detail` : 0,64 à 0,94) — en bonne partie le bruit
+temporel (grain, TAA) que le mélange de deux images moyenne. Masque flou
+sur les seules générées (0,2 à 0,7, 3×3 ou 5×5) : toujours négatif, −0,1 à
+−9 dB (la séquence presque statique perd 3,6 dB dès 0,2). Écart de
+luminosité générées/réelles : −0,15 sur 255, rien.
+
+**`mosaic_blur` : la forme entière plutôt que les fragments** (21/10). Vu à
+la vitesse du jeu (chaque image enregistrée une entrée, ×4) : une roulade
+de PRAGMATA casse le personnage en fragments et en grains sombres dans les
+trois générées (t = 0,5 le pire) ; couper `pixel_vectors`/`interp_splat`
+est pire. Prototype Python sur le masque de chaos recalculé depuis
+`--dump-flow` (même densité que le shader : il redonne le gain mesuré du
+moteur), synthèse brute notée contre la vérité, ×2 sur les 9 séquences :
+moyenne 3×3 (actuel) +0,045, 5×5 +0,052, 13×13 +0,032 ; fondu −0,26 ;
+déformation des deux entrées par le flux lissé (médiane 5×5 / 7×7 des
+vecteurs) seule −0,023 ; **moitié synthèse + moitié déformation lissée, puis
+moyenne 5×5 : +0,070 / +0,072, chaque séquence au-dessus de l'actuel**
+(×4 PRAGMATA : +0,148 contre +0,072). À l'œil : une forme douce qui suit le
+mouvement de la zone, moins de grains. Réglages (5 séquences ×2) : part du
+lissé 0,3 / 0,5 / 0,7 → +0,080 / +0,080 / +0,068 ; seuil 0,4 +0,089 mais
+Cyberpunk en baisse (gardé 0,5) ; rayon 1 / 2 / 3 → +0,081 / +0,080 /
++0,074. Dans le moteur (mode 0 : densité + médianes ; mode 1 : le mélange ;
+mode 2 : la moyenne) : **×2 +0,072, ×4 +0,117** (avant +0,045 / +0,059),
+chaque séquence en hausse, scintillement −0,03 / −0,18. Coût 1440p ×4
+(entrée suréchantillonnée de Cyberpunk) : d'abord +1,5 ms par image du jeu ;
+moyenne en mémoire partagée (sommes de lignes puis colonnes, tuile sans
+chaos quittée d'emblée) −0,4 ; médiane par comptage sur 25 valeurs
+(tableaux indexés à l'exécution : mémoire locale) 0,42 ms, déroulée
+(`[[unroll]]`, 4 × 625 comparaisons) +2 ms ; **médiane des médianes de
+lignes** (réseau min/max fixe) : gain identique à 0,002 dB près, presque
+gratuite → +0,85 ms au total, autant que l'ancienne version.
+**Piège** : push constants — un `vec2` GLSL est aligné sur 8 octets, un
+`float[2]` C++ sur 4 : après un nombre impair de champs de 4 octets, le
+shader lit tout décalé (ici `flowInvSize` et `timing` : flux lissé lu au
+mauvais endroit, Cyberpunk −0,13 dB au lieu de +0,06). `static_assert` sur
+l'offset ; audit de toutes les structures `*PC` : aucun autre cas.
+Débogage efficace : faire sortir au shader une grandeur intermédiaire
+(source non déformée, puis vecteurs encodés en couleur) et la comparer au
+modèle Python.
