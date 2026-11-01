@@ -3107,3 +3107,9 @@ coupée) : `hud_mask` −0,89 dB (arêtes −2,1), `global_motion` −0,60,
 enregistrés +0,03 à +0,17 et moins de scintillement, 0,1 ms — gardé) ;
 `zero_bias=0` → biais standard +0,021, arêtes +0,35, mais −0,06 sur `fps`
 et `strafe` — gardé (décision du 03/10 sur de vrais jeux).
+`mosaic_blur` : pixels exclus aussi selon l'indice de `static_soft` (canal g
+de la carte de `hud_mask`, ≥ 0,5 : texte anticrénelé du HUD, jamais tout à
+fait inchangé — le panneau de `make_game.py` n'a que 0,5 % de pixels
+strictement immobiles) : scènes ×4 +0,008 dB (aucune perte, arêtes +0,12),
+`mosaic_blur` y devient +0,004 face à 0 (arêtes −0,34 au lieu de −0,46) ;
+enregistrements +0,068 / +0,090 (inchangés).

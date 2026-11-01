@@ -98,6 +98,7 @@ bool chaotic(ivec2 t, ivec2 fs) {
 
 const int kBorder = 4, kSide = 16 + 2 * kBorder;  // mode 2: the average's largest radius
 const float kSmoothShare = 0.2;
+const float kStillEvidence = 0.5;
 shared uint sTile[kSide * kSide];  // the scratch image, packed
 shared bool sStill[kSide * kSide]; // hud_mask's still pixels: left out of the average
 shared vec4 sRows[kSide * 16];     // its row sums (rgb) and counts (a)
@@ -130,10 +131,13 @@ vec3 sourceAt(sampler2D tex, vec2 pos) {
     return c;
 }
 
+// Still: unchanged long enough, or static_soft's evidence (anti-aliased HUD
+// text over the moving scene, never quite unchanged) past half.
 bool stillAt(ivec2 p) {
     if (pc.stillFrames <= 0.0) return false;
     ivec2 ms = textureSize(stillMask, 0);
-    return texelFetch(stillMask, clamp(ivec2((vec2(p) + 0.5) * vec2(ms) / vec2(pc.size)), ivec2(0), ms - 1), 0).r >= pc.stillFrames;
+    vec2 m = texelFetch(stillMask, clamp(ivec2((vec2(p) + 0.5) * vec2(ms) / vec2(pc.size)), ivec2(0), ms - 1), 0).rg;
+    return m.r >= pc.stillFrames || m.g >= kStillEvidence;
 }
 
 float weightAt(ivec2 p) {
