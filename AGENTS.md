@@ -127,6 +127,7 @@ python3 tools/recording_report.py SEQUENCE             # temps des images réell
 build/demo/bdex_demo --replay SEQ --replay-timing --replay-log /tmp/rejeu.csv  # rejoue les temps source ; journal nouveau, retards de rejeu visibles
 tools/eval_sequence.py <dir_ppm> --variant KEY=VAL     # éval hors ligne (bdex_offline, sans fenêtre) sur séquence enregistrée
 tools/pending_decisions.py SEQ... [--only K,...]       # options en attente notées sur des jeux enregistrés : verdict par option
+tools/edge_bench/make_game.py DIR turn|walk|dark|strafe|fps|fence|flick  # un jeu à 30 i/s vu à 120 Hz, vérité exacte : eval_sequence.py --multiplier 4 (le vrai ×4)
 tools/replay_bench.py SEQ [--multiplier M] [--other-layer NAME]  # éval EN LIGNE : séquence rejouée comme un jeu (bdex_demo --replay) à travers la couche
 bdex-framegen --calibrate [--apply]                     # bdex-calibrate : coût sur ce GPU, preset/multiplicateur recommandés
 tools/train_flow.py [--write]                           # entraîne learned_flow (numpy, flux vrai de synthèse, bdex_offline --dump-flow)
@@ -660,6 +661,12 @@ réintroduire) :
   scripts les suivent. Vécu le 2026-10-02 : `uninstall.sh --purge` testé
   avec `HOME` seul a supprimé le vrai `~/.cache/bdex-framegen`
   (`tests/linux_scripts.sh` les isole tous désormais).
+- **Une option de synthèse se juge aussi à vitesse réelle** (21/10) : les
+  enregistrements du panneau sont à 30 i/s, leur éval ×2 simule un jeu à
+  15 i/s et ×4 à 7,5 i/s (mouvement accéléré). Les scènes
+  `tools/edge_bench/make_game.py` ×4 sont un vrai jeu à 30 i/s à 120 Hz :
+  `mosaic_blur` v2 y perdait 0,1 dB en gagnant 0,03 sur les enregistrements.
+  Juger sur les deux ; en cas de désaccord, ne pas perdre à vitesse réelle.
 - **Tests et outils hors ligne : jamais la config de l'utilisateur**
   (`BDEX_FG_CONFIG=/dev/null`) ; `eval_sequence.py` fixe `balanced`, qui sur
   un GPU dédié inclut les options automatiques (références du corpus =
