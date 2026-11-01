@@ -6,6 +6,16 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### The panel names the unavoidable holds (2026-10-21)
+
+- With fewer frames than refreshes (30 fps x4 = 120 fps on 144 Hz), the
+  running game's line adds « dont ~24/s inévitables à 120 i/s sur 144 Hz »
+  and, when the output matches a usual refresh rate, « un écran réglé à
+  120 Hz serait régulier »: those holds are the screen's, not a fault.
+- `tight_hold` keeps its spacing across a game hovering at one of its
+  bounds (a few percent of hysteresis): an uncapped 32–33 fps at x4 on 144 Hz
+  no longer switches the spacing from frame to frame.
+
 ### Half the interpolation's latency for one short prediction: `hybrid_predict` (2026-10-21)
 
 - **`hybrid_predict`** (`mode=hybrid`, panel « Images prédites en mode

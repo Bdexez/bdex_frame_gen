@@ -847,3 +847,25 @@ TEST(pacing_tight_hold_real_frame_sooner_same_holds) {
     CHECK(pacing::tightHold(1000.0 / 143.912, 2, 1000.0 / 30.0, 1) == 1.f);
     CHECK(pacing::tightHold(1000.0 / 143.912, 3, 1000.0 / 40.0, 2) < 1.f);
 }
+
+// tight_hold's hysteresis: a game hovering at a bound (x4 on 144 Hz around
+// 32.9 fps, where the saving falls under 2 ms) keeps one spacing instead of
+// switching present after present.
+TEST(pacing_tight_hold_hysteresis) {
+    const double P = 1000.0 / 143.912;
+    uint32_t rng = 99;
+    auto uniform = [&] { rng = rng * 1664525u + 1013904223u; return (rng >> 8) / double(1 << 24); };
+    int flipsPlain = 0, flipsHyst = 0;
+    bool plain = false, hyst = false;
+    for (int f = 0; f < 600; ++f) {
+        const double I = 1000.0 / (32.9 + 0.6 * (uniform() - 0.5));  // 32.6 to 33.2 fps
+        const bool p = pacing::tightHold(P, 4, I, 3) < 1.f, h = pacing::tightHold(P, 4, I, 3, hyst) < 1.f;
+        flipsPlain += f > 0 && p != plain;
+        flipsHyst += f > 0 && h != hyst;
+        plain = p;
+        hyst = h;
+    }
+    CHECK(flipsPlain > 50);
+    CHECK(flipsHyst <= 2);
+    CHECK(pacing::tightHold(P, 4, 1000.0 / 30.0, 3) < 1.f);  // (30 fps: on, either way)
+}

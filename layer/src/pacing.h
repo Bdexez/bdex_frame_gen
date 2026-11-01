@@ -228,12 +228,16 @@ inline float effectiveHold(float hold, float cfgHold, double hz, int mult, doubl
 // x3 at 40 fps: 2.8): as many refreshes held, the sharpest frame the one
 // shown longer. The hold that spaces them so (FrameOrder::hold), or 1 —
 // at most one frame a refresh, more than that or under 2 ms saved: unchanged.
-inline float tightHold(double periodMs, int mult, double intervalMs, int real) {
+// `wasOn`: it applied to the previous present — kept past the bounds by a
+// few percent, so a game hovering at one (an uncapped 32-33 fps at x4 on
+// 144 Hz) does not switch the spacing from frame to frame.
+inline float tightHold(double periodMs, int mult, double intervalMs, int real, bool wasOn = false) {
     if (!(periodMs > 0.0) || !(intervalMs > 0.0) || mult < 2 || real < 1) return 1.f;
     const double perFrame = intervalMs / mult;
-    if (perFrame <= periodMs || intervalMs > (mult + 1.25) * periodMs) return 1.f;
+    const double slack = wasOn ? 1.03 : 1.0;
+    if (perFrame <= periodMs || intervalMs > (mult + 1.25) * periodMs * slack) return 1.f;
     const double savedMs = real * (perFrame - periodMs);
-    return savedMs >= 2.0 ? float(periodMs * mult / intervalMs) : 1.f;
+    return savedMs >= (wasOn ? 1.6 : 2.0) ? float(periodMs * mult / intervalMs) : 1.f;
 }
 
 // A job that started too late for its first frame to make the first refresh
