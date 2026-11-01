@@ -1,0 +1,131 @@
+MSBuild version 17.14.60+43b635718 for .NET Framework
+
+  Checking File Globs
+  1>Checking Build System
+  Building Custom Rule D:/a/bdex_frame_gen/bdex_frame_gen/layer/CMakeLists.txt
+  config.cpp
+  glslc shaders/accel_map.comp 
+  glslc shaders/block_match.comp -DLUMA_FMT=r16f
+  glslc shaders/block_match.comp 
+  glslc shaders/cas.comp 
+  glslc shaders/cas.comp -DOUT_64
+  glslc shaders/depth_import.comp -DDEPTH_FMT=r16f
+  glslc shaders/depth_import.comp 
+  glslc shaders/downsample_chroma.comp 
+  glslc shaders/downsample.comp -DLUMA_FMT=r16f
+  glslc shaders/downsample.comp 
+  glslc shaders/false_detail.comp 
+  log.cpp
+  glslc shaders/flow_compose.comp 
+  glslc shaders/flow_confidence.comp 
+  glslc shaders/flow_lk.comp 
+  glslc shaders/flow_parallax.comp 
+  glslc shaders/flow_refine.comp -DLUMA_FMT=r16f
+  glslc shaders/flow_refine.comp 
+  glslc shaders/flow_smooth.comp 
+  glslc shaders/flow_temporal.comp 
+  format.cpp
+  glslc shaders/frame_state.comp 
+  present_slice.cpp
+  glslc shaders/global_motion.comp 
+  glslc shaders/hud_layer.comp 
+  platform.cpp
+  glslc shaders/hud_mask.comp 
+  glslc shaders/hud_overlay.comp 
+  glslc shaders/hud_overlay.comp -DOUT_64
+  glslc shaders/interpolate.comp -DSHARP
+  glslc shaders/interpolate.comp 
+  glslc shaders/interpolate.comp -DOUT_64
+  glslc shaders/learned_correction.comp 
+  glslc shaders/learned_flow.comp 
+  glslc shaders/luma_match.comp -DLUMA_FMT=r16f
+  vk_util.cpp
+  glslc shaders/luma_match.comp 
+  glslc shaders/mosaic_blur.comp 
+  budget.cpp
+  glslc shaders/probe_compare.comp 
+  glslc shaders/reduce_cost.comp 
+  glslc shaders/scene_hist.comp 
+  online_tune.cpp
+  glslc shaders/self_eval.comp 
+  glslc shaders/splat.comp 
+  glslc shaders/upscale.comp -DSHARP
+  glslc shaders/upscale.comp 
+  glslc shaders/upscale.comp -DOUT_64
+  descriptor_planner.cpp
+  glslc shaders/upscale_temporal.comp 
+  Building Custom Rule D:/a/bdex_frame_gen/bdex_frame_gen/layer/CMakeLists.txt
+  Embedding SPIR-V into D:/a/bdex_frame_gen/bdex_frame_gen/build/layer/generated/shaders.h
+  options_ui.cpp
+  display_clock.cpp
+  x11_present_clock.cpp
+  gamescope.cpp
+  status.cpp
+  crash.cpp
+  thread_priority.cpp
+  gpu_load.cpp
+  depth_select.cpp
+  Generating Code...
+  bdex_core.vcxproj -> D:\a\bdex_frame_gen\bdex_frame_gen\build\layer\Release\bdex_core.lib
+  Building Custom Rule D:/a/bdex_frame_gen/bdex_frame_gen/layer/CMakeLists.txt
+  Building Custom Rule D:/a/bdex_frame_gen/bdex_frame_gen/tests/CMakeLists.txt
+  Building Custom Rule D:/a/bdex_frame_gen/bdex_frame_gen/tests/CMakeLists.txt
+  Building Custom Rule D:/a/bdex_frame_gen/bdex_frame_gen/tests/CMakeLists.txt
+  Building Custom Rule D:/a/bdex_frame_gen/bdex_frame_gen/tests/CMakeLists.txt
+  Building Custom Rule D:/a/bdex_frame_gen/bdex_frame_gen/tests/CMakeLists.txt
+  test_main.cpp
+  layer.cpp
+  test_config.cpp
+  test_format.cpp
+  test_present_slice.cpp
+  test_budget.cpp
+  device.cpp
+  fuzz.cpp
+  test_display_clock.cpp
+  test_status.cpp
+  test_online_tune.cpp
+  depth_tracker.cpp
+  test_descriptor_planner.cpp
+  test_options_ui.cpp
+  test_crash.cpp
+  framegen.cpp
+  test_pacing.cpp
+  test_replay_timing.cpp
+  bdex_fuzz_status.vcxproj -> D:\a\bdex_frame_gen\bdex_frame_gen\build\tests\Release\bdex_fuzz_status.exe
+  test_x11_present_clock.cpp
+  framegen_output.cpp
+  test_depth.cpp
+  fuzz.cpp
+  Generating Code...
+  registry.cpp
+  flow_temporal.cpp
+  bdex_fuzz_options_ui.vcxproj -> D:\a\bdex_frame_gen\bdex_frame_gen\build\tests\Release\bdex_fuzz_options_ui.exe
+  bdex_tests.vcxproj -> D:\a\bdex_frame_gen\bdex_frame_gen\build\tests\Release\bdex_tests.exe
+  fuzz.cpp
+  fuzz.cpp
+  online_tune.cpp
+  bdex_fuzz_online_tune.vcxproj -> D:\a\bdex_frame_gen\bdex_frame_gen\build\tests\Release\bdex_fuzz_online_tune.exe
+  bdex_fuzz_config.vcxproj -> D:\a\bdex_frame_gen\bdex_frame_gen\build\tests\Release\bdex_fuzz_config.exe
+  synthesis_probe.cpp
+  temporal_upscale.cpp
+  subpixel_lk.cpp
+  hud_mask.cpp
+  flow_confidence.cpp
+  learned_correction.cpp
+  false_detail.cpp
+  mosaic_blur.cpp
+  hud_layer.cpp
+  parallax_search.cpp
+  learned_flow.cpp
+  luma_match.cpp
+  Generating Code...
+  Compiling...
+  extrapolate_accel.cpp
+  extrapolate_splat.cpp
+  fps_hud.cpp
+  swapchain.cpp
+  swapchain_worker.cpp
+  recorder.cpp
+  Generating Code...
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\swapchain.cpp(1679,1): error C2220: the following warning is treated as an error [D:\a\bdex_frame_gen\bdex_frame_gen\build\layer\bdex_framegen.vcxproj]
+D:\a\bdex_frame_gen\bdex_frame_gen\layer\src\swapchain.cpp(1679,1): warning C4701: potentially uninitialized local variable 'periodMs' used [D:\a\bdex_frame_gen\bdex_frame_gen\build\layer\bdex_framegen.vcxproj]
