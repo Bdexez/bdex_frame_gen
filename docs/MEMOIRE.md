@@ -3177,3 +3177,9 @@ Latence au banc (×4 30 i/s 144 Hz) −2,8 ms (`tight_hold`).
 `mosaic_blur` aux réglages de la v2 (moitié de flux lissé, rayon 2·f2r) avec
 les protections du HUD actuelles : scènes ×4 encore −0,051 dB — les pertes
 ne venaient pas que du HUD (bords des objets proches, personnage). v3 gardée.
+`hud_mask` : un pixel immobile **contrasté** (écart ≥ 20/255 avec un voisin :
+texte, bord d'icône) compte double — une nouvelle ligne de sous-titres
+apprise en 2 images au lieu de 4 (les faux HUD habituels, des plaques unies
+du décor, gardent le compte lent ; `hud_mask=2` partout perdait −0,017 sur
+les enregistrements). Scènes ×4 +0,014 dB (aucune perte), enregistrements
+±0,001.
