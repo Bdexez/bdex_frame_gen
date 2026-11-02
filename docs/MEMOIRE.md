@@ -3153,3 +3153,9 @@ référence varie de ±0,3 ms.
 Images prédites aussi (le « sur place » est l'image courante) : scènes ×4
 hybride `hybrid_predict=1` +0,076 dB, extrapolation +0,128 (arêtes +0,32 /
 +0,79), aucune perte ; enregistrements +0,007 / +0,015.
+`hud_flow` repris par-dessus `hud_layer` (blocs couverts à 10–90 % par le
+HUD appris, ré-appariés sur leurs autres pixels) : scènes ×4 −0,007 dB
+(`walk` −0,03) — retiré. Les intervalles de 12 px entre icônes opaques ne
+contiennent aucun bloc mixte ; leur erreur restante (zone des icônes, MSE
+72 ; 241 sans `hud_avoid`, 88 sans `hud_layer`) n'est pas un problème de
+vecteurs.
