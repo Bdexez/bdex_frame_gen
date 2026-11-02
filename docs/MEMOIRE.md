@@ -3113,3 +3113,9 @@ fait inchangé — le panneau de `make_game.py` n'a que 0,5 % de pixels
 strictement immobiles) : scènes ×4 +0,008 dB (aucune perte, arêtes +0,12),
 `mosaic_blur` y devient +0,004 face à 0 (arêtes −0,34 au lieu de −0,46) ;
 enregistrements +0,068 / +0,090 (inchangés).
+Prédiction à vitesse réelle (`make_game.py` ×4, face à l'interpolation) :
+`hybrid_predict=1` −0,87 dB (scintillement +0,39), hybride actuel −2,26,
+extrapolation −4,71 — plus que sur les enregistrements (−0,41 / −1,21) :
+même un quart d'image prédit coûte (bords découverts, mouvement propre des
+objets). `hybrid_predict=1` reste un compromis à proposer pour la latence,
+pas un défaut.
