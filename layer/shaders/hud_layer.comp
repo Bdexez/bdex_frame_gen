@@ -119,6 +119,7 @@ float weightAt(ivec2 p) {
 }
 
 const float kContrast = 0.08;  // (luma, 0..1: 20 of 255)
+const float kFall = 0.3;       // the persistent evidence's rate down
 
 shared uint sAny;
 
@@ -147,8 +148,11 @@ void main() {
                     ivec2 c = clamp(p + ivec2(x, y), ivec2(0), cs - 1);
                     m = max(m, cellMax[c.y * cs.x + c.x]);
                 }
+            // (slow to rise, quick to fall: a HUD element that goes — a
+            // subtitle's last word — must not leave its weight behind for
+            // a cross-fade of the scene where it was)
             float old = pc.rate < 0.0 ? 0.0 : imageLoad(dilated, p).r;
-            imageStore(dilated, p, vec4(old + abs(pc.rate) * (m - old)));
+            imageStore(dilated, p, vec4(old + (m < old ? kFall : abs(pc.rate)) * (m - old)));
         } else {
             float s = 0.0;
             for (int y = -1; y <= 1; ++y)

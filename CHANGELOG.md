@@ -27,6 +27,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   the current input): game-like scenes hybrid x4 with `hybrid_predict=1`
   +0.08 dB, extrapolation +0.13 (moving edges +0.3 / +0.8), every scene up;
   recordings +0.007 / +0.015.
+- Its weight falls quickly when the text goes (rises over ~10 frames, falls
+  over ~3): a subtitle that disappears no longer leaves a cross-faded ghost
+  of the scene where it was for a third of a second (`make_game.py subs`, a
+  new scene with changing subtitles: the box's area after its text went
+  34.2 → 39.2 dB, as without `hud_layer`).
 
 ### Whole shapes instead of fragments on a character in a fast turn: `mosaic_blur` (2026-10-21)
 

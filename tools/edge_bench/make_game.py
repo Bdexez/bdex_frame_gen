@@ -3,7 +3,7 @@
 presents, the three between are the exact pictures of the moments the
 generated frames show (score with eval_sequence.py --multiplier 4).
 
-    make_game.py DIR turn|walk|dark|strafe|fps|fence|flick [N=97]
+    make_game.py DIR turn|walk|dark|strafe|fps|fence|flick|subs [N=97, subs 241]
 
 1280x720: a textured world scrolled by the camera, a near layer moving
 faster (parallax), a character moving on its own, a static HUD (a
@@ -21,7 +21,10 @@ fence, poles, cables' supports) 20-60 px apart, moving 2.5x the background
 the setting the README advises); `flick` mouse flicks — still, then a
 600 px turn in 133 ms (16 frames at 120 Hz, easing in and out: motion
 starting and stopping inside a game frame), then still again, every 48
-frames."""
+frames; `subs` the turn with subtitles: a see-through box at the bottom with
+two lines of anti-aliased white text that change every second (120 frames)
+and vanish for its last fifth — HUD text appearing over the moving scene,
+what an overlay mask must learn anew each time (241 frames by default)."""
 import sys
 from pathlib import Path
 
@@ -68,12 +71,13 @@ def shift(img, x, y):
 
 
 def main():
-    out = Path(sys.argv[1]); kind = sys.argv[2]; n = int(sys.argv[3]) if len(sys.argv) > 3 else 97
-    rng = np.random.default_rng({"turn": 11, "walk": 12, "dark": 13, "strafe": 14, "fps": 15, "fence": 16, "flick": 17}[kind])
+    out = Path(sys.argv[1]); kind = sys.argv[2]; n = int(sys.argv[3]) if len(sys.argv) > 3 else (241 if kind == "subs" else 97)
+    rng = np.random.default_rng({"turn": 11, "walk": 12, "dark": 13, "strafe": 14, "fps": 15, "fence": 16, "flick": 17,
+                                 "subs": 18}[kind])
     out.mkdir(parents=True, exist_ok=True)
     # Camera speed in px per 120 Hz frame (x4 on a 30 fps game: 4 of them per game frame).
     cam = {"turn": (30.0, 3.0), "walk": (6.0, 1.5), "dark": (30.0, 3.0), "strafe": (12.0, 0.0), "fps": (30.0, 2.0),
-           "fence": (8.0, 0.0), "flick": (13.0, 1.0)}[kind]
+           "fence": (8.0, 0.0), "flick": (13.0, 1.0), "subs": (30.0, 3.0)}[kind]
     near_k = 2.5 if kind in ("strafe", "fence") else 1.6  # the near layer's speed relative to the background
     span = int(abs(cam[0]) * (n + 2) * near_k) + W + 400
     tall = int(abs(cam[1]) * (n + 2) * near_k) + H + 400
@@ -121,6 +125,25 @@ def main():
     hud_a = a3.reshape(H, SS, W, SS).mean((1, 3))
     hud = np.where(hud_a[..., None] > 0, pm / np.maximum(hud_a[..., None], 1e-6), 0.0)
     gain = 0.25 if kind == "dark" else 1.0
+    # subs: the subtitles' lines, one set a second, drawn at 3x like the HUD
+    subs = []
+    if kind == "subs":
+        for line in range(n // 120 + 1):
+            s3 = np.zeros((H * SS, W * SS, 3), np.float32); sa = np.zeros((H * SS, W * SS), np.float32)
+            sa[600 * SS:672 * SS, 340 * SS:940 * SS] = 0.6  # the box (black, see-through)
+            for row in range(2):
+                cols = int(rng.integers(24, 40))
+                x0 = (640 - cols * 7) * SS
+                for col in range(cols):
+                    if rng.random() < 0.15:
+                        continue  # (a space between words)
+                    g = np.kron(rng.random((14, 6)) < 0.5, np.ones((SS, SS), bool))
+                    y1, x1 = (610 + row * 30) * SS + 1, x0 + col * 14 * SS // 2 + 1
+                    s3[y1:y1 + 14 * SS, x1:x1 + 6 * SS][g] = (0.95, 0.95, 0.95)
+                    sa[y1:y1 + 14 * SS, x1:x1 + 6 * SS][g] = 1.0
+            spm = (s3 * sa[..., None]).reshape(H, SS, W, SS, 3).mean((1, 3))
+            s_a = sa.reshape(H, SS, W, SS).mean((1, 3))
+            subs.append((np.where(s_a[..., None] > 0, spm / np.maximum(s_a[..., None], 1e-6), 0.0), s_a))
     # fps: the weapon, a textured shape anchored at the bottom right
     wh, ww = 300, 420
     weap = texture(wh, ww, rng, (0.45, 0.45, 0.5), rects=25)
@@ -166,6 +189,9 @@ def main():
             ex, ey = min(ww, W - x0), min(wh, H - y0)
             a = weap_a[:ey, :ex, None]
             img[y0:y0 + ey, x0:x0 + ex] = img[y0:y0 + ey, x0:x0 + ex] * (1 - a) + weap[:ey, :ex] * a
+        if subs and f % 120 < 96:
+            sc, s_a = subs[f // 120]
+            img = img * (1 - s_a[..., None]) + sc * s_a[..., None]
         img = img * (1 - hud_a[..., None]) + hud * hud_a[..., None]
         a8 = (np.clip(img, 0, 1) * 255 + 0.5).astype(np.uint8)
         with open(out / f"f{f:04d}.ppm", "wb") as fh:
