@@ -88,8 +88,8 @@ public:
     }
     void beforeSynthesis(FgContext&, VkCommandBuffer, float t, int32_t timing, bool, const Config& cfg, SynthesisInputs&) override {
         if (usable_ && next_ < pending_.size()) {
-            // (interpolated frames: measured there only)
-            pending_[next_].on = cfg.hudLayer > 0.f && cfg.hudMask > 0 && t <= 1.f;
+            // (predicted frames too: in place = the current frame)
+            pending_[next_].on = cfg.hudLayer > 0.f && cfg.hudMask > 0;
             pending_[next_].strength = cfg.hudLayer;
             pending_[next_].t = t;
             pending_[next_].timing = timing;

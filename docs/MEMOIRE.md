@@ -3150,3 +3150,6 @@ en hausse), enregistrements +0,010 / +0,006 (×2 / ×4). Automatique sur GPU
 dédié (avec `hud_mask`). Mesure de coût : toujours **appariée** (les
 binaires en alternance dans le même banc) — d'un lancement à l'autre la
 référence varie de ±0,3 ms.
+Images prédites aussi (le « sur place » est l'image courante) : scènes ×4
+hybride `hybrid_predict=1` +0,076 dB, extrapolation +0,128 (arêtes +0,32 /
++0,79), aucune perte ; enregistrements +0,007 / +0,015.

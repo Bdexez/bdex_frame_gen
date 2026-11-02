@@ -22,7 +22,9 @@
 //   4  once a frame, per cell: the average over 3x3 cells, the weight (read
 //      bilinearly: a cell grid cost a twentieth of per-pixel maps; the
 //      maximum over a pixel window, one thread a cell, 0.55 ms at 1440p)
-//   2  interpolated frames: the result into the scratch image
+//   2  the result into the scratch image (predicted frames: in place is the
+//      current input — hybrid x4 with hybrid_predict=1 +0.08 dB, extrapolation
+//      +0.13 on the game-like scenes)
 //   3  the scratch image back into the output where the weight is
 #extension GL_GOOGLE_include_directive : require  // #include with glslangValidator too
 #include "common.glsl"
@@ -180,11 +182,11 @@ void main() {
     for (int y = -pc.radius; y <= pc.radius; y += pc.stride)
         for (int x = -pc.radius; x <= pc.radius; x += pc.stride) {
             ivec2 q = clamp(p + ivec2(x, y), ivec2(0), pc.size - 1);
-            vec3 inPlace = mix(sourceAt(prevTex, q), sourceAt(curTex, q), t);
+            vec3 inPlace = t <= 1.0 ? mix(sourceAt(prevTex, q), sourceAt(curTex, q), t) : sourceAt(curTex, q);
             sum += unpackOut(imageLoad(outImg, q).r).rgb - inPlace;
             n += 1.0;
         }
     vec4 c = unpackOut(imageLoad(outImg, p).r);
-    vec3 layered = mix(sourceAt(prevTex, p), sourceAt(curTex, p), t) + sum / n;
+    vec3 layered = (t <= 1.0 ? mix(sourceAt(prevTex, p), sourceAt(curTex, p), t) : sourceAt(curTex, p)) + sum / n;
     imageStore(scratch, p, uvec4(packOut(vec4(mix(c.rgb, layered, w), c.a)), 0u, 0u, 0u));
 }
