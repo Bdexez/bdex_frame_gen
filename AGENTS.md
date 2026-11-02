@@ -423,6 +423,12 @@ zones d'occultation, `pixel_vectors` y gagne +1,3 : ne pas y revenir),
 mal sa fenêtre, accord des deux sens ; structures fines en parallaxe),
 `false_detail` (14/10, auto GPU dédié : sur l'image générée finie,
 `afterOutput`, le détail fin qu'aucune entrée n'a à ±16 px → moyenne 5×5),
+`mosaic_blur` (auto GPU dédié, après `false_detail` : chaos du flux → un
+cinquième de déformation par flux lissé + moyenne, pixels immobiles de
+`hud_mask` exclus), `hud_layer` (21/10, auto GPU dédié, après `mosaic_blur` :
+texte du HUD sur la scène → fondu sur place + basses fréquences de l'écart à
+la synthèse, là où l'indice de `static_soft` est dense, contrasté et durable ;
+cartes sur une grille de cellules, `FgContext::staticMask()`),
 `hud_mask` (mesuré 2026-09-25 : le masque dans l'accumulation
 d'`upscale_temporal` — historique sans mouvement sur le HUD — ne change
 rien, HUD opaque ou transparent : le test aller-retour du flux rejette déjà
