@@ -17,6 +17,7 @@ std::unique_ptr<FgPass> makeFlowConfidencePass();
 std::unique_ptr<FgPass> makeLearnedCorrectionPass();
 std::unique_ptr<FgPass> makeFalseDetailPass();
 std::unique_ptr<FgPass> makeMosaicBlurPass();
+std::unique_ptr<FgPass> makeHudLayerPass();
 std::unique_ptr<FgPass> makeParallaxSearchPass();
 std::unique_ptr<FgPass> makeLumaMatchPass();
 std::unique_ptr<FgPass> makeLearnedFlowPass();
@@ -67,6 +68,7 @@ std::vector<std::unique_ptr<FgPass>> createOptionalPasses(const Config& cfg, Dev
     // the HUD, which read the finished output). Can be switched on live.
     passes.push_back(makeFalseDetailPass());
     passes.push_back(makeMosaicBlurPass());  // (after false_detail: measured over its output)
+    passes.push_back(makeHudLayerPass());    // (after mosaic_blur: measured over its output)
     if (cfg.learnedCorrection > 0.f) passes.push_back(makeLearnedCorrectionPass());
     return withHud();
 }

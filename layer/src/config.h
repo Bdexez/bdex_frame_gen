@@ -130,6 +130,7 @@ struct Config {
     bool  globalMotion  = false;  // the frame's dominant shift as a second search centre at the coarsest level (global_motion.comp)
     bool  temporalPrediction = false; // coarsest matching level searches around the previous frame pair's motion instead of zero, so sustained fast pans are followed beyond the pyramid's range (opt-in; off = bit-for-bit)
     bool  extrapolateSplat = false; // extrapolation: forward-splat the current frame, backward warp only where nothing lands (opt-in)
+    float hudLayer      = 0.0f;   // interpolation with hud_mask: where static_soft's evidence (a HUD's anti-aliased text holding still over the moving scene) is dense, the in-place cross-fade plus the low frequencies of the synthesis's difference to it — the glyphs stay, the scene behind moves; 0 = off .. 1 (8-bit/10-bit formats, no upscaling)
     float mosaicBlur    = 0.0f;   // interpolation: where the finest flow is chaos (half the vectors around a pixel far from their neighbours': a mosaic of unrelated blocks), the generated frame leans to its local average; 0 = off .. 1 (8-bit/10-bit formats, no upscaling)
     int   recordScale   = 0;      // the panel's recordings: written at 1/N of the game's size (1 = full), 0 = about 960 pixels wide (a 1440p game's HUD strokes then never stay still)
     bool  hudAvoid      = false;  // interpolation with hud_mask: a trajectory with an endpoint on a learned still overlay pixel (where the pixel itself is none) counts as broken — the scene between HUD icons no longer copies their colour
@@ -159,7 +160,7 @@ struct Config {
                        kAutoTemporalPrediction = 64, kAutoZeroBias = 128, kAutoGlobalMotion = 256,
                        kAutoHudMask = 512, kAutoStaticSoft = 1024, kAutoInterpAccel = 2048,
                        kAutoFalseDetail = 4096, kAutoBorderPredict = 8192, kAutoBorderFill = 16384, kAutoHudAvoid = 32768,
-                       kAutoMosaicBlur = 65536 };
+                       kAutoMosaicBlur = 65536, kAutoHudLayer = 131072 };
     uint32_t autoOptionsSet = 0;
     bool  pixelVectorsAuto = false; // runtime: pixel_vectors turned on by autoConfigure; FrameGen drops it where the synthesis would cost too much (display pixels x generated frames above 4K x2)
     bool  interpSplatAuto = false;  // runtime: interp_splat turned on by autoConfigure; dropped with pixelVectorsAuto

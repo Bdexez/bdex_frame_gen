@@ -1,0 +1,190 @@
+#version 450
+// hud_layer: a HUD's text over the moving scene — a see-through panel, the
+// subtitles' box — is two layers: still glyphs, and the scene behind them.
+// The synthesis can move only one: block flows follow the scene and drag the
+// glyphs along (or keep the glyphs and freeze the scene). Where hud_mask's
+// static_soft evidence (anti-aliased text that holds still while the scene
+// moves) is dense, the interpolated frame becomes the in-place cross-fade of
+// the inputs (the glyphs where they are) plus the low frequencies of the
+// synthesis's difference to it (the scene's motion behind, without the
+// glyphs' dragged edges). Game-like scenes at x4 (make_game.py: a 30 fps
+// game at 120 Hz) +0.01 to +0.25 dB, moving edges +0.6; recorded games
+// +0.01. Modes:
+//   0  once a frame, per cell of `cell` pixels: the evidence's maximum over
+//      the cell (every `dilateStep`; none within `margin` of the picture's
+//      edges, where entering content mimics it; only where the picture is
+//      contrasted: a flat floor the flow cannot follow mimics it too)
+//   1  once a frame, per cell: the maximum over `dilate` cells around, into
+//      a slow moving average: a HUD stays where it is for minutes, the
+//      scene's false hits come and go (without both tests 6 to 12 % of a
+//      recorded game's picture was weighted, its floor and walls in patches;
+//      with them ~2 %: the minimap, the quest text, the icons, the subtitles)
+//   4  once a frame, per cell: the average over 3x3 cells, the weight (read
+//      bilinearly: a cell grid cost a twentieth of per-pixel maps; the
+//      maximum over a pixel window, one thread a cell, 0.55 ms at 1440p)
+//   2  interpolated frames: the result into the scratch image
+//   3  the scratch image back into the output where the weight is
+#extension GL_GOOGLE_include_directive : require  // #include with glslangValidator too
+#include "common.glsl"
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0, r32ui) uniform uimage2D outImg;   // the output (swapchain storage encoding)
+layout(binding = 1, r32ui) uniform uimage2D scratch;  // mode 2's results
+layout(binding = 2, r32f) uniform image2D dilated;    // mode 0, per cell: the persistent evidence
+layout(binding = 3, r32f) uniform image2D weight;     // mode 1, per cell
+layout(binding = 4) uniform sampler2D stillMask;      // hud_mask: r frames unchanged, g static_soft's evidence
+layout(binding = 5) uniform sampler2D prevTex;        // the synthesis's inputs
+layout(binding = 6) uniform sampler2D curTex;
+layout(std430, binding = 8) buffer CellMax { float cellMax[]; };  // mode 0
+layout(std430, binding = 7) readonly buffer State {  // frame_state.comp: the outputs' content times
+    float meanCost; uint dup; uint diffCount; float ageLast; float agePrev; float interval; uint repeats; float histDiff;
+    float t[8];
+} st;
+
+#define ENC_BGRA8       1u
+#define ENC_A2B10G10R10 2u
+#define ENC_A2R10G10B10 3u
+#define ENC_SRGB_FLAG   0x100u
+
+layout(push_constant) uniform PC {
+    ivec2 size;        // the output (display pixels)
+    uint encoding;
+    int mode;
+    float strength;    // 0..1
+    float t;           // the output's moment between the inputs
+    int timing;        // > 0: the moment is st.t[timing - 1] (as the synthesis's)
+    int dilate;        // mode 1: reach of the maximum (cells)
+    int dilateStep;    // mode 0: the evidence sampled every this many pixels
+    int cell;          // pixels per side of the weight's cells
+    int radius;        // mode 2: radius of the difference's average
+    int stride;        // ... sampled every this many pixels (a low-pass: the samples need not touch)
+    int margin;        // mode 0: no evidence this close to the edges
+    float rate;        // mode 0: the moving average's rate (negative: from zero, the first frame)
+} pc;
+
+vec4 unpackOut(uint v) {
+    uint enc = pc.encoding & 0xffu;
+    if (enc == ENC_A2B10G10R10)
+        return vec4(uvec4(v & 1023u, (v >> 10) & 1023u, (v >> 20) & 1023u, v >> 30)) / vec4(1023.0, 1023.0, 1023.0, 3.0);
+    if (enc == ENC_A2R10G10B10)
+        return vec4(uvec4((v >> 20) & 1023u, (v >> 10) & 1023u, v & 1023u, v >> 30)) / vec4(1023.0, 1023.0, 1023.0, 3.0);
+    vec4 c = unpackUnorm4x8(v);
+    return enc == ENC_BGRA8 ? c.bgra : c;
+}
+uint packOut(vec4 c) {
+    uint enc = pc.encoding & 0xffu;
+    c = clamp(c, 0.0, 1.0);
+    if (enc == ENC_A2B10G10R10 || enc == ENC_A2R10G10B10) {
+        uvec4 q = uvec4(round(c * vec4(1023.0, 1023.0, 1023.0, 3.0)));
+        return enc == ENC_A2B10G10R10 ? q.r | (q.g << 10) | (q.b << 20) | (q.a << 30)
+                                      : q.b | (q.g << 10) | (q.r << 20) | (q.a << 30);
+    }
+    return enc == ENC_BGRA8 ? packUnorm4x8(c.bgra) : packUnorm4x8(c);
+}
+
+vec3 sourceAt(sampler2D tex, ivec2 q) {
+    vec3 c = texelFetch(tex, q, 0).rgb;
+    // (an sRGB view samples decoded light: back to the stored values)
+    if ((pc.encoding & ENC_SRGB_FLAG) != 0u) c = linearToSrgb(c);
+    return c;
+}
+
+// Text is contrasted: a flat floor the flow cannot follow mimics the
+// evidence (it holds still better than it moves), a glyph's edge never is.
+float contrastAt(ivec2 q) {
+    const vec3 L = vec3(0.299, 0.587, 0.114);
+    float c0 = dot(sourceAt(curTex, q), L);
+    float cx = dot(sourceAt(curTex, min(q + ivec2(1, 0), pc.size - 1)), L), cy = dot(sourceAt(curTex, min(q + ivec2(0, 1), pc.size - 1)), L);
+    return max(abs(c0 - cx), abs(c0 - cy));
+}
+
+float evidenceAt(ivec2 p) {
+    ivec2 ms = textureSize(stillMask, 0);
+    return texelFetch(stillMask, clamp(ivec2((vec2(p) + 0.5) * vec2(ms) / vec2(pc.size)), ivec2(0), ms - 1), 0).g;
+}
+
+float weightAt(ivec2 p) {
+    ivec2 cs = imageSize(weight);
+    vec2 c = (vec2(p) + 0.5) / float(pc.cell) - 0.5;
+    ivec2 i = ivec2(floor(c));
+    vec2 f = c - vec2(i);
+    float a = imageLoad(weight, clamp(i, ivec2(0), cs - 1)).r, b = imageLoad(weight, clamp(i + ivec2(1, 0), ivec2(0), cs - 1)).r;
+    float d = imageLoad(weight, clamp(i + ivec2(0, 1), ivec2(0), cs - 1)).r, e = imageLoad(weight, clamp(i + ivec2(1, 1), ivec2(0), cs - 1)).r;
+    return mix(mix(a, b, f.x), mix(d, e, f.x), f.y);
+}
+
+const float kContrast = 0.08;  // (luma, 0..1: 20 of 255)
+
+shared uint sAny;
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    const bool inside = all(lessThan(p, pc.size));
+    if (pc.mode <= 1 || pc.mode == 4) {
+        ivec2 cs = imageSize(weight);
+        if (any(greaterThanEqual(p, cs))) return;
+        if (pc.mode == 0) {
+            float m = 0.0;
+            ivec2 o = p * pc.cell;
+            for (int y = 0; y < pc.cell; y += pc.dilateStep)
+                for (int x = 0; x < pc.cell; x += pc.dilateStep) {
+                    ivec2 q = o + ivec2(x, y);
+                    if (all(greaterThanEqual(q, ivec2(pc.margin))) && all(lessThan(q, pc.size - pc.margin))) {
+                        float e = evidenceAt(q);
+                        if (e > m && contrastAt(q) > kContrast) m = e;
+                    }
+                }
+            cellMax[p.y * cs.x + p.x] = m;
+        } else if (pc.mode == 1) {
+            float m = 0.0;
+            for (int y = -pc.dilate; y <= pc.dilate; ++y)
+                for (int x = -pc.dilate; x <= pc.dilate; ++x) {
+                    ivec2 c = clamp(p + ivec2(x, y), ivec2(0), cs - 1);
+                    m = max(m, cellMax[c.y * cs.x + c.x]);
+                }
+            float old = pc.rate < 0.0 ? 0.0 : imageLoad(dilated, p).r;
+            imageStore(dilated, p, vec4(old + abs(pc.rate) * (m - old)));
+        } else {
+            float s = 0.0;
+            for (int y = -1; y <= 1; ++y)
+                for (int x = -1; x <= 1; ++x) s += imageLoad(dilated, clamp(p + ivec2(x, y), ivec2(0), cs - 1)).r;
+            imageStore(weight, p, vec4(smoothstep(0.3, 0.6, s / 9.0)));
+        }
+        return;
+    }
+    // Modes 2 and 3: a 16x16 tile no weighted cell reaches leaves at once
+    // (the cells under it and their bilinear neighbours, at most 7x7 with
+    // cells of 4 pixels or more: a thread each — one thread reading them all
+    // in turn cost 0.4 ms a game frame at 720p x4).
+    if (gl_LocalInvocationIndex == 0u) sAny = 0u;
+    barrier();
+    if (gl_LocalInvocationIndex < 64u) {
+        ivec2 cs = imageSize(weight);
+        ivec2 lo = max(ivec2(gl_WorkGroupID.xy) * 16 / pc.cell - 1, ivec2(0));
+        ivec2 hi = min((ivec2(gl_WorkGroupID.xy) * 16 + 15) / pc.cell + 1, cs - 1);
+        ivec2 c = lo + ivec2(int(gl_LocalInvocationIndex) % 8, int(gl_LocalInvocationIndex) / 8);
+        if (all(lessThanEqual(c, hi)) && imageLoad(weight, c).r > 0.0) atomicOr(sAny, 1u);
+    }
+    barrier();
+    if (sAny == 0u || !inside) return;
+    float w = pc.strength * weightAt(p);
+    if (w <= 0.0) return;
+    if (pc.mode == 3) {
+        imageStore(outImg, p, imageLoad(scratch, p));
+        return;
+    }
+    const float t = pc.timing > 0 ? st.t[pc.timing - 1] : pc.t;
+    vec3 sum = vec3(0.0);
+    float n = 0.0;
+    for (int y = -pc.radius; y <= pc.radius; y += pc.stride)
+        for (int x = -pc.radius; x <= pc.radius; x += pc.stride) {
+            ivec2 q = clamp(p + ivec2(x, y), ivec2(0), pc.size - 1);
+            vec3 inPlace = mix(sourceAt(prevTex, q), sourceAt(curTex, q), t);
+            sum += unpackOut(imageLoad(outImg, q).r).rgb - inPlace;
+            n += 1.0;
+        }
+    vec4 c = unpackOut(imageLoad(outImg, p).r);
+    vec3 layered = mix(sourceAt(prevTex, p), sourceAt(curTex, p), t) + sum / n;
+    imageStore(scratch, p, uvec4(packOut(vec4(mix(c.rgb, layered, w), c.a)), 0u, 0u, 0u));
+}

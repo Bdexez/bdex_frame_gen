@@ -246,6 +246,13 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
     // self-moving edges lose up to 0.5 dB, measured 17/10: synthetic, not
     // what the games show. ~0.9 ms a game frame at 1440p x4.)
     if (strong && !(autoOptionsSet & kAutoMosaicBlur) && mosaicBlur == 0.f) mosaicBlur = 1.f;
+    // HUD text over the moving scene, two layers (21/10): where static_soft's
+    // evidence is dense, contrasted and lasting, the in-place cross-fade plus
+    // the low frequencies of the synthesis's difference to it. Game-like
+    // scenes at x4 (make_game.py, a 30 fps game at 120 Hz) +0.01 to +0.25
+    // dB, +0.09 on average, moving edges +0.6, every scene up; recorded games
+    // +0.010 / +0.006 at x2 / x4. ~0.36 ms a game frame at 1440p x4.
+    if (strong && !(autoOptionsSet & kAutoHudLayer) && hudLayer == 0.f) hudLayer = 1.f;
     // No bonus for the zero-motion candidate (03/10, on top of everything
     // above, 960x540 corpus + demo): the free bonus won on soft content in
     // fast motion — a ghostly blend instead of the moving picture. The HUD
@@ -397,6 +404,7 @@ const std::vector<OptionDef>& registry() {
     B("hud_avoid", nullptr, &Config::hudAvoid, kLive),
     I("record_scale", nullptr, &Config::recordScale, 0, 4),
     F("mosaic_blur", nullptr, &Config::mosaicBlur, 0.f, 1.f, kLive),
+    F("hud_layer", nullptr, &Config::hudLayer, 0.f, 1.f, kLive),
     B("online_tune", nullptr, &Config::onlineTune),
     F("upscale_temporal", nullptr, &Config::upscaleTemporal, 0.f, 0.95f),
     B("frame_timing", nullptr, &Config::frameTiming, kLive),
@@ -556,6 +564,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "border_fill") autoOptionsSet |= kAutoBorderFill;
     if (key == "hud_avoid") autoOptionsSet |= kAutoHudAvoid;
     if (key == "mosaic_blur") autoOptionsSet |= kAutoMosaicBlur;
+    if (key == "hud_layer") autoOptionsSet |= kAutoHudLayer;
     if (const OptionDef* d = findOption(key)) {
         switch (d->kind) {
         case Kind::Bool:  return parseBool(value, this->*(d->b));
@@ -922,6 +931,7 @@ std::string Config::describe() const {
     if (hudMask > 0) o << " hud_mask=" << hudMask;
     if (falseDetail > 0.f) o << " false_detail=" << falseDetail;
     if (mosaicBlur > 0.f) o << " mosaic_blur=" << mosaicBlur;
+    if (hudLayer > 0.f) o << " hud_layer=" << hudLayer;
     if (borderPredict) o << " border_predict=1";
     if (parallaxSearch) o << " parallax_search=1";
     if (revealFill) o << " reveal_fill=1";
