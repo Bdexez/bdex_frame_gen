@@ -3197,3 +3197,7 @@ où prev et cur diffèrent beaucoup sur place gagnait +0,15 dans la boîte mais
 −0,09 sur l'image : non retenu. `hud_mask` (pixels contrastés comptés
 double) : sans effet ici — ces glyphes, décalés d'un tiers de pixel, n'ont
 presque aucun pixel strictement immobile.
+Écarté : dans `hud_layer`, les hautes fréquences du fondu sur place seulement
+là où celles de prev et cur s'accordent sur place (le reste de la synthèse) —
+scènes −0,018 dB, boîte des sous-titres −0,03 : le texte anticrénelé mêlé au
+décor n'a jamais tout à fait les mêmes détails d'une image à l'autre.
