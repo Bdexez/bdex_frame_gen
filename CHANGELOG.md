@@ -6,6 +6,20 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Predicted frames keep the HUD's icons apart: `hud_avoid` (2026-10-21)
+
+- `hud_avoid` covers predicted frames too (the hybrid's predictions,
+  extrapolation): where the scene between still HUD elements takes its source
+  in the current frame on one of them — the background moving behind the
+  icons — the pixel takes the current frame in place instead of the icon's
+  colour (the icons merged into bars in every predicted frame). Game-like
+  scenes at x4: hybrid with `hybrid_predict=1` +0.15 dB, extrapolation
+  +0.27, every scene up; the recordings ±0.003. Interpolated frames are
+  unchanged.
+- `false_detail` and `mosaic_blur` cost 0.5 ms less a game frame at 1440p x4,
+  outputs unchanged (the average as row and column sums; each flow texel's
+  chaos test once instead of 25 times).
+
 ### HUD text no longer dragged by the scene behind it: `hud_layer` (2026-10-21)
 
 - **`hud_layer`** (on with a discrete GPU, panel « Texte du HUD sur la

@@ -3212,3 +3212,12 @@ un tampon) au lieu de 25 fois dans la densité (275 lectures en série par fil
 sur 57 600 texels à 1440p) ; test des tuiles sur la densité avant les
 sondes par pixel. −0,3 ms par image du jeu à 1440p ×4 (surcoût 1,0 → 0,7),
 sorties identiques octet pour octet.
+**`hud_avoid` dans les images prédites** (21/10) : en hybride
+`hybrid_predict=1`, les icônes du HUD étaient cassées dans chaque image
+prédite (zone des icônes 21,8 dB contre ~29 en interpolation) — le décor
+entre les icônes prenait sa source dans `cur` sur une icône (le défaut que
+`hud_avoid` corrige en interpolation, où il était seul actif : `t <= 1`).
+Source sur un pixel immobile du HUD alors que q n'en est pas un → `cur` sur
+place. Scènes ×4 : hybride `hybrid_predict=1` +0,151 dB, extrapolation
++0,272, toutes en hausse ; enregistrements hybride ±0, extrapolation −0,003
+(pire −0,03 : du décor sombre immobile appris comme HUD, le défaut connu).
