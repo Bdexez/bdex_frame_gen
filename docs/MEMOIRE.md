@@ -3241,3 +3241,17 @@ Source sur un pixel immobile du HUD alors que q n'en est pas un → `cur` sur
 place. Scènes ×4 : hybride `hybrid_predict=1` +0,151 dB, extrapolation
 +0,272, toutes en hausse ; enregistrements hybride ±0, extrapolation −0,003
 (pire −0,03 : du décor sombre immobile appris comme HUD, le défaut connu).
+Latence au banc (gamescope sans tête, 1440p quality, ×4 à 30 i/s, 144 Hz,
+build du soir, trois essais alternés, machine calme) : interpolation image
+réelle 27,4 ms après le `present` du jeu, présentation → écran 38,5 ;
+`hybrid_predict=1` 21,5 / 32,6 (−5,9 ms) pour −0,67 dB à vitesse réelle.
+**Budget de latence de l'interpolation ×4** (21/10, banc ci-dessus) : image
+réelle 26,8 ms après le `present` du jeu = 3 rafraîchissements avant elle
+(les trois générées, 20,8 ms à 144 Hz) + l'attente du tic de la première
+générée (premier tic ≥ prête + 1,5 ms de marge X11 : 1,5 + P/2 ≈ 5 ms en
+moyenne) + le GPU de la démo et le nôtre (1–2 ms). Préréglage `performance`
+(bien moins de GPU) : 25,35 ms, −1,5 seulement ; `rot_weight=0` : −0,2 ms.
+Le travail GPU n'est pas le levier, l'ordre des images l'est
+(`hybrid_predict=1` : −5,9 ms). **À 120 Hz** le ×4 de 30 i/s devient
+parfaitement régulier mais les trois rafraîchissements valent 25 ms : ~+4 ms
+de latence — le dire en même temps que le conseil.
