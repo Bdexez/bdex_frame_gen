@@ -3201,3 +3201,9 @@ presque aucun pixel strictement immobile.
 là où celles de prev et cur s'accordent sur place (le reste de la synthèse) —
 scènes −0,018 dB, boîte des sous-titres −0,03 : le texte anticrénelé mêlé au
 décor n'a jamais tout à fait les mêmes détails d'une image à l'autre.
+Coûts par passe à 1440p ×4 (21/10, mesures appariées, par image du jeu) :
+`false_detail` 1,75 ms (dont la garde 0,15–0,2, la moyenne 9×9 0,45),
+`mosaic_blur` 1,05, `pixel_vectors` 0,9, `interp_splat` 0,55, `hud_layer`
+0,5. Moyenne de `false_detail` en sommes de lignes puis colonnes (mémoire
+partagée, tuiles filtrées seulement) : −0,18 ms, sorties identiques à 1
+niveau près.
