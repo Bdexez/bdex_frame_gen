@@ -78,12 +78,18 @@ log is in [`CHANGELOG.md`](CHANGELOG.md).
   pacing (the panel says so and names the even refresh rate: 120 Hz).
   `tight_hold` gives that refresh to the real frame (−2.8 ms), the Xwayland
   grid holds under a loaded compositor, `mosaic_blur` softens the moving
-  character's mosaics, and `hybrid_predict=1` halves the latency for one
-  short prediction (−0.4 dB). Still open there: subtitles and HUD text over
-  a moving semi-transparent box (text-line blocks take the zero vector; a
-  masked re-match moved the letters' anti-aliased edges with the scene,
-  −1 dB: judge on `record_scale = 1` recordings), near objects leaving the
-  picture in a turn, whip pans. Earlier: the cadence fills every
+  character's mosaics (judged at a 30 fps game's real speed too:
+  `tools/edge_bench/make_game.py`, the recordings accelerate the motion),
+  `hud_layer` keeps HUD text and subtitles in place over the moving scene
+  (and lets go at once when they disappear), `hud_avoid` keeps the icons
+  apart in predicted frames too, and `hybrid_predict=1` cuts the latency
+  for one short prediction (−0.67 dB at real speed). Against the version of
+  20/10: game-like scenes x4 +0.14 dB, recordings +0.08 / +0.11. Still open
+  there: the scene behind a see-through box (the box's area stays 5 dB
+  under the picture), near objects and a first-person weapon's edges in a
+  turn (occlusion), whip pans; a 120 fps recording without generation, at
+  `record_scale = 1`, would give the first real-content x4 at real speed.
+  Earlier: the cadence fills every
   refresh (`refresh_fill`, `virtual_grid`, `pace_plan`), and the synthesis
   lost its main visible defects on these benches — the block mosaic over
   blurred content (`false_detail`), the smeared screen edges in camera turns
