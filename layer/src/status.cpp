@@ -224,6 +224,14 @@ std::vector<std::string> statusDescribe(const StatusFile& file, bool english) {
                     if (std::fabs(outp - even) <= 0.03 * even) {
                         snprintf(buf, sizeof buf, T(" · un écran réglé à %d Hz serait régulier", " · a screen set to %d Hz would be even"), even);
                         line += buf;
+                        // (in interpolation the real frame waits m - 1 refreshes:
+                        // longer ones at the lower rate — x4 on 120 instead of 144 Hz, ~4 ms)
+                        const double game = num(v, "game_fps", 0);
+                        const double extra = game > 0 ? (std::round(outp / game) - 1.0) * (1000.0 / even - 1000.0 / hz) : 0.0;
+                        if (extra >= 1.0) {
+                            snprintf(buf, sizeof buf, T(" (~%.0f ms de latence en plus)", " (~%.0f ms more latency)"), extra);
+                            line += buf;
+                        }
                         break;
                     }
             }

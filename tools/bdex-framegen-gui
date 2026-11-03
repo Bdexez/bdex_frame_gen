@@ -151,6 +151,7 @@ _EN = {
  'affichées {}/s, tenues {}/s': 'shown {}/s, held {}/s',
  'dont ~{}/s inévitables à {} i/s sur {} Hz': 'of which ~{}/s unavoidable at {} fps on {} Hz',
  'un écran réglé à {} Hz serait régulier': 'a screen set to {} Hz would be even',
+ '(~{} ms de latence en plus)': '(~{} ms more latency)',
  'budget GPU : niveau {}': 'GPU budget: level {}',
  "flux incertain sur {} % de l'image": 'flow uncertain on {} % of the picture',
  "génération inutile : le jeu tient déjà la fréquence de l'écran": 'generation not needed: the game already '
@@ -2083,6 +2084,11 @@ def describe_entry(e):
                 even = next((r for r in (60, 72, 75, 90, 100, 120, 144, 165) if abs(outp - r) <= 0.03 * r), 0)
                 if even:
                     parts.append(tr(f"un écran réglé à {even} Hz serait régulier"))
+                    # (in interpolation the real frame waits m - 1 refreshes: longer
+                    # ones at the lower rate — x4 on 120 instead of 144 Hz, ~4 ms)
+                    extra = (round(outp / game) - 1) * (1000.0 / even - 1000.0 / hz) if game > 0 else 0.0
+                    if extra >= 1.0:
+                        parts.append(tr(f"(~{extra:.0f} ms de latence en plus)"))
         lvl = int(e.get("gpu_budget_level", 0))
         if lvl > 0:
             parts.append(tr(f"budget GPU : niveau {lvl}"))
