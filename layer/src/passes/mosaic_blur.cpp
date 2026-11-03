@@ -31,13 +31,15 @@ public:
         usable_ = !enc.is64 && e <= 3 && (enc.transfer == TRANSFER_PERCEPTUAL || enc.transfer == TRANSFER_PQ || enc.srgb) && !ctx.upscaling();
         if (!usable_) return;
         const VkDescriptorType SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        pipe_ = ctx.makePipeline(mosaic_blur_comp, mosaic_blur_comp_size, {SI, SI, SI, CIS, CIS, SI, CIS, CIS, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, CIS});
+        pipe_ = ctx.makePipeline(mosaic_blur_comp, mosaic_blur_comp_size, {SI, SI, SI, CIS, CIS, SI, CIS, CIS, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, CIS,
+                                                                       VK_DESCRIPTOR_TYPE_STORAGE_BUFFER});
         const VkExtent2D d = ctx.displayExtent();
         const FgFineLevel fine = ctx.fineLevel();
         fineExtent_ = fine.fine;
         scratch_ = ctx.createImage(VK_FORMAT_R32_UINT, d, VK_IMAGE_USAGE_STORAGE_BIT);
         density_ = ctx.createImage(VK_FORMAT_R32_SFLOAT, fineExtent_, VK_IMAGE_USAGE_STORAGE_BIT);
         smooth_ = ctx.createImage(VK_FORMAT_R32G32B32A32_SFLOAT, fineExtent_, VK_IMAGE_USAGE_STORAGE_BIT);
+        chaos_ = ctx.device().createBuffer(4 * VkDeviceSize(fineExtent_.width) * fineExtent_.height, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
         // Chaos: a vector about 1 % of the picture's width from a neighbour's
         // (8 display pixels at 853, measured on recordings at that size), in
         // flow units; the average over a quarter of a flow block each side
@@ -66,6 +68,7 @@ public:
                     ctx.writeImage(s, 7, CIS, ctx.sourceView(cur));
                     ctx.writeBuffer(s, 8, ctx.stateBuffer());
                     ctx.writeImage(s, 9, CIS, ctx.staticMask());
+                    ctx.writeBuffer(s, 10, chaos_.buffer);
                     sets_.push_back(s);
                 }
         pending_.assign(ctx.outputs(), Pending{});
@@ -75,6 +78,7 @@ public:
         if (scratch_.image) ctx.device().destroyImage(scratch_);
         if (density_.image) ctx.device().destroyImage(density_);
         if (smooth_.image) ctx.device().destroyImage(smooth_);
+        if (chaos_.buffer) ctx.device().destroyBuffer(chaos_);
         ctx.destroyPipeline(pipe_);
     }
 
@@ -114,9 +118,12 @@ public:
             MbPC p0 = pc;
             p0.size[0] = int32_t(fineExtent_.width);
             p0.size[1] = int32_t(fineExtent_.height);
-            vt.CmdPushConstants(cmd, pipe_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(p0), &p0);
-            vt.CmdDispatch(cmd, fg::divUp(fineExtent_.width, 16), fg::divUp(fineExtent_.height, 16), 1);
-            ctx.barrier(cmd);
+            for (int mode : {5, 0}) {
+                p0.mode = mode;
+                vt.CmdPushConstants(cmd, pipe_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(p0), &p0);
+                vt.CmdDispatch(cmd, fg::divUp(fineExtent_.width, 16), fg::divUp(fineExtent_.height, 16), 1);
+                ctx.barrier(cmd);
+            }
             densityFrame_ = frame_;
         }
         for (int mode : {1, 2}) {
@@ -143,6 +150,7 @@ private:
     bool usable_ = false;
     FgPipeline pipe_;
     AllocatedImage scratch_, density_, smooth_;
+    AllocatedBuffer chaos_;  // per flow texel (mode 5)
     VkExtent2D fineExtent_{};
     float deviation_ = 8.f;
     int32_t radius_ = 2;

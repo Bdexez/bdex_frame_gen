@@ -3207,3 +3207,8 @@ Coûts par passe à 1440p ×4 (21/10, mesures appariées, par image du jeu) :
 0,5. Moyenne de `false_detail` en sommes de lignes puis colonnes (mémoire
 partagée, tuiles filtrées seulement) : −0,18 ms, sorties identiques à 1
 niveau près.
+`mosaic_blur` : le test de chaos de chaque texel calculé une fois (mode 5,
+un tampon) au lieu de 25 fois dans la densité (275 lectures en série par fil
+sur 57 600 texels à 1440p) ; test des tuiles sur la densité avant les
+sondes par pixel. −0,3 ms par image du jeu à 1440p ×4 (surcoût 1,0 → 0,7),
+sorties identiques octet pour octet.
