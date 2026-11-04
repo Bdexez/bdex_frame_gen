@@ -17,6 +17,7 @@ TEST(config_defaults) {
     Config c;
     CHECK(!c.enabled);   // loaded-but-inert until a config/env turns it on
     CHECK(c.multiplier == 2);
+    CHECK(!c.skipFast && c.refreshFill == 0);  // fixed xN stays xN, even beyond the screen's rate
     CHECK(c.presentMode == -2);  // auto
     CHECK(c.debug == Config::Debug::None);
 }

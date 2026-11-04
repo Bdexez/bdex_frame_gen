@@ -3,6 +3,7 @@
 // the source interval and duplicate/prediction clocks intact.
 #include "device.h"
 #include "framegen_internal.h"
+#include "pacing.h"
 #include "shaders.h"
 
 #include <cmath>
@@ -261,6 +262,35 @@ int main() {
     run(true, 0.525f);  // duplicate detection overrides smoothing, keeps the distinct pair's interval
     pc.flags &= ~fg::kStateDedup; pc.realPos = 0; pc.sinceLastMs = pc.intervalMs;
     run(false, 1.f);    // predictions keep their source clock
+    // The generalized schedule also supplies shared-refresh and sub-refresh
+    // plans. Exercise every output slot against analytic interpolation times
+    // at arbitrary rates, on both sides of the output/source Hz boundaries.
+    const pacing::Grid grid{true, 0.0, 1000.0 / 144};
+    for (double fps : {23.976, 35.9, 36.2, 59.94, 90.0, 200.0}) {
+        for (int m = 2; m <= 8; ++m) {
+            const double interval = 1000.0 / fps;
+            double base[8] = {}, planned[8] = {}, last = 0.0;
+            for (int k = 0; k < m; ++k) base[k] = interval * k / m;
+            pacing::planLands(1000.0, 1.0, base, m, grid, last, planned, interval, m - 1);
+            pc.flags = fg::kStateDisplay | fg::kStateContent;
+            pc.multiplier = m; pc.realPos = m - 1;
+            pc.sinceLastMs = pc.intervalMs = pc.displaySpanMs = float(interval);
+            for (int o = 0; o < m - 1; ++o) pc.displayMs[o] = float(planned[o] - 1000.0);
+            pc.displayMs[7] = float(planned[m - 1] - 1000.0);
+            const auto expected = [&](int o) {
+                return std::clamp(1.0 + (planned[o] - planned[m - 1]) / interval, 0.0, 1.0);
+            };
+            run(false, float(expected(0)));
+            for (int o = 0; o < m - 1; ++o) {
+                const float t = static_cast<const float*>(mapped)[8 + o];
+                if (!std::isfinite(t) || std::abs(t - expected(o)) > 1e-5) {
+                    std::fprintf(stderr, "frame state: %.3f fps x%d slot %d: t=%f expected=%f\n",
+                                 fps, m, o, t, expected(o));
+                    ++failures;
+                }
+            }
+        }
+    }
     std::printf("frame state: %d failures\n", failures);
     failures += testAccelTiming(dev, sampler);
 
