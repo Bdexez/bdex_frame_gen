@@ -6,6 +6,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### The Zed editor is left alone (2026-10-21)
+
+- `zed-editor` (it draws with Vulkan) joins the desktop programs the layer
+  never arms and the panel never lists as a game.
+
 ### Predicted frames keep the HUD's icons apart: `hud_avoid` (2026-10-21)
 
 - `hud_avoid` covers predicted frames too (the hybrid's predictions,
