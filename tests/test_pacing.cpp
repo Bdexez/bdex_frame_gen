@@ -121,6 +121,36 @@ TEST(pacing_even_x2_every_frame_displayed) {
     CHECK(s.displayed() == 240);
 }
 
+// A multiplier past the refresh rate: 60 fps x4 on 144 Hz, 240 frames for
+// 144 refreshes. One refresh a frame, each present lasted four refreshes
+// (28 ms of a 17 ms game frame), a backlog without end — in the layer, a
+// real-only catch-up every few presents (headless gamescope: 24 game frames
+// a second without generated frames). The frames before the real one now
+// share refreshes: no backlog, no real frame replaced, every refresh a new
+// frame; and the uncapped game frame rates around it the same.
+TEST(pacing_multiplier_past_the_refresh_rate_no_backlog) {
+    const double P = 1000.0 / 143.912;
+    for (double fps : {40.0, 48.0, 60.0, 90.0}) {
+        const double I = 1000.0 / fps;
+        Screen s(P);
+        const FrameOrder o = orderFor(4, 1.f, 1.f, 143.912, I);
+        const int jobs = int(10.0 * fps);
+        double worstLag = 0.0;
+        for (int f = 1; f <= jobs; ++f) {
+            runJob(s, o, f * I, 3.0, I, 4);
+            if (f > 20) worstLag = std::max(worstLag, s.frames.back().displayMs - f * I);  // (the real frame, last)
+        }
+        int realShown = 0;
+        for (const auto& fr : s.frames) realShown += fr.real && fr.displayMs >= 0.0;
+        const double shownPerS = s.displayed() / (jobs * I / 1000.0);
+        std::printf("x4 at %.0f fps on 144 Hz: real frame on screen at most %.1f ms after the present, %.1f frames a second shown, %d of %d real\n",
+                    fps, worstLag, shownPerS, realShown, jobs);
+        CHECK(worstLag < I + 2.0 * P);
+        CHECK(realShown == jobs);
+        CHECK(shownPerS > 0.97 * std::min(143.912, 4.0 * fps));
+    }
+}
+
 // interp_hold: asked for 0.25 at 60 fps x2 on 144 Hz, the frames would come
 // a quarter of the usual spacing apart — inside one refresh — and replace
 // each other where the layer knows the refresh rate but not its grid (the

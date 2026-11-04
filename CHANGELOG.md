@@ -6,6 +6,21 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### A multiplier past the refresh rate no longer falls back to real frames only (2026-10-21)
+
+- A game whose frames times the multiplier exceed the refresh rate (60 fps
+  x4 on 144 Hz: 240 frames for 144 refreshes) gave each frame a refresh of
+  its own: a present lasted four refreshes for a 17 ms game frame, a
+  backlog that only real-only catch-ups undid — the output flipped between
+  x4 and x1 every second (Cyberpunk 2077: 45 to 115 fps shown). The frames
+  of a present now share the refreshes from their own times there, the
+  later replacing the earlier; the real frame and the first frame of a
+  present keep a refresh of their own. x4 stays 4 frames a game frame,
+  uncapped. Headless gamescope (Xwayland, 144 Hz), 60 fps x4: x2.80 -> x4.00,
+  no catch-up instead of 24 a second, present to screen 43.8 -> 26.8 ms,
+  144 fps shown; 45 fps: x3.33 -> x4.00, 49.7 -> 30.8 ms; hybrid and
+  extrapolation x4 at 60 fps: x2.40 / x3.00 -> x4.00. 30 fps x4 unchanged.
+
 ### The scene coming out from behind a first-person weapon: `still_occluder` (2026-10-21)
 
 - **`still_occluder`** (on with a discrete GPU): while the world moves (a

@@ -372,6 +372,14 @@ jamais redonner la phase du dernier tic. **`even_motion`** (opt-in,
 images générées, la réelle en position m−1 non présentée (la dernière du
 job porte ses métadonnées) ; +1 sortie allouée (`presentCeiling`,
 `outputCeiling`) ; « 8 jobs en retard » et `PlanSlip` neutralisés.
+**×m au-delà de l'écran** (21/10, `presentTargetMs`) : si I/m < P (60 i/s
+×4 sur 144 Hz), les images d'une présentation partagent les
+rafraîchissements depuis leur heure propre (la plus tardive remplace) ; la
+1re et celle après la réelle gardent le leur. Une image par rafraîchissement
+y faisait durer un job 4 P > I : retard, rattrapages ×1 en boucle (×2,8 au
+lieu de ×4). **Décision utilisateur : pas de plafond à la fréquence de
+l'écran, ×N reste N** (« les fps peuvent dépasser les Hz »), et ne jamais
+compter sur un jeu plafonné.
 **`tight_hold`** (21/10, défaut 1) : ×m fixe sur grille, quand
 I < (m+1,25)·P, images générées à un rafraîchissement d'écart, la tenue à la
 réelle (−2,8 ms à ×4/30/144). **Marge de prêt X11** (`Grid::readyMarginMs`,
