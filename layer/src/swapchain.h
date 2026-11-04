@@ -112,12 +112,14 @@ private:
         int slot = -1;               // the synthesis slot (slots_) of this present
         VkFence firstReady = VK_NULL_HANDLE;  // the first generated frame's work done (FrameSlot::firstFence), or none
         clock::time_point start{};   // when the application presented
+        clock::time_point preparedAt{};  // after CPU waits, before recording/planning synthesis
         clock::time_point queuedAt{};  // when present() handed it to the worker
         double frameStartMs = 0.0;   // when the application's previous present returned (it began this frame then)
         double intervalMs = 16.6;    // frame interval estimate for pacing
         double planned[8] = {};      // the refresh (steady ms) each frame was given its content for, 0 = none
         double contentMs[8] = {};    // the content time each frame shows (game present clock, as frame_state's t), for latency_log
         bool plan = false;           // ... and presented for it (pace_plan, pacing::planLands)
+        bool gridPacing = true;      // false beyond Hz or under submission pressure: sub-refresh spacing from GPU readiness
         bool smoothCatchup = false;  // a newly missed refresh can request gradual recovery from the game thread
         int presentMode = -1;        // VkSwapchainPresentModeInfoEXT (-1 = none), applied to every present
         uint64_t presentId = 0;      // VkPresentIdKHR (0 = none), forwarded on the real frame
@@ -216,6 +218,7 @@ private:
     // ready (worker, a running estimate quick to rise), and the last refresh
     // planned (present thread) — pacing::planLands.
     std::atomic<double> readyLagMs_{1.0};
+    pacing::GridPacer gridPacer_;
     double lastPlannedMs_ = 0.0;
     pacing::MotionClock motionClock_;  // present thread: the previous real frame's scheduled refresh
     pacing::EvenClock evenClock_;      // present thread: even_motion's lag behind the game's presents
