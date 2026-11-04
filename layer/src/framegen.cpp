@@ -225,6 +225,7 @@ void FrameGen::prebuildSynthesisVariants() {
                                ((extrap ? cfg.extrapolateSplat : cfg.interpSplat) ? SYNTH_SPLAT : 0u) |
                                (cfg.pixelVectors ? SYNTH_PIXEL_VECTORS : 0u) |
                                (!extrap && cfg.borderFill ? SYNTH_BORDER : 0u) |
+                               (!extrap && cfg.stillOccluder ? SYNTH_STILL_OCCLUDER : 0u) |
                                (cfg.occlusionStrength != 0.f ? SYNTH_OCCLUSION : 0u) |
                                (cfg.staticGuard != 0.f ? SYNTH_STATIC_GUARD : 0u) |
                                (hasStaticMask_ && cfg.hudMask != 0 ? SYNTH_STATIC_MASK : 0u);
@@ -1429,13 +1430,15 @@ void FrameGen::recordSynthesisImpl(VkCommandBuffer cmd, const Pass& pipe, VkDesc
                 // sRGB +0.09 to +0.28 dB, edges +1.1 to +4.6; in HDR10 +0.05 to
                 // +0.17, edges +0.3 to +1.1; recordings unchanged)
                 enc_.transfer == TRANSFER_PERCEPTUAL || enc_.transfer == TRANSFER_PQ || enc_.srgb ? cfg.staticSoft : 0.f,
-                in.accelIntervalRatio, cfg.borderFill && t <= 1.f ? 1 : 0, cfg.hudAvoid ? 1 : 0};
+                in.accelIntervalRatio, cfg.borderFill && t <= 1.f ? 1 : 0, cfg.hudAvoid ? 1 : 0,
+                cfg.stillOccluder && t <= 1.f ? 1 : 0};
     // The variant with exactly the opt-ins in use compiled in: the lean one
     // when none is (same results as the full one), else one per set.
     const uint32_t features = (pc.bicubic ? SYNTH_BICUBIC : 0u) | (pc.timing ? SYNTH_TIMING : 0u) |
                               (pc.localCut ? SYNTH_LOCAL_CUT : 0u) | (pc.accel != 0.f ? SYNTH_ACCEL : 0u) |
                               (pc.revealFill ? SYNTH_REVEAL : 0u) | (pc.splat ? SYNTH_SPLAT : 0u) |
                               (pc.pixelVectors ? SYNTH_PIXEL_VECTORS : 0u) | (pc.borderFill ? SYNTH_BORDER : 0u) |
+                              (pc.stillOccluder ? SYNTH_STILL_OCCLUDER : 0u) |
                               (pc.occlusionStrength != 0.f ? SYNTH_OCCLUSION : 0u) |
                               (pc.staticGuard != 0.f ? SYNTH_STATIC_GUARD : 0u) |
                               (pc.staticFrames != 0.f ? SYNTH_STATIC_MASK : 0u) | (pc.debugMode == 3 ? SYNTH_DEBUG_CONF : 0u);

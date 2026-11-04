@@ -99,7 +99,7 @@ def main():
         # false_detail and border_predict, which move both sides, too)
         base, local = evaluate(build, d / "popup", {"BDEX_FG_MODE": "interpolate", "BDEX_FG_SCENE_CUT_LOCAL": "0",
                                                     "BDEX_FG_FALSE_DETAIL": "0", "BDEX_FG_BORDER_PREDICT": "0",
-                                                    "BDEX_FG_BORDER_FILL": "0", "BDEX_FG_HUD_AVOID": "0",
+                                                    "BDEX_FG_BORDER_FILL": "0", "BDEX_FG_STILL_OCCLUDER": "0", "BDEX_FG_HUD_AVOID": "0",
                                                     "BDEX_FG_MOSAIC_BLUR": "0", "BDEX_FG_HUD_LAYER": "0"},
                                ["--variant", "SCENE_CUT_LOCAL=1"])
         if not local > base + 0.5:

@@ -6,6 +6,22 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### The scene coming out from behind a first-person weapon: `still_occluder` (2026-10-21)
+
+- **`still_occluder`** (on with a discrete GPU): while the world moves (a
+  camera turn), what holds still on screen — the weapon, the hands, a
+  cockpit, the HUD — is in front of it, and the scene passing behind its
+  edge is visible in one input only. Neither trajectory explained those
+  pixels, which fell to the cross-fade: a smeared band along the weapon's
+  edge, as wide as the motion. Where one end of a vector around the pixel
+  is still (unchanged in place, zero flow) while the other changes and the
+  two disagree, the content is taken from the input it is visible in. Only
+  where most of the picture moves (with a still camera the still pixels are
+  the background, behind what moves: a mouse-flick scene's still phases
+  lost 0.27 dB without that test). Game-like scenes at x4: first person
+  +0.13 dB, walk +0.05, turn +0.02, the others within 0.001; the corpus's
+  popup +0.24; recorded games ±0.003 (0.002 % of their pixels touched).
+
 ### The Zed editor is left alone (2026-10-21)
 
 - `zed-editor` (it draws with Vulkan) joins the desktop programs the layer

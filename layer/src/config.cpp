@@ -236,6 +236,12 @@ void Config::autoConfigure(const VkPhysicalDeviceProperties& props, const VkPhys
     // dark +0.25, fps +0.18, their HUD icons 18-29 -> 26-36 dB; 8 recorded
     // games within 0.005; four mask lookups a pixel).
     if (strong && !(autoOptionsSet & kAutoHudAvoid)) hudAvoid = true;
+    // While the world moves, the scene coming out from (going behind) the
+    // edge of what holds still on screen — a first-person weapon, the HUD —
+    // from the input it is visible in (21/10: x4 game-like scenes first
+    // person +0.13 dB, the band along the weapon's edge no longer a smear;
+    // walk +0.05, turn +0.02 (the HUD icons), the others within 0.001).
+    if (strong && !(autoOptionsSet & kAutoStillOccluder)) stillOccluder = true;
     // Where the finest flow is chaos (a character turning on itself, an arm
     // or a leg in a fast turn: the synthesis assembles the picture from
     // blocks with unrelated motions), the generated frame leans to its local
@@ -401,6 +407,7 @@ const std::vector<OptionDef>& registry() {
     I("hud_mask", nullptr, &Config::hudMask, 0, 1000, kLive),
     B("reveal_fill", nullptr, &Config::revealFill, kLive, Tune::SynthExtrapolation, "1", 12),
     B("border_fill", nullptr, &Config::borderFill, kLive),
+    B("still_occluder", nullptr, &Config::stillOccluder, kLive),
     B("hud_avoid", nullptr, &Config::hudAvoid, kLive),
     I("record_scale", nullptr, &Config::recordScale, 0, 4),
     F("mosaic_blur", nullptr, &Config::mosaicBlur, 0.f, 1.f, kLive),
@@ -562,6 +569,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "false_detail") autoOptionsSet |= kAutoFalseDetail;
     if (key == "border_predict") autoOptionsSet |= kAutoBorderPredict;
     if (key == "border_fill") autoOptionsSet |= kAutoBorderFill;
+    if (key == "still_occluder") autoOptionsSet |= kAutoStillOccluder;
     if (key == "hud_avoid") autoOptionsSet |= kAutoHudAvoid;
     if (key == "mosaic_blur") autoOptionsSet |= kAutoMosaicBlur;
     if (key == "hud_layer") autoOptionsSet |= kAutoHudLayer;
@@ -936,6 +944,7 @@ std::string Config::describe() const {
     if (parallaxSearch) o << " parallax_search=1";
     if (revealFill) o << " reveal_fill=1";
     if (borderFill) o << " border_fill=1";
+    if (stillOccluder) o << " still_occluder=1";
     if (onlineTune) o << " online_tune=1";
     if (upscaleTemporal > 0.f) o << " upscale_temporal=" << upscaleTemporal;
     if (targetFps != 0.f) o << " target_fps=" << (targetFps < 0.f ? std::string("auto") : std::to_string(targetFps));
