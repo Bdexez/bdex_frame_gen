@@ -1,6 +1,6 @@
 # Mémoire du projet bdex-framegen
 
-État au **5 octobre 2026** — dernière version publiée **0.5.6** (05/10), qui
+État du code au **23 octobre 2026** — dernière version publiée **0.5.6** (05/10), qui
 regroupe tout depuis la 0.5.5 : parité Lossless Scaling, compatibilité
 matériel/distributions, SteamOS, capture Linux, injection Windows par défaut,
 ménage du 04/10. Première version propriétaire.
@@ -140,7 +140,9 @@ les images répétées (`dedup`) et commande des passes en dispatch indirect,
     limité par le GPU perdait toutes ses images générées.
   - Les présentations suivent la **grille d'affichage**. Elle est apprise par
     `present_wait` (`DisplayClock`), transmise par le panneau, ou donnée par
-    gamescope. Une image par vblank.
+    gamescope. Les sorties au-delà des Hz partagent les rafraîchissements ; sous
+    pression de soumission ou si la source dépasse les Hz, espacement depuis
+    la disponibilité GPU sans réservation de rafraîchissements (23/10).
   - Les prédites sont abandonnées dès que l'image suivante est prête.
 - **Multiplicateur** :
   - fixe, de ×2 à ×8 (images de transit quand la surface limite le nombre
@@ -198,7 +200,8 @@ les images répétées (`dedup`) et commande des passes en dispatch indirect,
     privilèges (NVIDIA, amdgpu sans CAP_SYS_NICE : `VK_ERROR_NOT_PERMITTED`,
     mesuré par une sonde : MEDIUM accepté, HIGH/REALTIME refusés) → device
     recréé sans ;
-  - **`skip_fast`** (02/10, activé par défaut, multiplicateur fixe) : pas de
+  - **`skip_fast`** (02/10, **désactivé par défaut depuis le 23/10** pour
+    conserver ×N à toute cadence, multiplicateur fixe) : pas de
     génération quand le jeu est déjà à ≥ 85 % de la fréquence de l'écran
     (reprise sous 75 %, ½ s d'hystérésis) — cas Valheim 130 i/s sur 144 Hz.
     Mesuré 130 i/s ×2 sur 144 Hz : image→écran 16,0 → 11,8 ms. Statut
@@ -213,9 +216,10 @@ les images répétées (`dedup`) et commande des passes en dispatch indirect,
     → premier photon / image réelle) ; `tools/latency_bench.sh` compare des
     réglages dans gamescope sans fenêtre ; ctest `latency_probe` ;
   - `low_latency` et `fps_limit` complètent.
-- **Rattrapage** (30/09) : quand la présentation prend du retard, une image
-  est montrée sans générée. Sinon une file qui s'est formée ne se vide jamais
-  quand le jeu produit au rythme exact de l'écran.
+- **Rattrapage** (30/09, restreint le 23/10 aux modes automatiques et
+  adaptatifs) : une sortie peut être omise sous pression ou retard durable.
+  Un multiplicateur fixe conserve ×N : les attentes de soumission et les
+  fences limitent le producteur au débit réalisable, sans alterner ×N/×1.
 - **Extensions cachées au jeu** : `swapchain_maintenance1` et
   `present_id`/`present_wait` (1 et 2), qui visent une swapchain que la
   couche virtualise. VKD3D-Proton se bloquait sinon.
@@ -3368,3 +3372,110 @@ quality, scratchpad `bench60.sh`) :
 Écran : 144 affichées dans tous les cas au-delà de 36 i/s ; les ~96
 images/s de plus sont remplacées avant l'affichage (inévitable sans
 plafond). Appel `present` du jeu 4,3 → 0,08 ms (il n'attend plus le worker).
+
+
+### 23/10 — sources variables et sans limite, multiplicateur fixe conservé
+
+Objectif : ne plus dépendre de 30 i/s ×4 ou 60 i/s ×2 ; conserver ×N même
+au-delà des Hz et sans plafonner le jeu. Lecture d'AGENTS, de cette mémoire
+et des notes de projet antérieures ; détail de l'analyse et commandes dans
+[`framerate.md`](framerate.md).
+
+Corrections :
+
+- Plans fixes autorisés au-delà des Hz de **sortie**, avec rafraîchissements
+  partagés. La réservation après la réelle d'un hybride n'est conservée que
+  si deux rafraîchissements par source tiennent effectivement.
+- Si la source dépasse les Hz, ou si les sorties les dépassent et que le
+  worker impose > ¼ I d'attente, `GridPacer` passe à l'espacement depuis la
+  disponibilité GPU. Retour sur grille après huit jobs sans pression,
+  immédiat si chaque sortie y tient. Le débit mesuré inclut nos attentes :
+  s'en servir seul pour décider de réserver des rafraîchissements pouvait
+  verrouiller le producteur sans limite à 72/96/144 i/s sur 144 Hz.
+- Sans grille dans ce chemin, ni plan basé sur un délai GPU prédit, ni marge
+  supplémentaire d'une demi-sortie entre les jobs. Ces deux mécanismes
+  pouvaient réapprendre/amplifier une attente imposée par notre cadencement.
+  Sur grille, l'estimation GPU part de `Job::preparedAt`, après les attentes
+  CPU ; leur durée connue est ajoutée au plan courant séparément. `t0` reste
+  l'horloge du contenu et de la latence.
+- Le multiplicateur **fixe** ne rattrape plus en ×1 : les attentes de
+  soumission et les fences existantes limitent le producteur à la capacité
+  du pipeline. Les modes Auto/adaptatif conservent leurs rattrapages ; les
+  prédites obsolètes restent annulables. `skip_fast` est opt-in, conformément
+  au choix d'un multiplicateur exact, et reste activable à chaud.
+- `IntervalFilter` inclut les intervalles positifs < 0,5 ms. Avec une source
+  sans limite qui alterne appel rapide/attente longue, ignorer le premier
+  surestimait la durée des images et ralentissait encore le producteur.
+  La borne basse du limiteur reste ≤ sa borne haute même au-delà de 250 i/s.
+
+Régressions ajoutées : matrice de 462 combinaisons stables (×2..×8,
+23,976..300 i/s, 60..240 Hz), sources variables et pauses, modes prédictifs,
+source sans limite **couplée à son worker** (pas seulement une source
+imposée à l'extérieur), marge de prêt sous pression ; vrai shader GPU
+`frame_state` comparé aux temps analytiques à plusieurs cadences.
+`bdex_demo --uncapped` ne dort pas pour limiter la source.
+`tools/framerate_bench.py --check` conserve les logs, les heures du rejeu
+variable et les synthèses JSON. Le banc traite séparément la fin de la démo
+et celle du compositeur ; gamescope peut se bloquer ou planter à sa propre
+fermeture après une démo terminée correctement. Les groupes de processus
+isolés sont nettoyés.
+
+Mesures de développement (RTX 3060 Ti, gamescope headless/Xwayland 144 Hz,
+640×360 performance sauf mention contraire ; sorties = présentations, pas
+images distinctes physiquement affichées) :
+
+- Référence `889ce3c`, `skip_fast=0` pour isoler le cadencement : à 200 i/s
+  ×4, ratio effectif médian ×3,16 avec 225 rattrapages sur les échantillons
+  retenus ; sans limite ×2,50 avec 576. À ×8, ×6,03 / ×4,51, avec 226 / 579
+  rattrapages. Logs `/tmp/fg-before-rates`.
+- Version corrigée avant les derniers ajustements de marge : test prolongé
+  12 s à 200 i/s ×8, 199,9 → 1599,3 i/s, aucun rattrapage, réelle retardée
+  de 5,6 ms en moyenne des échantillons ; sans limite ~294 → 2353 i/s,
+  ratio ×8, aucun rattrapage (`/tmp/fg-ready-pressure`).
+- Banc 1440p **quality**, avant les derniers ajustements du chemin sous
+  pression : 30/60/90 i/s ×4 → 120/240/~360, aucun rattrapage ; sans limite
+  ~176 → 704, ratio ×4. Référence sans limite : ~288 → 720, ratio ×2,50
+  car elle omettait la génération dans 865 images sur les échantillons
+  retenus. Le débit de sorties est proche, mais la répartition ×4/×1 est
+  supprimée (`/tmp/fg-heavy-20261023`, `/tmp/fg-before-heavy`). Ne pas
+  présenter cela comme une hausse de débit GPU.
+- Matrice en ligne de 27 cas (23,976/30/36,2/47/59,94/90/200/variable/sans
+  limite × ×2/×4/×8) : démos terminées correctement, multiplicateurs
+  conservés, aucun rattrapage (`/tmp/fg-final-rates`). **Mesures de débit de
+  fin de série perturbées par un autre jeu** : State of Decay 2 a démarré
+  sur la machine et saturait le GPU à 99 %, sans génération (statut lu,
+  jeu laissé intact). Les ~90–100 i/s de source ×8 dans cette partie ne
+  se comparent pas aux mesures sur GPU libre. Les derniers ajustements
+  sont vérifiés séparément par les tests de propriétés et un essai en ligne
+  de 10 s par cas ×8 à 60/200/sans limite sous cette charge concurrente :
+  multiplicateur conservé, aucun rattrapage (`/tmp/fg-continuous`). Le banc
+  enregistre désormais aussi la charge GPU avant/après chaque cas lorsque
+  `nvidia-smi` est disponible, pour rendre ce contexte visible.
+
+Limites : ce banc ne prouve pas le ressenti dans un vrai jeu ni le bon
+fonctionnement de la couche Windows sur matériel. Aucune fenêtre, sortie,
+souris ni configuration de jeu de la session de l'utilisateur n'a été
+modifiée. Sous GPU saturé, le coût de génération peut réduire les i/s de
+source ; conserver ×N ne crée pas du temps GPU. Les mesures à faible charge
+et celles sous charge concurrente doivent rester distinctes.
+
+Vérifications finales : 114 tests unitaires natifs ; reproduction Docker
+`tools/ci/run.sh build` réussie (27 tests passés, 3 sautés : `latency_probe`,
+`gamescope_limit`, `multithread_config`, faute des capacités du banc).
+Après le dernier ajustement de marge, reprise Docker sur les sources finales
+de `unit`, `frame_state`, `integration`, `validation`, `swapchain_stress`,
+`acquire_timeout` : tous passent ; `multithread_config` reste sauté.
+Validation Vulkan de synchronisation sans message ; 12 images réelles et
+11 générées identiques octet pour octet à la référence du matcher ; PSNR
+normal 29,53 dB / rapide 23,72 (seuils 28 / 23). MinGW : x64 64 fichiers,
+x86 57, ordre des includes capture 41, liaison du launcher résolue.
+Logs : `/tmp/fg-ci-build.log`, `/tmp/fg-ci-final-sync.log`,
+`/tmp/fg-ci-mingw-final.log`.
+
+Installation locale 64 et 32 bits faite (`build-install`, `build-install32`),
+SHA256 des bibliothèques installées identiques aux builds. Remplacement par
+renommage pour conserver les mappings du jeu en cours ; anciennes copies
+dans `/tmp/fg-installed-before`. Manifests et `options_ui.json` vérifiés
+(`skip_fast=0`). Relancer le jeu et le panneau charge la nouvelle version.
+Validation du ressenti en ×4 sur le vrai jeu demandée à l'utilisateur ; elle
+reste à confirmer. Aucun push effectué.

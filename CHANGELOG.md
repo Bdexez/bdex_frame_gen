@@ -6,6 +6,26 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed multiplication across changing and uncapped source rates (2026-10-23)
+
+- Fixed xN preserves all N outputs under submission pressure, including
+  above the screen's refresh rate. It no longer alternates between xN and
+  real-only catch-up frames. `skip_fast` is now opt-in; explicit automatic
+  and adaptive modes retain their catch-up behavior.
+- Refresh plans allow outputs to share refreshes. Above Hz, or under
+  sustained submission pressure with more outputs than refreshes, presents
+  use sub-refresh spacing from GPU readiness. Eight quiet jobs restore
+  refresh planning; submission waits are kept out of the learned GPU delay.
+- Very short source intervals count toward pacing, including the short half
+  of alternating quick presents and long waits. The latency limiter also
+  keeps its clamp bounds ordered above 250 source fps.
+- Regression simulations cover x2..x8, changing rates and an uncapped
+  producer/worker feedback loop; GPU tests check synthesis times. The new
+  `tools/framerate_bench.py` runs reproducible isolated benchmarks with
+  constant, recorded variable and genuinely uncapped sources (`--uncapped`
+  in the demo), retained logs and optional output-count checks. See
+  [`docs/framerate.md`](docs/framerate.md) for the method and limitations.
+
 ### A multiplier past the refresh rate no longer falls back to real frames only (2026-10-21)
 
 - A game whose frames times the multiplier exceed the refresh rate (60 fps

@@ -380,6 +380,26 @@ y faisait durer un job 4 P > I : retard, rattrapages ×1 en boucle (×2,8 au
 lieu de ×4). **Décision utilisateur : pas de plafond à la fréquence de
 l'écran, ×N reste N** (« les fps peuvent dépasser les Hz »), et ne jamais
 compter sur un jeu plafonné.
+**Cadences quelconques (23/10, `docs/framerate.md`)** : `skip_fast` opt-in ;
+le multiplicateur fixe ne rattrape plus en ×1 (`needsCatchUp`), seuls les
+modes automatiques/adaptatifs gardent ce rattrapage. `planLands` partage les
+rafraîchissements aussi pour les plans fixes au-delà des Hz de sortie.
+Si la source dépasse les Hz, ou si les sorties les dépassent avec une attente
+de soumission > ¼ I, `GridPacer` retire la réservation de rafraîchissements :
+espacement depuis la disponibilité GPU effective, sans plan ni marge d'une
+demi-sortie entre les jobs (`presentTargetMs`, `continuous`). Huit jobs sans
+pression rétablissent la grille ; retour immédiat si chaque sortie y tient.
+Ne pas fixer ce chemin par un délai GPU prédit : il apprenait ses propres
+attentes et ralentissait encore le producteur. Sur grille, `readyLagMs_`
+part de `Job::preparedAt` (après les attentes CPU), ajoutées séparément au
+plan courant. `IntervalFilter` accepte les intervalles **positifs**, même
+< 0,5 ms : ignorer la moitié rapide des appels/attentes alternés doublait
+l'intervalle estimé. Le temps du contenu reste `t0`/`dt`. La borne du
+limiteur est ordonnée même au-delà de 250 i/s.
+Tests : matrice de cadences, source couplée au worker sans limite (pas
+seulement une source à cadence imposée), shader `frame_state` ; banc isolé
+`tools/framerate_bench.py --check` (démo `--uncapped`, sources variables,
+logs conservés). Les prédites devenues obsolètes restent annulables.
 **`tight_hold`** (21/10, défaut 1) : ×m fixe sur grille, quand
 I < (m+1,25)·P, images générées à un rafraîchissement d'écart, la tenue à la
 réelle (−2,8 ms à ×4/30/144). **Marge de prêt X11** (`Grid::readyMarginMs`,
