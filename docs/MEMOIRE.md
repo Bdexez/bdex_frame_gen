@@ -3264,3 +3264,14 @@ d'un pixel de q → −0,026 (arêtes +0,04). Rien gardé.
 générée très loin des deux → fondu sur place) — seuils 8–16 / 32–64 : −0,07
 à −0,56 dB pour 0,01 à 0,3 % des pixels touchés : un objet fin qui traverse
 q entre les deux images est le cas courant, la synthèse y avait raison.
+**`hud_layer` sur un fond texturé sans panneau** (21/10) : scène `hud` du
+corpus (`make_corpus.py` : texte et contours opaques sur une texture
+aléatoire qui défile, 61 images ×2) — `hud_layer` y perdait −0,51 dB : le
+fondu sur place double le décor détaillé qui défile juste derrière les
+lettres (aucun panneau ne l'assombrit). Poids coupé là où prev et cur
+diffèrent sur place (moyenne 3×3 du plus grand écart par canal, smoothstep
+0,16 → 0,4 ; une boîte transparente ou une lettre changent peu sur place) :
+perte −0,51 → −0,05 ; scènes `make_game.py` ×4 −0,010 (pire −0,031) face à
+la passe sans coupure ; sous-titres (`subs`) 33,60 → 33,59 ;
+enregistrements ×2 / ×4 : la passe vaut toujours +0,010 / +0,006. Seuils
+0,25 → 0,6 : scènes −0,002 mais corpus −0,20 seulement.
