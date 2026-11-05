@@ -23,6 +23,14 @@ shows on the game's present clock gives the motion line below. Reported:
   motion jumps/s  (x11_clock) content steps over 1.6 times the usual one in
                   a refresh: the picture moving on twice as far at once,
                   usually right after a refresh held
+  motion step rms (x11_clock) every refresh's content step against the
+                  refresh period (a held refresh is a step of 0): 0 for
+                  perfectly even motion; and the sd of the content's delay
+                  behind the screen
+  content delay   (x11_clock) mean of each refresh's handover time minus the
+                  present time of the content it shows: the motion's latency
+                  (the real frame's alone tells little once generated frames
+                  carry the motion)
   refresh grid    how well the display times sit on a grid of the refresh
                   period: the share within 1 ms of it (feedback precise
                   enough for the layer to measure the grid: most above 90 %)
@@ -101,6 +109,28 @@ def main():
             usual = per[len(per) // 2]
             jumps = sum(1 for n, dc in steps if n == 1 and dc > 1.6 * usual)
             print(f"motion jumps/s    {jumps / secs:.2f} (usual step {usual:.2f} ms of content a refresh)")
+        # Every refresh in turn, a refresh without a new frame showing the
+        # previous one: how far each refresh's content step is from the
+        # period (rms), and how much the content's delay behind the screen
+        # wanders (sd). Even motion is 0 for both; a frame held a refresh
+        # counts a step of 0 then one of two periods.
+        if len(ticks) > 2:
+            filled, at = [], 0
+            for tick in range(ticks[0], ticks[-1] + 1):
+                if at + 1 < len(ticks) and ticks[at + 1] <= tick:
+                    at += 1
+                filled.append((tick * period, last[ticks[at]]))
+            deltas = [b[1] - a[1] for a, b in zip(filled, filled[1:])]
+            rms = math.sqrt(sum((d - period) ** 2 for d in deltas) / len(deltas))
+            lag_sd = statistics.pstdev([t - c for t, c in filled])
+            print(f"motion step rms   {rms:.2f} ms (content step a refresh vs the period), delay sd {lag_sd:.2f} ms")
+            # The refresh the X server handed each frame over at, behind the
+            # game's present clock (the screen shows it a refresh later at the
+            # soonest): the motion's latency, whichever frames carry it.
+            handover = {}
+            for r in rows:
+                handover[round(r[1] / period)] = r[1] - r[4]
+            print(f"content delay     {statistics.mean(handover.values()):.1f} ms mean (refresh handed over - its content's present time)")
     print(f"refresh grid      {100 * on_grid:.0f} % of display times within 1 ms of it")
     real = [r[1] - r[0] for r in rows if r[2]]
     if real:

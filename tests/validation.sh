@@ -59,9 +59,11 @@ k=-1
 # synthesis of its own, the comparison), from the primed cache above.
 for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hybrid:state extrapolate:direct \
            interpolate:async extrapolate:async interpolate:probe extrapolate:probe hybrid:adaptive interpolate:x8 interpolate:hold hybrid:hold \
-           interpolate:even hybrid:predict1; do
+           interpolate:even hybrid:predict1 interpolate:fast; do
   k=$((k + 1))
   [ $((k % shard_n)) -eq "$shard_i" ] || continue
+  # BDEX_VALIDATION_RUNS="run ...": only those (while working on one path).
+  if [ -n "${BDEX_VALIDATION_RUNS:-}" ] && [[ " $BDEX_VALIDATION_RUNS " != *" $run "* ]]; then continue; fi
   mode=${run%%:*}
   mult=3
   output="BDEX_FG_RENDER_SCALE=0.75 BDEX_FG_SHARPNESS=0.5 BDEX_FG_HUD=2"
@@ -99,6 +101,13 @@ for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hy
     # usual plan is checked there).
     state="BDEX_FG_EVEN_MOTION=1 BDEX_FG_REFRESH_FILL=1 BDEX_FG_STATS=1 BDEX_FG_STATS_INTERVAL=2"; mult=4
     demo_args="--frames 90 --duration 40 --size 640x360"
+  elif [ "${run#*:}" = fast ]; then
+    # even_fast: x4 at 100 fps, 1.4 refreshes a game frame on an X server
+    # with Present at 144 Hz (headless gamescope): the generated frames on
+    # the refreshes, the real one just after them as a fallback that the
+    # next present's first frame replaces (Xvfb has no grid: the usual plan).
+    state="BDEX_FG_STATS=1 BDEX_FG_STATS_INTERVAL=1"; mult=4
+    demo_args="--fps 100 --frames 200 --duration 40 --size 640x360"
   elif [ "${run#*:}" = async ]; then
     state="BDEX_FG_ASYNC_COMPUTE=1 BDEX_FG_DEDUP=1 BDEX_FG_FLOW_TEMPORAL=1 BDEX_FG_ONLINE_TUNE=1 BDEX_FG_CACHE_DIR= BDEX_FG_HUD_MASK=24 BDEX_FG_SUBPIXEL_LK=2"; demo_args="--repeat 2 --frames 90 --duration 40"; output="BDEX_FG_HUD=0"
   elif [ "$run" != "$mode" ]; then
@@ -119,6 +128,7 @@ for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hy
   n=$(grep -E "VUID-|SYNC-" "$LOG" | grep -cvE "$IGNORE")
   echo "$run: demo exit $rc, $n validation message(s)"
   if [ "${run#*:}" = even ]; then grep -q "even motion" "$LOG" && echo "$run: planned by even_motion" || echo "$run: no refresh grid, usual plan"; fi
+  if [ "${run#*:}" = fast ]; then grep -q "even motion (even_fast)" "$LOG" && echo "$run: planned by even_fast" || echo "$run: no refresh grid, usual plan"; fi
   if [ "$n" -gt 0 ]; then grep -E "VUID-|SYNC-" "$LOG" | grep -vE "$IGNORE" | head -20; status=1; fi
   if [ "$rc" -ne 0 ]; then tail -20 "$LOG"; status=1; fi
   # The rebuild levels exist only if the flow is not already at 1/4.

@@ -1153,3 +1153,237 @@ TEST(pacing_tight_hold_hysteresis) {
     CHECK(flipsHyst <= 2);
     CHECK(pacing::tightHold(P, 4, 1000.0 / 30.0, 3) < 1.f);  // (30 fps: on, either way)
 }
+
+namespace {
+// even_fast against the pinned real frames, closed loop: a game at `fps`
+// whose frame times jitter (sum of three uniforms, sd `jitterMs`), held at
+// its present until the worker submitted the job before (as present()); its
+// first frame ready 2.5 +- 1 ms after the present; the worker presenting
+// each frame at its target, in order; an Xwayland-like screen on 143.912 Hz
+// (x11_clock's lead) taking a present at the first refresh at least 1 ms
+// after it, the later of two for one refresh replacing the other. Every
+// refresh's content step against the period (a held refresh is a step of
+// 0), motion jumps (a step over 1.6 times the usual), content delay behind
+// the screen, presents per game frame.
+struct Fast { double stepRmsMs, jumpsPerS, holdsPerS, delayMs, presentsPerFrame; int fastJobs; };
+Fast runFast(double fps, double jitterMs, int m, bool fast, bool wide = false) {
+    const double P = 1000.0 / 143.912;
+    pacing::Grid g{true, 0.37, P};
+    g.lead = pacing::kX11Lead;
+    pacing::IntervalFilter filter;
+    pacing::MotionClock motion;
+    pacing::EvenClock clock;
+    clock.fallback = true;
+    Config c;
+    const FrameOrder order = FrameOrder::of(c, m, true);
+    struct Pr { double at, content; };
+    std::vector<Pr> presents;
+    uint32_t rng = 4242;
+    auto uniform = [&] { rng = rng * 1664525u + 1013904223u; return (rng >> 8) / double(1 << 24); };
+    double call = 100.0, prevNow = 0.0, interval = 0.0, lastPlanned = 0.0, readyLag = 1.0, submitted = 0.0;
+    double workerFree = 0.0, lastPresent = 0.0, lastLand = 0.0;
+    bool on = false;
+    int fastJobs = 0, frames = 0;
+    const int count = int(fps * 20);
+    for (int f = 0; f < count; ++f) {
+        const double now = call, t0 = std::max(call, submitted);
+        const double dt = prevNow > 0.0 ? now - prevNow : 0.0;
+        prevNow = now;
+        interval = filter.update(interval, dt);
+        const double cpuWait = t0 - now + 0.15;
+        const double gpuReady = now + cpuWait + 2.5 + 2.0 * (uniform() - 0.5);
+        double planned[8] = {}, content[8] = {}, lands[8] = {};
+        int n = 0;
+        bool skip = false;
+        if (f > 0 && fast && (on = pacing::evenFastBand(interval, P, on, wide && m >= 4))) {
+            pacing::Grid gs = g;
+            gs.readyMarginMs = pacing::kX11ReadyMarginMs;
+            double realMs = 0.0;
+            n = clock.plan(now, dt, cpuWait + readyLag, gs, m - 1, lastPlanned, lands, realMs);
+            skip = n == 0 && clock.lagMs > 0.0;
+            for (int k = 0; k + 1 < m && n > 0; ++k) {
+                planned[k] = lands[std::min(n - 1, k * n / (m - 1))];
+                content[k] = std::clamp(planned[k] - clock.lagMs, now - dt, now);
+            }
+            content[m - 1] = now;
+            fastJobs += n > 0 || skip;
+        } else if (f > 0) {
+            clock.reset();
+            double base[8] = {};
+            for (int k = 1; k < m; ++k) base[k] = interval * k / m;
+            pacing::planLands(now, cpuWait + readyLag, base, m, g, lastPlanned, planned, interval, order.real);
+            const double span = motion.span(planned[order.real], dt, dt > 0.5 && dt < 500.0);
+            for (int k = 0; k < m; ++k) {
+                const double t = k == order.real ? 1.0
+                    : std::clamp(1.0 + (planned[k] - planned[order.real]) / (span > 0.0 ? span : dt), 0.0, 1.0);
+                content[k] = now - (1.0 - t) * dt;
+            }
+        }
+        const int jobFrames = f == 0 ? 1 : m;
+        const bool fallback = n > 0 || skip;
+        if (skip)
+            for (int k = 0; k < m; ++k) content[k] = now;
+        const double origin = std::max(gpuReady, std::max(t0 + 0.15, workerFree));
+        if (f > 0 && !skip) {
+            const double lag = origin - (t0 + 0.15);
+            if (lag < readyLag || gpuReady > workerFree) readyLag += (lag > readyLag ? 0.5 : 0.05) * (lag - readyLag);
+        }
+        double first = 0.0;
+        for (int k = 0; k < jobFrames; ++k) {
+            const bool real = jobFrames == 1 || k == order.real;
+            const bool standIn = fallback && (real || skip);  // (Job::fallbackFrom)
+            double target = origin;
+            if (standIn) target = lastLand > 0.0 ? lastLand + pacing::kFallbackAfter * P : origin;
+            else if (jobFrames > 1) target = pacing::presentTargetMs(origin, interval, m, order, k, lastPresent, lastLand, g, planned[k]);
+            const double at = std::max({target, origin, lastPresent + 0.02});
+            presents.push_back({at, jobFrames == 1 ? now : content[k]});
+            lastPresent = at;
+            if (!standIn) lastLand = g.land(at);
+            if (k == 0) first = at;
+        }
+        workerFree = lastPresent;
+        submitted = jobFrames > 1 && gpuReady > t0 + 0.15 ? first : t0 + 0.15;
+        frames += jobFrames;
+        // (the game: back from its present, then its own frame time)
+        call = t0 + 0.1 + std::max(1.0, 1000.0 / fps + jitterMs * 2.0 * (uniform() + uniform() + uniform() - 1.5));
+    }
+    // The screen: each refresh shows the last present that made it.
+    std::vector<double> shown;  // content, refresh by refresh
+    size_t i = 0;
+    double contentNow = 0.0;
+    const double begin = 3000.0, end = presents.back().at - 100.0;
+    double delay = 0.0;
+    int ticks = 0;
+    for (double tick = g.land(begin); tick < end; tick += P) {
+        while (i < presents.size() && presents[i].at + 1.0 <= tick) contentNow = presents[i++].content;
+        shown.push_back(contentNow);
+        delay += tick - contentNow, ++ticks;
+    }
+    std::vector<double> steps;
+    double e2 = 0.0;
+    int holds = 0;
+    for (size_t k = 1; k < shown.size(); ++k) {
+        const double s = shown[k] - shown[k - 1];
+        steps.push_back(s);
+        e2 += (s - P) * (s - P);
+        holds += s <= 1e-9;
+    }
+    std::vector<double> sorted;
+    for (double s : steps) if (s > 0.0) sorted.push_back(s);
+    std::sort(sorted.begin(), sorted.end());
+    const double usual = sorted[sorted.size() / 2];
+    int jumps = 0;
+    for (size_t k = 1; k < steps.size(); ++k) jumps += steps[k - 1] > 0.0 && steps[k] > 1.6 * usual;
+    const double secs = (end - begin) / 1000.0;
+    return {std::sqrt(e2 / steps.size()), jumps / secs, holds / secs, delay / ticks, double(frames) / count, fastJobs};
+}
+} // namespace
+
+// even_fast, a game frame of one to two refreshes: pinned real frames make
+// pairs of one and two refreshes (100 fps on 144 Hz: steps of 10, then 5 and
+// 5 ms of content a 6.9 ms refresh). Every refresh with the content of its
+// own moment instead: the motion even, no jumps, the delay about the same;
+// still x frames per game frame (the real one replaced on the refresh after).
+TEST(pacing_even_fast_smooths_one_to_two_refreshes_a_frame) {
+    for (int m : {3, 4, 8}) {
+        for (double fps : {80.0, 95.0, 105.0, 120.0}) {
+            const Fast pinned = runFast(fps, 1.0, m, false), even = runFast(fps, 1.0, m, true);
+            std::printf("even_fast x%d %.0f fps: step rms %.2f -> %.2f ms, jumps %.1f -> %.1f /s, held %.1f -> %.1f /s, "
+                        "delay %.1f -> %.1f ms\n", m, fps, pinned.stepRmsMs, even.stepRmsMs, pinned.jumpsPerS,
+                        even.jumpsPerS, pinned.holdsPerS, even.holdsPerS, pinned.delayMs, even.delayMs);
+            CHECK(even.stepRmsMs < 0.5 * pinned.stepRmsMs);
+            CHECK(even.stepRmsMs < 0.8);
+            CHECK(even.jumpsPerS < 1.0);
+            CHECK(even.holdsPerS <= pinned.holdsPerS + 0.5);
+            CHECK(even.delayMs < pinned.delayMs + 3.0);
+            CHECK(std::abs(even.presentsPerFrame - m) < 0.02);
+            CHECK(even.fastJobs > int(fps * 19));
+        }
+    }
+}
+
+// even_fast 2, x4 and up: two to three refreshes a frame as well (48 to 72
+// fps on 144 Hz), where the pinned pairs alternate two and three refreshes.
+// Smoother still, at the cost of the even clock's lag (a whole game frame).
+TEST(pacing_even_fast_wide_band) {
+    for (int m : {4, 8}) {
+        for (double fps : {55.0, 60.0, 65.0}) {
+            const Fast pinned = runFast(fps, 1.0, m, false), wide = runFast(fps, 1.0, m, true, true);
+            std::printf("even_fast 2 x%d %.0f fps: step rms %.2f -> %.2f ms, held %.1f -> %.1f /s, delay %.1f -> %.1f ms\n",
+                        m, fps, pinned.stepRmsMs, wide.stepRmsMs, pinned.holdsPerS, wide.holdsPerS, pinned.delayMs,
+                        wide.delayMs);
+            CHECK(wide.stepRmsMs < 0.5 * pinned.stepRmsMs);
+            CHECK(wide.holdsPerS <= pinned.holdsPerS + 0.5);
+            CHECK(wide.delayMs < pinned.delayMs + 6.0);
+            CHECK(std::abs(wide.presentsPerFrame - m) < 0.02);
+            // (level 1 leaves this band alone; x3 has too few generated frames)
+            CHECK(runFast(fps, 1.0, m, true).fastJobs == 0);
+        }
+    }
+    CHECK(runFast(60.0, 1.0, 3, true, true).fastJobs == 0);
+    const double P = 1000.0 / 143.912;
+    CHECK(pacing::evenFastBand(2.5 * P, P, false, true));
+    CHECK(!pacing::evenFastBand(2.5 * P, P, false));
+    CHECK(!pacing::evenFastBand(2.92 * P, P, false, true));
+    CHECK(pacing::evenFastBand(2.92 * P, P, true, true));
+    CHECK(!pacing::evenFastBand(2.97 * P, P, true, true));
+}
+
+// Outside its band (a whole number of refreshes a frame, a slower game, a
+// game faster than the screen) or at x2, even_fast does nothing.
+TEST(pacing_even_fast_only_inside_its_band) {
+    for (double fps : {30.0, 47.0, 60.0, 71.5, 200.0}) {
+        for (int m : {3, 4}) {
+            const Fast a = runFast(fps, 0.3, m, false), b = runFast(fps, 0.3, m, true);
+            CHECK(b.fastJobs == 0);
+            CHECK(a.stepRmsMs == b.stepRmsMs && a.delayMs == b.delayMs);
+        }
+    }
+    const double P = 1000.0 / 143.912;
+    CHECK(!pacing::evenFastBand(1.06 * P, P, false));
+    CHECK(pacing::evenFastBand(1.06 * P, P, true));
+    CHECK(pacing::evenFastBand(1.5 * P, P, false));
+    CHECK(!pacing::evenFastBand(1.97 * P, P, false));
+    CHECK(pacing::evenFastBand(1.97 * P, P, true));
+    CHECK(!pacing::evenFastBand(2.01 * P, P, true));
+    CHECK(!pacing::evenFastBand(1.02 * P, P, true));
+    CHECK(!pacing::evenFastBand(1.5 * P, 0.0, true));
+}
+
+// even_fast's clock: a present that misses its first refresh starts at the
+// first it can make (the real frame before shows meanwhile) without raising
+// the lag for good; a lag cut where the outputs ran out comes back to its
+// target over a few frames, not a refresh at a time through misses.
+TEST(pacing_even_fast_clock_fallback) {
+    const double P = 1000.0 / 143.912, I = 10.0;
+    pacing::Grid g{true, 0.0, P};
+    g.lead = pacing::kX11Lead;
+    g.readyMarginMs = pacing::kX11ReadyMarginMs;
+    pacing::EvenClock clock;
+    clock.fallback = true;
+    double lastPlanned = 0.0, lands[8] = {}, realMs = 0.0, now = 1000.0;
+    for (int f = 0; f < 50; ++f, now += I) clock.plan(now, I, 2.0, g, 3, lastPlanned, lands, realMs);
+    const double settled = clock.lagMs;
+    CHECK(settled > I && settled < I + 2.0 + pacing::kX11ReadyMarginMs + P);
+    // (a slow GPU this once: ready 12 ms after the present, two refreshes
+    // missed — a quarter of its larger target, not the refreshes given up)
+    const double chainBefore = lastPlanned;
+    const int n = clock.plan(now, I, 12.0, g, 3, lastPlanned, lands, realMs);
+    now += I;
+    CHECK(n >= 1 && lands[0] > chainBefore + 1.5 * P);
+    CHECK(clock.lagMs <= settled + 0.25 * 10.0 + 0.01);
+    for (int f = 0; f < 50; ++f, now += I) clock.plan(now, I, 2.0, g, 3, lastPlanned, lands, realMs);
+    CHECK(std::abs(clock.lagMs - settled) < 0.3);
+    // Cut far under the target (outputs ran out): back within 12 frames.
+    clock.lagMs = settled - 8.0;
+    for (int f = 0; f < 12; ++f, now += I) clock.plan(now, I, 2.0, g, 3, lastPlanned, lands, realMs);
+    CHECK(std::abs(clock.lagMs - settled) < 0.5);
+    // The historical clock (even_motion) still raises the lag on a miss.
+    pacing::EvenClock historical;
+    double chain = 0.0;
+    now = 1000.0;
+    for (int f = 0; f < 50; ++f, now += I) historical.plan(now, I, 2.0, g, 3, chain, lands, realMs);
+    const double before = historical.lagMs;
+    historical.plan(now, I, 2.0 + 3.0 * P, g, 3, chain, lands, realMs);
+    CHECK(historical.lagMs > before + P);
+}
