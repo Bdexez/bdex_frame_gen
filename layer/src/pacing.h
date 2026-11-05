@@ -256,9 +256,22 @@ struct MotionClock {
 // given up and the lag grows by as much (the picture holds one refresh; its
 // motion does not jump). A long frame needs a refresh more than the
 // multiplier's usual ceiling (39 ms on 144 Hz: 6): the outputs are sized so.
+//
+// even_fast (`fallback`): the same clock for a fixed multiplier whose game
+// frame lasts one to two refreshes, where the real frame still goes out —
+// just after the job's last refresh, standing in for the next one should the
+// next job miss it (presented later, that job's first frame replaces it).
+// A missed refresh then shows the real frame instead of holding, so the lag
+// is not raised for it (raising it for good cost 2 to 3 ms of delay in the
+// pacing simulator); the high mark and the lag come down 0.2 ms a frame;
+// a frame need only be ready by the X server's margin, not presented the
+// lead ahead (its present waits for it when late); and the target is the
+// high mark plus those delays less 0.5 ms (1 ms tighter, x4 at 130 fps held
+// 8.5 refreshes a second in the simulator).
 struct EvenClock {
     double lagMs = 0.0;
     double highDtMs = 0.0;  // the game's frame time, high mark (decays 0.002 ms a frame: 2 ms in 30 s at 30 fps)
+    bool fallback = false;  // even_fast: a real frame covers a missed refresh (see above)
     void reset() { lagMs = highDtMs = 0.0; }
     // The frames of this present (0: none fits, nothing planned) and their
     // refreshes; lastPlannedMs chains the presents as planLands does.
@@ -269,19 +282,28 @@ struct EvenClock {
             reset();
             return 0;
         }
-        highDtMs = std::max(dtMs, highDtMs - 0.002);
-        const double target = highDtMs + std::max(readyLagMs, 0.0) + std::max(g.lead * P, g.readyMarginMs) + 0.5;
-        const double earliest = g.land(nowMs + std::max(readyLagMs, 0.0) + g.lead * P);
+        highDtMs = std::max(dtMs, highDtMs - (fallback ? 0.2 : 0.002));
+        const double ready = fallback && g.readyMarginMs > 0.0 ? g.readyMarginMs : std::max(g.lead * P, g.readyMarginMs);
+        const double target = highDtMs + std::max(readyLagMs, 0.0) + ready + (fallback ? -0.5 : 0.5);
+        const double earliest = g.land(nowMs + std::max(readyLagMs, 0.0) + (fallback ? ready : g.lead * P));
         double first = earliest;
         if (lastPlannedMs > 0.0 && lagMs > 0.0) {
             const double next = g.lastMs + std::round((lastPlannedMs - g.lastMs) / P) * P + P;
             // (Never restarted ahead of the chain: the motion would go back.)
             if (next >= earliest) first = next;
+            else if (fallback) first = earliest;  // the previous real frame shows meanwhile
             else lagMs += earliest - next;  // refreshes given up: the picture holds
         }
         const double previous = nowMs - dtMs;
         if (!(lagMs > 0.0)) lagMs = std::max(target, first - previous - 0.5 * P);  // (start: half a refresh into the pair)
-        else if (lagMs > target) lagMs = std::max(target, lagMs - 0.05);
+        else if (lagMs > target) lagMs = std::max(target, lagMs - (fallback ? 0.2 : 0.05));
+        // (fallback: no miss raises it — under the target, say after the
+        // outputs ran out below, it comes back a quarter of the way a frame:
+        // the motion slows a little rather than every refresh waiting for a
+        // real frame not yet there)
+        else if (fallback && lagMs < target)  // (never past the outputs: cut back below, the motion would jump a refresh)
+            lagMs = std::max(lagMs, std::min({target, lagMs + std::max(0.2, 0.25 * (target - lagMs)),
+                                              first + maxFrames * P - 0.01 - nowMs}));
         int n = 0;
         for (double land = first; land <= nowMs + lagMs + 1e-6 && n < maxFrames; land += P) landMs[n++] = land;
         if (n == 0) return 0;
@@ -291,6 +313,33 @@ struct EvenClock {
         return n;
     }
 };
+
+// even_fast: where pinning each real frame on a refresh judders most — a
+// game frame lasting one to two refreshes (72 to 137 fps on 144 Hz, 30 to
+// 57 on 60 Hz). The pairs then alternate one and two refreshes: at 100 fps on
+// 144 Hz, steps of 10 then 5 and 5 ms of content a 6.9 ms refresh (pacing
+// simulator, steady source: 54 motion jumps a second, 2.4 ms rms off even
+// steps, whatever the multiplier). Near a whole number of refreshes (72, 144
+// fps) the pairs are even already. Entered inside 1.08..1.95 refreshes, left
+// outside 1.03..2.0, so a game hovering at an edge does not switch the
+// pacing from frame to frame. `wide` (even_fast 2, at least three generated
+// frames): up to three refreshes as well (entered under 2.9, left over
+// 2.95) — pinned there, the pairs alternate two and three refreshes (60 fps
+// on 144 Hz: 1.4 ms rms off even steps, steady), and even motion costs its
+// lag: the whole game frame plus the GPU's delay, against 3/4 of it at x4
+// (pacing simulator: +2 to +5 ms at 60 fps).
+inline bool evenFastBand(double intervalMs, double periodMs, bool wasOn, bool wide = false) {
+    if (!(periodMs > 0.0) || !(intervalMs > 0.0)) return false;
+    const double r = intervalMs / periodMs;
+    return wasOn ? r >= 1.03 && r <= (wide ? 2.95 : 2.0) : r >= 1.08 && r <= (wide ? 2.9 : 1.95);
+}
+
+// ...and its real frame goes out this far into the period after the refresh
+// the frame before it went to: past that refresh's latch whatever the grid's
+// jitter, ahead of the next present's first frame (presented its lead before
+// the next refresh, 0.6 or 0.3 period), and within the X server's margin of
+// the next refresh, which it stands in for.
+constexpr double kFallbackAfter = 0.25;
 
 // interp_hold as the screen allows: never closer than a refresh apart (also
 // the fastest a VRR screen shows) — two frames inside one refresh would
