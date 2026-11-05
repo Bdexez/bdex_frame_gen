@@ -3479,3 +3479,47 @@ dans `/tmp/fg-installed-before`. Manifests et `options_ui.json` vérifiés
 (`skip_fast=0`). Relancer le jeu et le panneau charge la nouvelle version.
 Validation du ressenti en ×4 sur le vrai jeu demandée à l'utilisateur ; elle
 reste à confirmer. Aucun push effectué.
+
+### 23/10 (suite) — le ×8 attendait sa dernière image faute d'un transit
+
+Audit du dimensionnement : depuis `e2abeb5` (20/10), `presentCeiling()`
+appliquait `min(7, ...)` à **tous** les modes. Cette limite est nécessaire
+à `even_motion` actif, qui présente uniquement des générées ; une
+présentation normale en ×8 contient sept générées **et la réelle**.
+`prepareStaging()` dimensionnait donc pour sept. Sur une surface min=3,
+max=8 (six images acquises à la fois), un transit au lieu de deux était
+alloué. Le worker ne marquait le job soumis qu'à la copie de la huitième
+image, à son heure d'affichage : le jeu restait retenu par le cadencement.
+La limite sept est maintenant réservée à `even_motion` actif ; les modes
+normaux ont une capacité de huit, y compris ×7 + `refresh_fill`.
+
+Test de capacité ajouté sur ×2..×8, trois modes, `even_motion` inactif ou
+actif sans remplissage, et cas remplissage qui atteint huit. Native :
+115 tests unitaires ; Docker WERROR : unit, frame_state, intégration,
+validation Vulkan du ×8 (`BDEX_VALIDATION_SHARD=13/17`), acquire passent ;
+multithread sauté faute de deuxième file dans lavapipe. Même test Vulkan
+×8 sur le GPU physique dans gamescope isolé : sortie démo 0, aucun message
+VUID/SYNC (`/tmp/fg-staging-vulkan` ; gamescope plante à sa fermeture après
+la fin correcte de la démo, comme auparavant). MinGW x64/x86, includes
+capture et liaison du launcher passent (`/tmp/fg-staging-mingw.log`).
+
+A/B avec `3cc05e6`, 640×360 performance, ×8, écran virtuel 144 Hz : premier
+couple sous GPU occupé à 99 % par State of Decay 2, source visée à 200 :
+97,4 → 196,4 i/s ; retard moyen de la réelle 20,25 → 11,3 ms ; sans limite
+97,45 → 212,4. Multiplicateur ×8, aucun rattrapage dans les deux versions.
+**Le jeu a été fermé par l'utilisateur pendant le deuxième couple** :
+celui-ci ne permet pas de comparer les performances. Troisième couple
+sans ce jeu : source visée 200 atteinte dans les deux ; sans limite
+~279 → 392. Ce dernier résultat reste indicatif (fréquences GPU variables).
+Ne pas agréger ces trois couples comme des conditions identiques.
+Logs et charge GPU : `/tmp/fg-x8-staging-before[-2|-3]` et `after[-2|-3]`.
+
+Vérification supplémentaire sur le code corrigé, 2560×1440 quality,
+×4, 144 Hz (`/tmp/fg-staging-quality-final`) : sources 24/30/48/60/90/144
+→ sorties 96/120/192/240/360/576 ; source 200 visée atteint ~169 i/s,
+~677 sorties, sans limite ~171/~683 ; source variable conserve ×4.
+Tous les cas terminent correctement, aucun rattrapage. À 60 i/s ×4,
+`cadence_report.py --hz 144 --skip 2` : 240 présentations/s dont ~96 sur le
+même rafraîchissement, aucune tenue d'un rafraîchissement supplémentaire,
+0 saut de mouvement/s, plans suivis et grille à 100 %. Il s'agit du retour
+Xwayland du banc, pas d'une validation ressentie par l'utilisateur.

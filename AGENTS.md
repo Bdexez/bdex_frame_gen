@@ -227,6 +227,12 @@ au-delà d'`acquireAhead_` passent par des **images de transit**
 `prepareStaging` à chaque reconstruction) copiées d'emblée, puis vers la
 swapchain à leur présentation — sinon le jeu attendait le pacing (×8 :
 6,8 i/s au lieu de 30).
+**Capacité ×8 (23/10, suite)** : `Config::presentCeiling()` garde 8 images
+pour les modes normaux (7 générées + la réelle). La limite 7 ne concerne
+que `even_motion` actif, qui présente uniquement des générées. L'appliquer
+à tout le monde faisait manquer une image de transit sous une surface
+plafonnée (6 acquises + 1 transit pour un job de 8), et le jeu attendait la
+présentation de la dernière avant de soumettre sa prochaine synthèse.
 **Adaptatif** (`adaptive`, 2026-09-29) : `chooseMultiplier` accumule
 I/P (P = 1000/cible, cible = `target_fps` ou la fréquence de l'écran) et
 rend n = partie entière (1..multiplier), le reste reporté ; `present()`
