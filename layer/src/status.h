@@ -28,6 +28,8 @@ struct StatusEntry {
     int displayGrid = -1;
     double fpsLimit = 0.0;   // fps_limit in force: the cap, -1 auto (screen / multiplier), 0 none
     std::string capPoint;    // where fps_limit holds the game: "input" (Reflex / Anti-Lag), "present"
+    double autoCapFps = 0.0; // gpu_headroom: the GPU saturated, the game held under this rate (0 none)
+    int gpuBusy = -1;        // the GPU's busy percent (NVML, amdgpu), -1 unknown
     std::string engine;      // the application's engine name (VkApplicationInfo): DXVK, vkd3d...
     double latencyMs = -1.0; // present-to-screen, -1 unknown
     // From the present feedback, over the last status period: frames that

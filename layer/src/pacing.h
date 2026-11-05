@@ -334,6 +334,42 @@ inline bool evenFastBand(double intervalMs, double periodMs, bool wasOn, bool wi
     return wasOn ? r >= 1.03 && r <= (wide ? 2.95 : 2.0) : r >= 1.08 && r <= (wide ? 2.9 : 1.95);
 }
 
+// ...and steps aside while it holds the game up. Its lag (a whole game frame
+// plus the GPU's delay) puts a job's first refresh late; the job's copies are
+// submitted only once that first frame is presented (runJob's deferRest),
+// and the game's next present waits for that submission. A game whose
+// frames take the GPU long after their present (a GPU-heavy game, even with
+// room on the GPU) then waits in present(), which the lag's ready time counts
+// in turn: measured, 1440p quality x4 drawing its scene 30 times a frame,
+// 105 -> 86 fps, 11.5 ms a present call, content 16 -> 34 ms behind the
+// screen. The game's waits for the worker (EMA) over 0.5 ms or 5 % of a
+// frame: pinned frames for 2 s, then again (4, 8... 60 s after each failed
+// return; 60 s on the plan without a wait bring the backoff down again).
+struct EvenFastGuard {
+    double waitEma = 0.0, offUntilMs = 0.0, backoffMs = 2000.0, cleanSinceMs = 0.0;
+    void reset() { *this = EvenFastGuard{}; }
+    // Per present: may even_fast plan it? `active`: it planned the previous one.
+    bool allow(double nowMs, double workerWaitMs, double intervalMs, bool active) {
+        if (nowMs < offUntilMs) return false;
+        if (!active) {
+            waitEma = 0.0;
+            cleanSinceMs = 0.0;
+            return true;
+        }
+        waitEma = 0.9 * waitEma + 0.1 * std::max(0.0, workerWaitMs);
+        if (waitEma > std::max(0.5, 0.05 * intervalMs)) {
+            offUntilMs = nowMs + backoffMs;
+            backoffMs = std::min(2.0 * backoffMs, 60000.0);
+            waitEma = 0.0;
+            cleanSinceMs = 0.0;
+            return false;
+        }
+        if (cleanSinceMs <= 0.0) cleanSinceMs = nowMs;
+        else if (nowMs - cleanSinceMs >= 60000.0) backoffMs = 2000.0;
+        return true;
+    }
+};
+
 // ...and its real frame goes out this far into the period after the refresh
 // the frame before it went to: past that refresh's latch whatever the grid's
 // jitter, ahead of the next present's first frame (presented its lead before
@@ -429,6 +465,126 @@ struct StartLimiter {
         else delayMs += 0.5 * (waitedMs - slackMs);
         delayMs = std::clamp(delayMs, 0.0, 0.75 * intervalMs);
         return delayMs < 0.25 ? 0.0 : delayMs;
+    }
+};
+
+// gpu_headroom: a game the GPU cannot keep up with (its rendering and our
+// synthesis together) leaves the generation no room: the synthesis queues
+// behind the game's next frame, its frames miss their refreshes, the
+// compositor waits for the GPU too. Held a little under what the GPU can do,
+// the game leaves it idle a `headroom` share of the time: x4 at 100 fps
+// becomes x4 at about 90, every output on time. Saturated: the game waits for
+// its previous frame's GPU work (max_frame_latency) or for the worker (a
+// synthesis slow to deliver holds the previous job's submission) on most
+// frames, and the GPU is busy most of the time (`busyPercent`: NVML,
+// amdgpu; < 0 unknown).
+// Every half second:
+//  - known load: the cap moves the game's rate by target / busy (the GPU's
+//    load follows the frame rate), at most 10 % down or 8 % up a step, inside
+//    a dead band (target -6..+4 %); down only while the GPU is over it and
+//    the game still waits — a GPU kept busy by another program (a second
+//    game, a recording) does not walk it down for nothing, nor do the waits
+//    the worker's pacing imposes on a GPU with room (measured: down 2 % a
+//    window at 83 % busy, back up the next, 61 to 76 fps) — and never under
+//    1 - 2 x headroom of what the GPU last let the game reach (a heavier
+//    scene is followed) nor half the rate it first capped; not binding for
+//    long (the game held under it by something else) and the GPU well under
+//    the target: gone;
+//  - unknown load (the game's waits alone, which say "saturated" or "not",
+//    not by how much): capped at 1 - headroom of the rate at once, lowered
+//    a half headroom a window while still saturated; probes up after a quiet
+//    while (4 s), by 0.4 headroom; after two quiet probes in a row each one
+//    sooner (halved, 2 s at least) and larger (x1.5, 25 % at most) — a
+//    lighter scene gets its frame rate back in seconds; a probe that
+//    saturates comes back to 1 - headroom of the rate it reached, and the
+//    next waits twice as long (32 s at most), small again.
+struct HeadroomCap {
+    double capFps = 0.0;    // the game's frame rate is held under this (0: none)
+    double floorFps = 0.0;  // ...never under this
+    double firstFps = 0.0;  // the rate it first capped
+    double windowMs = 0.0;  // the current window's start
+    int frames = 0, waits = 0, busyN = 0;
+    double busySum = 0.0;
+    double quietMs = 0.0, probeMs = 4000.0, probeStep = 0.0, raisedMs = 0.0, unboundMs = 0.0;
+    int quietProbes = 0;  // probes in a row that did not saturate
+    void reset() { *this = HeadroomCap{}; }
+    // Per game frame: how long the game waited for the GPU to finish its
+    // previous frame (< 0 unknown), its frame interval (estimate), the GPU's
+    // busy percent if read since the last call (< 0 none). Returns capFps.
+    double update(double nowMs, double waitedMs, double intervalMs, int busyPercent, double headroom) {
+        if (!(headroom > 0.0) || !(intervalMs > 0.5 && intervalMs < 500.0)) {
+            reset();
+            return 0.0;
+        }
+        if (windowMs <= 0.0 || nowMs < windowMs) windowMs = nowMs;
+        ++frames;
+        waits += waitedMs >= 0.1;
+        if (busyPercent >= 0) busySum += busyPercent, ++busyN;
+        const double spanMs = nowMs - windowMs;
+        if (spanMs < 500.0 || frames < 8) return capFps;
+        const double rate = 1000.0 / intervalMs;
+        const bool waited = waits * 5 >= frames * 3;  // (60 % of the frames)
+        const double target = 100.0 * (1.0 - headroom);
+        const double busy = busyN ? busySum / busyN : -1.0;
+        if (busy >= 0.0) {
+            const bool over = busy > std::min(98.0, target + 4.0);
+            if (!(capFps > 0.0)) {
+                if (waited && over) {
+                    capFps = rate * std::clamp(target / std::max(busy, 1.0), 0.9, 0.98);
+                    firstFps = rate;
+                    floorFps = rate * std::max(0.25, 1.0 - 2.0 * headroom);
+                }
+            } else if (waited && over) {
+                // (under the cap: as fast as the GPU lets it go now)
+                if (rate < 0.97 * capFps) floorFps = std::max(0.5 * firstFps, rate * std::max(0.25, 1.0 - 2.0 * headroom));
+                capFps = std::max(floorFps, std::min(capFps, rate * 1.02) * std::clamp(target / std::max(busy, 1.0), 0.9, 0.98));
+                unboundMs = 0.0;
+            } else if (busy < target - 6.0) {
+                if (rate < 0.9 * capFps) {  // (not what holds the game)
+                    unboundMs += spanMs;
+                    if (unboundMs >= 4000.0) reset();
+                } else {
+                    unboundMs = 0.0;
+                    capFps *= std::min(1.08, target / std::max(busy, 1.0));
+                }
+            } else {
+                unboundMs = 0.0;
+            }
+        } else if (waited) {
+            if (rate < 0.97 * capFps) floorFps = std::max(0.5 * firstFps, rate * std::max(0.25, 1.0 - 2.0 * headroom));
+            if (!(capFps > 0.0)) {
+                capFps = rate * (1.0 - headroom);
+                firstFps = rate;
+                floorFps = rate * std::max(0.25, 1.0 - 2.0 * headroom);
+            } else if (raisedMs > 0.0 && nowMs - raisedMs < 1500.0) {  // (the probe found the limit)
+                capFps = std::max(floorFps, std::min(capFps, rate * 1.02) * (1.0 - headroom));
+                probeMs = std::min(2.0 * probeMs, 32000.0);
+                probeStep = 0.0;
+                quietProbes = 0;
+            } else {
+                capFps = std::max(floorFps, std::min(capFps, rate * 1.02) * (1.0 - 0.5 * headroom));
+            }
+            quietMs = unboundMs = raisedMs = 0.0;
+        } else if (capFps > 0.0) {
+            quietMs += spanMs;
+            unboundMs = rate < 0.9 * capFps ? unboundMs + spanMs : 0.0;
+            if (unboundMs >= 4000.0) {
+                reset();
+            } else if (quietMs >= probeMs) {
+                if (raisedMs > 0.0 && ++quietProbes >= 2) {  // (two went through: sooner, larger)
+                    probeMs = std::max(2000.0, 0.5 * probeMs);
+                    probeStep = std::min(0.25, 1.5 * probeStep);
+                }
+                if (!(probeStep > 0.0)) probeStep = 0.4 * headroom;
+                capFps *= 1.0 + probeStep;
+                raisedMs = nowMs;
+                quietMs = 0.0;
+            }
+        }
+        windowMs = nowMs;
+        frames = waits = busyN = 0;
+        busySum = 0.0;
+        return capFps;
     }
 };
 
