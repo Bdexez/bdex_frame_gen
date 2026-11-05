@@ -3523,3 +3523,40 @@ Tous les cas terminent correctement, aucun rattrapage. À 60 i/s ×4,
 même rafraîchissement, aucune tenue d'un rafraîchissement supplémentaire,
 0 saut de mouvement/s, plans suivis et grille à 100 %. Il s'agit du retour
 Xwayland du banc, pas d'une validation ressentie par l'utilisateur.
+
+Essai écarté ensuite : supprimer l'attente des présentations en interpolation
+pure quand la source dépasse déjà les Hz (entrée au-delà de Hz/0,9, sortie
+à Hz). Sur le cas quality 1440p sans limite, ~176 i/s restent ~179,
+retard de la réelle 8,65 → 2,2 ms : le débit est limité par le travail GPU
+(analyse ~0,08 + flux ~0,58 + synthèses ~4,3 ms, copies ~0,1 ms par sortie),
+aucun gain notable de débit. **Mais les sauts de mouvement passent de
+0,12 à 35,33/s** : présenter les quatre sorties en rafale sélectionne
+presque toujours la réelle ; les sources à ~180 i/s elles-mêmes se
+rééchantillonnent mal sur 144 Hz. Même au-delà des Hz, l'espacement des
+intermédiaires améliore la régularité du mouvement. Le prototype
+`FastSourcePacer` a été entièrement retiré et n'a jamais été installé.
+Le binaire reconstruit est identique par SHA256 au binaire validé avant
+cet essai (754eb012… pour la couche x64).
+
+Le banc enregistre maintenant aussi `cadence` (rapport de
+`cadence_report.py`, après exclusion du démarrage) et accepte
+`--max-motion-jumps N`. Le compteur de sorties seul ne détectait pas ce
+défaut : dans les deux versions 170 → 680 i/s, ratio ×4 et aucun rattrapage.
+Vérification de bout en bout à 170 i/s ×4, 640×360, 144 Hz, seuil 2/s :
+version conservée 0 saut/s et code retour 0 ; prototype archivé hors dépôt
+25,33 sauts/s et code retour 1 comme attendu (`/tmp/fg-motion-gate-good`,
+`/tmp/fg-motion-gate-rejected`). La sortie en erreur est volontaire, elle
+valide le contrôle. Les rapports bruts restent disponibles dans les logs
+`/tmp/fg-quality-profile-paced`, `...-unpaced`, `fg-fast-source-quality`.
+
+Le correctif de capacité est installé en 64 et 32 bits après ses validations
+(native, Docker et MinGW), bibliothèques remplacées par renommage et hashes
+vérifiés. La validation ressentie sur un vrai jeu reste en attente de la
+réponse de l'utilisateur à la question déjà posée.
+
+Trois essais du cas cible 60 i/s ×4, quality 1440p/144 Hz, sur le binaire
+conservé : 240 sorties/s et aucun rattrapage dans les trois ; sauts de
+mouvement mesurés 0 / 0 / 0,17 par seconde, réelle retardée de
+14,9 / 14,7 / 15,1 ms. Les deux derniers passent le nouveau contrôle
+`--max-motion-jumps 2` (`/tmp/fg-60x4-final-2`, `...-3`). Le premier est le
+cas 60 de `fg-staging-quality-final`, analysé avec le même rapport.

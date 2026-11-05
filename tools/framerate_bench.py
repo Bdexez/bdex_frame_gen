@@ -100,6 +100,28 @@ def summarize(log):
     return result
 
 
+def summarize_cadence(log, hz, seconds):
+    """Use the existing display-clock analysis, including content jumps."""
+    if not log.is_file():
+        return {"error": "no latency log"}
+    try:
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "tools/cadence_report.py"), str(log),
+             "--hz", str(hz), "--skip", str(min(2.0, seconds / 3.0))],
+            capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"error": str(exc)}
+    if result.returncode:
+        return {"error": result.stderr.strip() or result.stdout.strip()}
+    data = {"report": result.stdout}
+    for key, label in {"logged_per_s": "shown/s", "held_per_s": "held/s",
+                       "same_refresh_per_s": "same refresh/s", "motion_jumps_per_s": "motion jumps/s"}.items():
+        match = re.search(r"^" + re.escape(label) + r"\s+([\d.]+)", result.stdout, re.MULTILINE)
+        if match:
+            data[key] = float(match[1])
+    return data
+
+
 def child(args):
     env = dict(os.environ)
     env.pop("WAYLAND_DISPLAY", None)  # use the isolated compositor's Xwayland
@@ -183,6 +205,8 @@ def main():
     parser.add_argument("--env", action="append", default=[], metavar="KEY=VALUE")
     parser.add_argument("--check", action="store_true",
                         help="fail if fixed interpolation loses more than 5%% of outputs or triggers catch-up")
+    parser.add_argument("--max-motion-jumps", type=float,
+                        help="optional maximum content jumps per second (requires display-clock content times)")
     parser.add_argument("--child", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--child-fps", help=argparse.SUPPRESS)
     parser.add_argument("--child-multiplier", type=int, help=argparse.SUPPRESS)
@@ -196,6 +220,8 @@ def main():
         parser.error("--output is required (new directory for logs)")
     if not math.isfinite(args.seconds) or args.seconds < 4 or not math.isfinite(args.hz) or args.hz <= 0:
         parser.error("use --seconds >= 4 and --hz > 0")
+    if args.max_motion_jumps is not None and (not math.isfinite(args.max_motion_jumps) or args.max_motion_jumps < 0):
+        parser.error("--max-motion-jumps must be finite and >= 0")
     for fps in args.fps:
         if fps not in ("variable", "uncapped"):
             try:
@@ -252,7 +278,9 @@ def main():
                 data = summarize((case / "demo.log").read_text(errors="replace")) if (case / "demo.log").exists() else {}
                 data.update(mode=mode, multiplier=mult, requested_fps=fps, hz=args.hz,
                             child_exit=child_exit, compositor_exit=compositor_exit,
-                            gpu_before=gpu_before, gpu_after=gpu_snapshot())
+                            gpu_before=gpu_before, gpu_after=gpu_snapshot(),
+                            motion_jump_limit=args.max_motion_jumps)
+                data["cadence"] = summarize_cadence(case / "latency.log", args.hz, args.seconds)
                 problems = []
                 if child_exit != 0:
                     problems.append(f"demo exit: {child_exit}")
@@ -263,6 +291,12 @@ def main():
                         problems.append(f"expected x{mult}, measured x{data['aggregate_ratio']:.3f}")
                     if data["catchups"] or data["omitted"]:
                         problems.append("fixed multiplier dropped outputs to catch up")
+                if args.max_motion_jumps is not None:
+                    jumps = data["cadence"].get("motion_jumps_per_s")
+                    if jumps is None:
+                        problems.append("no display-clock content times to check motion jumps")
+                    elif jumps > args.max_motion_jumps:
+                        problems.append(f"motion jumps {jumps:.2f}/s exceed {args.max_motion_jumps:.2f}/s")
                 data["problems"] = problems
                 failed |= bool(problems)
                 summaries.append(data)
@@ -270,6 +304,7 @@ def main():
                 print(f"{case.name}: source {data.get('source_fps', '?')}, output {data.get('output_fps', '?')}, "
                       f"x{data.get('ratio', '?')}, catch-ups {data.get('catchups', '?')}, "
                       f"real delay {data.get('real_delay_ms', '?')} ms, X grid {data.get('x11_grid', False)}, "
+                      f"motion jumps {data['cadence'].get('motion_jumps_per_s', '?')}/s, "
                       f"demo exit {child_exit}", flush=True)
                 for problem in problems:
                     print(f"  FAIL: {problem}", flush=True)
