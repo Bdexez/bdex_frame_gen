@@ -421,6 +421,27 @@ horloge GPU d'affichage ; repli si le format n'accepte pas les copies.
 ou a un effet par sortie indispensable (cas de `learned_correction` actif).
 Test `output_reuse` : comparaison des pixels GPU bruts, y compris FP16/HDR,
 avec `bdex_offline --no-output-reuse --raw-dumps` comme référence.
+**`even_fast`** (29/10, défaut 1, `docs/framerate.md`) : ×m fixe ≥ 3,
+interpolation pure, grille connue, pas FIFO, image du jeu entre 1,08 et 1,95
+rafraîchissement (`pacing::evenFastBand`, quittée hors 1,03..2,0 ; 2 = aussi
+2–2,9 à ×4+, +2 à 5 ms). Calées, les réelles faisaient des paires d'un et de
+deux rafraîchissements : 15 à 54 sauts/s même à cadence parfaite (100 i/s :
+pas de 10 puis 5+5 ms), invisibles pour le compte d'images. Chaque
+rafraîchissement : une générée du contenu de son instant (`EvenClock` avec
+`fallback` : pas de hausse du délai sur raté, marque haute −0,2 ms/image,
+remontée d'un quart de l'écart **bornée par les sorties** — sinon la paire
+déborde, le délai est recoupé, saut de 2 périodes —, marge de prêt X11 au
+lieu de l'avance, cible −0,5 ms) ; les m−1 générées réparties (doublons = copies), la réelle **après**
+à `kFallbackAfter` (¼ période) du dernier rafraîchissement, `Job::fallbackFrom`
+(ne met pas à jour `lastLandMs_` : la 1re du job suivant la remplace ; latence
+X11 comptée à son instant `Job::planned`). Paire sans rafraîchissement : tout
+en secours, générées à t = 1 (×N conservé). Simulateur ×4 gigue 1 ms : écart
+2,2 → 0,25 ms rms, délai du contenu +0,6 à +1,5 ms. Mesurer avec le **délai
+moyen du contenu** de `cadence_report.py` : le « retard de la réelle » des
+stats monte par construction. Ne pas relever le délai à chaque raté (ancien
+`EvenClock`) : +2 à 3 ms ; ne pas laisser le délai sans remontée (une coupure
+« sorties épuisées » s'emballait en tenues). Banc : `framerate_bench.py
+--trace` (temps d'un vrai jeu).
 **`tight_hold`** (21/10, défaut 1) : ×m fixe sur grille, quand
 I < (m+1,25)·P, images générées à un rafraîchissement d'écart, la tenue à la
 réelle (−2,8 ms à ×4/30/144). **Marge de prêt X11** (`Grid::readyMarginMs`,

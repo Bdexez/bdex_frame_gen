@@ -1,6 +1,6 @@
 # Mémoire du projet bdex-framegen
 
-État du code au **23 octobre 2026** — dernière version publiée **0.5.6** (05/10), qui
+État du code au **29 octobre 2026** — dernière version publiée **0.5.6** (05/10), qui
 regroupe tout depuis la 0.5.5 : parité Lossless Scaling, compatibilité
 matériel/distributions, SteamOS, capture Linux, injection Windows par défaut,
 ménage du 04/10. Première version propriétaire.
@@ -143,6 +143,12 @@ les images répétées (`dedup`) et commande des passes en dispatch indirect,
     gamescope. Les sorties au-delà des Hz partagent les rafraîchissements ; sous
     pression de soumission ou si la source dépasse les Hz, espacement depuis
     la disponibilité GPU sans réservation de rafraîchissements (23/10).
+  - **`even_fast`** (29/10, défaut 1) : à ×3 et plus, quand une image du jeu
+    dure entre un et deux rafraîchissements (72 à 137 i/s sur 144 Hz), chaque
+    rafraîchissement montre le contenu de son propre instant au lieu de caler
+    les réelles (paires d'un et de deux rafraîchissements : des dizaines de
+    sauts de mouvement par seconde) ; la réelle part juste après, en secours.
+    Latence du mouvement inchangée à ~1 ms près. Détail : session du 29/10.
   - Les prédites sont abandonnées dès que l'image suivante est prête.
 - **Multiplicateur** :
   - fixe, de ×2 à ×8 (images de transit quand la surface limite le nombre
@@ -3645,3 +3651,41 @@ L'utilisateur demande de pousser `main` vers `origin`, y compris la série
 de correctifs de cadence `889ce3c` à `f03e273`. Les validations et limites
 sont détaillées ci-dessus ; aucun changement moteur supplémentaire dans
 cette étape. La version reste 0.5.6, sans nouveau tag de release.
+
+### 29/10 — cadences quelconques : le mouvement, pas seulement le compte
+
+Objectif de l'utilisateur : que la génération marche sans saccades ni lag quand
+le jeu n'est ni à 30 ni à 60 i/s. Son jeu du moment, State of Decay 2, tourne
+sans limite à 70–95 i/s, GPU à 99 %, ×4 réglé (statuts de `run/`). Méthode,
+mesures et pistes écartées : [`framerate.md`](framerate.md), section du 29/10.
+
+- **Diagnostic** (simulateur en boucle fermée, jeu + GPU + worker + écran
+  type Xwayland, puis banc en ligne) : caler chaque réelle sur un
+  rafraîchissement fait des paires d'un et de deux rafraîchissements dès
+  qu'une image du jeu en dure entre un et deux (72–137 i/s sur 144 Hz) :
+  15 à 63 sauts de mouvement par seconde **à cadence parfaitement régulière**,
+  quel que soit ×N. Le banc du 23/10 (sources régulières, compte des sorties)
+  ne pouvait pas le voir ; la gigue réelle (enregistrements de l'utilisateur :
+  σ 1,2–3,4 ms à 30/60 i/s) ajoutait 7 sauts/s à 60 i/s.
+- **`even_fast`** (défaut 1, ×3+) : chaque rafraîchissement montre le contenu
+  de son instant (`EvenClock` mode `fallback`), la réelle part en secours un
+  quart de période après le dernier (`Job::fallbackFrom`). ×N conservé. En
+  ligne, ×4 de 80 à 120 i/s : écart rms 2,0–2,9 → 0,25–0,57 ms, sauts → ~0,
+  délai du contenu −0,6 à +1,3 ms ; 1440p `quality` sous GPU saturé : source
+  80,7 → 95 i/s tenus, délai −4 ms (moins de synthèses distinctes).
+  `even_fast = 2` : aussi 48–72 i/s à ×4+ (+2 à 5 ms, en option).
+- **Outils** : `cadence_report.py` (écart rms du pas, délai moyen du contenu),
+  `framerate_bench.py --trace` (temps d'un vrai jeu) et `--gpu-load`.
+- **Écarté** : diffusion d'erreur sur la réelle, horloge lissée (PLL) des
+  `present()`, `EvenClock` tel quel (+10 ms), réelle de secours présentée en
+  avance (bloque le worker), extension par défaut à 48–72 i/s (latence).
+- **Reste ouvert** : ×2 dans la même plage (il faudrait une seconde générée
+  par job et ~+3 à 4 ms) ; validation ressentie sur l'écran de l'utilisateur.
+
+Vérifications : 119 tests unitaires (dont 4 nouveaux scénarios `even_fast`),
+tests sans fenêtre (`unit`, `matcher`, `frame_state`, `offline`, `corpus`,
+`determinism`, `output_reuse`, `option_keys`…), tests d'affichage dans
+gamescope sans tête (intégration, validation Vulkan avec un nouveau cas
+`interpolate:fast` sans aucun message, stress, acquisition, multithread),
+MinGW x64/i686.
+

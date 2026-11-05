@@ -183,3 +183,126 @@ par image réelle (`--gpu-load 12`), le coût de synthèse médian baisse de
 240 et environ 480 présentations/s, aucun rattrapage. Les fréquences GPU
 varient automatiquement : ce sont des mesures de coût sur ce banc,
 pas une promesse de gain de FPS ou de latence dans tous les jeux.
+
+## Paires d'un et de deux rafraîchissements : `even_fast` (29/10)
+
+Travail du 29 octobre 2026. Objectif : que la génération reste fluide quand
+le jeu n'est ni à 30 ni à 60 i/s, sans ajouter de latence.
+
+### Ce que le banc à source régulière ne voyait pas
+
+Le cadencement du 23/10 conservait ×N et la cadence des présentations à
+toute cadence, mais il cale chaque image réelle sur un rafraîchissement et
+interpole les générées entre deux réelles ainsi calées. Quand une image du
+jeu dure entre un et deux rafraîchissements (72 à 137 i/s sur 144 Hz,
+30 à 57 sur 60 Hz), les paires alternent un et deux rafraîchissements : à
+100 i/s sur 144 Hz, le contenu avance de 10 ms en un rafraîchissement, puis
+de 5 et 5 ms. Simulateur, source parfaitement régulière : 15 (80 i/s) à
+54 (100 i/s) sauts de mouvement par seconde, 1,8 à 2,4 ms d'écart rms par
+rafraîchissement, quel que soit le multiplicateur. Le nombre d'images, le
+compteur de rattrapages et la grille étaient pourtant parfaits : c'est le
+mouvement qui saccade.
+
+La gigue des vrais jeux aggrave aussi les cadences intermédiaires. Les
+enregistrements de l'utilisateur donnent 1,2 à 3,4 ms d'écart-type à 30 et
+60 i/s, et jusqu'à 19 ms pour Cyberpunk sans limite à 23 i/s. Le banc en ligne
+avec la trace Cyberpunk à 60 i/s (σ ≈ 3 ms) montrait 7,1 sauts/s contre 0 sur
+la source régulière.
+
+### Outils
+
+- `tools/cadence_report.py` rapporte maintenant l'écart rms du pas de contenu
+  par rafraîchissement (un rafraîchissement tenu compte un pas de 0), l'écart-
+  type du délai contenu→écran, et le **délai moyen du contenu** (rafraîchissement
+  remis moins l'heure de présentation du contenu montré) : la latence du
+  mouvement, que l'image réelle seule ne mesure plus quand les générées le
+  portent.
+- `tools/framerate_bench.py --trace TIMESTAMPS_CSV` rejoue les temps d'images
+  d'un vrai jeu (le `timestamps.csv` d'un enregistrement du panneau), en
+  boucle ; `--gpu-load N` passe à la démo un jeu limité par son propre rendu.
+
+### Pistes écartées (simulateur, boucle fermée jeu + GPU + worker + Xwayland)
+
+- Choisir le rafraîchissement de la réelle par diffusion d'erreur (au plus
+  près de « réelle précédente + dt ») : moins de sauts à 72–87 i/s, mais plus
+  de tenues à 45 i/s et sur les traces réelles.
+- Planifier sur une horloge lissée (boucle à verrouillage de phase sur les
+  `present()`) : pire. Suivre l'heure brute de chaque `present()` compense la
+  gigue du contenu, dont l'heure de présentation fait partie.
+- `EvenClock` tel quel (marque haute du temps d'image qui décroît en 30 s,
+  délai relevé à chaque raté) : régulier, mais +10 ms de délai.
+- La réelle en secours présentée à l'avance du rafraîchissement suivant :
+  elle retarde le worker et s'affiche trop souvent.
+
+### Le mode retenu
+
+`even_fast` (défaut 1) : multiplicateur fixe ×3 et plus, interpolation pure,
+grille d'affichage connue (`x11_clock` ou retour d'affichage), pas en FIFO,
+une image du jeu entre 1,08 et 1,95 rafraîchissement (quittée hors de
+1,03..2,0). Chaque rafraîchissement couvert par la paire reçoit une générée
+qui montre le contenu de son propre instant (horloge `EvenClock` en mode
+`fallback`). Les ×N−1 générées sont réparties sur ces rafraîchissements, et
+plusieurs sur un même rafraîchissement sont la même image, que `FrameGen`
+copie. L'image réelle part juste après le dernier, à un quart de période
+(`pacing::kFallbackAfter`), sans réserver de rafraîchissement : la première
+image du job suivant la remplace, sauf si elle est en retard. Dans ce cas,
+la réelle s'affiche à la place d'une tenue, et le délai n'est pas relevé pour
+autant. Le délai visé est la marque haute du temps d'image (qui redescend de
+0,2 ms par image), plus le délai GPU, plus la marge de prêt X11 (1,5 ms),
+moins 0,5 ms. Une paire sans aucun rafraîchissement (image plus courte qu'un
+rafraîchissement) présente toutes ses images en secours, avec les générées à
+t = 1 : toujours ×N présentations par image du jeu. `even_fast = 2` ajoute,
+à ×4 et plus, la plage 2–3 rafraîchissements (48 à 72 i/s sur 144 Hz) :
+encore plus régulier, mais 2 à 5 ms de délai en plus, donc pas par défaut.
+
+Simulateur, 143,912 Hz, ×4, gigue de 1 ms (`pacing_even_fast_*`) : écart
+rms 1,8–2,3 → 0,22–0,29 ms, sauts 15–38 → 0/s, délai moyen du contenu
++0,6 à +1,5 ms (×3 à 80 i/s : +2,5 ; ×8 : −0,1 à −5,8, la réelle calée y
+attendait 7/8 d'intervalle). Robuste aux pics isolés (95 i/s avec une image
+de 30 ms par seconde : 36 → 0 sauts/s) et aux balayages de cadence. Au-delà
+de 3 ms de gigue, le gain diminue ; à 4 ms, le plan calé reste comparable.
+Hors de sa plage (30, 47, 60, 71,5, 200 i/s) et en ×2, rien ne change :
+résultats identiques au bit près dans le simulateur.
+
+### Mesures en ligne (banc isolé, gamescope sans tête, Xwayland 144 Hz)
+
+A/B avec `a80b38e`, cas alternés référence/nouveau, 8 s chacun, démo 640×360
+`performance` sauf mention. **Le jeu de l'utilisateur (State of Decay 2)
+tournait sur le même GPU** (77 à 100 % d'occupation, notée dans chaque
+`summary.json`) : les écarts de délai de l'ordre de 1 ms sont dans le bruit
+(60 i/s, mode inactif : 18,0 / 19,0 ms). Délai = délai moyen du contenu
+(`cadence_report.py`).
+
+| ×4 | écart rms (ms) | sauts/s | délai (ms) |
+|---|---|---|---|
+| 80 i/s stable | 1,98 → 0,42 | 16,1 → 0,17 | 16,0 → 16,4 |
+| 95 i/s stable | 2,46 → 0,41 | 46,0 → 0,17 | 14,2 → 14,4 |
+| 105 i/s stable | 2,45 → 0,48 | 62,7 → 0,33 | 14,1 → 13,5 |
+| 120 i/s stable | 2,03 → 0,27 | 0 → 0 | 12,6 → 12,9 |
+| 80 i/s, gigue 1 ms | 1,84 → 0,26 | 17,0 → 0 | 14,4 → 15,7 |
+| 95 i/s, gigue 1 ms | 2,33 → 0,25 | 37,8 → 0 | 13,2 → 13,8 |
+| 105 i/s, gigue 1 ms | 2,26 → 0,30 | 37,0 → 0 | 12,3 → 12,7 |
+| 120 i/s, gigue 1 ms | 2,88 → 0,57 | 4,8 → 0,33 | 12,6 → 13,4 |
+| 95 i/s, pic de 30 ms par seconde | 2,79 → 1,78 | 38,9 → 2,8 | 12,4 → 13,7 |
+| balayage 60 → 140 → 60 i/s | 2,94 → 2,14 | 7,5 → 4,7 | 14,2 → 16,2 |
+| 30 / 60 / 200 i/s (hors plage) | inchangés | inchangés | inchangés |
+
+×3 à 95 i/s : 2,46 → 0,10 ms, 46 → 0 sauts/s, délai +1,0 ms ; ×8 à 95 i/s :
+2,45 → 0,36 ms, 46 → 0, délai −1,4 ms. Toujours ×N sorties par image.
+
+1440p `quality`, ×4, GPU saturé par le jeu de l'utilisateur : à 95 i/s
+visés, la référence ne tenait que 80,7 i/s de source (322 sorties/s), la
+nouvelle version 95 (380) ; écart 1,77 → 0,36 ms, sauts 6,7 → 0,17/s, délai
+24,3 → 20,1 ms. Le mode synthétise moins d'images distinctes (une par
+rafraîchissement couvert, ~1,4 par image du jeu à 95 i/s ; les doublons sont
+copiés), ce qui laisse du GPU au jeu. À 80 i/s : 1,98 → 0,41 ms, délai +1,2.
+Mesures de banc, pas une validation ressentie sur l'écran de l'utilisateur.
+
+`even_fast = 2`, ×4, même banc et même charge du jeu : 60 i/s stable,
+écart 1,48 → 0,24 ms, délai 18,8 → 20,7 ms ; 60 i/s avec 1 ms de gigue,
+1,56 → 0,69 ms, 17,5 → 20,2 ms ; 55 i/s avec gigue, 1,43 → 0,58 ms, +2,7 ms
+(mesure prise avant la borne ci-dessous). Une première version laissait le
+délai remonter au-delà des sorties disponibles : à 2,4 rafraîchissements par
+image pour 3 générées, la paire débordait, le délai était recoupé et le
+mouvement sautait de deux périodes (1,0 saut/s, écart 1,39 ms). La remontée
+est maintenant bornée par les sorties (`first + maxFrames·P`).
