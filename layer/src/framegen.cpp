@@ -340,8 +340,10 @@ void FrameGen::createResources() {
     levels_ = static_cast<int>(levels_v_.size());
 
     const VkImageUsageFlags outUsage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    outputCopiesSupported_ = outputs_ > 1 && dev_.formatSupports(enc_.storageFormat, VK_FORMAT_FEATURE_TRANSFER_DST_BIT);
     for (uint32_t i = 0; i < outputs_; ++i)
-        out_.push_back(dev_.createImage(enc_.storageFormat, displayExtent_, outUsage, true));
+        out_.push_back(dev_.createImage(enc_.storageFormat, displayExtent_,
+                                       outUsage | (outputCopiesSupported_ ? VK_IMAGE_USAGE_TRANSFER_DST_BIT : 0), true));
     if (packReal_) outReal_ = dev_.createImage(enc_.storageFormat, displayExtent_, outUsage, true);
     if (sharpen_) {
         const VkImageUsageFlags sharpUsage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -914,6 +916,16 @@ bool FrameGen::writeDump(const std::string& path, uint32_t which, uint32_t downs
     return writePpm(path, dumpMapped_[which], displayExtent_, enc_, downscale);
 }
 
+bool FrameGen::writeRawDump(const std::string& path, uint32_t which) const {
+    if (which >= dumpMapped_.size() || !dumpMapped_[which]) return false;
+    FILE* f = std::fopen(path.c_str(), "wb");
+    if (!f) return false;
+    const size_t bytes = size_t(displayExtent_.width) * displayExtent_.height * (enc_.is64 ? 8 : 4);
+    const bool written = std::fwrite(dumpMapped_[which], 1, bytes, f) == bytes;
+    const int closed = std::fclose(f);
+    return written && closed == 0;
+}
+
 bool FrameGen::writePpm(const std::string& path, const void* pixels, VkExtent2D extent, const OutputEncoding& encoding,
                         uint32_t downscale) {
     downscale = std::max(1u, downscale);
@@ -997,6 +1009,9 @@ void FrameGen::memoryBarrier(VkCommandBuffer cmd) {
 }
 
 void FrameGen::recordAcquireSources(VkCommandBuffer cmd, int prev, int cur) {
+    reuseEqualOutputs_ = false;
+    recordedOutputs_ = {};
+    reusedOutputs_ = 0;
     if (!intervalRecorded_) previousIntervalMs_ = 0.0;
     intervalRecorded_ = false;
     flowIntervalRatio_ = 1.f;
@@ -1026,6 +1041,7 @@ void FrameGen::recordReleaseSources(VkCommandBuffer cmd, int prev, int cur) {
 }
 
 void FrameGen::recordAnalysis(VkCommandBuffer cmd, uint32_t parity, uint32_t cur) {
+    recordedOutputs_ = {};
     auto& vt = dev_.vt;
     // A new frame: the per-frame state of the previous one no longer applies.
     flowLastFrame_ = flowThisFrame_;
@@ -1078,6 +1094,8 @@ void FrameGen::dispatchGated(VkCommandBuffer cmd, uint32_t entry, uint32_t x, ui
 
 void FrameGen::recordFrameState(VkCommandBuffer cmd, const FrameTiming& timing) {
     timingActive_ = false;
+    reuseEqualOutputs_ = false;
+    recordedOutputs_ = {};
     gate_ = false;
     // Flow vectors are displacements over a source interval. Acceleration
     // needs velocities, so unequal intervals must be normalised even when
@@ -1143,6 +1161,9 @@ void FrameGen::recordFrameState(VkCommandBuffer cmd, const FrameTiming& timing) 
     mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
     vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, nullptr, 0, nullptr);
     timingActive_ = true;
+    reuseEqualOutputs_ = outputCopiesSupported_ && timing.reuseEqualOutputs && timing.haveDisplay;
+    timedRealPos_ = pc.realPos;
+    std::copy_n(timing.displayMs, outputDisplayMs_.size(), outputDisplayMs_.begin());
     gate_ = dedup;
 }
 
@@ -1227,6 +1248,7 @@ bool FrameGen::readState(State& out) const {
 }
 
 void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity, int costSlot) {
+    recordedOutputs_ = {};
     auto& vt = dev_.vt;
     // The flow images still hold the previous pair's flow (online_tune rates it).
     for (auto& p : passes_) p->flowBegin(*this, cmd, parity);
@@ -1375,6 +1397,30 @@ void FrameGen::copyToPresent(VkCommandBuffer cmd, VkImage src, VkImageLayout src
 }
 
 void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cur, float t, uint32_t output) {
+    if (output < recordedOutputs_.size()) recordedOutputs_[output].written = false;
+    // frame_state gives equal t bits to equal display moments in the same
+    // mode, even with jitter/dedup. Copy the finished pixels (postpasses and
+    // HUD included), retaining a separate image for each presentation slot.
+    const bool predicted = t > 1.f;
+    bool reuse = reuseEqualOutputs_ && output < recordedOutputs_.size() &&
+                 predicted == (int(output) >= timedRealPos_) && std::isfinite(outputDisplayMs_[output]);
+    if (reuse) {
+        const Config cfg = effectiveConfig();
+        for (const auto& p : passes_) reuse = reuse && p->canReuseOutput(cfg);
+    }
+    if (reuse) {
+        for (uint32_t other = 0; other < recordedOutputs_.size(); ++other) {
+            const RecordedOutput& r = recordedOutputs_[other];
+            if (other != output && r.written && r.prev == prev && r.cur == cur && r.predicted == predicted &&
+                outputDisplayMs_[other] == outputDisplayMs_[output]) {
+                copyRecordedOutput(cmd, other, output);
+                BDEX_DBG("output %u reuses output %u at display +%.3f ms", output, other, outputDisplayMs_[output]);
+                recordedOutputs_[output] = {true, predicted, prev, cur};
+                ++reusedOutputs_;
+                return;
+            }
+        }
+    }
     const uint32_t N = static_cast<uint32_t>(sources_.size());
     VkDescriptorSet set = dsInterp_[(prev * N + cur) * outputs_ + output];
     for (auto& p : passes_)
@@ -1382,6 +1428,25 @@ void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cu
     recordSynthesis(cmd, set, t, timingActive_ ? int32_t(output) + 1 : 0, false);
     if (sharpen_) recordCas(cmd, dsCas_[output]);  // sharp_[output] -> out_[output]
     for (auto& p : passes_) p->afterOutput(*this, cmd, int32_t(output));  // (the fps HUD)
+    if (reuse) recordedOutputs_[output] = {true, predicted, prev, cur};
+}
+
+void FrameGen::copyRecordedOutput(VkCommandBuffer cmd, uint32_t src, uint32_t dst) {
+    auto& vt = dev_.vt;
+    VkImageMemoryBarrier b[2] = {
+        imageBarrier(out_[src].image, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+                     VK_ACCESS_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL),
+        imageBarrier(out_[dst].image, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+                     VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL),
+    };
+    vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                          0, 0, nullptr, 0, nullptr, 2, b);
+    VkImageCopy region{};
+    region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.extent = {displayExtent_.width, displayExtent_.height, 1};
+    vt.CmdCopyImage(cmd, out_[src].image, VK_IMAGE_LAYOUT_GENERAL, out_[dst].image, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+    memoryBarrier(cmd);
 }
 
 // One synthesis pass (plus the forward splat it may need) into the output
@@ -1486,8 +1551,8 @@ void FrameGen::recordStage(VkCommandBuffer cmd, bool real, uint32_t output, uint
                                 VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     } else {           // written by the synthesis (queue order, or its semaphore)
         src = real ? outReal_.image : out_[output].image;
-        pre[n++] = imageBarrier(src, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
-                                VK_IMAGE_LAYOUT_GENERAL);
+        pre[n++] = imageBarrier(src, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+                                VK_ACCESS_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
     }
     vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
                           n, pre);
@@ -1510,7 +1575,8 @@ void FrameGen::recordCopyStaged(VkCommandBuffer cmd, uint32_t slot, VkImage dst)
 }
 
 void FrameGen::recordCopyOutput(VkCommandBuffer cmd, uint32_t output, VkImage dst) {
-    copyToPresent(cmd, out_[output].image, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, dst);
+    copyToPresent(cmd, out_[output].image, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+                  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, dst);
 }
 
 void FrameGen::recordCopySource(VkCommandBuffer cmd, uint32_t src, VkImage dst) {

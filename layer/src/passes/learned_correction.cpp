@@ -17,6 +17,8 @@ class LearnedCorrectionPass : public FgPass {
 public:
     const char* name() const override { return "learned_correction"; }
     bool active(const Config& cfg) const override { return usable_ && cfg.learnedCorrection > 0.f; }
+    // This filter still uses the nominal t, rather than frame_state's t.
+    bool canReuseOutput(const Config& cfg) const override { return !active(cfg); }
 
     void create(FgContext& ctx) override {
         const OutputEncoding enc = ctx.outputEncoding();

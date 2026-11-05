@@ -159,3 +159,27 @@ charge concurrente avant de comparer deux débits.
 
 Mesures et limites de validation : voir la session du 23/10 dans
 [`MEMOIRE.md`](MEMOIRE.md).
+
+## Éviter le calcul répété d'une même sortie
+
+Sur une grille connue, plusieurs sorties d'un même job peuvent avoir
+exactement le même instant GPU. Avec les mêmes sources et le même mode,
+elles ont les mêmes pixels. Le moteur copie alors l'image finie vers
+l'autre sortie au lieu de refaire sa synthèse et ses filtres. Toutes les
+images et toutes les présentations du multiplicateur restent présentes.
+Les phases distinctes, les modes différents et `learned_correction` actif
+conservent leur calcul complet ; sans grille GPU, aucune réutilisation.
+
+`ctest --test-dir build -R output_reuse --output-on-failure` compare les
+octets GPU au calcul complet, avec formats SDR/HDR, upscale/CAS,
+interpolation, hybride, prédiction, répétitions et filtres optionnels.
+Pour une comparaison manuelle, `bdex_offline --raw-dumps` exporte aussi
+les pixels empaquetés ; `--no-output-reuse` force la référence complète.
+Ces options de vérification ne modifient pas les réglages du jeu.
+
+Sur le banc 1440p quality/144 Hz à 60 i/s, avec douze dessins de la scène
+par image réelle (`--gpu-load 12`), le coût de synthèse médian baisse de
+3,97 à 2,97 ms en ×4 et de 7,10 à 2,99 ms en ×8. Débits conservés :
+240 et environ 480 présentations/s, aucun rattrapage. Les fréquences GPU
+varient automatiquement : ce sont des mesures de coût sur ce banc,
+pas une promesse de gain de FPS ou de latence dans tous les jeux.

@@ -4,6 +4,7 @@
 #include "fg_pass.h"
 #include "format.h"
 
+#include <array>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -64,6 +65,7 @@ public:
         bool haveDisplay = false;
         float displayMs[8] = {};
         double displaySpanMs = 0.0;  // pure interpolation: scheduled interval between the real anchors, 0 = content interval
+        bool reuseEqualOutputs = true;  // copy equivalent finished outputs; false for A/B verification
     };
     // Source intervals for acceleration and the per-frame GPU state
     // (frame_state.comp): duplicate detection and each output's content t.
@@ -129,6 +131,7 @@ public:
     // lows).
     // `latencyMs`: measured present-to-screen latency (HUD level 5), -1 unknown.
     void setHud(int gameFps, int outFps, int low1, int low01, int latencyMs = -1) {
+        recordedOutputs_ = {};
         hudGame_ = gameFps; hudOut_ = outFps; hudLow1_ = low1; hudLow01_ = low01; hudLatency_ = latencyMs;
     }
     // flow_confidence: share of uncertain flow texels since the last call (-1: not measured).
@@ -140,6 +143,7 @@ public:
     }
     // HUD level 6: the pacing graph (FgHud::graph), oldest sample first.
     void setHudGraph(const uint8_t* samples, int count, int refHalfMs) {
+        recordedOutputs_ = {};
         for (auto& w : hudGraph_) w = 0;
         for (int i = 0; i < count && i < FgHud::kHudGraph; ++i)
             hudGraph_[i / 4] |= uint32_t(samples[i]) << (8 * (i % 4));
@@ -152,6 +156,8 @@ public:
     // `which`: 0..outputs_-1 = generated outputs, outputs_ = real frame.
     void recordDump(VkCommandBuffer cmd, uint32_t which, uint32_t cur);
     bool writeDump(const std::string& path, uint32_t which, uint32_t downscale = 1);
+    // Packed GPU pixels without SDR/HDR conversion, for exact A/B checks.
+    bool writeRawDump(const std::string& path, uint32_t which) const;
     // Recordings (FrameRecorder): the game's own frame `cur` (render size,
     // before any upscale or HUD) copied into a host-visible buffer, between
     // recordAcquireSources and recordReleaseSources.
@@ -161,6 +167,8 @@ public:
     static bool writePpm(const std::string& path, const void* pixels, VkExtent2D extent, const OutputEncoding& enc,
                          uint32_t downscale = 1);
     uint32_t outputCount() const { return outputs_; }
+    uint32_t reusedOutputCount() const { return reusedOutputs_; }  // current recorded frame, outputs still presented
+    bool outputReuseSupported() const { return outputCopiesSupported_; }
     const OutputEncoding& encoding() const { return enc_; }
 
     int levels() const { return levels_; }
@@ -384,6 +392,14 @@ private:
     bool dedup_ = false;          // duplicate detection (config at creation)
     bool dupReal_ = false;        // extrapolated replacement of repeated real frames (dedup + extrapolation)
     bool timingActive_ = false;   // this frame's outputs read their t from the state buffer
+    bool outputCopiesSupported_ = false;
+    bool reuseEqualOutputs_ = false;
+    int timedRealPos_ = 0;
+    uint32_t reusedOutputs_ = 0;
+    struct RecordedOutput { bool written = false; bool predicted = false; uint32_t prev = 0, cur = 0; };
+    std::array<RecordedOutput, 7> recordedOutputs_{};
+    std::array<float, 7> outputDisplayMs_{};
+    void copyRecordedOutput(VkCommandBuffer cmd, uint32_t src, uint32_t dst);
     bool gate_ = false;           // this frame's flow dispatches are gated on the duplicate test
     bool flowThisFrame_ = false;  // recordFlow ran for the frame being recorded
     bool flowLastFrame_ = false;  // ... for the previous frame (its flow may be kept)
