@@ -6,6 +6,35 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### The frame limit adds no latency to Direct3D games under Proton (2026-10-31)
+
+- `fps_limit` held DXVK's and VKD3D-Proton's present thread, which the game
+  runs up to three frames ahead of: the frames queued behind the held
+  present each read their input one to three frames before reaching the
+  screen. `fps_limit_wait` (on by default) holds the game where it waits for
+  its earlier frames before it begins a new one, before it reads its input,
+  as its own limiter does: the layer answers `VK_KHR_present_id` /
+  `VK_KHR_present_wait` for its swapchains (where the driver has them) and,
+  while a limit is set, offers these games FIFO alone — the mode in which
+  both wait for each present — keeping the mode they would have picked on
+  the real swapchain. A limit set while the game runs makes it re-create its
+  swapchain once.
+- Measured at a 40 fps cap (headless gamescope, the demo presenting as they
+  do, `--present-thread`): input to the real frame on screen 72 -> 23 ms
+  with VKD3D-Proton's three-frame bound, 98 -> 23 ms with DXVK's default
+  latency, 48 -> 23 ms at a maximum latency of 1, 57 -> 7 ms at x1 — as
+  with the game's own limiter (22 ms). Real DXVK and VKD3D-Proton under Wine
+  on an RTX 3060 Ti, 30 fps cap: frame start to GPU done 34.4 -> 0.8 ms
+  (DXVK 2.5.3), 34.5 -> 0.8 ms (Proton 10's DXVK), 66.7 -> 0.8 ms
+  (VKD3D-Proton 3.0.1).
+- Without present wait in the driver (lavapipe), or with `fps_limit_wait = 0`,
+  the limit holds the present as before. Reflex stays as it was (still off
+  for DXVK, whose markers would name presents the driver never sees).
+- `bdex_demo --present-thread L` presents as DXVK and VKD3D-Proton do, for
+  the latency bench and the tests; the Direct3D probes of
+  `tools/ci/proton-check.sh` run uncapped under the layer's limit and report
+  how long after a frame began the GPU had done it.
+
 ### A saturated GPU gets headroom back; even_fast no longer holds GPU-heavy games up (2026-10-29)
 
 - `gpu_headroom` (on by default, 0.1): while generating, a GPU that cannot
