@@ -2,7 +2,8 @@
 # The latency measurement end to end (tools/latency_bench.sh): the demo's
 # flashes joined with the layer's display log in a headless gamescope —
 # every flash found on screen, the real frame no earlier than the first
-# photon, and interpolation x2 holding the real frame longer than x1.
+# photon, and interpolation x2 holding the real frame longer than x1; and
+# fps_limit as fast as the game's own limiter, a present thread's included.
 # Skipped (77) without gamescope.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -28,4 +29,21 @@ capreal="$(grep "^x1cap " <<<"$cap" | awk '{ print $10 }')"
 [[ "$capreal" =~ ^[0-9.]+$ ]] || { echo "FAIL: fps_limit: no displayed flash (the limiter holds the present?)"; exit 1; }
 awk -v c="$capreal" -v x="$x1real" 'BEGIN { exit !(c <= x + 4.0) }' ||
   { echo "FAIL: fps_limit adds latency: $capreal ms against $x1real ms with the game's own cap"; exit 1; }
+# The same through a present thread, as DXVK / VKD3D-Proton present (the
+# demo's --present-thread 3: VKD3D-Proton's own bound of three frames): held
+# at its present wait (fps_limit_wait), the game must reach the screen as
+# fast as when it caps itself — held at its present thread, it read its
+# input two frames early (+50 ms at 40 fps).
+pt="--present-thread 3 --mode immediate"
+own="$("$ROOT/tools/latency_bench.sh" --fps 40 --seconds 6 --demo-args "$pt" ptown=BDEX_FG_MULTIPLIER=1)" || exit $?
+echo "$own"
+wait="$("$ROOT/tools/latency_bench.sh" --fps 1000 --seconds 6 --demo-args "$pt" ptwait=BDEX_FG_MULTIPLIER=1,BDEX_FG_FPS_LIMIT=40)" || exit $?
+echo "$wait"
+ownreal="$(grep "^ptown " <<<"$own" | awk '{ print $10 }')"
+waitreal="$(grep "^ptwait " <<<"$wait" | awk '{ print $10 }')"
+for v in "$ownreal" "$waitreal"; do
+  [[ "$v" =~ ^[0-9.]+$ ]] || { echo "FAIL: present thread: no displayed flash"; exit 1; }
+done
+awk -v c="$waitreal" -v x="$ownreal" 'BEGIN { exit !(c <= x + 4.0) }' ||
+  { echo "FAIL: fps_limit on a present thread adds latency: $waitreal ms against $ownreal ms with the game's own cap"; exit 1; }
 echo "latency probe OK"

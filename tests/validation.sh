@@ -59,7 +59,7 @@ k=-1
 # synthesis of its own, the comparison), from the primed cache above.
 for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hybrid:state extrapolate:direct \
            interpolate:async extrapolate:async interpolate:probe extrapolate:probe hybrid:adaptive interpolate:x8 interpolate:hold hybrid:hold \
-           interpolate:even hybrid:predict1 interpolate:fast; do
+           interpolate:even hybrid:predict1 interpolate:fast interpolate:waitcap; do
   k=$((k + 1))
   [ $((k % shard_n)) -eq "$shard_i" ] || continue
   # BDEX_VALIDATION_RUNS="run ...": only those (while working on one path).
@@ -108,6 +108,14 @@ for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hy
     # next present's first frame replaces (Xvfb has no grid: the usual plan).
     state="BDEX_FG_STATS=1 BDEX_FG_STATS_INTERVAL=1"; mult=4
     demo_args="--fps 100 --frames 200 --duration 40 --size 640x360"
+  elif [ "${run#*:}" = waitcap ]; then
+    # fps_limit_wait: the demo presents as VKD3D-Proton does (a present
+    # thread, three frames of latency), uncapped, the layer's limit at 40
+    # fps: offered FIFO alone, the game's present ids and waits answered by
+    # the layer where the driver has present wait (else the limit stays at
+    # the present, as before).
+    state="BDEX_FG_FPS_LIMIT=40"; mult=2
+    demo_args="--present-thread 3 --mode immediate --uncapped --frames 90 --duration 40 --size 640x360"
   elif [ "${run#*:}" = async ]; then
     state="BDEX_FG_ASYNC_COMPUTE=1 BDEX_FG_DEDUP=1 BDEX_FG_FLOW_TEMPORAL=1 BDEX_FG_ONLINE_TUNE=1 BDEX_FG_CACHE_DIR= BDEX_FG_HUD_MASK=24 BDEX_FG_SUBPIXEL_LK=2"; demo_args="--repeat 2 --frames 90 --duration 40"; output="BDEX_FG_HUD=0"
   elif [ "$run" != "$mode" ]; then
@@ -129,6 +137,7 @@ for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hy
   echo "$run: demo exit $rc, $n validation message(s)"
   if [ "${run#*:}" = even ]; then grep -q "even motion" "$LOG" && echo "$run: planned by even_motion" || echo "$run: no refresh grid, usual plan"; fi
   if [ "${run#*:}" = fast ]; then grep -q "even motion (even_fast)" "$LOG" && echo "$run: planned by even_fast" || echo "$run: no refresh grid, usual plan"; fi
+  if [ "${run#*:}" = waitcap ]; then grep -q "held where it waits" "$LOG" && echo "$run: fps_limit at the present wait" || echo "$run: no present wait on this driver, fps_limit at the present"; fi
   if [ "$n" -gt 0 ]; then grep -E "VUID-|SYNC-" "$LOG" | grep -vE "$IGNORE" | head -20; status=1; fi
   if [ "$rc" -ne 0 ]; then tail -20 "$LOG"; status=1; fi
   # The rebuild levels exist only if the flow is not already at 1/4.
