@@ -138,13 +138,16 @@ TEST(status_screen_timing_hint) {
     m[1].displayGrid = -1;  // not known: no line at all in the file
     CHECK(statusFormat("game", 1, 1, m).find("display_grid") == std::string::npos);
     // fps_limit holding the present of a DXVK / VKD3D game: the queue hint;
-    // not when the game's Reflex / Anti-Lag sleep holds it.
+    // held at the game's own wait (fps_limit_wait) or its Reflex / Anti-Lag
+    // sleep: where it holds it instead.
     m[1].fpsLimit = 40.0;
     m[1].capPoint = "present";
     m[1].engine = "vkd3d";
     CHECK(lines().size() == 2 && lines()[1].find("Direct3D") != std::string::npos);
+    m[1].capPoint = "wait";
+    CHECK(lines().size() == 2 && lines()[1].find("attente du jeu") != std::string::npos);
     m[1].capPoint = "input";
-    CHECK(lines().size() == 1);
+    CHECK(lines().size() == 2 && lines()[1].find("Reflex") != std::string::npos);
     m[1].capPoint = "present";
     m[1].engine = "Unreal Engine";
     CHECK(lines().size() == 1);

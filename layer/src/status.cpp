@@ -285,6 +285,12 @@ std::vector<std::string> statusDescribe(const StatusFile& file, bool english) {
         {
             std::string eng = get(v, "engine");
             for (char& c : eng) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (get(v, "cap_point") == "wait")
+                out.push_back(T("   limite d'images retenue dans l'attente du jeu, avant qu'il lise ses entrées : pas de latence ajoutée",
+                                "   frame limit held in the game's wait, before it reads its input: no latency added"));
+            else if (get(v, "cap_point") == "input")
+                out.push_back(T("   limite d'images retenue au sommeil Reflex / Anti-Lag du jeu, avant qu'il lise ses entrées",
+                                "   frame limit held at the game's Reflex / Anti-Lag sleep, before it reads its input"));
             if (get(v, "cap_point") == "present" && (eng.find("dxvk") != std::string::npos || eng.find("vkd3d") != std::string::npos))
                 out.push_back(T("   limite d'images sur un jeu Direct3D (DXVK / VKD3D) retenu à sa présentation (pilote sans "
                                 "present_wait, ou fps_limit_wait coupé) : le jeu garde une à trois images d'avance — la limite "
