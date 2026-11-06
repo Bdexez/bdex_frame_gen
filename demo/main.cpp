@@ -5,6 +5,7 @@
 //   bdex_demo [--fps N] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]
 //             [--deterministic] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]
 //             [--gpu-load N] [--latency-test [auto]] [--latency-log FILE]
+//             [--present-thread L [--engine NAME]]
 //             [--stress KIND:N[,KIND:N...]] [--stress-until N]
 //             [--replay DIR [--replay-step N] [--replay-start N]
 //              [--replay-timing [--replay-log FILE]]]
@@ -14,6 +15,7 @@
 // on present k, scaled to the window — so the whole online path (layer,
 // pacing, swapchain) runs on real content; tools/replay_bench.py scores the
 // frames shown against the frames left out.
+// --present-thread: presents as DXVK and VKD3D-Proton do — see Demo::ptQueueLoop.
 // --replay-timing uses the recording's timestamps.csv instead of --fps and
 // stops after the last selected source. --replay-log records source offsets,
 // requested deadlines, actual presents and overload shifts (steady ms).
@@ -24,12 +26,16 @@
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -70,6 +76,13 @@ struct Options {
     // input is read, its present stage before presenting.
     bool antiLag = false;
     std::string latencyLog;
+    // --present-thread L: as a Direct3D game under Proton presents (DXVK,
+    // VKD3D-Proton): rendered here, submitted and presented by a present
+    // thread, the next frame begun once present k - L + 1 is done (DXGI's
+    // frame latency); --engine: the engine name the layer sees ("vkd3d" by
+    // default with --present-thread: fps_limit_wait offers it present wait).
+    int presentThread = 0;
+    std::string engine;
     // --stress: what games do to their swapchain, every N frames (tests/
     // swapchain_stress.sh): resize (the window to another size), recreate
     // (a new swapchain from the old one, same size, another present mode and
@@ -114,6 +127,13 @@ private:
     void recreateSwapchain();
     void initReplay();
     void recordReplay(VkCommandBuffer cmd, uint32_t imageIndex, int fi);
+    void drawFramePT();
+    void ptQueueLoop();
+    void ptWaitLoop();
+    void ptCreateTargets();
+    void ptDestroyTargets();
+    void ptDrain();
+    void ptStopThreads();
     size_t replayIndex() const;
     uint32_t findMemory(uint32_t bits, VkMemoryPropertyFlags flags);
 
@@ -185,6 +205,34 @@ private:
     void* replayMapped_[kInFlight]{};
     VkImage replayImage_[kInFlight]{};
     VkDeviceMemory replayImageMem_[kInFlight]{};
+    // --present-thread: per slot, the frame's own image, its rendering and its
+    // blit to the swapchain.
+    static constexpr int kPtSlots = 8;
+    struct PtFrame { int slot; double flashInput; };
+    struct PtWait { uint64_t presentId; int slot; };
+    VkRenderPass ptPass_ = VK_NULL_HANDLE;
+    VkCommandPool ptPool_ = VK_NULL_HANDLE;  // the present thread's (a pool is used by one thread)
+    VkImage ptImage_[kPtSlots]{};
+    VkDeviceMemory ptMem_[kPtSlots]{};
+    VkImageView ptView_[kPtSlots]{};
+    VkFramebuffer ptFb_[kPtSlots]{};
+    VkCommandBuffer ptRender_[kPtSlots]{}, ptBlit_[kPtSlots]{};
+    VkFence ptRenderFence_[kPtSlots]{}, ptBlitFence_[kPtSlots]{};
+    VkSemaphore ptAcquire_[kPtSlots]{};
+    int ptSlot_ = 0;
+    bool ptHasPresentWait_ = false;  // VK_KHR_present_id + VK_KHR_present_wait enabled
+    PFN_vkWaitForPresentKHR ptWaitForPresent_ = nullptr;
+    uint64_t ptPresentId_ = 0;        // present thread
+    std::thread ptQueueThread_, ptWaitThread_;
+    std::mutex ptMutex_;
+    std::condition_variable ptCv_;
+    std::deque<PtFrame> ptFrames_;
+    std::deque<PtWait> ptWaits_;
+    int ptCredits_ = 0;    // the frame-latency semaphore (L - 1 at the start)
+    int ptInFlight_ = 0;   // frames handed to the present thread, not released yet
+    bool ptStop_ = false;
+    std::atomic<bool> ptRecreate_{false};
+    bool ptFifo_ = false;  // the swapchain presents in FIFO: the present thread waits for each present (with present wait)
 };
 
 // A binary PPM (P6, 8 bits): its size, and its pixels as RGBA when `rgba`.
@@ -255,6 +303,8 @@ void Demo::initVulkan() {
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
     app.pApplicationName = "bdex_demo";
     app.apiVersion = VK_API_VERSION_1_1;
+    const std::string engine = !opt_.engine.empty() ? opt_.engine : opt_.presentThread ? "vkd3d" : "";
+    if (!engine.empty()) app.pEngineName = engine.c_str();
     uint32_t extCount = 0;
     const char** glfwExts = glfwGetRequiredInstanceExtensions(&extCount);
     std::vector<const char*> exts(glfwExts, glfwExts + extCount);
@@ -303,16 +353,40 @@ void Demo::initVulkan() {
     qci.queueFamilyIndex = queueFamily_;
     qci.queueCount = 1;
     qci.pQueuePriorities = &prio;
-#ifdef VK_AMD_anti_lag
-    const char* devExts[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_AMD_ANTI_LAG_EXTENSION_NAME};
-#else
-    const char* devExts[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
-#endif
+    std::vector<const char*> devExts = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
     VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     dci.queueCreateInfoCount = 1;
     dci.pQueueCreateInfos = &qci;
-    dci.enabledExtensionCount = 1;
-    dci.ppEnabledExtensionNames = devExts;
+    // --present-thread: present ids and waits where the device has them, as
+    // DXVK and VKD3D-Proton enable them.
+    VkPhysicalDevicePresentIdFeaturesKHR presentIdFeat{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR};
+    VkPhysicalDevicePresentWaitFeaturesKHR presentWaitFeat{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR};
+    if (opt_.presentThread) {
+        uint32_t n = 0;
+        vkEnumerateDeviceExtensionProperties(physDev_, nullptr, &n, nullptr);
+        std::vector<VkExtensionProperties> exts(n);
+        vkEnumerateDeviceExtensionProperties(physDev_, nullptr, &n, exts.data());
+        bool id = false, wait = false;
+        for (const auto& e : exts) {
+            id = id || strcmp(e.extensionName, VK_KHR_PRESENT_ID_EXTENSION_NAME) == 0;
+            wait = wait || strcmp(e.extensionName, VK_KHR_PRESENT_WAIT_EXTENSION_NAME) == 0;
+        }
+        if (id && wait) {
+            presentIdFeat.pNext = &presentWaitFeat;
+            VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+            f2.pNext = &presentIdFeat;
+            vkGetPhysicalDeviceFeatures2(physDev_, &f2);
+            ptHasPresentWait_ = presentIdFeat.presentId && presentWaitFeat.presentWait;
+        }
+        if (ptHasPresentWait_) {
+            devExts.push_back(VK_KHR_PRESENT_ID_EXTENSION_NAME);
+            devExts.push_back(VK_KHR_PRESENT_WAIT_EXTENSION_NAME);
+            presentWaitFeat.pNext = nullptr;
+            dci.pNext = &presentIdFeat;
+        }
+        printf("demo: present thread, frame latency %d, present wait %s\n", opt_.presentThread,
+               ptHasPresentWait_ ? "available" : "not offered");
+    }
 #ifdef VK_AMD_anti_lag
     VkPhysicalDeviceAntiLagFeaturesAMD antiLagFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ANTI_LAG_FEATURES_AMD};
     if (opt_.antiLag) {
@@ -324,13 +398,18 @@ void Demo::initVulkan() {
         for (const auto& e : exts) found = found || strcmp(e.extensionName, VK_AMD_ANTI_LAG_EXTENSION_NAME) == 0;
         if (!found) throw std::runtime_error("--anti-lag: VK_AMD_anti_lag not available (ENABLE_LAYER_MESA_ANTI_LAG=1?)");
         antiLagFeature.antiLag = VK_TRUE;
+        antiLagFeature.pNext = const_cast<void*>(dci.pNext);
         dci.pNext = &antiLagFeature;
-        dci.enabledExtensionCount = 2;
+        devExts.push_back(VK_AMD_ANTI_LAG_EXTENSION_NAME);
     }
 #else
     if (opt_.antiLag) throw std::runtime_error("--anti-lag: built with Vulkan headers older than VK_AMD_anti_lag");
 #endif
+    dci.enabledExtensionCount = static_cast<uint32_t>(devExts.size());
+    dci.ppEnabledExtensionNames = devExts.data();
     VK_CHECK(vkCreateDevice(physDev_, &dci, nullptr, &device_));
+    if (ptHasPresentWait_)
+        ptWaitForPresent_ = reinterpret_cast<PFN_vkWaitForPresentKHR>(vkGetDeviceProcAddr(device_, "vkWaitForPresentKHR"));
 #ifdef VK_AMD_anti_lag
     if (opt_.antiLag)
         antiLagUpdate_ = reinterpret_cast<PFN_vkAntiLagUpdateAMD>(vkGetDeviceProcAddr(device_, "vkAntiLagUpdateAMD"));
@@ -357,6 +436,12 @@ void Demo::initVulkan() {
     createSwapchain();
     createPipeline();
     if (!opt_.replayDir.empty()) initReplay();
+    if (opt_.presentThread) {
+        ptCreateTargets();
+        ptCredits_ = opt_.presentThread - 1;
+        ptQueueThread_ = std::thread([this] { ptQueueLoop(); });
+        ptWaitThread_ = std::thread([this] { ptWaitLoop(); });
+    }
 }
 
 void Demo::createSwapchain() {
@@ -378,6 +463,9 @@ void Demo::createSwapchain() {
     vkGetPhysicalDeviceSurfacePresentModesKHR(physDev_, surface_, &mn, modes.data());
     VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
     if (std::find(modes.begin(), modes.end(), opt_.mode) != modes.end()) mode = opt_.mode;
+    else if (opt_.presentThread && opt_.mode == VK_PRESENT_MODE_IMMEDIATE_KHR &&
+             std::find(modes.begin(), modes.end(), VK_PRESENT_MODE_MAILBOX_KHR) != modes.end())
+        mode = VK_PRESENT_MODE_MAILBOX_KHR;  // (as VKD3D-Proton and DXVK pick for a game without vertical sync)
     if (stressMode_ >= 0) {  // a core mode the surface supports (others need features enabled)
         std::vector<VkPresentModeKHR> core;
         for (VkPresentModeKHR m : modes)
@@ -402,7 +490,8 @@ void Demo::createSwapchain() {
     sci.imageColorSpace = chosen.colorSpace;
     sci.imageExtent = extent_;
     sci.imageArrayLayers = 1;
-    sci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | (opt_.replayDir.empty() ? VkImageUsageFlags(0) : VkImageUsageFlags(VK_IMAGE_USAGE_TRANSFER_DST_BIT));
+    sci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                     (opt_.replayDir.empty() && !opt_.presentThread ? VkImageUsageFlags(0) : VkImageUsageFlags(VK_IMAGE_USAGE_TRANSFER_DST_BIT));
     sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     sci.preTransform = caps.currentTransform;
     sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
@@ -418,6 +507,7 @@ void Demo::createSwapchain() {
     images_.resize(in);
     vkGetSwapchainImagesKHR(device_, swapchain_, &in, images_.data());
     printf("demo: swapchain %ux%u, %u images, present mode %d\n", extent_.width, extent_.height, in, mode);
+    ptFifo_ = mode == VK_PRESENT_MODE_FIFO_KHR || mode == VK_PRESENT_MODE_FIFO_RELAXED_KHR;
 
     if (!renderPass_) {
         VkAttachmentDescription att{};
@@ -793,6 +883,313 @@ size_t Demo::replayIndex() const {
     return std::min(replayFrames_.size() - 1, size_t(opt_.replayStart) + size_t(frameCount_) * size_t(opt_.replayStep));
 }
 
+// --present-thread: the frame's own image, rendered in a pass compatible with
+// the pipeline's (only its final layout differs: the present thread's blit
+// moves it to TRANSFER_SRC).
+void Demo::ptCreateTargets() {
+    if (!ptPass_) {
+        VkAttachmentDescription att{};
+        att.format = format_;
+        att.samples = VK_SAMPLE_COUNT_1_BIT;
+        att.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        att.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        VkAttachmentReference ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        VkSubpassDescription sub{};
+        sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        sub.colorAttachmentCount = 1;
+        sub.pColorAttachments = &ref;
+        VkSubpassDependency dep{};  // (as renderPass_'s: render passes are compatible only with identical dependencies)
+        dep.srcSubpass = VK_SUBPASS_EXTERNAL;
+        dep.dstSubpass = 0;
+        dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dep.srcAccessMask = 0;
+        dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        VkRenderPassCreateInfo rci{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+        rci.attachmentCount = 1;
+        rci.pAttachments = &att;
+        rci.subpassCount = 1;
+        rci.pSubpasses = &sub;
+        rci.dependencyCount = 1;
+        rci.pDependencies = &dep;
+        VK_CHECK(vkCreateRenderPass(device_, &rci, nullptr, &ptPass_));
+        VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+        pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        pci.queueFamilyIndex = queueFamily_;
+        VK_CHECK(vkCreateCommandPool(device_, &pci, nullptr, &ptPool_));
+        VkCommandBufferAllocateInfo cai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        cai.commandPool = pool_;
+        cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cai.commandBufferCount = kPtSlots;
+        VK_CHECK(vkAllocateCommandBuffers(device_, &cai, ptRender_));
+        cai.commandPool = ptPool_;
+        VK_CHECK(vkAllocateCommandBuffers(device_, &cai, ptBlit_));
+        for (int i = 0; i < kPtSlots; ++i) {
+            VkFenceCreateInfo fi{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+            fi.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+            VK_CHECK(vkCreateFence(device_, &fi, nullptr, &ptRenderFence_[i]));
+            VK_CHECK(vkCreateFence(device_, &fi, nullptr, &ptBlitFence_[i]));
+            VkSemaphoreCreateInfo si{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+            VK_CHECK(vkCreateSemaphore(device_, &si, nullptr, &ptAcquire_[i]));
+        }
+    }
+    for (int i = 0; i < kPtSlots; ++i) {
+        VkImageCreateInfo ici{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        ici.imageType = VK_IMAGE_TYPE_2D;
+        ici.format = format_;
+        ici.extent = {extent_.width, extent_.height, 1};
+        ici.mipLevels = ici.arrayLayers = 1;
+        ici.samples = VK_SAMPLE_COUNT_1_BIT;
+        ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+        ici.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        VK_CHECK(vkCreateImage(device_, &ici, nullptr, &ptImage_[i]));
+        VkMemoryRequirements req;
+        vkGetImageMemoryRequirements(device_, ptImage_[i], &req);
+        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        ai.allocationSize = req.size;
+        ai.memoryTypeIndex = findMemory(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        VK_CHECK(vkAllocateMemory(device_, &ai, nullptr, &ptMem_[i]));
+        VK_CHECK(vkBindImageMemory(device_, ptImage_[i], ptMem_[i], 0));
+        VkImageViewCreateInfo vci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        vci.image = ptImage_[i];
+        vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vci.format = format_;
+        vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        VK_CHECK(vkCreateImageView(device_, &vci, nullptr, &ptView_[i]));
+        VkFramebufferCreateInfo fci{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+        fci.renderPass = ptPass_;
+        fci.attachmentCount = 1;
+        fci.pAttachments = &ptView_[i];
+        fci.width = extent_.width;
+        fci.height = extent_.height;
+        fci.layers = 1;
+        VK_CHECK(vkCreateFramebuffer(device_, &fci, nullptr, &ptFb_[i]));
+    }
+}
+
+void Demo::ptDestroyTargets() {
+    for (int i = 0; i < kPtSlots; ++i) {
+        if (ptFb_[i]) vkDestroyFramebuffer(device_, ptFb_[i], nullptr);
+        if (ptView_[i]) vkDestroyImageView(device_, ptView_[i], nullptr);
+        if (ptImage_[i]) vkDestroyImage(device_, ptImage_[i], nullptr);
+        if (ptMem_[i]) vkFreeMemory(device_, ptMem_[i], nullptr);
+        ptFb_[i] = VK_NULL_HANDLE;
+        ptView_[i] = VK_NULL_HANDLE;
+        ptImage_[i] = VK_NULL_HANDLE;
+        ptMem_[i] = VK_NULL_HANDLE;
+    }
+}
+
+// Every frame handed over released (a new swapchain, the end).
+void Demo::ptDrain() {
+    std::unique_lock<std::mutex> lk(ptMutex_);
+    ptCv_.wait_for(lk, std::chrono::seconds(2), [this] { return ptInFlight_ == 0; });
+}
+
+void Demo::ptStopThreads() {
+    if (!ptQueueThread_.joinable()) return;
+    ptDrain();
+    {
+        std::lock_guard<std::mutex> lk(ptMutex_);
+        ptStop_ = true;
+    }
+    ptCv_.notify_all();
+    ptQueueThread_.join();
+    ptWaitThread_.join();
+}
+
+// The game's thread under --present-thread: reads its input, renders into
+// the frame's own image and hands the frame over — then, in Present(), takes
+// a frame-latency credit (one per released present; L - 1 at the start), so
+// that frame k + 1 begins once present k - L + 1 is done.
+void Demo::drawFramePT() {
+    static const auto start = std::chrono::steady_clock::now();
+    if (ptRecreate_.exchange(false)) {
+        ptDrain();
+        vkDeviceWaitIdle(device_);
+        ptDestroyTargets();
+        destroySwapchain();
+        createSwapchain();
+        ptCreateTargets();
+    }
+    const int slot = ptSlot_;
+    ptSlot_ = (ptSlot_ + 1) % kPtSlots;
+    VkFence done[2] = {ptRenderFence_[slot], ptBlitFence_[slot]};  // (its last use, kPtSlots frames back)
+    vkWaitForFences(device_, 2, done, VK_TRUE, UINT64_MAX);
+
+    if (opt_.deterministic) animTime_ = frameCount_ / opt_.fps;
+    else animTime_ = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    PushConstants pc{{float(extent_.width), float(extent_.height)}, float(animTime_ * opt_.speed), frameCount_,
+                     opt_.cutEvery > 0 ? uint32_t((frameCount_ / opt_.cutEvery) & 1) : 0u};
+    double flashInput = -1.0;
+    if (opt_.latencyTest == 2 && steadyMs() >= nextAutoMs_) {
+        if (nextAutoMs_ > 0.0) inputMs_ = steadyMs();  // (none in the first half second)
+        nextAutoMs_ = steadyMs() + 500.0;
+    }
+    if (opt_.latencyTest && inputMs_ >= 0.0) {
+        flashInput = inputMs_;
+        inputMs_ = -1.0;
+        pc.variant = 2u;
+    }
+    VkCommandBuffer cmd = ptRender_[slot];
+    vkResetCommandBuffer(cmd, 0);
+    VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &bi);
+    VkRenderPassBeginInfo rbi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    rbi.renderPass = ptPass_;
+    rbi.framebuffer = ptFb_[slot];
+    rbi.renderArea = {{0, 0}, extent_};
+    vkCmdBeginRenderPass(cmd, &rbi, VK_SUBPASS_CONTENTS_INLINE);
+    VkViewport viewport{0.f, 0.f, float(extent_.width), float(extent_.height), 0.f, 1.f};
+    VkRect2D scissor{{0, 0}, extent_};
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
+    vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
+    for (long i = 0; i < opt_.gpuLoad; ++i) vkCmdDraw(cmd, 3, 1, 0, 0);
+    vkCmdEndRenderPass(cmd);
+    vkEndCommandBuffer(cmd);
+    {
+        std::lock_guard<std::mutex> lk(ptMutex_);
+        ptFrames_.push_back({slot, flashInput});
+        ++ptInFlight_;
+    }
+    ptCv_.notify_all();
+    {
+        std::unique_lock<std::mutex> lk(ptMutex_);
+        ptCv_.wait(lk, [this] { return ptCredits_ > 0 || ptStop_; });
+        --ptCredits_;
+    }
+    ++frameCount_;
+}
+
+// The present thread (DXVK's submission thread, VKD3D-Proton's queue
+// thread): submits each frame's rendering, acquires a swapchain image, blits
+// the frame to it and presents, in order — with a present id in FIFO where
+// the device has present wait, as both do.
+void Demo::ptQueueLoop() {
+    for (;;) {
+        PtFrame f{};
+        {
+            std::unique_lock<std::mutex> lk(ptMutex_);
+            ptCv_.wait(lk, [this] { return ptStop_ || !ptFrames_.empty(); });
+            if (ptFrames_.empty()) return;
+            f = ptFrames_.front();
+            ptFrames_.pop_front();
+        }
+        vkResetFences(device_, 1, &ptRenderFence_[f.slot]);
+        VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        si.commandBufferCount = 1;
+        si.pCommandBuffers = &ptRender_[f.slot];
+        VK_CHECK(vkQueueSubmit(queue_, 1, &si, ptRenderFence_[f.slot]));
+        uint32_t img = 0;
+        uint64_t id = 0;
+        VkResult r = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX, ptAcquire_[f.slot], VK_NULL_HANDLE, &img);
+        if (r >= 0) {
+            VkCommandBuffer cmd = ptBlit_[f.slot];
+            vkResetCommandBuffer(cmd, 0);
+            VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+            bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            vkBeginCommandBuffer(cmd, &bi);
+            VkImageMemoryBarrier b[2]{};
+            for (auto& x : b) {
+                x.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                x.srcQueueFamilyIndex = x.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                x.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            }
+            b[0].image = ptImage_[f.slot];
+            b[0].oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            b[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            b[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            b[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            b[1].image = images_[img];
+            b[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            b[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            b[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, b);
+            VkImageBlit blit{};
+            blit.srcSubresource = blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            blit.srcOffsets[1] = blit.dstOffsets[1] = {int32_t(extent_.width), int32_t(extent_.height), 1};
+            vkCmdBlitImage(cmd, ptImage_[f.slot], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, images_[img],
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
+            b[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            b[1].newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+            b[1].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            b[1].dstAccessMask = 0;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0,
+                                 nullptr, 1, &b[1]);
+            vkEndCommandBuffer(cmd);
+            const VkPipelineStageFlags wait = VK_PIPELINE_STAGE_TRANSFER_BIT;
+            VkSubmitInfo bs{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+            bs.waitSemaphoreCount = 1;
+            bs.pWaitSemaphores = &ptAcquire_[f.slot];
+            bs.pWaitDstStageMask = &wait;
+            bs.commandBufferCount = 1;
+            bs.pCommandBuffers = &cmd;
+            bs.signalSemaphoreCount = 1;
+            bs.pSignalSemaphores = &renderSem_[img];
+            vkResetFences(device_, 1, &ptBlitFence_[f.slot]);
+            VK_CHECK(vkQueueSubmit(queue_, 1, &bs, ptBlitFence_[f.slot]));
+            VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+            pi.waitSemaphoreCount = 1;
+            pi.pWaitSemaphores = &renderSem_[img];
+            pi.swapchainCount = 1;
+            pi.pSwapchains = &swapchain_;
+            pi.pImageIndices = &img;
+            VkPresentIdKHR pid{VK_STRUCTURE_TYPE_PRESENT_ID_KHR};
+            if (ptHasPresentWait_ && ptFifo_) {
+                id = ++ptPresentId_;
+                pid.swapchainCount = 1;
+                pid.pPresentIds = &id;
+                pi.pNext = &pid;
+            }
+            if (f.flashInput >= 0.0 && latencyLog_) {
+                fprintf(latencyLog_, "flash %.3f %.3f\n", f.flashInput, steadyMs());
+                fflush(latencyLog_);
+            }
+            r = vkQueuePresentKHR(queue_, &pi);
+            if (r < 0) id = 0;
+        }
+        if (r == VK_ERROR_OUT_OF_DATE_KHR || (r == VK_SUBOPTIMAL_KHR && !opt_.ignoreResize)) ptRecreate_ = true;
+        else if (r < 0) fprintf(stderr, "demo: present thread: %d\n", r);
+        {
+            std::lock_guard<std::mutex> lk(ptMutex_);
+            ptWaits_.push_back({id, f.slot});
+        }
+        ptCv_.notify_all();
+    }
+}
+
+// Releases each present in turn, as DXVK's frame thread and VKD3D-Proton's
+// swapchain-sync thread do: after vkWaitForPresentKHR for a present with an
+// id (FIFO), else once its blit is done on the GPU.
+void Demo::ptWaitLoop() {
+    for (;;) {
+        PtWait w{};
+        {
+            std::unique_lock<std::mutex> lk(ptMutex_);
+            ptCv_.wait(lk, [this] { return ptStop_ || !ptWaits_.empty(); });
+            if (ptWaits_.empty()) return;
+            w = ptWaits_.front();
+            ptWaits_.pop_front();
+        }
+        if (w.presentId && ptWaitForPresent_) ptWaitForPresent_(device_, swapchain_, w.presentId, UINT64_MAX);
+        else vkWaitForFences(device_, 1, &ptBlitFence_[w.slot], VK_TRUE, UINT64_MAX);
+        {
+            std::lock_guard<std::mutex> lk(ptMutex_);
+            ++ptCredits_;
+            --ptInFlight_;
+        }
+        ptCv_.notify_all();
+    }
+}
+
 void Demo::recreateSwapchain() {
     vkDeviceWaitIdle(device_);
     destroySwapchain();
@@ -876,7 +1273,8 @@ void Demo::run() {
             if (minimizedFrames_ == 0 && opt_.stressEvery[kMinimize] > 0) glfwRestoreWindow(window_);
             continue;
         }
-        drawFrame();
+        if (opt_.presentThread) drawFramePT();
+        else drawFrame();
         ++statFrames;
         if (opt_.replayTiming && frameCount_ > (replayFrames_.size() - 1 - size_t(opt_.replayStart)) / size_t(opt_.replayStep)) break;
         if (opt_.frames >= 0 && frameCount_ >= static_cast<uint32_t>(opt_.frames)) break;
@@ -917,8 +1315,17 @@ void Demo::run() {
 }
 
 void Demo::cleanup() {
+    ptStopThreads();
     if (device_) {
         vkDeviceWaitIdle(device_);
+        ptDestroyTargets();
+        for (int i = 0; i < kPtSlots; ++i) {
+            if (ptRenderFence_[i]) vkDestroyFence(device_, ptRenderFence_[i], nullptr);
+            if (ptBlitFence_[i]) vkDestroyFence(device_, ptBlitFence_[i], nullptr);
+            if (ptAcquire_[i]) vkDestroySemaphore(device_, ptAcquire_[i], nullptr);
+        }
+        if (ptPass_) vkDestroyRenderPass(device_, ptPass_, nullptr);
+        if (ptPool_) vkDestroyCommandPool(device_, ptPool_, nullptr);
         destroySwapchain();
         for (VkSemaphore s : renderSem_) vkDestroySemaphore(device_, s, nullptr);
         for (int i = 0; i < kInFlight; ++i) {
@@ -970,6 +1377,8 @@ Options parseArgs(int argc, char** argv) {
             if (i + 1 < argc && std::string(argv[i + 1]) == "auto") { o.latencyTest = 2; ++i; }
         } else if (a == "--latency-log") o.latencyLog = value();
         else if (a == "--anti-lag") o.antiLag = true;
+        else if (a == "--present-thread") o.presentThread = std::clamp(atoi(value().c_str()), 1, 6);
+        else if (a == "--engine") o.engine = value();
         else if (a == "--size") {
             std::string v = value();
             if (sscanf(v.c_str(), "%dx%d", &o.width, &o.height) != 2) throw std::runtime_error("bad --size");
@@ -1001,6 +1410,7 @@ Options parseArgs(int argc, char** argv) {
             printf("usage: bdex_demo [--fps N | --uncapped] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]\n"
                    "                 [--deterministic] [--ignore-resize] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]\n"
                    "                 [--gpu-load N] [--latency-test [auto]] [--latency-log FILE] [--anti-lag]\n"
+                   "                 [--present-thread L [--engine NAME]]\n"
                    "                 [--stress resize|recreate|surface|window|fullscreen|minimize:N[,...]] [--stress-until N]\n"
                    "                 [--replay DIR [--replay-step N] [--replay-start N]\n"
                    "                  [--replay-timing [--replay-log FILE]]]\n");
@@ -1010,6 +1420,10 @@ Options parseArgs(int argc, char** argv) {
         }
     }
     if (o.replayTiming && o.replayDir.empty()) throw std::runtime_error("--replay-timing needs --replay DIR");
+    if (o.presentThread && (!o.replayDir.empty() || o.repeat > 1 || o.antiLag))
+        throw std::runtime_error("--present-thread does not go with --replay, --repeat or --anti-lag");
+    for (long every : o.stressEvery)
+        if (o.presentThread && every > 0) throw std::runtime_error("--present-thread does not go with --stress");
     if (!o.replayLog.empty() && !o.replayTiming) throw std::runtime_error("--replay-log needs --replay-timing");
     return o;
 }
