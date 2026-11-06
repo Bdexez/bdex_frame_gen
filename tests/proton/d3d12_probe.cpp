@@ -2,16 +2,20 @@
 // path, the one that deadlocked before hide_present_ext): a flip-model
 // swapchain on a command queue, a moving bar drawn by clearing rectangles of
 // the back buffer, a fence per frame, 30 fps for a few seconds.
-//   d3d12_probe.exe [SECONDS] [uncapped]
+//   d3d12_probe.exe [SECONDS] [uncapped [waitable N]]
 // uncapped: no limit of its own (the layer's fps_limit then holds it); it
 // also reports how long after a frame began (its input read) the GPU had
 // done it — what a limit holding VKD3D-Proton's present thread adds: the
-// frames queued behind the held present reach the GPU late.
+// frames queued behind the held present reach the GPU late. waitable N: a
+// frame-latency waitable swapchain at maximum latency N, waited at the start
+// of each frame, as many Direct3D 12 games pace themselves.
 //   x86_64-w64-mingw32-g++ -O2 -static d3d12_probe.cpp -ld3d12 -ldxgi -o d3d12_probe.exe
 #include <windows.h>
 #include <d3d12.h>
 #include <dxgi1_4.h>
+#include <dxgi1_3.h>
 #include <algorithm>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -30,6 +34,25 @@ static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             return 1;                                                         \
         }                                                                     \
     } while (0)
+
+// Results to stdout, and to the file BDEX_PROBE_OUT names (under Proton the
+// program's stdout goes nowhere).
+static void report(const char* fmt, ...) {
+    char line[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof line, fmt, ap);
+    va_end(ap);
+    fputs(line, stdout);
+    fflush(stdout);
+    char path[1024];
+    if (GetEnvironmentVariableA("BDEX_PROBE_OUT", path, sizeof path) > 0) {
+        if (FILE* f = fopen(path, "a")) {
+            fputs(line, f);
+            fclose(f);
+        }
+    }
+}
 
 static double qpcMs() {
     static LARGE_INTEGER freq{};
@@ -61,6 +84,7 @@ static DWORD WINAPI watchFrames(void* p) {
 int main(int argc, char** argv) {
     const int seconds = argc > 1 ? atoi(argv[1]) : 8;
     const bool uncapped = argc > 2 && strcmp(argv[2], "uncapped") == 0;
+    const UINT waitable = argc > 4 && strcmp(argv[3], "waitable") == 0 ? UINT(atoi(argv[4])) : 0;
     constexpr UINT kBuffers = 3;
     WNDCLASSA wc{};
     wc.lpfnWndProc = wndProc;
@@ -90,10 +114,16 @@ int main(int argc, char** argv) {
     sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     sd.BufferCount = kBuffers;
     sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    if (waitable) sd.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
     IDXGISwapChain1* swap1 = nullptr;
     CHECK(factory->CreateSwapChainForHwnd(queue, hwnd, &sd, nullptr, nullptr, &swap1));
     IDXGISwapChain3* swap = nullptr;
     CHECK(swap1->QueryInterface(__uuidof(IDXGISwapChain3), reinterpret_cast<void**>(&swap)));
+    HANDLE latencyWait = nullptr;
+    if (waitable) {
+        CHECK(swap->SetMaximumFrameLatency(waitable));
+        latencyWait = swap->GetFrameLatencyWaitableObject();
+    }
 
     D3D12_DESCRIPTOR_HEAP_DESC hd{};
     hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
@@ -138,6 +168,7 @@ int main(int argc, char** argv) {
     for (int f = 0; f < frames; ++f) {
         MSG msg;
         while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE)) DispatchMessageA(&msg);
+        if (latencyWait) WaitForSingleObjectEx(latencyWait, 1000, TRUE);  // (a waitable swapchain: before the frame begins)
         startMs[f] = qpcMs();  // (where a game reads its input)
         const UINT i = swap->GetCurrentBackBufferIndex();
         if (fence->GetCompletedValue() < fenceValue[i]) {
@@ -189,10 +220,10 @@ int main(int argc, char** argv) {
         double mean = 0.0;
         for (double v : lat) mean += v;
         if (!lat.empty())
-            printf("d3d12 probe: %.1f fps, frame start to GPU done: median %.1f ms, mean %.1f ms (%zu frames)\n",
+            report("d3d12 probe: %.1f fps, frame start to GPU done: median %.1f ms, mean %.1f ms (%zu frames)\n",
                    (frames - 1) * 1000.0 / (startMs[frames - 1] - startMs[0]), lat[lat.size() / 2], mean / lat.size(),
                    lat.size());
     }
-    printf("d3d12 probe: %d frames presented\n", frames);
+    report("d3d12 probe: %d frames presented\n", frames);
     return 0;
 }

@@ -12,6 +12,7 @@
 #include <d3d11_1.h>
 #include <d3d11_4.h>
 #include <algorithm>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -20,6 +21,25 @@
 static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     if (m == WM_DESTROY) PostQuitMessage(0);
     return DefWindowProcA(h, m, w, l);
+}
+
+// Results to stdout, and to the file BDEX_PROBE_OUT names (under Proton the
+// program's stdout goes nowhere).
+static void report(const char* fmt, ...) {
+    char line[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof line, fmt, ap);
+    va_end(ap);
+    fputs(line, stdout);
+    fflush(stdout);
+    char path[1024];
+    if (GetEnvironmentVariableA("BDEX_PROBE_OUT", path, sizeof path) > 0) {
+        if (FILE* f = fopen(path, "a")) {
+            fputs(line, f);
+            fclose(f);
+        }
+    }
 }
 
 static double qpcMs() {
@@ -134,12 +154,13 @@ int main(int argc, char** argv) {
         }
         double mean = 0.0;
         for (double v : lat) mean += v;
-        printf("d3d11 probe: %.1f fps", frames * double(freq.QuadPart) / double(now.QuadPart - start.QuadPart));
+        const double fps = frames * double(freq.QuadPart) / double(now.QuadPart - start.QuadPart);
         if (!lat.empty())
-            printf(", frame start to GPU done: median %.1f ms, mean %.1f ms (%zu frames)", lat[lat.size() / 2],
-                   mean / lat.size(), lat.size());
-        printf("\n");
+            report("d3d11 probe: %.1f fps, frame start to GPU done: median %.1f ms, mean %.1f ms (%zu frames)\n", fps,
+                   lat[lat.size() / 2], mean / lat.size(), lat.size());
+        else
+            report("d3d11 probe: %.1f fps\n", fps);
     }
-    printf("d3d11 probe: %d frames presented\n", frames);
+    report("d3d11 probe: %d frames presented\n", frames);
     return 0;
 }

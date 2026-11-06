@@ -3783,6 +3783,21 @@ latence qu'elle ajoute, « diminuer drastiquement » cette latence.
     0,8 ms, DXVK de Proton 10 34,5 → 0,8, VKD3D-Proton 3.0.1 66,7 → 0,8 ;
     VKD3D-Proton de Proton 10 0,7 → 0,8 (cette sonde n'y file rien même
     retenue au présent : sa gestion de latence a changé depuis 3.0.1).
+- **Dans la chaîne exacte des jeux de l'utilisateur** (Cyberpunk, Oblivion
+  Remastered et PRAGMATA tournent sous Proton Experimental 11.0-100 :
+  DXVK 3.1.1, VKD3D-Proton récent, conteneur Steam Linux Runtime 4.0 — lu
+  dans `compatdata/<appid>/version`) : sondes lancées comme Steam
+  (`_v2-entry-point --verb=waitforexitandrun -- proton waitforexitandrun`,
+  préfixe neuf, gamescope sans tête **sans** sa couche WSI, présentation X11
+  immediate comme sous Hyprland), limite 30 i/s, début d'image → fin GPU :
+  D3D12 sans swapchain waitable 66,6 → 0,7 ms, D3D12 waitable latence 2
+  33,4 → 0,7, D3D12 waitable latence 1 0,1 → 0,7 (rien en file avant ;
+  ~0,6 ms de plus, comme la démo à L = 1), D3D11 34,4 → 0,7–0,8 ms ;
+  30 i/s tenus (un premier lancement à 26 i/s : compilation des shaders
+  comptée par la sonde, la couche mesurait 30,0). Avec la couche WSI de
+  gamescope (Proton 10, essais précédents), l'ancien chemin ne filait rien
+  pour la sonde D3D12 : la couche WSI change le cadencement de VKD3D.
+  Sortie des sondes : `BDEX_PROBE_OUT` (sous Proton, stdout ne sort pas).
 - **Limites** : sans present_wait dans le pilote (lavapipe des conteneurs
   CI, vieux pilotes), le jeu ne peut pas l'activer : la limite reste au
   présent (message `fps_limit_wait: the game did not enable ...`) ;
