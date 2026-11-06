@@ -1481,3 +1481,96 @@ TEST(pacing_gpu_headroom_holds_a_saturated_game_under_the_gpu) {
     }
     CHECK(cap.capFps >= 0.5 * 1000.0 / 11.0 - 0.01 && cap.capFps < 0.5 * 1000.0 / 11.0 + 1.0);
 }
+
+// fps_limit on a game presenting through DXVK or VKD3D-Proton (Proton's
+// Direct3D): the game thread renders each frame and hands it to a present
+// thread of theirs, which submits its GPU work and presents (our
+// vkQueuePresentKHR) in order; the game may begin frame k + 1 once present
+// k - latency + 1 is released — after the GPU did it, or in FIFO with
+// VK_KHR_present_wait, once the wait for that present returns. `latency`:
+// 1 for VKD3D-Proton with a waitable swapchain at maximum latency 1 (the
+// game waits for its last frame), 2 for DXVK at DXGI's maximum latency 1
+// (Present(N) waits for frame N - 1), 3 for VKD3D-Proton without a waitable
+// swapchain (its own bound: three frames), 4 for DXVK at DXGI's default 3.
+// - present: the limit holds our present (FrameCap at its end): the present
+//   thread waits, and the frames behind it read their input latency - 1
+//   frames before they reach us;
+// - wait: the limit holds that wait (fps_limit_wait), the present goes on;
+// - own: the game's own limiter, before it reads its input (the reference).
+struct TranslatedRun { double fps = 0.0, inputToLayerMs = 0.0, maxInputToLayerMs = 0.0, inputToGpuDoneMs = 0.0; };
+enum class CapAt { Present, Wait, Own };
+TranslatedRun runTranslated(CapAt at, int latency, double capFps, double cpuMs, double gpuMs, int frames = 600,
+                            int spikeEvery = 0) {
+    const double I = 1000.0 / capFps;
+    pacing::CapSchedule cap;
+    std::vector<double> start(frames + 1), call(frames + 1), handed(frames + 1), released(frames + 1);
+    double presentFree = 0.0, gpuDone = 0.0, lastRelease = 0.0;
+    start[1] = 0.0;
+    TranslatedRun out;
+    int counted = 0;
+    for (int k = 1; k <= frames; ++k) {
+        if (at == CapAt::Own) start[k] = std::max(start[k], cap.release(start[k], I));  // (sleeps, then reads its input)
+        const double cpu = spikeEvery && k % spikeEvery == 0 ? 4.0 * cpuMs + I : cpuMs;
+        call[k] = start[k] + cpu;
+        handed[k] = std::max(call[k], presentFree);  // our present call (the GPU work submitted just before)
+        gpuDone = std::max(handed[k], gpuDone) + gpuMs;
+        double returns = handed[k], wait = gpuDone;
+        if (at == CapAt::Present) returns = cap.release(handed[k], I);
+        if (at == CapAt::Wait) wait = std::max(gpuDone, cap.release(handed[k], I));
+        presentFree = returns;
+        released[k] = lastRelease = std::max({lastRelease, returns, wait});
+        // Present(k) returns once present k - latency + 1 is released.
+        if (k < frames) start[k + 1] = std::max(call[k], k - latency + 1 >= 1 ? released[k - latency + 1] : 0.0);
+        if (k > frames / 4) {
+            out.inputToLayerMs += handed[k] - start[k];
+            out.maxInputToLayerMs = std::max(out.maxInputToLayerMs, handed[k] - start[k]);
+            out.inputToGpuDoneMs += gpuDone - start[k];
+            ++counted;
+        }
+    }
+    out.inputToLayerMs /= counted;
+    out.inputToGpuDoneMs /= counted;
+    out.fps = (frames - frames / 4 - 1) * 1000.0 / (handed[frames] - handed[frames / 4 + 1]);
+    return out;
+}
+
+TEST(pacing_fps_limit_wait_holds_a_translated_game_before_its_input) {
+    for (int latency : {1, 2, 3, 4}) {
+        for (double capFps : {30.0, 40.0, 60.0}) {
+            const double I = 1000.0 / capFps;
+            const TranslatedRun present = runTranslated(CapAt::Present, latency, capFps, 4.0, 6.0);
+            const TranslatedRun wait = runTranslated(CapAt::Wait, latency, capFps, 4.0, 6.0);
+            const TranslatedRun own = runTranslated(CapAt::Own, latency, capFps, 4.0, 6.0);
+            std::printf("  latency %d, cap %.0f: input to layer %.1f ms (present) %.1f (wait) %.1f (own), %.2f / %.2f / %.2f fps\n",
+                        latency, capFps, present.inputToLayerMs, wait.inputToLayerMs, own.inputToLayerMs, present.fps,
+                        wait.fps, own.fps);
+            // The limit holds the rate either way...
+            CHECK(std::abs(present.fps - capFps) < 0.05 * capFps);
+            CHECK(std::abs(wait.fps - capFps) < 0.05 * capFps);
+            // ...but the frames queued behind a held present read their
+            // input latency - 1 frames earlier.
+            CHECK(present.inputToLayerMs > std::max(4.0, (latency - 1) * I) - 0.5);
+            // Held at its wait, the game is as fresh as with its own limiter.
+            CHECK(wait.inputToLayerMs < own.inputToLayerMs + 0.5);
+            CHECK(wait.maxInputToLayerMs < 4.0 + 0.5);
+            CHECK(wait.inputToGpuDoneMs < own.inputToGpuDoneMs + 0.5);
+        }
+    }
+    // A frame now and then far longer than the cap: no burst afterwards, and
+    // no queue left behind.
+    const TranslatedRun spiky = runTranslated(CapAt::Wait, 4, 30.0, 4.0, 6.0, 600, 37);
+    const double spikeMs = 4.0 * 4.0 + 1000.0 / 30.0;
+    CHECK(spiky.fps < 30.0 + 0.05);
+    CHECK(spiky.inputToLayerMs < 4.0 + (spikeMs - 4.0) / 37.0 + 0.5);
+    // GPU-bound under the limit (30 ms of GPU a frame, a 40 fps cap): the GPU
+    // sets the rate, and the frames wait for it no longer than without a
+    // limit at all.
+    for (int latency : {1, 2, 3, 4}) {
+        const TranslatedRun gpu = runTranslated(CapAt::Wait, latency, 40.0, 4.0, 30.0);
+        const TranslatedRun free = runTranslated(CapAt::Own, latency, 1000.0, 4.0, 30.0);
+        std::printf("  GPU-bound, latency %d: %.2f fps (no limit %.2f), input to GPU done %.1f ms (no limit %.1f)\n", latency,
+                    gpu.fps, free.fps, gpu.inputToGpuDoneMs, free.inputToGpuDoneMs);
+        CHECK(std::abs(gpu.fps - free.fps) < 0.2);
+        CHECK(gpu.inputToGpuDoneMs < free.inputToGpuDoneMs + 0.5);
+    }
+}

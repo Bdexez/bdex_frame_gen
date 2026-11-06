@@ -49,6 +49,15 @@ public:
     // Presents virtual image `imageIndex`. `info` is the application's present
     // info (used for wait semaphores and the pNext chain).
     VkResult present(uint32_t imageIndex, const VkPresentInfoKHR& info, bool consumeWaitSemaphores);
+    // fps_limit_wait (DeviceData::gamePresentWait): the game's
+    // vkWaitForPresentKHR on this swapchain. Returns once the present with id
+    // `presentId` (or a later one) has been handed over, the GPU has done that
+    // frame's work (the game's and our synthesis), and fps_limit's cadence
+    // lets the game begin a frame: DXVK and VKD3D-Proton release the game's
+    // next frame from this wait (FIFO), before it reads its input — the
+    // limit's sleep happens there, not in their present thread, which would
+    // let up to three frames queue up behind it.
+    VkResult waitPresent(uint64_t presentId, uint64_t timeoutNs);
 
     // Waits for all of the layer's pending work on this swapchain.
     void waitIdle();
@@ -404,7 +413,7 @@ private:
     VkResult pendingResult_ = VK_SUCCESS;  // surfaced to the application on its next call
 
     clock::time_point lastAppPresent_{};
-    double lastReturnMs_ = 0.0;  // when present() last returned to the game (its next frame began then)
+    double lastReturnMs_ = 0.0;  // when present() last returned to the game (its next frame began then, unless it waits for its presents: pwReturnedMs_)
     // max_frame_latency: the synthesis slot (and its generation) of each of
     // the last frames, newest last; present() waits for the GPU to finish
     // the frame max_frame_latency presents back before it returns.
@@ -416,9 +425,35 @@ private:
     double statsStartDelayMs_ = 0.0;  // sum over the statistics window
     void syncFrameStart(double waitedMs);
     // fps_limit at the end of present (unless the game's own sleep point
-    // caps: DeviceData::capAtSleep), without mutex_.
+    // caps: DeviceData::capAtSleep, or its present wait: capsAtWait), without
+    // mutex_. Returns the moment the wait for this present may return (0:
+    // none — no limit, or held here).
     FrameCap frameCap_;
-    void limitFrameRate();
+    double limitFrameRate();
+    // fps_limit_wait: the game's presents by their id (VkPresentIdKHR), each
+    // with what its wait waits for (waitPresent); pwMutex_.
+    struct PresentWait {
+        uint64_t id = 0;
+        double releaseMs = 0.0;          // fps_limit's slot, 0: none
+        VkFence fence = VK_NULL_HANDLE;  // its synthesis slot's (slots_ are kept until destroyAll)
+    };
+    void notePresentWait(const PresentWait& w);
+    std::mutex pwMutex_;
+    std::condition_variable pwCv_;   // a present noted / retired
+    std::deque<PresentWait> pwRecent_;
+    uint64_t pwPresented_ = 0;       // the highest id handed over
+    bool pwRetired_ = false;
+    std::atomic<double> pwWaitedMs_{0.0};    // when the game last waited (steady ms)
+    std::atomic<double> pwReturnedMs_{0.0};  // when such a wait last let it go on (its next frame began then)
+    // The game waits for its presents: fps_limit holds it there (within a
+    // second of its last wait).
+    bool capsAtWait(double nowMs) const {
+        const double at = pwWaitedMs_.load(std::memory_order_relaxed);
+        return dev_.gamePresentWait && at > 0.0 && nowMs - at < 1000.0;
+    }
+    pacing::CapSchedule waitCap_;    // presenting thread: the cadence of the waits' releases
+    bool capAtWaitLogged_ = false;   // presenting thread
+    VkPresentModeKHR appPresentMode_ = VK_PRESENT_MODE_FIFO_KHR;  // the mode the game created the swapchain with
     // gpu_headroom (pacing::HeadroomCap; presenting thread, after
     // max_frame_latency's wait): the cap it holds the game under, the GPU's
     // busy percent read every 200 ms where NVML / amdgpu tell it.

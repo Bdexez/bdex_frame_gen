@@ -60,7 +60,7 @@ SETTINGS = [
 NOT_FRAMES = {"enabled", "multiplier", "low_latency", "max_frame_latency", "latency_limiter", "sync_present", "hide_present_ext", "ignore_anticheat", "pacing", "require_app",
               "present_feedback", "async_compute", "present_queue", "log", "paused", "gpu_budget", "stats", "profile",
               "shared_queue", "stats_interval", "dump_frames", "preset", "fullres", "flow_scale", "mode", "adaptive",
-              "upscale", "overlay", "capture_hdr", "log_file", "target_fps", "fps_limit", "dump",
+              "upscale", "overlay", "capture_hdr", "log_file", "target_fps", "fps_limit", "fps_limit_wait", "dump",
               "present_mode", "debug", "interp_hold", "synth_priority", "skip_fast", "crash_log", "latency_log", "vrr_hold", "precise_wake", "thread_priority", "pipeline_cache",
               "gpu", "method", "hotkey", "battery_saver", "present_timing", "refresh_fill", "pace_plan", "virtual_grid", "content_clock", "phase_smooth", "even_motion", "even_fast", "gpu_headroom", "tight_hold", "catchup_smooth", "x11_clock", "record_scale"}
 

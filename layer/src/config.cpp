@@ -369,6 +369,7 @@ const std::vector<OptionDef>& registry() {
     B("interp_splat", nullptr, &Config::interpSplat, kLive),
     B("sync_present", "sync", &Config::syncPresent),
     B("hide_present_ext", nullptr, &Config::hidePresentExt),
+    B("fps_limit_wait", nullptr, &Config::fpsLimitWait),
     B("ignore_anticheat", nullptr, &Config::ignoreAntiCheat),
     I("battery_saver", nullptr, &Config::batterySaver, 0, 2),
     I("search", "search_radius", &Config::searchRadius, 1, 4),
@@ -813,6 +814,7 @@ Config Config::keepingCreationSettings(Config n) const {
     n.renderScale = renderScale;
     n.presentMode = presentMode;
     n.hidePresentExt = hidePresentExt;
+    n.fpsLimitWait = fpsLimitWait;
     n.asyncCompute = asyncCompute;
     n.synthPriority = synthPriority;
     n.presentFeedback = presentFeedback;
