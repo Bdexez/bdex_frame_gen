@@ -1,6 +1,7 @@
 #pragma once
 #include "config.h"
 #include "dispatch.h"
+#include "pacing.h"
 #include "vk_util.h"
 
 #include <atomic>
@@ -8,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace bdex {
@@ -36,6 +38,18 @@ struct InstanceData {
     std::string engine;         // VkApplicationInfo::pEngineName ("DXVK", "vkd3d"...): the status names a translation layer
     Config config;  // loaded at instance creation; the render-scale hook needs it before the device exists
     std::atomic<bool> renderScaleAllowed{true};  // disabled if a device needs pass-through present extensions
+    // fps_limit_wait: DXVK and VKD3D-Proton wait for each present (VK_KHR_
+    // present_wait) before they let the game begin a frame — in FIFO only.
+    // Such an instance is offered present_id / present_wait, which the layer
+    // answers for its swapchains (VirtualSwapchain::waitPresent), and while a
+    // frame limit is set (fifoOnly, from the live settings: DeviceData::
+    // setFrameLimitHint) its surfaces offer FIFO alone, so that fps_limit
+    // holds the game there, before it reads its input.
+    bool presentWaitOffered = false;
+    bool dxvk = false;  // the engine is DXVK
+    std::atomic<bool> fifoOnly{false};
+    std::unordered_set<VkSurfaceKHR> fifoSurfaces;  // surfMutex: surfaces last offered FIFO alone (a swapchain made in FIFO there is ours: createReal keeps the game's mode)
+    std::unordered_set<VkSurfaceKHR> fifoAsked;     // surfMutex: surfaces whose game was asked once for a new swapchain (VirtualSwapchain::present)
     std::mutex surfMutex;
     std::unordered_map<VkSurfaceKHR, WaylandSurfaceState> waylandSurfaces;
     std::unordered_map<VkSurfaceKHR, uint32_t> x11Windows;  // X11 surfaces: the window (XID) each shows (x11_clock)
@@ -62,12 +76,16 @@ inline double steadyMs() {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-// fps_limit's schedule: wait() returns at the next slot of a `fps` cadence —
-// it sleeps until ~1.5 ms before, then spins; after a late frame the
-// schedule restarts from now instead of letting the game burst to catch up.
+// Sleeps until steady-clock `ms` (steadyMs()): until ~1.5 ms before, then
+// spins, for precision.
+void sleepUntilSteadyMs(double ms);
+
+// fps_limit's schedule: wait() returns at the next slot of a `fps` cadence
+// (pacing::CapSchedule: after a late frame it restarts from now instead of
+// letting the game burst to catch up).
 struct FrameCap {
     std::mutex mutex;
-    std::chrono::steady_clock::time_point next{};
+    pacing::CapSchedule schedule;
     void wait(double fps);
 };
 
@@ -133,6 +151,16 @@ struct DeviceData {
     bool capsAtSleep(double nowMs) const {
         const double at = capAtSleepMs.load(std::memory_order_relaxed);
         return at > 0.0 && nowMs - at < 1000.0;
+    }
+    // The game enabled VK_KHR_present_id and VK_KHR_present_wait itself
+    // (fps_limit_wait offers them to DXVK / VKD3D-Proton): it may wait for the
+    // presents of our swapchains, which the layer answers.
+    bool gamePresentWait = false;
+    // fps_limit_wait: the instance's surfaces offer FIFO alone while a frame
+    // limit is set (InstanceData::fifoOnly), from these live settings
+    // (configMutex held, or before the device is published).
+    void setFrameLimitHint() {
+        if (inst && inst->presentWaitOffered) inst->fifoOnly.store(config.fpsLimit != 0.f, std::memory_order_relaxed);
     }
     VkQueue computeQueue = VK_NULL_HANDLE;
     uint32_t computeFamily = 0;

@@ -13,6 +13,7 @@
 #include "vk_util.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -105,6 +106,14 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateInstance(const VkInstanceCreateInfo* pCreat
     for (uint32_t i = 0; i < pCreateInfo->enabledExtensionCount; ++i)
         data->surfaceCaps2 |= strcmp(pCreateInfo->ppEnabledExtensionNames[i], "VK_KHR_get_surface_capabilities2") == 0;
     {
+        std::string eng = data->engine;
+        for (char& c : eng) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        data->dxvk = eng.find("dxvk") != std::string::npos;
+        const bool translation = data->dxvk || eng.find("vkd3d") != std::string::npos;
+        data->presentWaitOffered = translation && data->config.enabled && data->config.hidePresentExt && data->config.fpsLimitWait;
+        data->fifoOnly.store(data->presentWaitOffered && data->config.fpsLimit != 0.f, std::memory_order_relaxed);
+    }
+    {
         std::lock_guard<std::mutex> lock(g_mapMutex);
         g_instances[dispatchKey(*pInstance)] = std::move(data);
     }
@@ -157,6 +166,20 @@ bool isHiddenPresentExtension(const char* name) {
            strcmp(name, "VK_EXT_present_timing") == 0;
 }
 
+// What this instance's game does not see. fps_limit_wait (presentWaitOffered):
+// present_id and present_wait, which the layer answers for its swapchains,
+// stay visible to DXVK / VKD3D-Proton. DXVK enables VK_NV_low_latency2 only
+// with present ids: it is hidden from DXVK instead, which keeps Reflex off
+// there as before (its markers would name presents that never reach the
+// driver). VKD3D-Proton enables it without them: unchanged.
+bool hiddenFrom(const InstanceData& inst, const char* name) {
+    if (inst.presentWaitOffered) {
+        if (strcmp(name, "VK_KHR_present_id") == 0 || strcmp(name, "VK_KHR_present_wait") == 0) return false;
+        if (inst.dxvk && strcmp(name, "VK_NV_low_latency2") == 0) return true;
+    }
+    return isHiddenPresentExtension(name);
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceExtensionProperties(VkPhysicalDevice physDev, const char* pLayerName,
                                                                   uint32_t* pCount, VkExtensionProperties* pProps) {
     if (pLayerName && strcmp(pLayerName, BDEX_LAYER_NAME) == 0) { *pCount = 0; return VK_SUCCESS; }
@@ -174,7 +197,7 @@ VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceExtensionProperties(VkPhysicalDevi
     std::vector<VkExtensionProperties> keep;
     keep.reserve(all.size());
     for (const auto& e : all)
-        if (!isHiddenPresentExtension(e.extensionName)) keep.push_back(e);
+        if (!hiddenFrom(*inst, e.extensionName)) keep.push_back(e);
     if (!pProps) { *pCount = static_cast<uint32_t>(keep.size()); return VK_SUCCESS; }
     uint32_t m = std::min(*pCount, static_cast<uint32_t>(keep.size()));
     for (uint32_t i = 0; i < m; ++i) pProps[i] = keep[i];
@@ -248,6 +271,40 @@ VKAPI_ATTR VkResult VKAPI_CALL GetPhysicalDeviceSurfaceCapabilities2KHR(VkPhysic
     return r;
 }
 
+// fps_limit_wait: while a frame limit is set, DXVK / VKD3D-Proton are offered
+// FIFO alone (InstanceData::fifoOnly) — the mode in which both wait for each
+// present (VK_KHR_present_wait, answered by VirtualSwapchain::waitPresent)
+// before the game begins a frame, where the limit then holds it. (FIFO is
+// always supported.) The surface is noted: the real swapchain keeps the mode
+// the game would have picked from the full list (createReal).
+VKAPI_ATTR VkResult VKAPI_CALL GetPhysicalDeviceSurfacePresentModesKHR(VkPhysicalDevice physDev, VkSurfaceKHR surface,
+                                                                      uint32_t* pCount, VkPresentModeKHR* pModes) {
+    InstanceData* inst = getInstance(dispatchKey(physDev));
+    if (!inst) return VK_ERROR_INITIALIZATION_FAILED;
+    if (!inst->fifoOnly.load(std::memory_order_relaxed)) {
+        if (inst->presentWaitOffered) {
+            std::lock_guard<std::mutex> lk(inst->surfMutex);
+            inst->fifoSurfaces.erase(surface);  // (every mode offered again)
+        }
+        return inst->vt.GetPhysicalDeviceSurfacePresentModesKHR(physDev, surface, pCount, pModes);
+    }
+    uint32_t n = 0;
+    const VkResult r = inst->vt.GetPhysicalDeviceSurfacePresentModesKHR(physDev, surface, &n, nullptr);
+    if (r < 0) return r;
+    {
+        std::lock_guard<std::mutex> lk(inst->surfMutex);
+        inst->fifoSurfaces.insert(surface);
+    }
+    if (!pModes) {
+        *pCount = 1;
+        return VK_SUCCESS;
+    }
+    if (*pCount < 1) return VK_INCOMPLETE;
+    pModes[0] = VK_PRESENT_MODE_FIFO_KHR;
+    *pCount = 1;
+    return VK_SUCCESS;
+}
+
 #ifdef __linux__
 // X11 surfaces: the window each one shows, for the swapchains' X Present
 // clock (x11_present_clock.h). The create infos by their layout, without the
@@ -303,6 +360,8 @@ VKAPI_ATTR void VKAPI_CALL DestroySurfaceKHR(VkInstance instance, VkSurfaceKHR s
         std::lock_guard<std::mutex> lk(inst->surfMutex);
         inst->waylandSurfaces.erase(surface);
         inst->x11Windows.erase(surface);
+        inst->fifoSurfaces.erase(surface);
+        inst->fifoAsked.erase(surface);
     }
     auto next = reinterpret_cast<PFN_vkDestroySurfaceKHR>(inst->vt.GetInstanceProcAddr(instance, "vkDestroySurfaceKHR"));
     if (next) next(instance, surface, pAllocator);
@@ -348,12 +407,23 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
 
     bool hasSwapchainExt = false;
     bool requestedHiddenPresentExt = false;
+    bool gameId = false, gameWait = false;  // (fps_limit_wait: offered, answered by the layer)
     for (uint32_t i = 0; i < pCreateInfo->enabledExtensionCount; ++i) {
         const char* e = pCreateInfo->ppEnabledExtensionNames[i];
         if (strcmp(e, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0) hasSwapchainExt = true;
-        if (isHiddenPresentExtension(e)) requestedHiddenPresentExt = true;
+        if (hiddenFrom(*inst, e)) requestedHiddenPresentExt = true;
+        if (strcmp(e, VK_KHR_PRESENT_ID_EXTENSION_NAME) == 0) gameId = true;
+        if (strcmp(e, VK_KHR_PRESENT_WAIT_EXTENSION_NAME) == 0) gameWait = true;
         if (strcmp(e, "VK_EXT_swapchain_maintenance1") == 0 || strcmp(e, "VK_KHR_swapchain_maintenance1") == 0)
             data->hasSwapchainMaintenance1 = true;
+    }
+    {
+        const auto* idFeat = findChain<VkPhysicalDevicePresentIdFeaturesKHR>(
+            pCreateInfo->pNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR);
+        const auto* waitFeat = findChain<VkPhysicalDevicePresentWaitFeaturesKHR>(
+            pCreateInfo->pNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR);
+        data->gamePresentWait = inst->presentWaitOffered && gameId && gameWait && idFeat && idFeat->presentId &&
+                                waitFeat && waitFeat->presentWait;
     }
     // An application may request an extension by name without enumerating it.
     // Its feature chain is const input: changing it in place is invalid, while
@@ -506,7 +576,9 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
     // hidden from the game (which hangs with them under VKD3D-Proton, see
     // isHiddenPresentExtension); enabled only where the device supports both
     // and the game did not ask for them, and dropped again if device creation
-    // fails with them.
+    // fails with them. A game they are offered to (fps_limit_wait) may enable
+    // them itself: the feedback then comes with its features (none if it
+    // enabled one without the other).
     VkPhysicalDevicePresentIdFeaturesKHR presentIdFeat{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR};
     VkPhysicalDevicePresentWaitFeaturesKHR presentWaitFeat{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR};
     bool feedback = false;
@@ -523,8 +595,8 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
         VkPhysicalDeviceProperties pp{};
         inst->vt.GetPhysicalDeviceProperties(physDev, &pp);
         if (data->config.enabled && data->config.presentFeedback && data->config.hidePresentExt && hasSwapchainExt &&
-            !requestedHiddenPresentExt && inst->apiVersion >= VK_API_VERSION_1_1 &&
-            pp.apiVersion >= VK_API_VERSION_1_1 && inst->vt.GetPhysicalDeviceFeatures2) {
+            !requestedHiddenPresentExt && (!(gameId || gameWait) || data->gamePresentWait) &&
+            inst->apiVersion >= VK_API_VERSION_1_1 && pp.apiVersion >= VK_API_VERSION_1_1 && inst->vt.GetPhysicalDeviceFeatures2) {
             uint32_t n = 0;
             inst->vt.EnumerateDeviceExtensionProperties(physDev, nullptr, &n, nullptr);
             std::vector<VkExtensionProperties> avail(n);
@@ -565,12 +637,32 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
         if (feedback) {
             VkDeviceCreateInfo fci = ci;
             std::vector<const char*> fexts(ci.ppEnabledExtensionNames, ci.ppEnabledExtensionNames + ci.enabledExtensionCount);
-            fexts.push_back(VK_KHR_PRESENT_ID_EXTENSION_NAME);
-            fexts.push_back(VK_KHR_PRESENT_WAIT_EXTENSION_NAME);
-            presentIdFeat.presentId = VK_TRUE;
-            presentWaitFeat.presentWait = VK_TRUE;
-            presentIdFeat.pNext = &presentWaitFeat;
-            presentWaitFeat.pNext = const_cast<void*>(ci.pNext);
+            // (the game's own present_id / present_wait: its names and features as they are)
+            const bool own = !data->gamePresentWait;
+            if (own) {
+                fexts.push_back(VK_KHR_PRESENT_ID_EXTENSION_NAME);
+                fexts.push_back(VK_KHR_PRESENT_WAIT_EXTENSION_NAME);
+            }
+            auto chain = [&](bool withTiming) {
+                void* next = const_cast<void*>(ci.pNext);
+#if defined(VK_EXT_present_timing) && defined(VK_KHR_present_id2)
+                if (withTiming) {
+                    id2Feat.pNext = next;
+                    timingFeat.pNext = &id2Feat;
+                    next = &timingFeat;
+                }
+#else
+                (void)withTiming;
+#endif
+                if (own) {
+                    presentIdFeat.presentId = VK_TRUE;
+                    presentWaitFeat.presentWait = VK_TRUE;
+                    presentWaitFeat.pNext = next;
+                    presentIdFeat.pNext = &presentWaitFeat;
+                    next = &presentIdFeat;
+                }
+                fci.pNext = next;
+            };
 #if defined(VK_EXT_present_timing) && defined(VK_KHR_present_id2)
             if (timing) {
                 fexts.push_back("VK_KHR_present_id2");
@@ -580,21 +672,18 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
                 timingFeat.presentTiming = VK_TRUE;
                 id2Feat = VkPhysicalDevicePresentId2FeaturesKHR{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_2_FEATURES_KHR};
                 id2Feat.presentId2 = VK_TRUE;
-                id2Feat.pNext = const_cast<void*>(ci.pNext);
-                timingFeat.pNext = &id2Feat;
-                presentWaitFeat.pNext = &timingFeat;
             }
 #endif
+            chain(timing);
             fci.enabledExtensionCount = static_cast<uint32_t>(fexts.size());
             fci.ppEnabledExtensionNames = fexts.data();
-            fci.pNext = &presentIdFeat;
             res = createDevice(physDev, &fci, pAllocator, pDevice);
             if (res != VK_SUCCESS && timing && !(res == VK_ERROR_NOT_PERMITTED_EXT && prioInfo >= 0)) {
                 // (present timing is the newest piece: without it first)
                 BDEX_WARN("device creation with present timing failed (%s); retrying without it", vkResultName(res));
                 timing = false;
                 fexts.resize(fexts.size() - 3);
-                presentWaitFeat.pNext = const_cast<void*>(ci.pNext);
+                chain(false);
                 fci.enabledExtensionCount = static_cast<uint32_t>(fexts.size());
                 fci.ppEnabledExtensionNames = fexts.data();
                 res = createDevice(physDev, &fci, pAllocator, pDevice);
@@ -650,6 +739,7 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
     }
     inst->vt.GetPhysicalDeviceMemoryProperties(physDev, &data->memProps);
     data->config.autoConfigure(data->props, data->memProps);
+    data->setFrameLimitHint();
     if (!data->config.autoTunedTo.empty()) {
         static const char* kind[] = {"other", "integrated GPU", "discrete GPU", "virtual GPU", "software"};
         BDEX_INFO("auto-tuned for '%s' (%s): preset %s", data->props.deviceName,
@@ -697,6 +787,13 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
               data->queueShared ? "shared with the application" : "private",
               data->presentTiming ? ", present feedback + timing" : data->presentFeedback ? ", present feedback" : "");
     if (!hasSwapchainExt) BDEX_DBG("VK_KHR_swapchain not enabled on this device");
+    if (data->gamePresentWait)
+        BDEX_INFO("fps_limit_wait: the game waits for its presents (VK_KHR_present_wait, answered by the layer): "
+                  "a frame limit holds it there");
+    else if (inst->presentWaitOffered && hasSwapchainExt)
+        BDEX_INFO("fps_limit_wait: the game did not enable VK_KHR_present_id and VK_KHR_present_wait%s: a frame limit "
+                  "holds its present thread",
+                  gameId || gameWait ? "" : " (the driver may not have them)");
 
     std::lock_guard<std::mutex> lock(g_mapMutex);
     g_devices[dispatchKey(*pDevice)] = std::move(data);
@@ -910,7 +1007,13 @@ VKAPI_ATTR VkResult VKAPI_CALL ReleaseSwapchainImagesEXT(VkDevice device, const 
 VKAPI_ATTR VkResult VKAPI_CALL WaitForPresentKHR(VkDevice device, VkSwapchainKHR swapchain, uint64_t presentId,
                                                  uint64_t timeout) {
     DeviceData* dev = getDevice(dispatchKey(device));
-    if (dev->findSwapchain(swapchain)) return VK_SUCCESS;  // our async presentation; do not let the game stall on it
+    if (VirtualSwapchain* vs = dev->findSwapchain(swapchain)) {
+        // fps_limit_wait: the game's present ids are ours to answer (see
+        // VirtualSwapchain::waitPresent); otherwise (hide_present_ext = 0) our
+        // asynchronous presentation: do not let the game stall on it.
+        if (dev->gamePresentWait) return vs->waitPresent(presentId, timeout);
+        return VK_SUCCESS;
+    }
     if (!dev->vt.WaitForPresentKHR) return VK_SUCCESS;
     return dev->vt.WaitForPresentKHR(device, swapchain, presentId, timeout);
 }
@@ -1128,6 +1231,7 @@ const Hook g_instanceHooks[] = {
     HOOK(CreateDevice),
     HOOK(GetPhysicalDeviceSurfaceCapabilitiesKHR),
     HOOK(GetPhysicalDeviceSurfaceCapabilities2KHR),
+    HOOK(GetPhysicalDeviceSurfacePresentModesKHR),
     HOOK(DestroySurfaceKHR),
 #ifdef __linux__
     HOOK(CreateXlibSurfaceKHR),
@@ -1199,6 +1303,8 @@ PFN_vkVoidFunction VKAPI_CALL layerGetPhysicalDeviceProcAddr(VkInstance instance
         return reinterpret_cast<PFN_vkVoidFunction>(GetPhysicalDeviceSurfaceCapabilitiesKHR);
     if (pName && strcmp(pName, "vkGetPhysicalDeviceSurfaceCapabilities2KHR") == 0)
         return reinterpret_cast<PFN_vkVoidFunction>(GetPhysicalDeviceSurfaceCapabilities2KHR);
+    if (pName && strcmp(pName, "vkGetPhysicalDeviceSurfacePresentModesKHR") == 0)
+        return reinterpret_cast<PFN_vkVoidFunction>(GetPhysicalDeviceSurfacePresentModesKHR);
     InstanceData* inst = instance ? getInstance(dispatchKey(instance)) : nullptr;
     if (!inst) return nullptr;
     return inst->vt.GetInstanceProcAddr(instance, pName);
