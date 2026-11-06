@@ -306,3 +306,87 @@ délai remonter au-delà des sorties disponibles : à 2,4 rafraîchissements par
 image pour 3 générées, la paire débordait, le délai était recoupé et le
 mouvement sautait de deux périodes (1,0 saut/s, écart 1,39 ms). La remontée
 est maintenant bornée par les sorties (`first + maxFrames·P`).
+
+## GPU saturé : `gpu_headroom` (29/10)
+
+Demande de l'utilisateur : quand le GPU sature (par exemple 400 i/s affichés,
+100 de base ×4), baisser un peu les i/s de base (100 → 90) pour que le ×4
+reste fluide.
+
+### Pourquoi la saturation casse la génération
+
+Un jeu limité par le GPU l'occupe en permanence : la synthèse de l'image N
+passe derrière le rendu de l'image N+1, sa première image sort tard
+(`readyLagMs_` de 15–20 ms au lieu de 2–3), elle rate ses rafraîchissements,
+et le compositeur attend lui aussi le GPU. Avec `even_fast`, le délai visé
+inclut ce retard (le contenu suit à 30 ms au lieu de 15) et le worker retient
+la soumission du job suivant : le jeu est alors bloqué dans son `present()`
+par la couche (« present call 9 ms »), pas sur le GPU.
+
+### Détection et régulation (`pacing::HeadroomCap`)
+
+- **Saturé** : sur une demi-seconde, le jeu attend sur 60 % de ses images
+  (fin GPU de l'image précédente, `max_frame_latency`, ou soumission du job
+  précédent par le worker) **et** le GPU est occupé à plus de 94 % (NVML pour
+  NVIDIA, chargé à l'exécution, présent aussi dans le conteneur Steam ;
+  `gpu_busy_percent` d'amdgpu ; lus toutes les 200 ms, l'UUID Vulkan du
+  périphérique pour choisir le bon GPU).
+- **Limite** : `limitFrameRate()` (même chemin que `fps_limit`, point de
+  sommeil du jeu avec Reflex / Anti-Lag), la plus basse des deux si
+  `fps_limit` est réglé. Départ à `rate × 90/occupation` (−10 % à 100 %
+  d'occupation), puis toutes les demi-secondes ×cible/occupation, au plus
+  −10 % / +8 % par pas, zone morte 84–94 %. Elle ne baisse que si le jeu
+  attend encore : un GPU occupé par un autre programme ne la fait pas
+  descendre pour rien. Jamais sous 80 % de ce que le GPU laisse atteindre
+  au jeu à ce moment (une scène plus lourde est suivie), ni sous la moitié
+  du premier régime limité (pas de spirale si un autre jeu prend tout le
+  GPU). Plus contraignante pendant 4 s et le GPU sous 84 % : retirée.
+- **Sans mesure d'occupation** (Intel, Windows pour l'instant) : les
+  attentes seules ; limite à 90 % d'emblée, sondages vers le haut après 4 s
+  calmes (+4 %, puis plus tôt et plus grands après deux réussis), retour à
+  90 % du débit atteint quand un sondage sature, intervalle doublé.
+
+Simulateur (`pacing_gpu_headroom_holds_a_saturated_game_under_the_gpu`,
+jeu de 11 ms de GPU par image, 91 i/s) : NVML 81,8 i/s, GPU occupé à 90 % ;
+scène à 14 ms : 65,6 i/s à 92 % ; à 7 ms : 120 i/s à 84 % ; jeu limité par
+son CPU : jamais limité ; attentes seules : 85 i/s à 94 % en moyenne.
+
+### Mesures en ligne et correctif d'`even_fast` sur les jeux lourds
+
+Banc isolé, GPU libre (RTX 3060 Ti), 1440p `quality`, ×4, démo sans limite
+dont la scène est dessinée N fois par image (`--gpu-load N`) : un jeu dont
+le rendu prend le GPU longtemps après son `present()`.
+
+**Régression trouvée en chemin** : à N = 30 (GPU occupé à 64–77 %), le
+`even_fast` du 29/10 bloquait le jeu 11,5 ms par `present()` : 86 i/s au lieu
+de 105, contenu 34 ms derrière l'écran au lieu de 16, image→écran 42 ms au
+lieu de 24,5. Boucle : le délai d'`even_fast` inclut le retard du GPU, la
+première image du job part donc tard ; `runJob` (`deferRest`) ne soumettait
+les autres copies qu'après cette présentation, et le `present()` suivant du
+jeu attend cette soumission ; cette attente s'ajoute à son tour au délai.
+Deux correctifs :
+- les copies restantes d'un job `even_fast` partent dès la fin de la synthèse
+  si elle précède la présentation de sa première image (la variante mesurée
+  le 20/10, ici sans contrepartie : cette présentation est loin) ;
+- `pacing::EvenFastGuard` : si le jeu attend malgré tout le worker (moyenne
+  au-dessus de 0,5 ms ou 5 % d'une image), images réelles calées pendant 2 s,
+  puis 4, 8… 60 s après chaque nouvel échec.
+
+Résultat à N = 30 : 130 i/s, écart 0,65 ms, 0 saut, image→écran 22,5 ms.
+Cas légers (80/95/120 i/s stables, trace à 95) inchangés : écart 0,33–0,54 ms.
+
+**A/B `gpu_headroom`** (0 / 0,1, deux couples alternés) :
+
+| Charge | i/s | écart rms | sauts/s | délai du contenu | image→écran |
+|---|---|---|---|---|---|
+| N = 30 | 107 → 110–121 | 1,31–1,35 → 0,57–1,19 ms | 1,8–2,3 → 0–1,2 | 21,3 → 16,5 ms | 30,7 → 23,1–24,7 ms |
+| N = 60 | 74,5 → 65–73 | 4,7–5,0 → 5,1–5,5 ms | 6–7 → 5–8 | 31 → 22,5–28,7 ms | 41,5 → 31,9–36,5 ms |
+
+À N = 30, le mode limite d'abord le jeu vers 96 i/s (GPU à 98–99 %), le GPU
+garde de la marge, la synthèse sort à l'heure et `even_fast` tient : moins de
+latence, plus régulier, et finalement plus d'i/s. À N = 60, la latence baisse
+mais les tenues restent : la démo y enchaîne 12 ms de rendu d'un seul bloc et
+le compositeur de gamescope (sans priorité dans ce banc) rate ses
+rafraîchissements quoi qu'on fasse ; le jeu bridé y sort aussi de la plage
+d'`even_fast`. Cas extrême du banc, pas une conclusion sur les vrais jeux,
+dont le rendu est découpé en nombreuses soumissions.

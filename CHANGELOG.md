@@ -6,6 +6,22 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### A saturated GPU gets headroom back; even_fast no longer holds GPU-heavy games up (2026-10-29)
+
+- `gpu_headroom` (on by default, 0.1): while generating, a GPU that cannot
+  keep up with the game and the generation together (the game waits for it
+  on most frames, NVML or amdgpu report it busy over 94 %) gets the game held
+  so that it idles a tenth of the time: x4 at 100 fps becomes x4 at about 90,
+  the syntheses finish on time. Rises again when the scene gets lighter,
+  never under 80 % of what the GPU sustains; elsewhere (Intel, Windows) the
+  game's waits alone decide. Headless gamescope, 1440p quality x4, a
+  GPU-bound demo: frame to screen 30.7 -> 23-25 ms, steadier motion.
+- `even_fast` on a GPU-heavy game held it in its present call (the job's
+  copies waited for its first frame's late present): 105 -> 86 fps, 42 ms
+  frame to screen. The copies now go as soon as the synthesis is done, and a
+  guard pins the real frames again should the game still wait (130 fps,
+  22.5 ms, even motion on the same bench).
+
 ### Even motion between 72 and 137 fps on 144 Hz (2026-10-29)
 
 - `even_fast` (on by default): with a fixed multiplier of x3 and up, pure
