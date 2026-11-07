@@ -69,9 +69,15 @@ log is in [`CHANGELOG.md`](CHANGELOG.md).
   visible in only one of the two frames hold 51–78 % of all the error; the
   flow's resolution is not the cause (`flow_scale=1` is worse). Picking the
   right one-sided sample would give up to ~+4 dB, but which layer is in
-  front cannot be told reliably from two frames: next step, use frame N−2
-  from the history ring (MEMOIRE §9; prototype on branch
-  `wip/occlusion-layers`).
+  front cannot be told reliably from two frames. **Settled on 2026-11-01**
+  (`tools/edge_bench/depth_oracle.py`, MEMOIRE §7): frame N−2 alone loses
+  (−0.95 dB, it mistakes uncovered pixels for covered ones), and even an
+  exact per-pixel segmentation with "the faster layer in front" loses on
+  fast motion (−0.44 dB); the exact depth wins on every sequence (+0.17 to
+  +1.54 dB, the edge pixels only). Next step: **read the game's depth
+  buffer in the layer** (as ReShade's generic depth does): a copy at present
+  time and a depth test at motion boundaries, under 0.5 ms of GPU on the
+  first generated frame's path (under 1.5 ms of latency even GPU-bound).
 - **x4 on a 30 fps game** (2026-10-13 to 21): x4 is again exactly 4 frames a
   game frame by default (the player's choice, 2026-10-20: `refresh_fill`
   off); on 144 Hz that leaves ~24 refreshes a second held whatever the

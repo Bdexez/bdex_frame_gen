@@ -129,6 +129,7 @@ python3 tools/recording_report.py SEQUENCE             # temps des images réell
 build/demo/bdex_demo --replay SEQ --replay-timing --replay-log /tmp/rejeu.csv  # rejoue les temps source ; journal nouveau, retards de rejeu visibles
 tools/eval_sequence.py <dir_ppm> --variant KEY=VAL     # éval hors ligne (bdex_offline, sans fenêtre) sur séquence enregistrée
 tools/pending_decisions.py SEQ... [--only K,...]       # options en attente notées sur des jeux enregistrés : verdict par option
+tools/edge_bench/depth_oracle.py SEQ OUT [N] [n2,depth,depthv,seg,quad]  # sur make_sequence.py + bdex_offline --dump-flow : ce qu'une profondeur (ou N−2, une segmentation) donnerait aux occultations
 tools/edge_bench/make_game.py DIR turn|walk|dark|strafe|fps|fence|flick|subs  # un jeu à 30 i/s vu à 120 Hz, vérité exacte : eval_sequence.py --multiplier 4 (le vrai ×4) ; subs : sous-titres qui changent et disparaissent
 tools/replay_bench.py SEQ [--multiplier M] [--other-layer NAME]  # éval EN LIGNE : séquence rejouée comme un jeu (bdex_demo --replay) à travers la couche
 bdex-framegen --calibrate [--apply]                     # bdex-calibrate : coût sur ce GPU, preset/multiplicateur recommandés
@@ -1282,8 +1283,12 @@ Tenus à jour dans `ROADMAP.md` (où en est le projet, ce qui reste) et
   n'y changent rien. **05/10 (`tools/edge_bench/`) : c'est l'occultation**
   — pixels visibles dans une seule image = 51 à 78 % de toute l'erreur ;
   pas la résolution (`flow_scale=1` pire) ; l'ordre des couches est ambigu
-  à deux images → piste : l'image N−2 (MEMOIRE §9, branche
-  `wip/occlusion-layers`).
+  à deux images. **01/11** : ni l'image N−2 seule (−0,95 dB : recouvert et
+  découvert confondus) ni une segmentation exacte au pixel avec « le plus
+  rapide devant » (−0,44 sur fast) ne tranchent ; la profondeur exacte gagne
+  sur toutes les séquences (+0,17 à +1,54 dB, `tools/edge_bench/
+  depth_oracle.py`) → piste : lire le tampon de profondeur du jeu dans la
+  couche (< 1,5 ms de latence estimée ; MEMOIRE §7, 01/11).
 - **Options en attente de vrais jeux** : `tools/pending_decisions.py
   SEQ…` (verdict par option ; liste `CANDIDATES` à tenir à jour quand une
   option est tranchée ou ajoutée).

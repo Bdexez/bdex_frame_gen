@@ -1278,6 +1278,12 @@ vrai absent des 4×4 texels voisins : 3 à 8 % seulement (lowcon 16).
   de prev et de cur par le vecteur qui l'explique le mieux, sur fenêtre
   décalée, à pleine résolution), puis la décision d'occultation sur ces
   étiquettes plutôt que sur les champs de blocs.
+- **Tranché le 01/11** (§7, « axes contre les artefacts ») : même une
+  segmentation exacte au pixel reste bornée par l'ordre des couches deviné
+  (« le plus rapide devant » : fast −0,44 dB, lowcon −0,11), et l'image N−2
+  seule perd (−0,95 dB, elle confond recouvert et découvert). La profondeur
+  exacte gagne partout (+0,17 à +1,54 dB, `tools/edge_bench/depth_oracle.py`)
+  → piste : lire le tampon de profondeur du jeu dans la couche.
 
 **Windows**
 - Transmettre le plein écran exclusif (mode 1).
@@ -4020,3 +4026,76 @@ L'utilisateur, après tout cela : « sur oblivion remastered j'ai encore un
   48–49 ; limite de la couche (`cap_point=input`) — 6,0–7,8 ms, 48–50.
   Environ 1,5 ms de plus avant le présent (4 % d'une image), rien après ;
   l'utilisateur : « pareil que le jeu ».
+
+### 01/11 — axes contre les artefacts, dans 10 ms de latence : mesures
+
+Demande (/goal) : trouver des axes d'amélioration pour limiter au maximum
+les artefacts sans ajouter plus de 10 ms de latence. Bancs : `tools/edge_bench`
+(`make_sequence.py` still/pan/fast/lowcon ×2, vérité des couches ;
+`make_game.py` turn/walk/fps/strafe ×4), les 27 enregistrements du panneau
+(×2), défauts d'un GPU dédié (préréglage `balanced`, comme `preset = auto`
+de l'utilisateur), RTX 3060 Ti — d'abord lavapipe en conteneur pendant que
+l'utilisateur jouait (mêmes chiffres à 0,07 dB près).
+
+- **L'occultation domine encore plus qu'au 05/10** (avec toutes les options
+  d'octobre) : pixels visibles d'un seul côté = **89 %** de toute l'erreur
+  (still), 70 % (pan), 62 % (fast), 72 % (lowcon), à 19–25 dB contre 33–46
+  ailleurs ; les deux côtés (recouvert / découvert) pèsent autant.
+- **Il manque l'ordre des couches, pas un meilleur choix** :
+  `tools/edge_bench/depth_oracle.py` corrige les sorties du moteur là où aucun
+  candidat (12 texels avant + 12 arrière autour de q) n'explique le pixel
+  (meilleur des quatre quadrants 2×2 > 0,04) ; gain sur l'image, 6 images
+  (15, toute la séquence, pour les deux dernières lignes) :
+
+  | variante (information ajoutée) | still | pan | fast | lowcon |
+  |---|---|---|---|---|
+  | re-sélection seule (aucune) | −0,16 | +0,06 | −0,16 | −0,15 |
+  | image N−2 (copie de l'image) | −0,95 | | | |
+  | profondeur exacte, z-buffer sur les candidats | +1,28 | +0,76 | +0,33 | +0,09 |
+  | segmentation exacte, « le plus rapide devant » (15) | +1,54 | +0,58 | −0,44 | −0,11 |
+  | profondeur + vecteur de la même couche, `depthv` (15) | **+1,54** | **+0,82** | **+0,48** | **+0,17** |
+
+  N−2 gagne sur les zones recouvertes (−2,9 % de l'erreur) mais se trompe
+  sur les découvertes (+27 %) : un contenu qui a bougé de façon cohérente
+  dans le passé n'est pas pour autant visible au temps t. Une segmentation
+  parfaite au pixel (la piste du 05/10) reste bornée par l'ordre deviné :
+  perdante dès que des objets se croisent ou que le fond va plus vite.
+  Seule la profondeur est positive partout (0,1 à 0,6 % des pixels touchés,
+  tous au contour) ; plafond connu ~+4 dB (choix oracle du 05/10). Attendre
+  l'image N+1 trancherait aussi, mais coûte une image (33 ms à 30 i/s).
+- **Axe retenu n° 1 : lire le tampon de profondeur du jeu dans la couche**
+  (comme le « generic depth » de ReShade ; jamais envisagé ici). Coût :
+  copie de la profondeur 1440p (~15 Mo, ~0,06 ms) + un test de profondeur
+  aux frontières (ordre de `pixel_vectors`, mesuré apparié ~0,2 ms par image
+  générée à 1440p) : < 0,5 ms sur le chemin de la 1re image générée, soit
+  < 1,5 ms de latence même pour un jeu limité par le GPU (règle « ×3 » du
+  21/10) — loin des 10 ms. Esquisse : `vkCreateImage` (formats de
+  profondeur, taille ≥ ½ de la swapchain, même rapport), passes de rendu
+  (`vkCmdBeginRendering`/`BeginRenderPass*` : la profondeur la plus utilisée
+  de l'image, zone de rendu pour la résolution dynamique), barrières de
+  cette seule image (sa disposition), copie soumise dans `present()` avant le
+  travail suivant du jeu sur la même file ; sens de Z par la valeur
+  d'effacement (D3D : souvent inversé ; d ou 1−d donne des rapports de
+  profondeur sans near/far). Moteur : liaison optionnelle, bit `SYNTH_*`,
+  candidats aux frontières départagés par la profondeur, priorité du splat
+  et `reveal_fill` par la profondeur au lieu de « le plus rapide devant »
+  (les images prédites aussi : `hybrid_predict=1`, −6 ms, n'y perdait que
+  par l'occultation). Repli : chemin actuel au bit près si la profondeur
+  manque ou ne colle pas aux contours de l'image. Risques : mauvais tampon
+  (ombres, UI), gigue TAA, profondeur à la résolution de rendu (DLSS/FSR),
+  arme à la première personne sur sa propre plage, MSAA. Mode capture :
+  non concerné.
+- **Écartés aujourd'hui (mesurés)** : filet de sécurité par tuile (fondu ou
+  réelle là où la synthèse échoue) — plafond oracle +0,16 à +0,35 dB sur les
+  enregistrements, mais une tuile ratée ne l'est à la paire suivante que
+  4–12 % du temps (1 % de base) : basculer celles de la paire précédente
+  −0,02/−0,03 dB, aucun auto-contrôle sur le passé ne les prédit.
+  **Homographie** de caméra (rotation) au lieu du décalage de
+  `global_motion` : pixels que le flux du moteur n'explique pas et qu'elle
+  explique 1,59 % (PRAGMATA, 211 paires rapides) / 1,48 % (Cyberpunk, 266)
+  / 2,71 % (Oblivion, 254) contre 1,41 / 1,35 / 2,51 % pour la translation
+  — 0,1 à 0,2 % des pixels de plus : marginal à 853×480.
+  Scintillement ×4 découpé dans/entre paires : rien de tranché.
+- **Budget** (1440p ×4, `balanced`) : analyse 0,09 + flux 0,47 ms par image
+  du jeu, synthèse 5,24 (1,75 par image générée, toutes passes) : seule la
+  1re générée est sur le chemin de la latence.
