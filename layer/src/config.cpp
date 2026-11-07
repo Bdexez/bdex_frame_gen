@@ -411,6 +411,7 @@ const std::vector<OptionDef>& registry() {
     B("reveal_fill", nullptr, &Config::revealFill, kLive, Tune::SynthExtrapolation, "1", 12),
     B("border_fill", nullptr, &Config::borderFill, kLive),
     B("still_occluder", nullptr, &Config::stillOccluder, kLive),
+    B("depth", nullptr, &Config::depth),
     B("hud_avoid", nullptr, &Config::hudAvoid, kLive),
     I("record_scale", nullptr, &Config::recordScale, 0, 4),
     F("mosaic_blur", nullptr, &Config::mosaicBlur, 0.f, 1.f, kLive),
@@ -683,6 +684,7 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
         else if (v == "split")                    debug = Debug::Split;
         else if (v == "passthrough" || v == "off") debug = Debug::Passthrough;
         else if (v == "confidence" || v == "conf") debug = Debug::Confidence;
+        else if (v == "depth")                    debug = Debug::Depth;
         else return false;
         return true;
     }
@@ -920,8 +922,8 @@ int Config::flowScaleFor(uint32_t width, uint32_t height) const {
 }
 
 std::string Config::describe() const {
-    static const char* const dbg[] = {"none", "flow", "split", "passthrough", "confidence"};
-    static_assert(sizeof(dbg) / sizeof(dbg[0]) == size_t(Debug::Confidence) + 1, "a name per Debug value");
+    static const char* const dbg[] = {"none", "flow", "split", "passthrough", "confidence", "depth"};
+    static_assert(sizeof(dbg) / sizeof(dbg[0]) == size_t(Debug::Depth) + 1, "a name per Debug value");
     std::ostringstream o;
     o << "enabled=" << enabled << " multiplier=" << multiplier << " levels=" << levels
       << " mode=" << modeName() << " flow_scale=" << (flowScale > 0 ? std::to_string(flowScale) : flowScale < 0 ? "fine" : "auto") << " search=" << searchRadius << "/" << searchFine << " refine=" << refine
@@ -949,6 +951,7 @@ std::string Config::describe() const {
     if (revealFill) o << " reveal_fill=1";
     if (borderFill) o << " border_fill=1";
     if (stillOccluder) o << " still_occluder=1";
+    if (depth) o << " depth=1";
     if (onlineTune) o << " online_tune=1";
     if (upscaleTemporal > 0.f) o << " upscale_temporal=" << upscaleTemporal;
     if (targetFps != 0.f) o << " target_fps=" << (targetFps < 0.f ? std::string("auto") : std::to_string(targetFps));

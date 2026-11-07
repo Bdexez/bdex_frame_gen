@@ -13,7 +13,7 @@ namespace bdex {
 // priority): built-in defaults, ~/.config/bdex-framegen.conf, environment
 // variables named BDEX_FG_<KEY>.
 struct Config {
-    enum class Debug { None, Flow, Split, Passthrough, Confidence };
+    enum class Debug { None, Flow, Split, Passthrough, Confidence, Depth };
 
     // Resolution divisor of the finest flow level for a given swapchain
     // size: keeps that level around 0.5 Mpixel (half resolution at 1080p,
@@ -144,6 +144,7 @@ struct Config {
     bool  hudAvoid      = false;  // interpolation with hud_mask: a trajectory with an endpoint on a learned still overlay pixel (where the pixel itself is none) counts as broken — the scene between HUD icons no longer copies their colour
     bool  borderFill    = false;  // interpolation: content entering (leaving) the picture in a camera move from cur (prev) alone, instead of the cross-fade its off-screen trajectories fell to (opt-in, off = bit-for-bit)
     bool  stillOccluder = false;  // interpolation: while the world moves, the scene passing behind a still object's edge (a first-person weapon, the HUD) from the input it is visible in, instead of the cross-fade its trajectories fell to (opt-in, off = bit-for-bit)
+    bool  depth         = false;  // the game's depth buffer (Vulkan layer: found among its depth attachments, read at each present): at object edges, where no trajectory explains a pixel, the candidate trajectories are ordered by depth — the layer in front wins, a side covered or uncovered between the two frames is taken from the frame it is visible in (opt-in, off = bit-for-bit; sizes the output stage)
     bool  revealFill    = false;  // extrapolation: revealed areas take the slower-moving of the last two sources (opt-in, off = bit-for-bit)
     int   hudMask       = 0;      // learned static-overlay mask: frames a pixel must stay unchanged while the picture moves to be kept as is (0 = off, bit-for-bit; enabling it is read at start-up)
     bool  synthBicubic  = false;  // synthesis samples the frames with Catmull-Rom instead of bilinear (keeps sub-pixel detail; opt-in, off = bit-for-bit)

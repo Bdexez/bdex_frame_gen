@@ -230,6 +230,8 @@ void FrameGen::prebuildSynthesisVariants() {
                                (cfg.staticGuard != 0.f ? SYNTH_STATIC_GUARD : 0u) |
                                (hasStaticMask_ && cfg.hudMask != 0 ? SYNTH_STATIC_MASK : 0u);
             if (f) synthesisVariant(interp_, f);
+            // (with depth, a pair whose two frames have theirs: most of them)
+            if (!extrap && !depth_.empty()) synthesisVariant(interp_, f | SYNTH_DEPTH);
         }
     }
 }
@@ -275,13 +277,23 @@ void FrameGen::createPipelines() {
         reduce_ = makePass(reduce_cost_comp, reduce_cost_comp_size, {SI, SB});
         // With sharpening, the interpolation writes a linear rgba16f image that
         // the CAS pass then sharpens and packs; otherwise it packs directly.
-        if (sharpen_)       interp_ = makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SB, CIS, CIS, CIS, CIS}, true, false, false, true);
-        else if (enc_.is64) interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB, SB, CIS, CIS, CIS, CIS}, true, false, false, true);
-        else                interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB, SB, CIS, CIS, CIS, CIS}, true, false, false, true);
+        if (sharpen_)       interp_ = makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SB, CIS, CIS, CIS, CIS, CIS, CIS}, true, false, false, true);
+        else if (enc_.is64) interp_ = makePass(interpolate_comp_u64, interpolate_comp_u64_size, {CIS, CIS, CIS, CIS, SI, SB, SB, CIS, CIS, CIS, CIS, CIS, CIS}, true, false, false, true);
+        else                interp_ = makePass(interpolate_comp_u32, interpolate_comp_u32_size, {CIS, CIS, CIS, CIS, SI, SB, SB, CIS, CIS, CIS, CIS, CIS, CIS}, true, false, false, true);
         frameState_ = makePass(frame_state_comp, frame_state_comp_size, {CIS, CIS, SB});
         sceneHist_ = makePass(scene_hist_comp, scene_hist_comp_size, {CIS, CIS, SB});
         globalMotion_ = makePass(global_motion_comp, global_motion_comp_size, {CIS, CIS, SB, SI});
         if (chroma_) downChroma_ = makePass(downsample_chroma_comp, downsample_chroma_comp_size, {CIS, SI});
+        if ((*cfgp_).depth) {
+            // (r16f: half the memory; a nearness ~near/z keeps 3 significant
+            // digits there, ten times the depth test's tolerance)
+            depthFormat_ = dev_.formatSupports(VK_FORMAT_R16_SFLOAT, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT |
+                                                                         VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)
+                               ? VK_FORMAT_R16_SFLOAT : VK_FORMAT_R32_SFLOAT;
+            depthImport_ = depthFormat_ == VK_FORMAT_R16_SFLOAT
+                               ? makePass(depth_import_comp_f16, depth_import_comp_f16_size, {CIS, SI})
+                               : makePass(depth_import_comp_f32, depth_import_comp_f32_size, {CIS, SI});
+        }
     }
     if (packReal_) {
         if (sharpen_)       upscale_ = makePass(upscale_comp_sharp, upscale_comp_sharp_size, {CIS, SI});
@@ -403,6 +415,16 @@ void FrameGen::createResources() {
         confMap_ = confDummy_.view;
         accelDummy_ = dev_.createImage(VK_FORMAT_R32G32_SFLOAT, {1, 1}, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, true);
         accelMap_ = accelDummy_.view;
+        depthDummy_ = dev_.createImage(VK_FORMAT_R32_SFLOAT, {1, 1}, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, true);
+        if (cfg.depth) {
+            for (size_t i = 0; i < sources_.size(); ++i) depth_.push_back(dev_.createImage(depthFormat_, extent_, storageSampled, true));
+            depthValid_.assign(sources_.size(), false);
+            VkSamplerCreateInfo ds{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+            ds.magFilter = ds.minFilter = VK_FILTER_NEAREST;
+            ds.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+            ds.addressModeU = ds.addressModeV = ds.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            VK_CHECK(dev_.vt.CreateSampler(dev_.device, &ds, nullptr, &depthSampler_));
+        }
     }
 
     // (Offline and capture tools fill no queue families: assume timestamps.)
@@ -443,13 +465,15 @@ void FrameGen::createResources() {
         if (maskDummy_.image) add(maskDummy_);
         if (confDummy_.image) add(confDummy_);
         if (accelDummy_.image) add(accelDummy_);
+        if (depthDummy_.image) add(depthDummy_);
+        for (auto& d : depth_) add(d);
         if (packReal_) add(outReal_);
         for (auto& s : sharp_) add(s);
         if (sharpen_) add(sharpReal_);
         dev_.vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
                                    nullptr, static_cast<uint32_t>(barriers.size()), barriers.data());
-        for (AllocatedImage* d : {&maskDummy_, &accelDummy_})
+        for (AllocatedImage* d : {&maskDummy_, &accelDummy_, &depthDummy_})
             if (d->image) {
                 VkClearColorValue zero{};
                 VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
@@ -643,6 +667,8 @@ void FrameGen::createDescriptors() {
                 writeImage(s, 8, CIS, staticMask_);
                 writeImage(s, 9, CIS, confMap_);
                 writeImage(s, 10, CIS, accelMap_);
+                writeImage(s, 11, CIS, depth_.empty() ? depthDummy_.view : depth_[prev].view);
+                writeImage(s, 12, CIS, depth_.empty() ? depthDummy_.view : depth_[cur].view);
                 synthSets_.push_back(s);
                 dsInterp_.push_back(s);
             }
@@ -659,10 +685,17 @@ void FrameGen::createDescriptors() {
                 writeImage(s, 8, CIS, staticMask_);
                 writeImage(s, 9, CIS, confMap_);
                 writeImage(s, 10, CIS, accelMap_);
+                writeImage(s, 11, CIS, depthDummy_.view);
+                writeImage(s, 12, CIS, depthDummy_.view);
                 synthSets_.push_back(s);
                 dsInterpReal_.push_back(s);
             }
         }
+    }
+    for (size_t i = 0; i < depth_.size(); ++i) {
+        VkDescriptorSet s = allocSet(depthImport_.setLayout);
+        writeImage(s, 1, SI, depth_[i].view);  // (binding 0, the game's view: at each import)
+        dsDepthImport_.push_back(s);
     }
 }
 
@@ -713,7 +746,7 @@ VkDescriptorSet FrameGen::synthesisSet(VkImageView prev, VkImageView cur, uint32
 FgPipeline FrameGen::makeLinearSynthesisPipeline() {
     const VkDescriptorType CIS = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SI = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
                            SB = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    return makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SB, CIS, CIS, CIS, CIS});
+    return makePass(interpolate_comp_sharp, interpolate_comp_sharp_size, {CIS, CIS, CIS, CIS, SI, SB, SB, CIS, CIS, CIS, CIS, CIS, CIS});
 }
 
 VkDescriptorSet FrameGen::synthesisSetFor(VkDescriptorSetLayout layout, VkImageView prev, VkImageView cur,
@@ -731,6 +764,8 @@ VkDescriptorSet FrameGen::synthesisSetFor(VkDescriptorSetLayout layout, VkImageV
     writeImage(s, 8, CIS, staticMask_);
     writeImage(s, 9, CIS, confMap_);
     writeImage(s, 10, CIS, accelMap_);
+    writeImage(s, 11, CIS, depthDummy_.view);  // (a pass's own inputs: never the game's depth)
+    writeImage(s, 12, CIS, depthDummy_.view);
     synthSets_.push_back(s);
     return s;
 }
@@ -777,7 +812,7 @@ void FrameGen::destroyAll() {
     pools_.clear();
     planner_.reset();
     for (Pass* p : {&downsample_, &blockMatch_, &smooth_, &refine_, &reduce_, &interp_, &upscale_, &cas_, &frameState_, &downChroma_,
-                    &sceneHist_, &globalMotion_}) {
+                    &sceneHist_, &globalMotion_, &depthImport_}) {
         destroyVariants(*p);
         if (p->pipeline) vt.DestroyPipeline(d, p->pipeline, nullptr);
         if (p->lean) vt.DestroyPipeline(d, p->lean, nullptr);
@@ -788,6 +823,13 @@ void FrameGen::destroyAll() {
     }
     if (sampler_) vt.DestroySampler(d, sampler_, nullptr);
     sampler_ = VK_NULL_HANDLE;
+    if (depthSampler_) vt.DestroySampler(d, depthSampler_, nullptr);
+    depthSampler_ = VK_NULL_HANDLE;
+    for (auto& i : depth_) dev_.destroyImage(i);
+    depth_.clear();
+    depthValid_.clear();
+    dsDepthImport_.clear();
+    if (depthDummy_.image) dev_.destroyImage(depthDummy_);
     for (auto& src : sources_) {
         if (src.view) vt.DestroyImageView(d, src.view, nullptr);
         src.view = VK_NULL_HANDLE;
@@ -1396,6 +1438,40 @@ void FrameGen::copyToPresent(VkCommandBuffer cmd, VkImage src, VkImageLayout src
     vt.CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &post);
 }
 
+void FrameGen::recordDepthImport(VkCommandBuffer cmd, uint32_t source, VkImageView view, VkImageLayout layout,
+                                 VkExtent2D imageExtent, VkRect2D area, bool reversed) {
+    if (source >= depth_.size() || !view || area.extent.width == 0 || area.extent.height == 0) return;
+    auto& vt = dev_.vt;
+    // (The set's previous import, at this source's previous present, is
+    // done: the game rendered into this source since, which waited for the
+    // synthesis that read that import — VirtualSwapchain::present.)
+    VkDescriptorImageInfo ii{depthSampler_, view, layout};
+    VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    w.dstSet = dsDepthImport_[source];
+    w.dstBinding = 0;
+    w.descriptorCount = 1;
+    w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    w.pImageInfo = &ii;
+    vt.UpdateDescriptorSets(dev_.device, 1, &w, 0, nullptr);
+    // The previous readers of depth_[source] (syntheses) precede on the queue
+    // or through the semaphores that ordered the game's frame after them.
+    memoryBarrier(cmd);
+    const uint32_t x1 = std::min(imageExtent.width, uint32_t(area.offset.x) + area.extent.width);
+    const uint32_t y1 = std::min(imageExtent.height, uint32_t(area.offset.y) + area.extent.height);
+    DepthImportPC pc{{int32_t(extent_.width), int32_t(extent_.height)},
+                     {float(area.extent.width) / float(extent_.width), float(area.extent.height) / float(extent_.height)},
+                     {float(area.offset.x), float(area.offset.y)},
+                     {int32_t(x1) - 1, int32_t(y1) - 1},
+                     reversed ? 1 : 0};
+    vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, depthImport_.pipeline);
+    vt.CmdPushConstants(cmd, depthImport_.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+    vt.CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, depthImport_.layout, 0, 1, &dsDepthImport_[source], 0,
+                             nullptr);
+    vt.CmdDispatch(cmd, divUp(extent_.width, 16), divUp(extent_.height, 16), 1);
+    memoryBarrier(cmd);
+    depthValid_[source] = true;
+}
+
 void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cur, float t, uint32_t output) {
     if (output < recordedOutputs_.size()) recordedOutputs_[output].written = false;
     // frame_state gives equal t bits to equal display moments in the same
@@ -1422,10 +1498,16 @@ void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cu
         }
     }
     const uint32_t N = static_cast<uint32_t>(sources_.size());
-    VkDescriptorSet set = dsInterp_[(prev * N + cur) * outputs_ + output];
+    const VkDescriptorSet own = dsInterp_[(prev * N + cur) * outputs_ + output];
+    VkDescriptorSet set = own;
     for (auto& p : passes_)
         if (VkDescriptorSet alt = p->synthesisInputs(*this, cmd, prev, cur, output)) set = alt;
+    // depth: the engine's own set binds the two frames' depth; a pass's
+    // inputs (upscale_temporal's history) bind none.
+    depthActive_ = !predicted && set == own && prev < depthValid_.size() && cur < depthValid_.size() &&
+                   depthValid_[prev] && depthValid_[cur];
     recordSynthesis(cmd, set, t, timingActive_ ? int32_t(output) + 1 : 0, false);
+    depthActive_ = false;
     if (sharpen_) recordCas(cmd, dsCas_[output]);  // sharp_[output] -> out_[output]
     for (auto& p : passes_) p->afterOutput(*this, cmd, int32_t(output));  // (the fps HUD)
     if (reuse) recordedOutputs_[output] = {true, predicted, prev, cur};
@@ -1483,7 +1565,8 @@ void FrameGen::recordSynthesisImpl(VkCommandBuffer cmd, const Pass& pipe, VkDesc
     const float sy = float(displayExtent_.height) / extent_.height;
     InterpPC pc{{(int32_t)displayExtent_.width, (int32_t)displayExtent_.height}, t, flowScale_ * sx, enc_.encoding,
                 cfg.debug == Config::Debug::Flow ? 1 : cfg.debug == Config::Debug::Split ? 2
-                    : cfg.debug == Config::Debug::Confidence && hasConfMap_ ? 3 : 0,
+                    : cfg.debug == Config::Debug::Confidence && hasConfMap_ ? 3
+                    : cfg.debug == Config::Debug::Depth ? 4 : 0,
                 cfg.sceneCutLow, cfg.sceneCutHigh,
                 {1.f / (fine.fine.width * blk * flowScale_ * sx),
                  1.f / (fine.fine.height * blk * flowScale_ * sy)},
@@ -1496,7 +1579,8 @@ void FrameGen::recordSynthesisImpl(VkCommandBuffer cmd, const Pass& pipe, VkDesc
                 // +0.17, edges +0.3 to +1.1; recordings unchanged)
                 enc_.transfer == TRANSFER_PERCEPTUAL || enc_.transfer == TRANSFER_PQ || enc_.srgb ? cfg.staticSoft : 0.f,
                 in.accelIntervalRatio, cfg.borderFill && t <= 1.f ? 1 : 0, cfg.hudAvoid ? 1 : 0,
-                cfg.stillOccluder && t <= 1.f ? 1 : 0};
+                cfg.stillOccluder && t <= 1.f ? 1 : 0,
+                &pipe == &interp_ && depthActive_ && t <= 1.f ? 1 : 0, 0.05f};
     // The variant with exactly the opt-ins in use compiled in: the lean one
     // when none is (same results as the full one), else one per set.
     const uint32_t features = (pc.bicubic ? SYNTH_BICUBIC : 0u) | (pc.timing ? SYNTH_TIMING : 0u) |
@@ -1506,7 +1590,8 @@ void FrameGen::recordSynthesisImpl(VkCommandBuffer cmd, const Pass& pipe, VkDesc
                               (pc.stillOccluder ? SYNTH_STILL_OCCLUDER : 0u) |
                               (pc.occlusionStrength != 0.f ? SYNTH_OCCLUSION : 0u) |
                               (pc.staticGuard != 0.f ? SYNTH_STATIC_GUARD : 0u) |
-                              (pc.staticFrames != 0.f ? SYNTH_STATIC_MASK : 0u) | (pc.debugMode == 3 ? SYNTH_DEBUG_CONF : 0u);
+                              (pc.staticFrames != 0.f ? SYNTH_STATIC_MASK : 0u) | (pc.debugMode == 3 ? SYNTH_DEBUG_CONF : 0u) |
+                              (pc.depth ? SYNTH_DEPTH : 0u);
     const VkPipeline bound = features == 0 && pipe.lean ? pipe.lean : synthesisVariant(pipe, features);
     vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, bound);
     vt.CmdPushConstants(cmd, pipe.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);

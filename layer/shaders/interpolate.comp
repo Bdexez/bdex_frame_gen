@@ -9,6 +9,7 @@
 // copied verbatim into the swapchain image (this keeps us on mandatory storage
 // formats regardless of the swapchain format).
 #extension GL_GOOGLE_include_directive : require  // #include with glslangValidator too
+#extension GL_EXT_control_flow_attributes : require  // [[dont_unroll]] (the depth block)
 #include "common.glsl"
 
 layout(local_size_x = 16, local_size_y = 16) in;
@@ -38,6 +39,7 @@ const bool kOcclusion = (kFeatures & 256u) != 0u;
 const bool kStaticGuard = (kFeatures & 1024u) != 0u;
 const bool kStaticMask = (kFeatures & 2048u) != 0u;
 const bool kDebugConf = (kFeatures & 4096u) != 0u;
+const bool kDepth = (kFeatures & 8192u) != 0u;
 
 layout(binding = 0) uniform sampler2D prevTex;
 layout(binding = 1) uniform sampler2D curTex;
@@ -69,6 +71,8 @@ layout(binding = 7) uniform sampler2D prevBwdTex;  // previous pair's backward f
 layout(binding = 8) uniform sampler2D staticMask;  // hud_mask: frames each render pixel stayed unchanged (1x1 zero when off)
 layout(binding = 9) uniform sampler2D confMap;     // flow_confidence: trust in the finest flow, 0..1 (1x1 one when off)
 layout(binding = 10) uniform sampler2D accelMap;   // interp_accel: the content's acceleration at cur positions (accel_map.comp; 1x1 zero when off)
+layout(binding = 11) uniform sampler2D prevDepth;  // depth: the game's depth of prev / cur as nearness (depth_import.comp; 1x1 zero when off)
+layout(binding = 12) uniform sampler2D curDepth;
 
 #define ENC_RGBA8      0u
 #define ENC_BGRA8      1u
@@ -82,6 +86,7 @@ layout(binding = 10) uniform sampler2D accelMap;   // interp_accel: the content'
 #define DBG_FLOW  1
 #define DBG_SPLIT 2
 #define DBG_CONF  3   // debug=confidence: red where flow_confidence does not trust the flow
+#define DBG_DEPTH 4   // debug=depth: the imported depth of cur in grey (magenta: no depth for this pair)
 
 layout(push_constant) uniform PC {
     ivec2 size;
@@ -109,6 +114,8 @@ layout(push_constant) uniform PC {
     int borderFill;          // interpolation: content entering (leaving) the picture from cur (prev) alone
     int hudAvoid;            // interpolation with hud_mask: a trajectory with an endpoint on a still overlay pixel is contaminated
     int stillOccluder;       // interpolation: the scene passing behind a still object's edge from the input it is visible in
+    int depth;               // interpolation: both frames have the game's depth (prevDepth / curDepth), 0 = not used
+    float depthTol;          // relative difference of nearness under which two depths are the same surface
 } pc;
 
 // flow_confidence's trust at display pixel p (the map covers the flow's area).
@@ -279,6 +286,40 @@ float staticness(vec2 uv) {
     float d = colourError(texelFetch(prevTex, sp, 0), texelFetch(curTex, sp, 0));
     return 1.0 - smoothstep(0.0005, 0.003, d);
 }
+
+// depth: the photometric error of a trajectory from prev at a to cur at b
+// on the best of the four 2x2 windows around it (a window centred on an
+// object's boundary holds the other layer: no vector explains all of it).
+// (The four window sums accumulated as the 3x3 samples come, rather than
+// the nine errors kept: registers are what this block costs the whole
+// synthesis, compiled in even where it does not run.)
+float quadError(vec2 a, vec2 b, vec2 fsize) {
+    vec4 qs = vec4(0.0);  // windows: top-left, top-right, bottom-left, bottom-right
+    for (int y = 0; y < 3; ++y)
+        for (int x = 0; x < 3; ++x) {
+            const vec2 d = vec2(x - 1, y - 1);
+            const float e = colourError(texture(prevTex, (a + d) / fsize), texture(curTex, (b + d) / fsize));
+            qs += e * vec4(x < 2 && y < 2, x > 0 && y < 2, x < 2 && y > 0, x > 0 && y > 0);
+        }
+    return 0.25 * min(min(qs.x, qs.y), min(qs.z, qs.w));
+}
+// Nearness at a display position of prev / cur (nearest texel).
+float nearPrev(vec2 pos, vec2 fsize) {
+    const ivec2 s = textureSize(prevDepth, 0);
+    return texelFetch(prevDepth, clamp(ivec2(pos * vec2(s) / fsize), ivec2(0), s - 1), 0).r;
+}
+float nearCur(vec2 pos, vec2 fsize) {
+    const ivec2 s = textureSize(curDepth, 0);
+    return texelFetch(curDepth, clamp(ivec2(pos * vec2(s) / fsize), ivec2(0), s - 1), 0).r;
+}
+bool sameDepth(float x, float y) { return abs(x - y) <= pc.depthTol * max(x, y) + 1e-7; }
+bool nearerThan(float x, float y) { return x > y * (1.0 + pc.depthTol) + 1e-7; }
+#ifndef DEPTH_GATE
+#define DEPTH_GATE 0.04
+#endif
+#ifndef DEPTH_FULL
+#define DEPTH_FULL 0.12
+#endif
 
 void main() {
     ivec2 p = ivec2(gl_GlobalInvocationID.xy);
@@ -672,6 +713,104 @@ void main() {
         }
         c = mix(c, one, best * (1.0 - found) * moveQ);
     }
+    if (kDepth && pc.depth != 0 && min(ef, eb) > DEPTH_GATE) {
+        // depth (the game's depth buffer): at an object's edge, the pixels
+        // visible in one frame only — covered or uncovered between the two
+        // — hold most of the remaining error, and no trajectory explains
+        // them from both sides by definition: the colour test above keeps a
+        // wrong one that looks consistent, or falls to the cross-fade (the
+        // object smears). Which layer is in front cannot be told from two
+        // frames (measured 05/10 and 01/11: frame N-2, an exact per-pixel
+        // segmentation with the faster layer in front, all net negative);
+        // the depth tells. A z-buffer over the vectors of the flow texels
+        // around q (12 forward, 12 backward): a trajectory is the same
+        // surface at both ends (and explains them), or one-sided — its other
+        // end shows something nearer (covered there) — and each vector only
+        // carries the layer of the block it was measured on (the depth at
+        // its texel centre). The nearest wins; at equal depth the two-sided
+        // one, then the lower error. Only where none explains q from both
+        // sides. (tools/edge_bench/depth_oracle.py's depthv: with the exact
+        // depth +0.17 to +1.54 dB, the edge pixels only.)
+        const vec2 fsz = fsize;
+        const ivec2 fts = textureSize(flowFwd, 0);
+        const vec2 texPx = 1.0 / (pc.flowInvSize * vec2(fts));  // display pixels per flow texel
+        const ivec2 t0 = ivec2(floor(qa / texPx - 0.5));
+        float minE = 1e9, bestN = 0.0, bestE = 1e9;
+        bool found = false, bestSame = false;
+        vec4 bestC = c;
+        vec2 bestV = vec2(0.0);
+        // (One loop over the 32 slots, not unrolled: an unrolled body 24
+        // times over weighed on the registers of the whole synthesis.)
+        [[dont_unroll]] for (int k = 0; k < 32; ++k) {
+                    const int field = k >> 4, i = (k & 3) - 1, j = ((k >> 2) & 3) - 1;
+                    if ((i == -1 || i == 2) && (j == -1 || j == 2)) continue;
+                    const ivec2 ct = clamp(t0 + ivec2(i, j), ivec2(0), fts - 1);
+                    const vec2 V = field == 0 ? texelFetch(flowFwd, ct, 0).xy * pc.flowScale
+                                              : -texelFetch(flowBwd, ct, 0).xy * pc.flowScale;
+                    const vec2 a = qa - t * V, b = qa + (1.0 - t) * V;
+                    // (Both ends in the picture, the 2x2 windows too: an end
+                    // off-screen reads the clamped edge — colour and depth
+                    // alike — and the content entering or leaving at the
+                    // borders is border_fill's. Without this, x4 camera turns
+                    // lost 1.2 to 1.5 dB along the left and right edges.)
+                    if (any(lessThan(min(a, b), vec2(1.5))) || any(greaterThan(max(a, b), fsz - 1.5))) continue;
+                    const vec2 centre = (vec2(ct) + 0.5) * texPx;
+                    const float zt = field == 0 ? nearPrev(centre, fsz) : nearCur(centre, fsz);
+                    const float za = nearPrev(a, fsz), zb = nearCur(b, fsz);
+                    const bool oneP = nearerThan(zb, za) && sameDepth(zt, za);  // covered in cur: prev's side
+                    const bool oneC = nearerThan(za, zb) && sameDepth(zt, zb);  // uncovered in cur: cur's side
+                    // The windowed error (18 samples) only for a trajectory on
+                    // one surface at both ends: the one test of a two-sided
+                    // candidate, and what "explained" means (one from a layer
+                    // to another that looks consistent is the false match the
+                    // colour test keeps, it must not veto the depth). A
+                    // one-sided candidate's tie-break: its pixel error.
+                    // (1440p x4, a fast turn: +2.5 -> ms a game frame.)
+                    bool same = false;
+                    float e;
+                    if (sameDepth(za, zb)) {
+                        e = quadError(a, b, fsz);
+                        minE = min(minE, e);
+                        same = e < 0.04 && sameDepth(zt, za);
+                    } else if (oneP || oneC) {
+                        e = colourError(texture(prevTex, a / fsz), texture(curTex, b / fsz));
+                    } else {
+                        continue;
+                    }
+                    if (!(same || oneP || oneC)) continue;
+                    const float n = same || oneP ? za : zb;  // nearness of the visible end
+                    if (!found || nearerThan(n, bestN) ||
+                        (sameDepth(n, bestN) && ((same && !bestSame) || (same == bestSame && e < bestE)))) {
+                        found = true;
+                        bestN = n;
+                        bestSame = same;
+                        bestE = e;
+                        bestV = V;
+                        const vec4 pa = texture(prevTex, a / fsz), cv = texture(curTex, b / fsz);
+                        bestC = same ? mix(pa, cv, t) : oneP ? pa : cv;
+                    }
+                }
+        // A one-sided pick has no photometric test of its own: its vector
+        // must explain its layer a few pixels away, where that layer is seen
+        // in both frames (the rest of an object that a sharp edge covers
+        // moves with it). Under motion blur no trajectory holds anywhere near
+        // a moving edge — the depth is sharp, the colours are spread over
+        // the blur — and a pick from elsewhere pasted sharp chunks into the
+        // blur (x4 camera turn with a 30 fps game's blur: -1.5 dB; the same
+        // scene without blur: +0.05): the engine's blend stays there.
+        if (found && minE > DEPTH_GATE && !bestSame) {
+            bool held = false;
+            [[dont_unroll]] for (int k = 0; k < 8 && !held; ++k) {
+                const float r = k < 4 ? 6.0 : 12.0;
+                const vec2 o = vec2(k % 4 == 0 ? r : k % 4 == 1 ? -r : 0.0, k % 4 == 2 ? r : k % 4 == 3 ? -r : 0.0);
+                const vec2 a = qa + o - t * bestV, b = qa + o + (1.0 - t) * bestV;
+                if (any(lessThan(min(a, b), vec2(1.5))) || any(greaterThan(max(a, b), fsz - 1.5))) continue;
+                held = sameDepth(nearPrev(a, fsz), bestN) && sameDepth(nearCur(b, fsz), bestN) && quadError(a, b, fsz) < 0.04;
+            }
+            found = held;
+        }
+        if (found && minE > DEPTH_GATE) c = mix(c, bestC, smoothstep(DEPTH_GATE, DEPTH_FULL, min(ef, eb)));
+    }
     }
 
     // Interpolation only: an unchanged pixel says nothing about the frame
@@ -713,6 +852,10 @@ void main() {
         if (abs(p.x - pc.size.x / 2) < 2) c = vec4(1.0, 0.0, 1.0, 1.0);
     } else if (kDebugConf && pc.debugMode == DBG_CONF) {
         c.rgb = mix(c.rgb, vec3(1.0, 0.12, 0.08), 0.75 * (1.0 - confidenceAt(vec2(p) + 0.5)));
+    } else if (pc.debugMode == DBG_DEPTH) {
+        // Nearness ~ near/z on a log scale: 1 white, 2^-16 black.
+        if (kDepth && pc.depth != 0) c = vec4(vec3(clamp((log2(max(nearCur(q, fsize), 1e-9)) + 16.0) / 16.0, 0.0, 1.0)), 1.0);
+        else c.rgb = mix(c.rgb, vec3(1.0, 0.0, 1.0), 0.5);
     }
     // (The fps HUD is drawn over the finished output by passes/fps_hud.cpp.)
     store(p, c);

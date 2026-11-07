@@ -1,0 +1,38 @@
+#version 450
+// The game's depth buffer (the `depth` option) brought to the engine's own
+// image of the frame: one texel per render pixel, as "nearness" — larger is
+// nearer. D3D games (DXVK, VKD3D-Proton) mostly use a reversed Z, where the
+// stored value is already ~near/z; a standard Z stores ~1 - near/z, so 1 - d.
+// Either way the value is about proportional to 1/z for any far plane well
+// beyond the near one: a ratio of two nearnesses is the inverse ratio of the
+// distances, whatever near and far are (interpolate.comp compares them with
+// a relative tolerance). The game's depth may have another resolution than
+// its colour (a render resolution under DLSS / FSR, a dynamic resolution
+// drawn into a part of a larger image): `scale` / `offset` map our pixels
+// onto the texels of the area it renders.
+#extension GL_GOOGLE_include_directive : require  // #include with glslangValidator too
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+#ifndef DEPTH_FMT
+#define DEPTH_FMT r32f
+#endif
+
+layout(binding = 0) uniform sampler2D depthTex;  // the game's image, depth aspect
+layout(binding = 1, DEPTH_FMT) uniform writeonly image2D outImg;
+
+layout(push_constant) uniform PC {
+    ivec2 size;      // our image (the render size)
+    vec2 scale;      // game texels per our pixel
+    vec2 offset;     // the area's origin, game texels
+    ivec2 maxTexel;  // the area's last texel (clamp)
+    int reversed;    // 1: reversed Z (cleared to 0, near = 1)
+} pc;
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, pc.size))) return;
+    ivec2 src = clamp(ivec2(pc.offset + (vec2(p) + 0.5) * pc.scale), ivec2(0), pc.maxTexel);
+    float d = texelFetch(depthTex, src, 0).r;
+    imageStore(outImg, p, vec4(pc.reversed != 0 ? d : 1.0 - d));
+}

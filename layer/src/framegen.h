@@ -123,6 +123,22 @@ public:
     // extrapolated from `prev` (-1: no previous frame) and the kept flow.
     void recordUpscaleReal(VkCommandBuffer cmd, uint32_t cur, int prev = -1);
 
+    // depth (the game's depth buffer): an image of nearness per source, at
+    // the render size, filled by recordDepthImport when the depth of the frame
+    // in that source is known (the layer's DepthTracker, bdex_offline --depth).
+    // The interpolation reads it where both frames of a pair have theirs.
+    bool depthEnabled() const { return !depth_.empty(); }
+    // The game's depth for the frame now in source `source`: `view` (the depth
+    // aspect of its image of `imageExtent`), readable in `layout`, `area` the
+    // part of the image the game renders; `reversed`: cleared to 0 (near = 1).
+    // The view must outlive the submission. Records nothing when depth is off.
+    void recordDepthImport(VkCommandBuffer cmd, uint32_t source, VkImageView view, VkImageLayout layout,
+                           VkExtent2D imageExtent, VkRect2D area, bool reversed);
+    // No depth for the frame now in `source` (none imported at its present).
+    void clearDepth(uint32_t source) {
+        if (source < depthValid_.size()) depthValid_[source] = false;
+    }
+
     bool upscaling() const override { return upscaling_; }
     // The real frame is produced into an internal packed image (for upscaling
     // or the HUD) rather than copied straight through.
@@ -370,6 +386,14 @@ private:
                                     VkImageView bwd, VkImageView out) override;
     void recordSynthesisWith(VkCommandBuffer cmd, const FgPipeline& pipe, VkDescriptorSet set, float t,
                              const Config& cfg) override;
+    std::vector<AllocatedImage> depth_;           // depth: nearness per source (render size); empty when off
+    std::vector<bool> depthValid_;                // ... holding the depth of the frame now in that source
+    std::vector<VkDescriptorSet> dsDepthImport_;  // [source]: the game's depth -> depth_[source]
+    AllocatedImage depthDummy_;                   // 1x1 zero: the synthesis's depth slots without depth
+    VkSampler depthSampler_ = VK_NULL_HANDLE;     // nearest: the game's depth formats need not filter
+    VkFormat depthFormat_ = VK_FORMAT_R32_SFLOAT;
+    Pass depthImport_;
+    bool depthActive_ = false;                    // the synthesis being recorded reads both frames' depth
     AllocatedImage maskDummy_;               // 1x1 zero: the static mask without hud_mask
     VkImageView staticMask_ = VK_NULL_HANDLE;
     AllocatedImage confDummy_;               // 1x1 one: the confidence map without flow_confidence

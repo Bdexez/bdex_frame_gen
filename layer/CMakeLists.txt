@@ -35,6 +35,8 @@ bdex_add_shaders(bdex_layer_shaders
     shaders/luma_match.comp:f16:LUMA_FMT=r16f
     shaders/flow_compose.comp
     shaders/probe_compare.comp
+    shaders/depth_import.comp:f32
+    shaders/depth_import.comp:f16:DEPTH_FMT=r16f
     shaders/interpolate.comp:u32
     shaders/interpolate.comp:u64:OUT_64
     shaders/interpolate.comp:sharp:SHARP
@@ -92,6 +94,7 @@ add_library(bdex_core STATIC
   src/crash.cpp
   src/thread_priority.cpp
   src/gpu_load.cpp
+  src/depth_select.cpp
 )
 target_include_directories(bdex_core PUBLIC src)
 # Threads and dladdr: part of libc since glibc 2.34, in libpthread / libdl
@@ -109,6 +112,7 @@ bdex_strict(bdex_core)
 # the layer, bdex_offline and bdex_capture from this one list.
 set(BDEX_ENGINE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/device.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/depth_tracker.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/framegen.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/framegen_output.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/passes/registry.cpp
