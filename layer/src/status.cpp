@@ -285,9 +285,18 @@ std::vector<std::string> statusDescribe(const StatusFile& file, bool english) {
         {
             std::string eng = get(v, "engine");
             for (char& c : eng) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            // (Unreal, RE Engine: a game thread one frame ahead of the one that
+            // presents — held there, it still reads its input a frame early;
+            // Reflex's sleep is on the game thread. Measured on such a
+            // pipeline at 40 fps: 46.9 ms at the wait, 26.2 at Reflex's
+            // sleep, 27.3 with the game's own limiter.)
             if (get(v, "cap_point") == "wait")
-                out.push_back(T("   limite d'images retenue dans l'attente du jeu, avant qu'il lise ses entrées : pas de latence ajoutée",
-                                "   frame limit held in the game's wait, before it reads its input: no latency added"));
+                out.push_back(T("   limite d'images retenue dans l'attente du jeu, avant qu'il lise ses entrées : pas de latence ajoutée "
+                                "(jeux Unreal, RE Engine : activer NVIDIA Reflex dans le jeu place la limite sur leur fil de "
+                                "jeu, une image de latence en moins)",
+                                "   frame limit held in the game's wait, before it reads its input: no latency added (Unreal, "
+                                "RE Engine games: NVIDIA Reflex on in the game puts the limit on their game thread, a frame of "
+                                "latency less)"));
             else if (get(v, "cap_point") == "input")
                 out.push_back(T("   limite d'images retenue au sommeil Reflex / Anti-Lag du jeu, avant qu'il lise ses entrées",
                                 "   frame limit held at the game's Reflex / Anti-Lag sleep, before it reads its input"));

@@ -5,7 +5,7 @@
 //   bdex_demo [--fps N] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]
 //             [--deterministic] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]
 //             [--gpu-load N] [--latency-test [auto]] [--latency-log FILE]
-//             [--present-thread L [--engine NAME]]
+//             [--present-thread L [--engine NAME] [--sim-thread [--reflex]]]
 //             [--stress KIND:N[,KIND:N...]] [--stress-until N]
 //             [--replay DIR [--replay-step N] [--replay-start N]
 //              [--replay-timing [--replay-log FILE]]]
@@ -83,6 +83,15 @@ struct Options {
     // default with --present-thread: fps_limit_wait offers it present wait).
     int presentThread = 0;
     std::string engine;
+    // --sim-thread (with --present-thread): a game thread of its own reads
+    // the input and simulates, at most one frame ahead of the thread that
+    // renders and presents — Unreal's game and render threads (FFrameEndSync
+    // with one frame of lag), RE Engine's. Its own cap (--fps) sleeps there,
+    // before the input, as those engines' limiters do; --reflex: so does
+    // NVIDIA Reflex's sleep (VK_NV_low_latency2's vkLatencySleepNV, with its
+    // markers), which a game turns on in its settings.
+    bool simThread = false;
+    bool reflex = false;
     // --stress: what games do to their swapchain, every N frames (tests/
     // swapchain_stress.sh): resize (the window to another size), recreate
     // (a new swapchain from the old one, same size, another present mode and
@@ -134,6 +143,8 @@ private:
     void ptDestroyTargets();
     void ptDrain();
     void ptStopThreads();
+    void simLoop();
+    void reflexMarker(VkLatencyMarkerNV marker, uint64_t id);
     size_t replayIndex() const;
     uint32_t findMemory(uint32_t bits, VkMemoryPropertyFlags flags);
 
@@ -208,7 +219,7 @@ private:
     // --present-thread: per slot, the frame's own image, its rendering and its
     // blit to the swapchain.
     static constexpr int kPtSlots = 8;
-    struct PtFrame { int slot; double flashInput; };
+    struct PtFrame { int slot; double flashInput; uint64_t id; };
     struct PtWait { uint64_t presentId; int slot; };
     VkRenderPass ptPass_ = VK_NULL_HANDLE;
     VkCommandPool ptPool_ = VK_NULL_HANDLE;  // the present thread's (a pool is used by one thread)
@@ -232,6 +243,19 @@ private:
     int ptInFlight_ = 0;   // frames handed to the present thread, not released yet
     bool ptStop_ = false;
     std::atomic<bool> ptRecreate_{false};
+    // --sim-thread: the frames the game thread hands over (input time, id)
+    // and how far the render thread got (FFrameEndSync).
+    struct SimFrame { double flashInput; uint64_t id; };
+    std::thread simThread_;
+    std::deque<SimFrame> simFrames_;   // ptMutex_
+    uint64_t renderDone_ = 0;          // ptMutex_: the last frame the render thread finished
+    // --reflex
+    VkSemaphore reflexSem_ = VK_NULL_HANDLE;  // timeline, signalled by vkLatencySleepNV
+    uint64_t reflexValue_ = 0;
+    uint32_t reflexTimeouts_ = 0;
+    PFN_vkLatencySleepNV latencySleep_ = nullptr;
+    PFN_vkSetLatencySleepModeNV setSleepMode_ = nullptr;
+    PFN_vkSetLatencyMarkerNV setMarker_ = nullptr;
     bool ptFifo_ = false;  // the swapchain presents in FIFO: the present thread waits for each present (with present wait)
 };
 
@@ -302,7 +326,7 @@ void Demo::makeWindow() {
 void Demo::initVulkan() {
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
     app.pApplicationName = "bdex_demo";
-    app.apiVersion = VK_API_VERSION_1_1;
+    app.apiVersion = opt_.reflex ? VK_API_VERSION_1_2 : VK_API_VERSION_1_1;  // (--reflex: timeline semaphores)
     const std::string engine = !opt_.engine.empty() ? opt_.engine : opt_.presentThread ? "vkd3d" : "";
     if (!engine.empty()) app.pEngineName = engine.c_str();
     uint32_t extCount = 0;
@@ -405,9 +429,35 @@ void Demo::initVulkan() {
 #else
     if (opt_.antiLag) throw std::runtime_error("--anti-lag: built with Vulkan headers older than VK_AMD_anti_lag");
 #endif
+    VkPhysicalDeviceTimelineSemaphoreFeatures timelineFeat{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
+    if (opt_.reflex) {
+        uint32_t n = 0;
+        vkEnumerateDeviceExtensionProperties(physDev_, nullptr, &n, nullptr);
+        std::vector<VkExtensionProperties> exts(n);
+        vkEnumerateDeviceExtensionProperties(physDev_, nullptr, &n, exts.data());
+        bool found = false;
+        for (const auto& e : exts) found = found || strcmp(e.extensionName, VK_NV_LOW_LATENCY_2_EXTENSION_NAME) == 0;
+        if (!found) throw std::runtime_error("--reflex: VK_NV_low_latency2 not available");
+        devExts.push_back(VK_NV_LOW_LATENCY_2_EXTENSION_NAME);
+        timelineFeat.timelineSemaphore = VK_TRUE;
+        timelineFeat.pNext = const_cast<void*>(dci.pNext);
+        dci.pNext = &timelineFeat;
+    }
     dci.enabledExtensionCount = static_cast<uint32_t>(devExts.size());
     dci.ppEnabledExtensionNames = devExts.data();
     VK_CHECK(vkCreateDevice(physDev_, &dci, nullptr, &device_));
+    if (opt_.reflex) {
+        latencySleep_ = reinterpret_cast<PFN_vkLatencySleepNV>(vkGetDeviceProcAddr(device_, "vkLatencySleepNV"));
+        setSleepMode_ = reinterpret_cast<PFN_vkSetLatencySleepModeNV>(vkGetDeviceProcAddr(device_, "vkSetLatencySleepModeNV"));
+        setMarker_ = reinterpret_cast<PFN_vkSetLatencyMarkerNV>(vkGetDeviceProcAddr(device_, "vkSetLatencyMarkerNV"));
+        if (!latencySleep_ || !setSleepMode_ || !setMarker_) throw std::runtime_error("--reflex: no vkLatencySleepNV");
+        VkSemaphoreTypeCreateInfo ti{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
+        ti.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+        VkSemaphoreCreateInfo sci{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+        sci.pNext = &ti;
+        VK_CHECK(vkCreateSemaphore(device_, &sci, nullptr, &reflexSem_));
+        printf("demo: Reflex (VK_NV_low_latency2) on the game thread\n");
+    }
     if (ptHasPresentWait_)
         ptWaitForPresent_ = reinterpret_cast<PFN_vkWaitForPresentKHR>(vkGetDeviceProcAddr(device_, "vkWaitForPresentKHR"));
 #ifdef VK_AMD_anti_lag
@@ -441,6 +491,7 @@ void Demo::initVulkan() {
         ptCredits_ = opt_.presentThread - 1;
         ptQueueThread_ = std::thread([this] { ptQueueLoop(); });
         ptWaitThread_ = std::thread([this] { ptWaitLoop(); });
+        if (opt_.simThread) simThread_ = std::thread([this] { simLoop(); });
     }
 }
 
@@ -507,6 +558,11 @@ void Demo::createSwapchain() {
     images_.resize(in);
     vkGetSwapchainImagesKHR(device_, swapchain_, &in, images_.data());
     printf("demo: swapchain %ux%u, %u images, present mode %d\n", extent_.width, extent_.height, in, mode);
+    if (setSleepMode_) {
+        VkLatencySleepModeInfoNV lm{VK_STRUCTURE_TYPE_LATENCY_SLEEP_MODE_INFO_NV};
+        lm.lowLatencyMode = VK_TRUE;
+        setSleepMode_(device_, swapchain_, &lm);
+    }
     ptFifo_ = mode == VK_PRESENT_MODE_FIFO_KHR || mode == VK_PRESENT_MODE_FIFO_RELAXED_KHR;
 
     if (!renderPass_) {
@@ -998,8 +1054,58 @@ void Demo::ptStopThreads() {
         ptStop_ = true;
     }
     ptCv_.notify_all();
+    if (simThread_.joinable()) simThread_.join();
     ptQueueThread_.join();
     ptWaitThread_.join();
+}
+
+void Demo::reflexMarker(VkLatencyMarkerNV marker, uint64_t id) {
+    if (!setMarker_) return;
+    VkSetLatencyMarkerInfoNV mi{VK_STRUCTURE_TYPE_SET_LATENCY_MARKER_INFO_NV};
+    mi.presentID = id;
+    mi.marker = marker;
+    setMarker_(device_, swapchain_, &mi);
+}
+
+// --sim-thread: the game thread — its own cap or Reflex's sleep, then the
+// input and the simulation (4 ms), handed to the render thread; it begins
+// the next frame once the render thread has finished the one before this one
+// (one frame of lag, as Unreal's FFrameEndSync allows).
+void Demo::simLoop() {
+    using clock = std::chrono::steady_clock;
+    const auto period = std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(1.0 / opt_.fps));
+    auto next = clock::now();
+    for (uint64_t id = 1;; ++id) {
+        if (opt_.reflex) {
+            VkLatencySleepInfoNV si{VK_STRUCTURE_TYPE_LATENCY_SLEEP_INFO_NV};
+            si.signalSemaphore = reflexSem_;
+            si.value = ++reflexValue_;
+            latencySleep_(device_, swapchain_, &si);
+            VkSemaphoreWaitInfo wi{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
+            wi.semaphoreCount = 1;
+            wi.pSemaphores = &reflexSem_;
+            wi.pValues = &si.value;
+            if (vkWaitSemaphores(device_, &wi, 200'000'000) == VK_TIMEOUT) ++reflexTimeouts_;
+        } else if (!opt_.uncapped) {
+            next += period;
+            if (next > clock::now()) std::this_thread::sleep_until(next);
+            else next = clock::now();
+        }
+        reflexMarker(VK_LATENCY_MARKER_SIMULATION_START_NV, id);
+        double flashInput = -1.0;
+        if (opt_.latencyTest == 2 && steadyMs() >= nextAutoMs_) {
+            if (nextAutoMs_ > 0.0) flashInput = steadyMs();  // (none in the first half second)
+            nextAutoMs_ = steadyMs() + 500.0;
+        }
+        const auto busy = clock::now() + std::chrono::milliseconds(4);
+        while (clock::now() < busy) {}
+        reflexMarker(VK_LATENCY_MARKER_SIMULATION_END_NV, id);
+        std::unique_lock<std::mutex> lk(ptMutex_);
+        simFrames_.push_back({flashInput, id});
+        ptCv_.notify_all();
+        ptCv_.wait(lk, [&] { return ptStop_ || renderDone_ + 1 >= id; });
+        if (ptStop_) return;
+    }
 }
 
 // The game's thread under --present-thread: reads its input, renders into
@@ -1026,15 +1132,27 @@ void Demo::drawFramePT() {
     PushConstants pc{{float(extent_.width), float(extent_.height)}, float(animTime_ * opt_.speed), frameCount_,
                      opt_.cutEvery > 0 ? uint32_t((frameCount_ / opt_.cutEvery) & 1) : 0u};
     double flashInput = -1.0;
-    if (opt_.latencyTest == 2 && steadyMs() >= nextAutoMs_) {
-        if (nextAutoMs_ > 0.0) inputMs_ = steadyMs();  // (none in the first half second)
-        nextAutoMs_ = steadyMs() + 500.0;
+    uint64_t id = frameCount_ + 1;
+    if (opt_.simThread) {
+        std::unique_lock<std::mutex> lk(ptMutex_);
+        ptCv_.wait(lk, [this] { return ptStop_ || !simFrames_.empty(); });
+        if (simFrames_.empty()) return;
+        flashInput = simFrames_.front().flashInput;
+        id = simFrames_.front().id;
+        simFrames_.pop_front();
+        if (flashInput >= 0.0) pc.variant = 2u;
+    } else {
+        if (opt_.latencyTest == 2 && steadyMs() >= nextAutoMs_) {
+            if (nextAutoMs_ > 0.0) inputMs_ = steadyMs();  // (none in the first half second)
+            nextAutoMs_ = steadyMs() + 500.0;
+        }
+        if (opt_.latencyTest && inputMs_ >= 0.0) {
+            flashInput = inputMs_;
+            inputMs_ = -1.0;
+            pc.variant = 2u;
+        }
     }
-    if (opt_.latencyTest && inputMs_ >= 0.0) {
-        flashInput = inputMs_;
-        inputMs_ = -1.0;
-        pc.variant = 2u;
-    }
+    reflexMarker(VK_LATENCY_MARKER_RENDERSUBMIT_START_NV, id);
     VkCommandBuffer cmd = ptRender_[slot];
     vkResetCommandBuffer(cmd, 0);
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -1056,7 +1174,7 @@ void Demo::drawFramePT() {
     vkEndCommandBuffer(cmd);
     {
         std::lock_guard<std::mutex> lk(ptMutex_);
-        ptFrames_.push_back({slot, flashInput});
+        ptFrames_.push_back({slot, flashInput, id});
         ++ptInFlight_;
     }
     ptCv_.notify_all();
@@ -1064,7 +1182,10 @@ void Demo::drawFramePT() {
         std::unique_lock<std::mutex> lk(ptMutex_);
         ptCv_.wait(lk, [this] { return ptCredits_ > 0 || ptStop_; });
         --ptCredits_;
+        renderDone_ = id;  // (--sim-thread: the game thread may go on)
     }
+    ptCv_.notify_all();
+    reflexMarker(VK_LATENCY_MARKER_RENDERSUBMIT_END_NV, id);
     ++frameCount_;
 }
 
@@ -1153,7 +1274,9 @@ void Demo::ptQueueLoop() {
                 fprintf(latencyLog_, "flash %.3f %.3f\n", f.flashInput, steadyMs());
                 fflush(latencyLog_);
             }
+            reflexMarker(VK_LATENCY_MARKER_PRESENT_START_NV, f.id);
             r = vkQueuePresentKHR(queue_, &pi);
+            reflexMarker(VK_LATENCY_MARKER_PRESENT_END_NV, f.id);
             if (r < 0) id = 0;
         }
         if (r == VK_ERROR_OUT_OF_DATE_KHR || (r == VK_SUBOPTIMAL_KHR && !opt_.ignoreResize)) ptRecreate_ = true;
@@ -1296,7 +1419,7 @@ void Demo::run() {
             statT = now;
             statFrames = 0;
         }
-        if (!opt_.replayTiming && !opt_.uncapped) {
+        if (!opt_.replayTiming && !opt_.uncapped && !opt_.simThread) {
             next += period;
             if (next > clock::now()) std::this_thread::sleep_until(next);
             else next = clock::now();
@@ -1325,6 +1448,8 @@ void Demo::cleanup() {
             if (ptAcquire_[i]) vkDestroySemaphore(device_, ptAcquire_[i], nullptr);
         }
         if (ptPass_) vkDestroyRenderPass(device_, ptPass_, nullptr);
+        if (reflexSem_) vkDestroySemaphore(device_, reflexSem_, nullptr);
+        if (reflexTimeouts_) printf("demo: %u Reflex sleep(s) never signalled within 200 ms\n", reflexTimeouts_);
         if (ptPool_) vkDestroyCommandPool(device_, ptPool_, nullptr);
         destroySwapchain();
         for (VkSemaphore s : renderSem_) vkDestroySemaphore(device_, s, nullptr);
@@ -1379,6 +1504,8 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--anti-lag") o.antiLag = true;
         else if (a == "--present-thread") o.presentThread = std::clamp(atoi(value().c_str()), 1, 6);
         else if (a == "--engine") o.engine = value();
+        else if (a == "--sim-thread") o.simThread = true;
+        else if (a == "--reflex") o.reflex = true;
         else if (a == "--size") {
             std::string v = value();
             if (sscanf(v.c_str(), "%dx%d", &o.width, &o.height) != 2) throw std::runtime_error("bad --size");
@@ -1410,7 +1537,7 @@ Options parseArgs(int argc, char** argv) {
             printf("usage: bdex_demo [--fps N | --uncapped] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]\n"
                    "                 [--deterministic] [--ignore-resize] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]\n"
                    "                 [--gpu-load N] [--latency-test [auto]] [--latency-log FILE] [--anti-lag]\n"
-                   "                 [--present-thread L [--engine NAME]]\n"
+                   "                 [--present-thread L [--engine NAME] [--sim-thread [--reflex]]]\n"
                    "                 [--stress resize|recreate|surface|window|fullscreen|minimize:N[,...]] [--stress-until N]\n"
                    "                 [--replay DIR [--replay-step N] [--replay-start N]\n"
                    "                  [--replay-timing [--replay-log FILE]]]\n");
@@ -1420,6 +1547,8 @@ Options parseArgs(int argc, char** argv) {
         }
     }
     if (o.replayTiming && o.replayDir.empty()) throw std::runtime_error("--replay-timing needs --replay DIR");
+    if ((o.simThread || o.reflex) && !o.presentThread) throw std::runtime_error("--sim-thread, --reflex need --present-thread");
+    if (o.reflex && !o.simThread) throw std::runtime_error("--reflex needs --sim-thread (Reflex sleeps on the game thread)");
     if (o.presentThread && (!o.replayDir.empty() || o.repeat > 1 || o.antiLag))
         throw std::runtime_error("--present-thread does not go with --replay, --repeat or --anti-lag");
     for (long every : o.stressEvery)
