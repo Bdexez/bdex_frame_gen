@@ -27,6 +27,11 @@ struct Config {
                                   // swapchain, frames passed through) and generates only once « Démarrer » targets it
                                   // (platformAppSession); set by the panel. BDEX_FG=1 bypasses it.
     bool  appTargeted   = false;  // require_app, runtime: the panel's session targets this process
+    // fps_limit holds this game: always without the panel's model
+    // (require_app = 0: Game Mode, a [game] section, BDEX_FG=1), else only
+    // the game the panel's session targets (« Démarrer ») — not an armed
+    // game it has not started, nor one it stopped or left when it closed.
+    bool  capsThisGame() const { return !requireApp || appTargeted; }
     bool  processNamed  = false;  // runtime: this process's own [section] or BDEX_FG=1 turned the layer on or
                                   // set require_app — never taken for a desktop program (platformIsNonGame)
     double panelDisplayHz = 0.0;  // require_app, runtime: the monitor's refresh rate as the panel reads it (0 unknown)

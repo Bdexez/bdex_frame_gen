@@ -45,10 +45,10 @@ jobs:
       matrix:
         include:
           - part: core
-            ctest: "-E '^validation$|integration|latency_probe|gamescope_limit|capture_linux|live_config|record_live|replay_bench|swapchain_stress|acquire_timeout|multithread_config'"
+            ctest: "-E '^validation$|integration|latency_probe|gamescope_limit|capture_linux|live_config|limit_session|record_live|replay_bench|swapchain_stress|acquire_timeout|multithread_config'"
             extras: true
           - part: display
-            ctest: "-R 'integration|latency_probe|gamescope_limit|capture_linux|live_config|record_live|replay_bench|swapchain_stress|acquire_timeout|multithread_config'"
+            ctest: "-R 'integration|latency_probe|gamescope_limit|capture_linux|live_config|limit_session|record_live|replay_bench|swapchain_stress|acquire_timeout|multithread_config'"
           - part: validation-1
             ctest: "-R '^validation$'"
             shard: 1/3

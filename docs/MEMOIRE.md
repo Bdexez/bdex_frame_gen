@@ -3883,3 +3883,37 @@ State of Decay 2 parfait, mais Oblivion Remastered (Unreal 5) et PRAGMATA
   `VK_NV_low_latency2` (piège : `vulkaninfo | grep -q` sous pipefail).
 - Reflex reste masqué pour DXVK (D3D11) : pas de jeu D3D11 concerné chez
   l'utilisateur ; à revoir si un jeu D3D11 Unreal avec Reflex le demande.
+- Poussé sur `origin/main` le 31/10 (9044435) avec l'accord de
+  l'utilisateur. Retour après essai avec Reflex au maximum : « encore un
+  léger écart » avec le limiteur du jeu sur Oblivion et PRAGMATA, « bien
+  que très léger » — non étudié.
+
+### 31/10 (fin, 2) — la limite ne retient que le jeu démarré
+
+Signalé par l'utilisateur : « le limiteur de fps s'applique à tous les jeux
+démarrés sans regarder avant si on a sélectionné le jeu », « si je ferme le
+framegen le limiteur continue son application ».
+
+- **Cause** : sous `require_app`, chaque jeu Vulkan est armé (swapchain
+  virtuelle, images passées telles quelles, `paused`) ; `limitFrameRate`,
+  l'offre FIFO de `fps_limit_wait` (`fifoOnly`, la demande SUBOPTIMAL) et
+  le statut lisaient `fps_limit` sans regarder si la session du panneau
+  ciblait le jeu. « Arrêter » ou un panneau fermé (session de plus de 5 s)
+  remettaient seulement la génération en pause.
+- **Correctif** : `Config::capsThisGame()` = `!requireApp || appTargeted`,
+  appliqué à la limite, au plafond de `gpu_headroom`, à `fifoOnly`
+  (création de l'instance et `setFrameLimitHint` à chaque relecture), à la
+  demande de nouvelle swapchain et au `fps_limit` / `cap_point` du statut.
+  Sans le panneau (mode Jeu, `[jeu]` avec `require_app = 0`, `BDEX_FG=1`) :
+  inchangé. Un jeu ciblé mis en pause par le raccourci garde sa limite
+  (choix laissé à l'utilisateur).
+- **Test** `limit_session` (et `limit_session_present_thread`, présenté
+  comme DXVK / VKD3D) : panneau factice (un `sleep` nommé
+  `bdex-framegen-gui`, battement par `touch`), démo à 60 i/s, limite 20 :
+  avant 20/20/20/20 (armé, démarré, arrêté, panneau fermé), après
+  60/20/60/60. Présenté comme VKD3D : au « Démarrer », demande de
+  swapchain FIFO, retenu à l'attente ; libre ensuite (il reste en FIFO, la
+  couche répond à ses attentes à la fin GPU).
+- Piège de banc : une copie du script hors du dépôt ne trouve plus
+  `tools/layer_env.sh` (chemin relatif) et charge la couche **installée**
+  sans le dire — le premier essai donnait 20/20/20/20 avec le correctif.

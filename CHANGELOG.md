@@ -6,6 +6,21 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### The frame cap holds only the game the panel started (2026-10-31)
+
+- Under the control panel's model (`require_app`), `fps_limit` held every
+  armed Vulkan game, started with « Démarrer » or not, and went on holding
+  it after « Arrêter » or once the panel was closed. It now holds only the
+  game the panel's session targets, and lets it go on « Arrêter » or once the
+  panel's session is no longer refreshed (5 s after it closes). The same
+  goes for the `gpu_headroom` cap, the FIFO offered to DXVK / VKD3D-Proton
+  games for `fps_limit_wait`, and the cap shown in the game's status. Games
+  run without the panel (Game Mode, a `[game]` section with
+  `require_app = 0`, `BDEX_FG=1`) are capped as before. A targeted game
+  paused by the shortcut keeps its cap. `limit_session` checks it (armed
+  60 fps, started 20, stopped 60, panel closed 60, with a 20 fps limit), also
+  presented as DXVK / VKD3D-Proton do.
+
 ### A slider for the game's frame cap in the panel (2026-10-31)
 
 - « Limite d'images du jeu » is now a slider from 0 (none) to 240 fps with a

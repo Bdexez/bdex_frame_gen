@@ -124,10 +124,10 @@ void VirtualSwapchain::publishStatus(int multiplier) {
     e.outFps = e.gameFps * e.multiplier;
     e.refreshHz = displayHz();
     e.limitHz = gsLimited_.load() ? gsHz_.load() : 0.0;
-    e.fpsLimit = cfg_.fpsLimit;
+    e.fpsLimit = cfg_.capsThisGame() ? cfg_.fpsLimit : 0.f;  // (an armed game the panel has not started: none)
     e.autoCapFps = headroomCap_.capFps;
     e.gpuBusy = gpuBusy_;
-    if (cfg_.fpsLimit != 0.f) {
+    if (e.fpsLimit != 0.0) {
         const double nowMs = msOf(clock::now());
         e.capPoint = dev_.capsAtSleep(nowMs) ? "input" : capsAtWait(nowMs) ? "wait" : "present";
     }
@@ -1035,12 +1035,15 @@ bool VirtualSwapchain::fastGame(double hz) {
 // input a frame earlier.
 double VirtualSwapchain::limitFrameRate() {
     // auto: the refresh rate divided by the multiplier (60 on 120 Hz at x2),
-    // once the present feedback knows it; no cap until then.
-    double fps = cfg_.fpsLimit == 0.f ? 0.0
-                 : cfg_.fpsLimit < 0.f ? displayHz() / std::max(1, cfg_.multiplier)
-                                       : double(cfg_.fpsLimit);
+    // once the present feedback knows it; no cap until then. Under the
+    // panel's model, only in the game « Démarrer » targets
+    // (Config::capsThisGame): an armed game runs free.
+    const bool caps = cfg_.capsThisGame();
+    double fps = !caps || cfg_.fpsLimit == 0.f ? 0.0
+                 : cfg_.fpsLimit < 0.f         ? displayHz() / std::max(1, cfg_.multiplier)
+                                               : double(cfg_.fpsLimit);
     // (gpu_headroom: the lower of the two)
-    if (const double cap = headroomCap_.capFps; cap > 0.0) fps = fps > 0.0 ? std::min(fps, cap) : cap;
+    if (const double cap = headroomCap_.capFps; caps && cap > 0.0) fps = fps > 0.0 ? std::min(fps, cap) : cap;
     dev_.capFps.store(fps, std::memory_order_relaxed);  // (for the game's own sleep point, DeviceData::capAtSleep)
     const double nowMs = msOf(clock::now());
     if (fps <= 0.0 || dev_.capsAtSleep(nowMs)) {
@@ -2023,8 +2026,8 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     // one (DXVK and VKD3D-Proton do on VK_SUBOPTIMAL_KHR), from the modes now
     // offered: once per surface, until a swapchain takes the FIFO offered
     // (createReal), so that a game that does not follow is not asked again.
-    if (pending == VK_SUCCESS && dev_.gamePresentWait && cfg_.fpsLimit != 0.f && !fifoLike(appPresentMode_) &&
-        dev_.inst->fifoOnly.load(std::memory_order_relaxed)) {
+    if (pending == VK_SUCCESS && dev_.gamePresentWait && cfg_.fpsLimit != 0.f && cfg_.capsThisGame() &&
+        !fifoLike(appPresentMode_) && dev_.inst->fifoOnly.load(std::memory_order_relaxed)) {
         bool ask = false;
         {
             std::lock_guard<std::mutex> lk(dev_.inst->surfMutex);

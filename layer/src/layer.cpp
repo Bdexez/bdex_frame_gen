@@ -111,7 +111,8 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateInstance(const VkInstanceCreateInfo* pCreat
         data->dxvk = eng.find("dxvk") != std::string::npos;
         const bool translation = data->dxvk || eng.find("vkd3d") != std::string::npos;
         data->presentWaitOffered = translation && data->config.enabled && data->config.hidePresentExt && data->config.fpsLimitWait;
-        data->fifoOnly.store(data->presentWaitOffered && data->config.fpsLimit != 0.f, std::memory_order_relaxed);
+        data->fifoOnly.store(data->presentWaitOffered && data->config.fpsLimit != 0.f && data->config.capsThisGame(),
+                             std::memory_order_relaxed);
     }
     {
         std::lock_guard<std::mutex> lock(g_mapMutex);
