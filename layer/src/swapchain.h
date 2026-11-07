@@ -335,8 +335,7 @@ private:
     std::atomic<bool> gsLimited_{false};  // Steam's framerate limit is on: gsHz_ is the limit
     clock::time_point gsPolledAt_{};      // worker
     bool gsFailed_ = false;               // worker: the WSI layer did not answer for this swapchain
-    uint64_t gsFirstCycle_ = 0;           // worker: the cycle the WSI layer gave first (its default until an event)
-    bool gsCycleChanged_ = false;         // worker: it has changed since — gamescope sent this swapchain one
+    pacing::GamescopeCycle gsCycle_;      // worker: this swapchain's cycle (the WSI layer's default until an event)
     bool gsLimitLogged_ = false;          // present thread: the limit state last logged
     double fbLastMs_ = 0.0;             // fbMutex_: last completion
     uint64_t fbDoneId_ = 0;             // fbMutex_: last present id the thread is done with (shown, or given up)

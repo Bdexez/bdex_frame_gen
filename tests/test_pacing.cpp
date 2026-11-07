@@ -1574,3 +1574,36 @@ TEST(pacing_fps_limit_wait_holds_a_translated_game_before_its_input) {
         CHECK(gpu.inputToGpuDoneMs < free.inputToGpuDoneMs + 0.5);
     }
 }
+
+// gamescope's refresh cycle for each of our swapchains (pollGamescope): the
+// WSI layer's default (60 Hz) until gamescope sends the swapchain one, the
+// surface's last cycle standing for a swapchain re-created without one.
+TEST(pacing_gamescope_cycle_takes_the_limit_a_re_created_swapchain_got) {
+    using pacing::GamescopeCycle;
+    const uint64_t d = GamescopeCycle::kWsiDefaultNs, limit = 33'333'333, deck = 11'111'111;
+    uint64_t known = 0;
+    // The game's first swapchain on a 60 Hz display.
+    GamescopeCycle a;
+    CHECK(a.take(d, known) == d && known == d);
+    // Steam's limit at 30: the limiter file flips before the limit's cycle
+    // reaches the swapchain, which still reads 60 Hz; the WSI layer then has
+    // the swapchain re-created (a game aware of the limiter), and the new one
+    // gets the limit's cycle at once. Until 31/10 its first reading was taken
+    // for the default: the surface's last, 60 Hz, stood under the limit.
+    CHECK(a.take(d, known) == d);
+    GamescopeCycle b;
+    CHECK(b.take(limit, known) == limit && known == limit);
+    CHECK(b.take(limit, known) == limit);
+    // Re-created again, gamescope sending nothing (it sends a surface's
+    // cycle only when it changes): the default read, the limit stands.
+    GamescopeCycle c;
+    CHECK(c.take(d, known) == limit && known == limit);
+    CHECK(c.take(d, known) == limit);
+    // A cycle sent to a swapchain that had read the default: its own.
+    CHECK(c.take(deck, known) == deck && known == deck);
+    // ...and after a change, even back to the default's value: the limit
+    // lifted on a 60 Hz display, sent to the swapchain that had the limit.
+    CHECK(b.take(d, known) == d && known == d);
+    GamescopeCycle e;
+    CHECK(e.take(d, known) == d);
+}

@@ -192,7 +192,8 @@ struct DeviceData {
     // (statusKey): it sends a surface's cycle only when it changes, so a
     // swapchain re-created on the surface — its WSI layer forces that when
     // Steam's framerate limit is switched on or off — reports the layer's
-    // default (60 Hz) until the next change; the surface's last one stands.
+    // default (60 Hz) until the next change; the surface's last one stands
+    // (pacing::GamescopeCycle).
     std::mutex gamescopeMutex;
     std::unordered_map<uint64_t, uint64_t> gamescopeCycles;
     // Steam's frame limit was on at some point: gamescope's cycles may since
