@@ -6,6 +6,20 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Unreal's own limit with Reflex as the latency reference (2026-10-31)
+
+- `bdex_demo --reflex-limit`: the game's frame limit handed to Reflex
+  (`minimumIntervalUs`, the driver's limiter), as Unreal does with Reflex on;
+  `latency_probe` checks the layer's limit at Reflex's sleep against it too.
+  Measured at 40 fps: no systematic difference (means of 9.3–10.3 ms at
+  x1, 24.5–26.9 at x3, from run to run). What differs from one launch to the next, whichever
+  limiter caps, is the moment of the refresh cycle the frames are ready at:
+  up to a refresh of latency (48 fps on 144 Hz, five runs: first photon 7.6
+  to 11.9 ms). Locking the cap onto the refreshes was tried and left out:
+  no gain measured (x3 on 144 Hz: 25.7 ms either way; x2 on 60 Hz: 35.2
+  without, 35.6 with), the frames' readiness and the compositor jittering by
+  about half a refresh on this bench.
+
 ### Steam's frame limit is read right when a game re-creates its swapchain (2026-10-31)
 
 - Under gamescope (SteamOS Game Mode), when Steam's framerate limit came on

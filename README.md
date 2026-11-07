@@ -837,7 +837,15 @@ NVAPI on NVIDIA by default), the layer's limit holds the game at Reflex's
 sleep (`cap_point=input`), before its input. Same demo with such a game
 thread (`--sim-thread`), 40 fps cap at x2, input to the real frame: the
 game's own limiter 27.3 ms, the layer at the present wait 46.9 ms, at
-Reflex's sleep 26.2 ms (the old present hold: 96.9 ms).
+Reflex's sleep 26.2 ms (the old present hold: 96.9 ms). Unreal hands its
+own frame rate limit to Reflex when Reflex is on (the driver's limiter):
+the layer at Reflex's sleep measures the same (`--reflex-limit`, 40 fps:
+9.3–10.3 ms at x1, 24.5–26.9 at x3, either way). A cap of a whole number of
+refreshes a frame (48 fps on 144 Hz) has the game's frames ready at the same
+moment of the refresh cycle for a whole run, but a different one at each
+launch, whichever limiter caps: from one launch to the next, up to a
+refresh more from input to screen (headless gamescope, five runs: first
+photon 7.6 to 11.9 ms).
 
 ---
 
