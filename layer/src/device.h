@@ -1,5 +1,6 @@
 #pragma once
 #include "config.h"
+#include "depth_tracker.h"
 #include "dispatch.h"
 #include "pacing.h"
 #include "vk_util.h"
@@ -177,6 +178,9 @@ struct DeviceData {
         if (inst && inst->presentWaitOffered)
             inst->fifoOnly.store(config.fpsLimit != 0.f && config.capsThisGame(), std::memory_order_relaxed);
     }
+    // depth: the game's depth buffer, tracked from its commands (only when
+    // the option is on at the device's creation: layer.cpp hooks them then).
+    std::shared_ptr<DepthTracker> depthTracker;  // (shared: its deleter comes with it, the tests that build a DeviceData link no tracker)
     VkQueue computeQueue = VK_NULL_HANDLE;
     uint32_t computeFamily = 0;
     uint32_t computeIndex = 0;

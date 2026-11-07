@@ -109,7 +109,22 @@ namespace bdex {
     X(DestroyQueryPool)               \
     X(CmdResetQueryPool)              \
     X(CmdWriteTimestamp)              \
-    X(GetQueryPoolResults)
+    X(GetQueryPoolResults)            \
+    X(CreateFramebuffer)              \
+    X(DestroyFramebuffer)             \
+    X(CreateRenderPass)               \
+    X(CreateRenderPass2)              \
+    X(CreateRenderPass2KHR)           \
+    X(DestroyRenderPass)              \
+    X(CmdBeginRenderPass)             \
+    X(CmdBeginRenderPass2)            \
+    X(CmdBeginRenderPass2KHR)         \
+    X(CmdBeginRendering)              \
+    X(CmdBeginRenderingKHR)           \
+    X(CmdPipelineBarrier2)            \
+    X(CmdPipelineBarrier2KHR)         \
+    X(CmdClearDepthStencilImage)      \
+    X(CmdClearAttachments)
 // Newer than the oldest Vulkan headers the layer builds with (1.3.204).
 #ifdef VK_NV_low_latency2
 #define BDEX_DEVICE_FUNCS_LOW_LATENCY2(X) \

@@ -13,6 +13,7 @@
 #include "vk_util.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <cstring>
@@ -40,6 +41,11 @@ std::unordered_map<void*, std::unique_ptr<InstanceData>>& g_instances =
     *new std::unordered_map<void*, std::unique_ptr<InstanceData>>();
 std::unordered_map<void*, std::unique_ptr<DeviceData>>& g_devices =
     *new std::unordered_map<void*, std::unique_ptr<DeviceData>>();
+// depth: the device whose commands are watched, found without g_mapMutex
+// (its hooks run for each render pass and barrier of the game, from all of
+// its recording threads).
+std::atomic<void*> g_depthKey{nullptr};
+std::atomic<DeviceData*> g_depthDev{nullptr};
 std::once_flag g_logInit;
 
 const VkLayerProperties g_layerProps = {
@@ -742,6 +748,16 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
     inst->vt.GetPhysicalDeviceMemoryProperties(physDev, &data->memProps);
     data->config.autoConfigure(data->props, data->memProps);
     data->setFrameLimitHint();
+    // depth: the game's commands are watched (depth_tracker.h) — the hooks
+    // are handed out by layerGetDeviceProcAddr only from here on, and only
+    // with the option on when the game starts.
+    if (data->config.depth && data->config.enabled && !data->config.antiCheatDisabled) {
+        data->depthTracker = std::make_shared<DepthTracker>(*data);
+        g_depthDev.store(nullptr, std::memory_order_release);
+        g_depthKey.store(dispatchKey(*pDevice), std::memory_order_release);
+        g_depthDev.store(data.get(), std::memory_order_release);
+        BDEX_INFO("depth: the game's depth buffer is looked for in its commands");
+    }
     if (!data->config.autoTunedTo.empty()) {
         static const char* kind[] = {"other", "integrated GPU", "discrete GPU", "virtual GPU", "software"};
         BDEX_INFO("auto-tuned for '%s' (%s): preset %s", data->props.deviceName,
@@ -814,6 +830,10 @@ VKAPI_ATTR void VKAPI_CALL DestroyDevice(VkDevice device, const VkAllocationCall
         }
     }
     if (!data) return;
+    if (g_depthKey.load() == dispatchKey(device)) {
+        g_depthKey.store(nullptr);
+        g_depthDev.store(nullptr);
+    }
     {
         std::lock_guard<std::mutex> lock(data->swapchainsMutex);
         if (!data->swapchains.empty()) BDEX_WARN("%zu swapchain(s) still alive at device destruction", data->swapchains.size());
@@ -822,7 +842,206 @@ VKAPI_ATTR void VKAPI_CALL DestroyDevice(VkDevice device, const VkAllocationCall
     statusRemove(statusKey(device));
     if (data->cmdPool) data->vt.DestroyCommandPool(device, data->cmdPool, nullptr);
     data->destroyPipelineCache();
+    data->depthTracker.reset();  // (its views of the game's depth images)
     data->vt.DestroyDevice(device, pAllocator);
+}
+
+// ---------------------------------------------------------------------------
+// depth: the game's depth buffer (depth_tracker.h). These hooks are handed
+// out only to a device created with the option on (layerGetDeviceProcAddr).
+// ---------------------------------------------------------------------------
+
+DeviceData* depthDevice(const void* handle) {
+    void* key = dispatchKey(handle);
+    if (key == g_depthKey.load(std::memory_order_acquire))
+        if (DeviceData* d = g_depthDev.load(std::memory_order_acquire)) return d;
+    return getDevice(key);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL CreateImage(VkDevice device, const VkImageCreateInfo* pCreateInfo,
+                                           const VkAllocationCallbacks* pAllocator, VkImage* pImage) {
+    DeviceData* dev = depthDevice(device);
+    DepthTracker* t = dev->depthTracker.get();
+    if (!t) return dev->vt.CreateImage(device, pCreateInfo, pAllocator, pImage);
+    VkImageCreateInfo ci = *pCreateInfo;
+    ci.usage = t->usageFor(*pCreateInfo);  // (SAMPLED, so that the layer can read a depth buffer)
+    VkResult r = dev->vt.CreateImage(device, &ci, pAllocator, pImage);
+    if (r != VK_SUCCESS && ci.usage != pCreateInfo->usage) {
+        ci.usage = pCreateInfo->usage;
+        r = dev->vt.CreateImage(device, &ci, pAllocator, pImage);
+    }
+    if (r == VK_SUCCESS) t->imageCreated(*pImage, ci);
+    return r;
+}
+
+VKAPI_ATTR void VKAPI_CALL DestroyImage(VkDevice device, VkImage image, const VkAllocationCallbacks* pAllocator) {
+    DeviceData* dev = depthDevice(device);
+    if (image && dev->depthTracker) dev->depthTracker->imageDestroying(image);
+    dev->vt.DestroyImage(device, image, pAllocator);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL CreateImageView(VkDevice device, const VkImageViewCreateInfo* pCreateInfo,
+                                               const VkAllocationCallbacks* pAllocator, VkImageView* pView) {
+    DeviceData* dev = depthDevice(device);
+    VkResult r = dev->vt.CreateImageView(device, pCreateInfo, pAllocator, pView);
+    if (r == VK_SUCCESS && dev->depthTracker) dev->depthTracker->viewCreated(*pView, *pCreateInfo);
+    return r;
+}
+
+VKAPI_ATTR void VKAPI_CALL DestroyImageView(VkDevice device, VkImageView view, const VkAllocationCallbacks* pAllocator) {
+    DeviceData* dev = depthDevice(device);
+    if (view && dev->depthTracker) dev->depthTracker->viewDestroyed(view);
+    dev->vt.DestroyImageView(device, view, pAllocator);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL CreateFramebuffer(VkDevice device, const VkFramebufferCreateInfo* pCreateInfo,
+                                                 const VkAllocationCallbacks* pAllocator, VkFramebuffer* pFb) {
+    DeviceData* dev = depthDevice(device);
+    VkResult r = dev->vt.CreateFramebuffer(device, pCreateInfo, pAllocator, pFb);
+    if (r == VK_SUCCESS && dev->depthTracker) dev->depthTracker->framebufferCreated(*pFb, *pCreateInfo);
+    return r;
+}
+
+VKAPI_ATTR void VKAPI_CALL DestroyFramebuffer(VkDevice device, VkFramebuffer fb, const VkAllocationCallbacks* pAllocator) {
+    DeviceData* dev = depthDevice(device);
+    if (fb && dev->depthTracker) dev->depthTracker->framebufferDestroyed(fb);
+    dev->vt.DestroyFramebuffer(device, fb, pAllocator);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL CreateRenderPass(VkDevice device, const VkRenderPassCreateInfo* pCreateInfo,
+                                                const VkAllocationCallbacks* pAllocator, VkRenderPass* pRp) {
+    DeviceData* dev = depthDevice(device);
+    VkResult r = dev->vt.CreateRenderPass(device, pCreateInfo, pAllocator, pRp);
+    if (r == VK_SUCCESS && dev->depthTracker) dev->depthTracker->renderPassCreated(*pRp, *pCreateInfo);
+    return r;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL CreateRenderPass2(VkDevice device, const VkRenderPassCreateInfo2* pCreateInfo,
+                                                 const VkAllocationCallbacks* pAllocator, VkRenderPass* pRp) {
+    DeviceData* dev = depthDevice(device);
+    VkResult r = dev->vt.CreateRenderPass2(device, pCreateInfo, pAllocator, pRp);
+    if (r == VK_SUCCESS && dev->depthTracker) dev->depthTracker->renderPassCreated2(*pRp, *pCreateInfo);
+    return r;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL CreateRenderPass2KHR(VkDevice device, const VkRenderPassCreateInfo2* pCreateInfo,
+                                                    const VkAllocationCallbacks* pAllocator, VkRenderPass* pRp) {
+    DeviceData* dev = depthDevice(device);
+    VkResult r = dev->vt.CreateRenderPass2KHR(device, pCreateInfo, pAllocator, pRp);
+    if (r == VK_SUCCESS && dev->depthTracker) dev->depthTracker->renderPassCreated2(*pRp, *pCreateInfo);
+    return r;
+}
+
+VKAPI_ATTR void VKAPI_CALL DestroyRenderPass(VkDevice device, VkRenderPass rp, const VkAllocationCallbacks* pAllocator) {
+    DeviceData* dev = depthDevice(device);
+    if (rp && dev->depthTracker) dev->depthTracker->renderPassDestroyed(rp);
+    dev->vt.DestroyRenderPass(device, rp, pAllocator);
+}
+
+VKAPI_ATTR void VKAPI_CALL GetDeviceQueue(VkDevice device, uint32_t family, uint32_t index, VkQueue* pQueue) {
+    DeviceData* dev = depthDevice(device);
+    dev->vt.GetDeviceQueue(device, family, index, pQueue);
+    if (*pQueue && dev->depthTracker) dev->depthTracker->queueRetrieved(*pQueue, family);
+}
+
+VKAPI_ATTR void VKAPI_CALL GetDeviceQueue2(VkDevice device, const VkDeviceQueueInfo2* pInfo, VkQueue* pQueue) {
+    DeviceData* dev = depthDevice(device);
+    dev->vt.GetDeviceQueue2(device, pInfo, pQueue);
+    if (*pQueue && dev->depthTracker) dev->depthTracker->queueRetrieved(*pQueue, pInfo->queueFamilyIndex);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL BeginCommandBuffer(VkCommandBuffer cb, const VkCommandBufferBeginInfo* pInfo) {
+    DeviceData* dev = depthDevice(cb);
+    if (dev->depthTracker) dev->depthTracker->beginCommandBuffer(cb);
+    return dev->vt.BeginCommandBuffer(cb, pInfo);
+}
+
+VKAPI_ATTR void VKAPI_CALL CmdBeginRenderPass(VkCommandBuffer cb, const VkRenderPassBeginInfo* pInfo, VkSubpassContents c) {
+    DeviceData* dev = depthDevice(cb);
+    if (dev->depthTracker) dev->depthTracker->beginRenderPass(cb, *pInfo);
+    dev->vt.CmdBeginRenderPass(cb, pInfo, c);
+}
+
+VKAPI_ATTR void VKAPI_CALL CmdBeginRenderPass2(VkCommandBuffer cb, const VkRenderPassBeginInfo* pInfo,
+                                               const VkSubpassBeginInfo* pSubpass) {
+    DeviceData* dev = depthDevice(cb);
+    if (dev->depthTracker) dev->depthTracker->beginRenderPass(cb, *pInfo);
+    dev->vt.CmdBeginRenderPass2(cb, pInfo, pSubpass);
+}
+
+VKAPI_ATTR void VKAPI_CALL CmdBeginRenderPass2KHR(VkCommandBuffer cb, const VkRenderPassBeginInfo* pInfo,
+                                                  const VkSubpassBeginInfo* pSubpass) {
+    DeviceData* dev = depthDevice(cb);
+    if (dev->depthTracker) dev->depthTracker->beginRenderPass(cb, *pInfo);
+    dev->vt.CmdBeginRenderPass2KHR(cb, pInfo, pSubpass);
+}
+
+VKAPI_ATTR void VKAPI_CALL CmdBeginRendering(VkCommandBuffer cb, const VkRenderingInfo* pInfo) {
+    DeviceData* dev = depthDevice(cb);
+    if (dev->depthTracker) dev->depthTracker->beginRendering(cb, *pInfo);
+    dev->vt.CmdBeginRendering(cb, pInfo);
+}
+
+VKAPI_ATTR void VKAPI_CALL CmdBeginRenderingKHR(VkCommandBuffer cb, const VkRenderingInfo* pInfo) {
+    DeviceData* dev = depthDevice(cb);
+    if (dev->depthTracker) dev->depthTracker->beginRendering(cb, *pInfo);
+    dev->vt.CmdBeginRenderingKHR(cb, pInfo);
+}
+
+VKAPI_ATTR void VKAPI_CALL CmdPipelineBarrier(VkCommandBuffer cb, VkPipelineStageFlags src, VkPipelineStageFlags dst,
+                                              VkDependencyFlags flags, uint32_t memCount, const VkMemoryBarrier* mem,
+                                              uint32_t bufCount, const VkBufferMemoryBarrier* buf, uint32_t imgCount,
+                                              const VkImageMemoryBarrier* img) {
+    DeviceData* dev = depthDevice(cb);
+    if (imgCount && dev->depthTracker) dev->depthTracker->barriers(cb, imgCount, img);
+    dev->vt.CmdPipelineBarrier(cb, src, dst, flags, memCount, mem, bufCount, buf, imgCount, img);
+}
+
+VKAPI_ATTR void VKAPI_CALL CmdPipelineBarrier2(VkCommandBuffer cb, const VkDependencyInfo* pInfo) {
+    DeviceData* dev = depthDevice(cb);
+    if (dev->depthTracker) dev->depthTracker->barriers2(cb, *pInfo);
+    dev->vt.CmdPipelineBarrier2(cb, pInfo);
+}
+
+VKAPI_ATTR void VKAPI_CALL CmdPipelineBarrier2KHR(VkCommandBuffer cb, const VkDependencyInfo* pInfo) {
+    DeviceData* dev = depthDevice(cb);
+    if (dev->depthTracker) dev->depthTracker->barriers2(cb, *pInfo);
+    dev->vt.CmdPipelineBarrier2KHR(cb, pInfo);
+}
+
+VKAPI_ATTR void VKAPI_CALL CmdClearDepthStencilImage(VkCommandBuffer cb, VkImage image, VkImageLayout layout,
+                                                     const VkClearDepthStencilValue* value, uint32_t rangeCount,
+                                                     const VkImageSubresourceRange* ranges) {
+    DeviceData* dev = depthDevice(cb);
+    if (dev->depthTracker)
+        for (uint32_t i = 0; i < rangeCount; ++i)
+            if (ranges[i].aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT) {
+                dev->depthTracker->clearImage(cb, image, value->depth);
+                break;
+            }
+    dev->vt.CmdClearDepthStencilImage(cb, image, layout, value, rangeCount, ranges);
+}
+
+VKAPI_ATTR void VKAPI_CALL CmdClearAttachments(VkCommandBuffer cb, uint32_t count, const VkClearAttachment* atts,
+                                               uint32_t rectCount, const VkClearRect* rects) {
+    DeviceData* dev = depthDevice(cb);
+    if (dev->depthTracker) dev->depthTracker->clearAttachments(cb, count, atts);
+    dev->vt.CmdClearAttachments(cb, count, atts, rectCount, rects);
+}
+
+// The game's submissions, in order: the depth images' states move on.
+void depthSubmitted(DeviceData* dev, uint32_t count, const VkSubmitInfo* s) {
+    if (!dev->depthTracker) return;
+    for (uint32_t i = 0; i < count; ++i) dev->depthTracker->submitted(s[i].commandBufferCount, s[i].pCommandBuffers);
+}
+void depthSubmitted2(DeviceData* dev, uint32_t count, const VkSubmitInfo2* s) {
+    if (!dev->depthTracker) return;
+    std::vector<VkCommandBuffer> cbs;
+    for (uint32_t i = 0; i < count; ++i) {
+        cbs.clear();
+        for (uint32_t k = 0; k < s[i].commandBufferInfoCount; ++k) cbs.push_back(s[i].pCommandBufferInfos[k].commandBuffer);
+        dev->depthTracker->submitted(uint32_t(cbs.size()), cbs.data());
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -831,18 +1050,21 @@ VKAPI_ATTR void VKAPI_CALL DestroyDevice(VkDevice device, const VkAllocationCall
 
 VKAPI_ATTR VkResult VKAPI_CALL QueueSubmit(VkQueue queue, uint32_t count, const VkSubmitInfo* pSubmits, VkFence fence) {
     DeviceData* dev = getDevice(dispatchKey(queue));
+    depthSubmitted(dev, count, pSubmits);
     std::lock_guard<std::mutex> lock(dev->queueMutex(queue));
     return dev->vt.QueueSubmit(queue, count, pSubmits, fence);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL QueueSubmit2(VkQueue queue, uint32_t count, const VkSubmitInfo2* pSubmits, VkFence fence) {
     DeviceData* dev = getDevice(dispatchKey(queue));
+    depthSubmitted2(dev, count, pSubmits);
     std::lock_guard<std::mutex> lock(dev->queueMutex(queue));
     return dev->vt.QueueSubmit2(queue, count, pSubmits, fence);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL QueueSubmit2KHR(VkQueue queue, uint32_t count, const VkSubmitInfo2* pSubmits, VkFence fence) {
     DeviceData* dev = getDevice(dispatchKey(queue));
+    depthSubmitted2(dev, count, pSubmits);
     std::lock_guard<std::mutex> lock(dev->queueMutex(queue));
     return dev->vt.QueueSubmit2KHR(queue, count, pSubmits, fence);
 }
@@ -1228,7 +1450,7 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue, const VkPresentInf
         return dev->vt.QueuePresentKHR(queue, pPresentInfo);
     }
     if (n == 1) {
-        VkResult r = virt[0]->present(pPresentInfo->pImageIndices[0], *pPresentInfo, true);
+        VkResult r = virt[0]->present(pPresentInfo->pImageIndices[0], *pPresentInfo, true, queue);
         if (pPresentInfo->pResults) pPresentInfo->pResults[0] = r;
         return r;
     }
@@ -1279,7 +1501,7 @@ VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue queue, const VkPresentInf
 
     for (uint32_t i = 0; i < n; ++i) {
         if (!virt[i]) continue;
-        VkResult r = virt[i]->present(pPresentInfo->pImageIndices[i], virtualPresents[i]->info(), !semaphoresConsumed);
+        VkResult r = virt[i]->present(pPresentInfo->pImageIndices[i], virtualPresents[i]->info(), !semaphoresConsumed, queue);
         semaphoresConsumed = true;
         if (pPresentInfo->pResults) pPresentInfo->pResults[i] = r;
         result = worstResult(result, r);
@@ -1356,6 +1578,33 @@ const Hook g_deviceHooks[] = {
 #endif
 };
 
+// depth: handed out to a device created with the option on only.
+const Hook g_depthHooks[] = {
+    HOOK(CreateImage),
+    HOOK(DestroyImage),
+    HOOK(CreateImageView),
+    HOOK(DestroyImageView),
+    HOOK(CreateFramebuffer),
+    HOOK(DestroyFramebuffer),
+    HOOK(CreateRenderPass),
+    HOOK(CreateRenderPass2),
+    HOOK(CreateRenderPass2KHR),
+    HOOK(DestroyRenderPass),
+    HOOK(GetDeviceQueue),
+    HOOK(GetDeviceQueue2),
+    HOOK(BeginCommandBuffer),
+    HOOK(CmdBeginRenderPass),
+    HOOK(CmdBeginRenderPass2),
+    HOOK(CmdBeginRenderPass2KHR),
+    HOOK(CmdBeginRendering),
+    HOOK(CmdBeginRenderingKHR),
+    HOOK(CmdPipelineBarrier),
+    HOOK(CmdPipelineBarrier2),
+    HOOK(CmdPipelineBarrier2KHR),
+    HOOK(CmdClearDepthStencilImage),
+    HOOK(CmdClearAttachments),
+};
+
 template <size_t N>
 PFN_vkVoidFunction findHook(const Hook (&hooks)[N], const char* name) {
     for (const Hook& h : hooks)
@@ -1414,6 +1663,8 @@ PFN_vkVoidFunction VKAPI_CALL layerGetDeviceProcAddr(VkDevice device, const char
     PFN_vkVoidFunction next = dev->vt.GetDeviceProcAddr(device, pName);
     if (!next) return nullptr;
     if (PFN_vkVoidFunction f = findHook(g_deviceHooks, pName)) return f;
+    if (dev->depthTracker)
+        if (PFN_vkVoidFunction f = findHook(g_depthHooks, pName)) return f;
     return next;
 }
 

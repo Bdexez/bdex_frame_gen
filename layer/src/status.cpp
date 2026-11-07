@@ -117,6 +117,7 @@ std::string statusFormat(const std::string& process, long pid, long long unixTim
             o << "reflex_sim_gpu_ms=" << buf << "\n";
         }
         if (!e.engine.empty()) o << "engine=" << e.engine << "\n";
+        if (!e.depth.empty()) o << "depth=" << e.depth << "\n";
         fixed1(buf, sizeof buf, e.latencyMs);
         o << "latency_ms=" << buf << "\n";
         if (e.shownFps >= 0.0) {

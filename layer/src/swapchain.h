@@ -48,7 +48,9 @@ public:
     VkResult release(uint32_t count, const uint32_t* indices);
     // Presents virtual image `imageIndex`. `info` is the application's present
     // info (used for wait semaphores and the pNext chain).
-    VkResult present(uint32_t imageIndex, const VkPresentInfoKHR& info, bool consumeWaitSemaphores);
+    // `queue`: the queue the game presents on (the depth option reads its
+    // depth buffer there, in the game's own order).
+    VkResult present(uint32_t imageIndex, const VkPresentInfoKHR& info, bool consumeWaitSemaphores, VkQueue queue);
     // fps_limit_wait (DeviceData::gamePresentWait): the game's
     // vkWaitForPresentKHR on this swapchain. Returns once the present with id
     // `presentId` (or a later one) has been handed over, the GPU has done that
@@ -383,6 +385,19 @@ private:
     // slots, one for the worker's (both used to share the device's pool).
     VkCommandPool appPool_ = VK_NULL_HANDLE;
     VkCommandPool workerPool_ = VK_NULL_HANDLE;
+    // depth: the read of the game's depth buffer at each present, on the
+    // queue the game presents on (application thread): a pool of that
+    // queue's family, a command buffer and a semaphore per synthesis slot
+    // (the slot's synthesis waits it, so its fence covers it). Made on the
+    // first read.
+    VkCommandPool depthPool_ = VK_NULL_HANDLE;
+    uint32_t depthFamily_ = ~0u;
+    VkQueue depthQueue_ = VK_NULL_HANDLE;  // last used (waited before these go)
+    std::vector<VkCommandBuffer> depthCmds_;
+    std::vector<VkSemaphore> depthSems_;
+    std::string depthWhy_;  // why the last present had no depth ("" = it had), logged when it changes
+    bool importDepth(uint32_t slot, VkQueue queue, uint32_t imageIndex, const VkSemaphore*& waits, uint32_t& waitCount);
+    void destroyDepthReads();
     // async_compute: copy-done semaphores of submitted worker presents not yet
     // waited by a synthesis (workerMutex_).
     std::vector<VkSemaphore> pendingCopyDone_;

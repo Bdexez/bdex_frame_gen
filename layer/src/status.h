@@ -31,6 +31,7 @@ struct StatusEntry {
     double autoCapFps = 0.0; // gpu_headroom: the GPU saturated, the game held under this rate (0 none)
     int gpuBusy = -1;        // the GPU's busy percent (NVML, amdgpu), -1 unknown
     std::string engine;      // the application's engine name (VkApplicationInfo): DXVK, vkd3d...
+    std::string depth;       // depth option: "on" (the game's depth buffer read), or why not; empty: option off
     double latencyMs = -1.0; // present-to-screen, -1 unknown
     // The game's Reflex reports (vkGetLatencyTimingsNV, medians over the
     // last frames, ms; -1 none): from its simulation's start (where it reads

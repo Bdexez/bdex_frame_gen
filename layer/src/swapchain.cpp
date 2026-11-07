@@ -134,6 +134,7 @@ void VirtualSwapchain::publishStatus(int multiplier) {
         e.capPoint = dev_.capsAtSleep(nowMs) ? "input" : capsAtWait(nowMs) ? "wait" : "present";
     }
     if (dev_.inst) e.engine = dev_.inst->engine;
+    if (fg_ && fg_->depthEnabled()) e.depth = depthWhy_.empty() ? "on" : depthWhy_;
     {
         // (2: virtual_grid — the frames on a grid of our own, one a refresh)
         std::lock_guard<std::mutex> lock(fbMutex_);
@@ -613,6 +614,127 @@ void VirtualSwapchain::waitQueuesIdle() {
     }
 }
 
+// depth: reads the depth buffer the game drew this frame with
+// (DepthTracker::pick) into the engine's image of source `imageIndex`, on
+// the queue the game presents on. That submission takes the game's present
+// semaphores (its rendering, whichever queue did it) and leaves its own for
+// the synthesis in their place (`waits`). It ends on a barrier with every
+// later command of that queue: the game's next frame — which clears or
+// redraws this depth buffer — waits for the read (a write after our read,
+// on the game's own queue; on another queue it could overtake it).
+bool VirtualSwapchain::importDepth(uint32_t slot, VkQueue queue, uint32_t imageIndex, const VkSemaphore*& waits,
+                                   uint32_t& waitCount) {
+    DepthTracker& tracker = *dev_.depthTracker;
+    DepthTracker::Pick pk;
+    std::string why;
+    uint32_t family = 0;
+    bool ok = queue && tracker.queueFamily(queue, family);
+    if (!ok) why = "the presenting queue is unknown";
+    else if (family >= dev_.families.size() || !(dev_.families[family].queueFlags & VK_QUEUE_COMPUTE_BIT)) {
+        ok = false;
+        why = "the presenting queue cannot run the read (no compute)";
+    } else if (const auto fams = dev_.layerFamilies(); std::find(fams.begin(), fams.end(), family) == fams.end()) {
+        // (The engine's depth images are shared between the layer's own
+        // families only: written from another, their content is undefined.)
+        ok = false;
+        why = "the game presents from a queue family the layer does not use";
+    }
+    if (ok) ok = tracker.pick({extent_.width, extent_.height}, pk, why);
+    VkImageLayout read = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (ok) ok = depth::readLayout(pk.layout, read);
+    if (ok && (depthPool_ == VK_NULL_HANDLE || depthFamily_ != family)) {
+        destroyDepthReads();
+        VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+        pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        pci.queueFamilyIndex = family;
+        ok = dev_.vt.CreateCommandPool(dev_.device, &pci, nullptr, &depthPool_) == VK_SUCCESS;
+        depthFamily_ = family;
+        if (ok) {
+            depthCmds_.assign(slots_.size(), VK_NULL_HANDLE);
+            depthSems_.assign(slots_.size(), VK_NULL_HANDLE);
+            VkSemaphoreCreateInfo si{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+            for (size_t i = 0; i < slots_.size() && ok; ++i)
+                ok = dev_.allocateCommandBuffer(&depthCmds_[i], depthPool_) == VK_SUCCESS &&
+                     dev_.vt.CreateSemaphore(dev_.device, &si, nullptr, &depthSems_[i]) == VK_SUCCESS;
+        }
+        if (!ok) {
+            destroyDepthReads();
+            why = "no command pool for the presenting queue";
+        }
+    }
+    if (ok) {
+        // (Its previous use was waited by this slot's previous synthesis,
+        // whose fence nextSlot waited.)
+        VkCommandBuffer cb = depthCmds_[slot];
+        dev_.vt.ResetCommandBuffer(cb, 0);
+        VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        dev_.vt.BeginCommandBuffer(cb, &bi);
+        const bool separate = pk.layout == VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL || pk.layout == VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL;
+        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = pk.image;
+        // (A depth/stencil image changes layout for both aspects, unless its
+        // layout is a depth-only one: separate depth and stencil layouts.)
+        b.subresourceRange = {VkImageAspectFlags(VK_IMAGE_ASPECT_DEPTH_BIT |
+                                                 (depth::hasStencil(pk.format) && !separate ? VK_IMAGE_ASPECT_STENCIL_BIT : 0)),
+                              0, 1, 0, 1};
+        b.oldLayout = pk.layout;
+        b.newLayout = read;
+        b.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+        b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        dev_.vt.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr,
+                                   0, nullptr, 1, &b);
+        fg_->recordDepthImport(cb, imageIndex, pk.view, read, pk.extent, pk.area, pk.reversed);
+        b.oldLayout = read;
+        b.newLayout = pk.layout;
+        b.srcAccessMask = 0;
+        b.dstAccessMask = 0;
+        dev_.vt.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr,
+                                   0, nullptr, 1, &b);
+        dev_.vt.EndCommandBuffer(cb);
+        std::vector<VkPipelineStageFlags> stages(waitCount, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+        VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        si.waitSemaphoreCount = waitCount;
+        si.pWaitSemaphores = waits;
+        si.pWaitDstStageMask = stages.data();
+        si.commandBufferCount = 1;
+        si.pCommandBuffers = &cb;
+        si.signalSemaphoreCount = 1;
+        si.pSignalSemaphores = &depthSems_[slot];
+        ok = submitOn(queue, si, VK_NULL_HANDLE) == VK_SUCCESS;
+        if (ok) {
+            tracker.readOn(pk.image, queue);
+            depthQueue_ = queue;
+            waits = &depthSems_[slot];
+            waitCount = 1;
+        } else {
+            why = "the read's submission failed";
+        }
+    }
+    if (why != depthWhy_) {
+        if (!why.empty()) BDEX_INFO("depth: none for now (%s)", why.c_str());
+        else if (!depthWhy_.empty()) BDEX_INFO("depth: read again");
+        depthWhy_ = why;
+    }
+    return ok;
+}
+
+void VirtualSwapchain::destroyDepthReads() {
+    if (depthQueue_) {
+        std::lock_guard<std::mutex> qlock(dev_.queueMutex(depthQueue_));
+        dev_.vt.QueueWaitIdle(depthQueue_);
+    }
+    for (VkSemaphore sem : depthSems_)
+        if (sem) dev_.vt.DestroySemaphore(dev_.device, sem, nullptr);
+    if (depthPool_) dev_.vt.DestroyCommandPool(dev_.device, depthPool_, nullptr);  // (its command buffers too)
+    depthPool_ = VK_NULL_HANDLE;
+    depthFamily_ = ~0u;
+    depthQueue_ = VK_NULL_HANDLE;
+    depthCmds_.clear();
+    depthSems_.clear();
+}
+
 VkResult VirtualSwapchain::submitOn(VkQueue queue, const VkSubmitInfo& si, VkFence fence) {
     std::lock_guard<std::mutex> qlock(dev_.queueMutex(queue));
     return dev_.vt.QueueSubmit(queue, 1, &si, fence);
@@ -700,6 +822,7 @@ void VirtualSwapchain::destroyAll() {
     waitQueuesIdle();
     if (recorder_) recorder_->finish([](uint32_t, uint64_t, bool) { return true; });  // (queues idle)
     recorder_.reset();
+    destroyDepthReads();
     destroySlots(slots_, appPool_);
     destroySlots(workerSlots_, workerPool_);
     if (appPool_) dev_.vt.DestroyCommandPool(d, appPool_, nullptr);
@@ -1173,7 +1296,8 @@ void VirtualSwapchain::rebuildOutput() {
               generating_ && !cfg_.paused ? "on" : "paused");
 }
 
-VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& info, bool consumeWaitSemaphores) {
+VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& info, bool consumeWaitSemaphores,
+                                   VkQueue queue) {
     dev_.pollConfig();
     dev_.snapshotConfig(cfg_, cfgVersion_);
     {
@@ -1190,7 +1314,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     std::unique_lock<std::mutex> lock(mutex_);
     const auto t0 = clock::now();
     const VkSemaphore* appWaits = consumeWaitSemaphores ? info.pWaitSemaphores : nullptr;
-    const uint32_t appWaitCount = consumeWaitSemaphores ? info.waitSemaphoreCount : 0;
+    uint32_t appWaitCount = consumeWaitSemaphores ? info.waitSemaphoreCount : 0;  // (importDepth replaces them)
 
     if (imageIndex >= virtualImages_.size() || retired_) {
         consumeSemaphores(appWaits, appWaitCount);
@@ -1504,6 +1628,14 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         recBuf_ = recorder_->next(extent_, fg_->encoding(),
                                   [this](uint32_t s, uint64_t g, bool w) { return slotDone(s, g, w); });
     recording_ = recBuf_ != VK_NULL_HANDLE;
+    // depth: the game's depth buffer of this frame, read on its own queue
+    // before the synthesis is recorded (which looks whether both frames of
+    // the pair have theirs). Interpolated frames only.
+    if (generating_ && fg_->depthEnabled()) {
+        if (!(interpolate && (!cfg_.extrapolate || cfg_.hybrid) && dev_.depthTracker &&
+              importDepth(slotIdx, queue, imageIndex, appWaits, appWaitCount)))
+            fg_->clearDepth(imageIndex);
+    }
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     // Interpolation x3 and up on two queues: the first generated frame is
