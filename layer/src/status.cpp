@@ -108,6 +108,14 @@ std::string statusFormat(const std::string& process, long pid, long long unixTim
             o << "auto_cap_fps=" << buf << "\n";
         }
         if (e.gpuBusy >= 0) o << "gpu_busy=" << e.gpuBusy << "\n";
+        if (e.reflexSimToPresentMs >= 0.0) {
+            fixed1(buf, sizeof buf, e.reflexSimToPresentMs);
+            o << "reflex_sim_present_ms=" << buf << "\n";
+        }
+        if (e.reflexSimToGpuMs >= 0.0) {
+            fixed1(buf, sizeof buf, e.reflexSimToGpuMs);
+            o << "reflex_sim_gpu_ms=" << buf << "\n";
+        }
         if (!e.engine.empty()) o << "engine=" << e.engine << "\n";
         fixed1(buf, sizeof buf, e.latencyMs);
         o << "latency_ms=" << buf << "\n";

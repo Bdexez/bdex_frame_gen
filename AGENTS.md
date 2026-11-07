@@ -688,7 +688,15 @@ le jeu (NVAPI actif par défaut sous Proton) met la limite sur ce fil
 (`bdex_demo --sim-thread --reflex` : 26,2 ms contre 46,9 à l'attente).
 Retour utilisateur 31/10 : « beaucoup mieux qu'avant », State of Decay 2
 parfait, Oblivion / PRAGMATA encore moins bons que leur limiteur. Limite au sommeil Reflex = limiteur Reflex du pilote (`--reflex-limit`,
-`latency_probe` les compare). **Calage de la limite sur les rafraîchissements
+`latency_probe` les compare). **Jamais de sommeil de la couche dans
+`vkLatencySleepNV`** (31/10) : VKD3D-Proton l'appelle sous
+`low_latency_swapchain_lock`, que prend aussi chacun de ses marqueurs (fils
+de rendu et de présentation) ; la limite passe par le limiteur de Reflex
+(`minimumIntervalUs` = max(celui du jeu, le nôtre), renvoyé depuis les
+appels Reflex du jeu, `reflexIntervalUs`). Oblivion à 30 i/s : simulation →
+présent 66,7 → 12,5–13,2 ms (limiteur du jeu 13,8–15,5 ; rapports Reflex du
+jeu dans le statut, `reflex_sim_present_ms`) ; `bdex_demo --reflex-lock`
+reproduit le verrou. Anti-Lag (VKD3D l'appelle sans verrou) : inchangé. **Calage de la limite sur les rafraîchissements
 essayé et écarté** (31/10, MEMOIRE) : la phase d'une limite qui divise la
 fréquence est tirée à chaque lancement (jusqu'à un rafraîchissement d'écart),
 mais une boucle qui la cale n'a rien gagné (gigue de la synthèse et du

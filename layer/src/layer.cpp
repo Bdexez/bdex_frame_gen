@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -1077,24 +1078,102 @@ VKAPI_ATTR void VKAPI_CALL SetLocalDimmingAMD(VkDevice device, VkSwapchainKHR sw
 }
 
 #ifdef VK_NV_low_latency2
+// fps_limit with Reflex on: Reflex's own limiter (minimumIntervalUs, the
+// driver's) holds the game, the longer of the game's interval and the
+// layer's — where the game's own limit holds it (Unreal hands its limit to
+// Reflex). Never a sleep of the layer's in vkLatencySleepNV: VKD3D-Proton
+// makes that call holding the lock its every latency marker takes, the
+// game's render and present threads' too (low_latency_swapchain_lock; it
+// waits for the sleep after it). Held there, those threads waited out the
+// layer's sleep: until 31/10, Oblivion Remastered at 30 fps went from the
+// start of a frame's simulation to its present in 66.7 ms, two frames,
+// against 14.5 with its own limit (its Reflex reports).
+static uint32_t reflexIntervalUs(DeviceData* dev) {
+    const double fps = dev->capFps.load(std::memory_order_relaxed);
+    const uint32_t ours = fps > 0.0 ? uint32_t(std::lround(1e6 / fps)) : 0u;
+    return std::max(dev->appMinIntervalUs.load(std::memory_order_relaxed), ours);
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL SetLatencySleepModeNV(VkDevice device, VkSwapchainKHR swapchain,
                                                      const VkLatencySleepModeInfoNV* pInfo) {
     DeviceData* dev = getDevice(dispatchKey(device));
     dev->appLowLatencyMode.store(pInfo && pInfo->lowLatencyMode, std::memory_order_relaxed);
+    dev->appLowLatencyBoost.store(pInfo && pInfo->lowLatencyBoost, std::memory_order_relaxed);
+    dev->appMinIntervalUs.store(pInfo ? pInfo->minimumIntervalUs : 0u, std::memory_order_relaxed);
     if (!pInfo || !pInfo->lowLatencyMode) dev->appPacedAtMs.store(0.0, std::memory_order_relaxed);
-    return dev->vt.SetLatencySleepModeNV(device, currentReal(dev, swapchain), pInfo);
+    const VkSwapchainKHR real = currentReal(dev, swapchain);
+    if (!pInfo || !pInfo->lowLatencyMode) {
+        dev->sleepModeSentOn = VK_NULL_HANDLE;
+        return dev->vt.SetLatencySleepModeNV(device, real, pInfo);
+    }
+    VkLatencySleepModeInfoNV mode = *pInfo;
+    mode.minimumIntervalUs = reflexIntervalUs(dev);
+    const VkResult r = dev->vt.SetLatencySleepModeNV(device, real, &mode);
+    dev->sleepModeSentUs = mode.minimumIntervalUs;
+    dev->sleepModeSentOn = r == VK_SUCCESS ? real : VK_NULL_HANDLE;
+    return r;
+}
+
+// The game's Reflex reports, medians of the frames it reported: from its
+// simulation's start to its present call and to its GPU work's end, as the
+// driver timed them (the layer's latency is after those).
+static void readReflexReports(DeviceData* dev, VkDevice device, VkSwapchainKHR real) {
+    if (!dev->vt.GetLatencyTimingsNV) return;
+    std::vector<VkLatencyTimingsFrameReportNV> reports(64, {VK_STRUCTURE_TYPE_LATENCY_TIMINGS_FRAME_REPORT_NV});
+    VkGetLatencyMarkerInfoNV info{VK_STRUCTURE_TYPE_GET_LATENCY_MARKER_INFO_NV};
+    info.timingCount = uint32_t(reports.size());
+    info.pTimings = reports.data();
+    dev->vt.GetLatencyTimingsNV(device, real, &info);
+    std::vector<double> present, gpu;
+    for (uint32_t i = 0; i < std::min<uint32_t>(info.timingCount, uint32_t(reports.size())); ++i) {
+        const VkLatencyTimingsFrameReportNV& r = reports[i];
+        if (!r.simStartTimeUs) continue;
+        if (r.presentStartTimeUs > r.simStartTimeUs && r.presentStartTimeUs - r.simStartTimeUs < 1'000'000)
+            present.push_back(double(r.presentStartTimeUs - r.simStartTimeUs) / 1000.0);
+        if (r.gpuRenderEndTimeUs > r.simStartTimeUs && r.gpuRenderEndTimeUs - r.simStartTimeUs < 1'000'000)
+            gpu.push_back(double(r.gpuRenderEndTimeUs - r.simStartTimeUs) / 1000.0);
+    }
+    auto median = [](std::vector<double>& v) {
+        if (v.empty()) return -1.0;
+        std::nth_element(v.begin(), v.begin() + long(v.size() / 2), v.end());
+        return v[v.size() / 2];
+    };
+    dev->reflexSimToPresentMs.store(median(present), std::memory_order_relaxed);
+    dev->reflexSimToGpuMs.store(median(gpu), std::memory_order_relaxed);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL LatencySleepNV(VkDevice device, VkSwapchainKHR swapchain, const VkLatencySleepInfoNV* pInfo) {
     DeviceData* dev = getDevice(dispatchKey(device));
     if (dev->appLowLatencyMode.load(std::memory_order_relaxed)) {
+        // (In the game's own low-latency call: what it serialises its calls with covers this one.)
+        if (const double now = steadyMs(); now - dev->reflexReadAtMs >= 1000.0) {
+            dev->reflexReadAtMs = now;
+            readReflexReports(dev, device, currentReal(dev, swapchain));
+        }
+    }
+    const VkSwapchainKHR real = currentReal(dev, swapchain);
+    if (dev->appLowLatencyMode.load(std::memory_order_relaxed)) {
         dev->appPacedAtMs.store(steadyMs(), std::memory_order_relaxed);
         dev->appLatencyApi.store(1, std::memory_order_relaxed);
-        dev->capAtSleep();  // fps_limit here: before the game reads its input
-        if (dev->capFps.load(std::memory_order_relaxed) > 0.0 && !dev->capAtSleepLogged.exchange(true))
-            BDEX_INFO("fps_limit: the game is held at its Reflex sleep, before it reads its input");
+        // fps_limit here, before the game reads its input: Reflex's limiter
+        // set to it (a new limit, a real swapchain re-created underneath),
+        // within the game's own call (reflexIntervalUs).
+        if (const uint32_t want = reflexIntervalUs(dev); want != dev->sleepModeSentUs || real != dev->sleepModeSentOn) {
+            VkLatencySleepModeInfoNV mode{VK_STRUCTURE_TYPE_LATENCY_SLEEP_MODE_INFO_NV};
+            mode.lowLatencyMode = VK_TRUE;
+            mode.lowLatencyBoost = dev->appLowLatencyBoost.load(std::memory_order_relaxed);
+            mode.minimumIntervalUs = want;
+            const VkResult r = dev->vt.SetLatencySleepModeNV(device, real, &mode);
+            dev->sleepModeSentUs = want;
+            dev->sleepModeSentOn = r == VK_SUCCESS ? real : VK_NULL_HANDLE;
+        }
+        if (dev->capFps.load(std::memory_order_relaxed) > 0.0 && dev->sleepModeSentOn) {
+            dev->capAtSleepMs.store(steadyMs(), std::memory_order_relaxed);
+            if (!dev->capAtSleepLogged.exchange(true))
+                BDEX_INFO("fps_limit: the game is held by its Reflex sleep (Reflex's own limiter), before it reads its input");
+        }
     }
-    return dev->vt.LatencySleepNV(device, currentReal(dev, swapchain), pInfo);
+    return dev->vt.LatencySleepNV(device, real, pInfo);
 }
 
 VKAPI_ATTR void VKAPI_CALL SetLatencyMarkerNV(VkDevice device, VkSwapchainKHR swapchain,

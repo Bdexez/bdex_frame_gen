@@ -32,6 +32,10 @@ struct StatusEntry {
     int gpuBusy = -1;        // the GPU's busy percent (NVML, amdgpu), -1 unknown
     std::string engine;      // the application's engine name (VkApplicationInfo): DXVK, vkd3d...
     double latencyMs = -1.0; // present-to-screen, -1 unknown
+    // The game's Reflex reports (vkGetLatencyTimingsNV, medians over the
+    // last frames, ms; -1 none): from its simulation's start (where it reads
+    // its input) to its present call, and to the end of its GPU work.
+    double reflexSimToPresentMs = -1.0, reflexSimToGpuMs = -1.0;
     // From the present feedback, over the last status period: frames that
     // reached the screen per second, and how many of them stayed a refresh
     // more (a display interval of 1.5 refreshes or more) — the cadence the

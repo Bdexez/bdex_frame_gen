@@ -6,6 +6,26 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### The frame limit adds no latency with Reflex in Direct3D 12 games (2026-10-31)
+
+- With NVIDIA Reflex on in a Direct3D 12 game, the layer held the game inside
+  its Reflex sleep call. VKD3D-Proton makes that call holding a lock that
+  each of its latency markers takes, the render and present threads' too,
+  and those threads waited out the hold: in Oblivion Remastered at 30 fps,
+  66.7 ms from the start of a frame's simulation to its present (two
+  frames), against 14.5 ms with the game's own limit (the game's Reflex
+  reports). The layer now hands its limit to Reflex's own limiter
+  (`minimumIntervalUs`, the longer of the game's and its own), as the game's
+  limit does: 12.5–13.2 ms. "No difference with the game's limiter" (user,
+  Oblivion Remastered, x3 at 30 fps).
+- A game's status now carries its Reflex reports: `reflex_sim_present_ms`
+  (from the start of a frame's simulation to its present call) and
+  `reflex_sim_gpu_ms` (to the end of its GPU work, where the driver counts
+  more than the game's own work through the layer).
+- `bdex_demo --reflex-lock` makes the Reflex calls under one lock as
+  VKD3D-Proton does; `latency_probe` and the new `reflexcap` validation run
+  use it.
+
 ### Unreal's own limit with Reflex as the latency reference (2026-10-31)
 
 - `bdex_demo --reflex-limit`: the game's frame limit handed to Reflex

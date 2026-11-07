@@ -124,6 +124,13 @@ struct DeviceData {
     // layer's latency_limiter steps aside instead of stacking a second hold
     // on the driver's.
     std::atomic<bool> appLowLatencyMode{false};
+    // The game's other Reflex settings (vkSetLatencySleepModeNV), and what the
+    // layer last set the driver to, fps_limit merged into the minimum
+    // interval (layer.cpp, reflexIntervalUs: in the game's own Reflex calls).
+    std::atomic<bool> appLowLatencyBoost{false};
+    std::atomic<uint32_t> appMinIntervalUs{0};
+    uint32_t sleepModeSentUs = 0;
+    VkSwapchainKHR sleepModeSentOn = VK_NULL_HANDLE;
     std::atomic<double> appPacedAtMs{0.0};
     std::atomic<int> appLatencyApi{0};  // what paces it: 1 Reflex, 2 Anti-Lag (status)
     bool appPacesLatency(double nowMs) const {
@@ -131,14 +138,20 @@ struct DeviceData {
         return at > 0.0 && nowMs - at < 1000.0;
     }
     // fps_limit where the game waits for its next frame to start — Reflex's
-    // vkLatencySleepNV, Anti-Lag's input stage: the game is held just
-    // before it reads its input, as by its own limiter. Holding its present
-    // instead (the swapchain's limiter) lets an engine whose game thread runs
-    // a frame ahead of its render thread (Unreal, RE Engine...) read the
-    // input during the wait: a frame of latency more. The swapchain sets the
-    // cap at each present (capFps, 0 = none) and steps aside while the sleep
-    // point caps (capAtSleepMs within the last second).
+    // sleep (its own limiter set to the cap: layer.cpp, reflexIntervalUs),
+    // Anti-Lag's input stage (capAtSleep): the game is held just before it
+    // reads its input, as by its own limiter. Holding its present instead
+    // (the swapchain's limiter) lets an engine whose game thread runs a frame
+    // ahead of its render thread (Unreal, RE Engine...) read the input during
+    // the wait: a frame of latency more. The swapchain sets the cap at each
+    // present (capFps, 0 = none) and steps aside while the sleep point caps
+    // (capAtSleepMs within the last second).
     std::atomic<double> capFps{0.0};
+    // The game's own Reflex reports (vkGetLatencyTimingsNV), read at most
+    // once a second at its sleep (LatencySleepNV): medians in ms, -1 none
+    // (StatusEntry::reflexSimToPresentMs, reflexSimToGpuMs).
+    std::atomic<double> reflexSimToPresentMs{-1.0}, reflexSimToGpuMs{-1.0};
+    double reflexReadAtMs = 0.0;  // (the game's sleep, its thread)
     std::atomic<double> capAtSleepMs{0.0};
     FrameCap sleepCap;
     std::atomic<bool> capAtSleepLogged{false};
