@@ -1669,7 +1669,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         // Adaptive: the frames are one output period apart, not spread over
         // the game's interval — they always need their display times (the
         // fixed i/m would be wrong), predicted on the grid when it is known.
-        double lastMs, periodMs;
+        double lastMs = 0.0, periodMs = 0.0;  // (set by displayGrid; MSVC C4701 cannot see it)
         const bool adaptive = interpolate && adaptivePeriodMs_ > 0.0;
         const double spacing = adaptive ? adaptivePeriodMs_ : frameIntervalMs_ / mult;
         double gridLead = 0.3;

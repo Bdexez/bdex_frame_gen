@@ -1231,7 +1231,11 @@ x2/x3/x4), sauf le correctif HDR (les chemins SDR restent identiques).
   paramètre (C4457 : `msg` dans une `WndProc`) ou une autre locale (C4456 :
   un `lock_guard lock` sous le `unique_lock lock` de `present()` a cassé les
   deux builds Windows le 01/11, après un mois sans CI Windows) —
-  `tools/ci/mingw/check.sh` passe `-Werror=shadow=local` depuis.
+  `tools/ci/mingw/check.sh` passe `-Werror=shadow=local` depuis. Ce que
+  MinGW ne voit pas : C4701 (« variable locale peut-être non initialisée »,
+  analyse de MSVC à la génération de code, même là où un `&&` court-circuite :
+  `double lastMs, periodMs;` remplis par `displayGrid` — GCC -O2 ne dit
+  rien). Initialiser toute locale remplie par une fonction par référence.
 
 ### Variantes allégées des shaders (2026-09-25)
 
