@@ -990,10 +990,10 @@ bool FrameGen::writePpm(const std::string& path, const void* pixels, VkExtent2D 
                 const uint16_t* h = reinterpret_cast<const uint16_t*>(px) + (size_t(y) * extent.width + x) * 4;
                 const int32_t tr = encoding.transfer;
                 auto q = [tr](uint16_t c) {
-                    float f = halfToFloat(c);
-                    if (tr == TRANSFER_SCRGB) f = srgbEncode(f * (80.f / 203.f));
-                    else if (tr == TRANSFER_PQ) f = srgbEncode(pqDecodeNits(f) / 203.f);
-                    return uint8_t(std::lround(std::clamp(std::isfinite(f) ? f : 0.f, 0.f, 1.f) * 255.f));
+                    float v = halfToFloat(c);
+                    if (tr == TRANSFER_SCRGB) v = srgbEncode(v * (80.f / 203.f));
+                    else if (tr == TRANSFER_PQ) v = srgbEncode(pqDecodeNits(v) / 203.f);
+                    return uint8_t(std::lround(std::clamp(std::isfinite(v) ? v : 0.f, 0.f, 1.f) * 255.f));
                 };
                 r = q(h[0]); g = q(h[1]); b = q(h[2]);
                 row[x * 3] = r; row[x * 3 + 1] = g; row[x * 3 + 2] = b;

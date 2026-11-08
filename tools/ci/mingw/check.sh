@@ -4,7 +4,10 @@
 # x86, syntax only. The 32-bit pass catches what only MSVC Win32
 # used to report after a push: non-dispatchable Vulkan handles are uint64_t
 # there, not pointers (no reinterpret_cast to or from them), and pointer-
-# sized integers are 32 bits. Run through tools/ci/run.sh mingw (Docker), or
+# sized integers are 32 bits. -Werror=shadow=local stands for MSVC's /W4
+# /WX C4456/C4457 (a local hiding another local or a parameter: a
+# lock_guard named like the function's unique_lock broke both Windows builds
+# on 2026-11-01, after a month without the Windows CI). Run through tools/ci/run.sh mingw (Docker), or
 # directly where both MinGW toolchains are installed (the CI's windows-syntax job).
 set -uo pipefail
 cd "$(dirname "$0")/../../.."
@@ -22,7 +25,7 @@ for cxx in x86_64-w64-mingw32-g++-posix i686-w64-mingw32-g++-posix; do
   [[ $cxx == x86_64* ]] && files="$files capture/src/vkctx.cpp capture/src/launcher.cpp capture/src/main.cpp capture/src/tray.cpp capture/src/injection.cpp capture/src/report.cpp tools/calibrate/bdex_calibrate.cpp"
   n=0
   for f in $files; do
-    out=$($cxx -std=c++20 -fsyntax-only -DWIN32_LEAN_AND_MEAN -DNOMINMAX \
+    out=$($cxx -std=c++20 -fsyntax-only -Werror=shadow=local -DWIN32_LEAN_AND_MEAN -DNOMINMAX \
           -DVK_USE_PLATFORM_WIN32_KHR -DBDEX_LAYER_NAME='"VK_LAYER_BDEX_framegen"' -DBDEX_LAYER_VERSION_STR='"0"' -DBDEX_VERSION_STR='"0"' \
           -Ilayer/src -Icapture/src -Itests -Ibuild-gen/layer/generated -isystem /tmp/vkinc "$f" 2>&1)
     if [ $? -ne 0 ]; then

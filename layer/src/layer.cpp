@@ -651,7 +651,7 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
                 fexts.push_back(VK_KHR_PRESENT_ID_EXTENSION_NAME);
                 fexts.push_back(VK_KHR_PRESENT_WAIT_EXTENSION_NAME);
             }
-            auto chain = [&](bool withTiming) {
+            auto chainFeatures = [&](bool withTiming) {
                 void* next = const_cast<void*>(ci.pNext);
 #if defined(VK_EXT_present_timing) && defined(VK_KHR_present_id2)
                 if (withTiming) {
@@ -682,7 +682,7 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
                 id2Feat.presentId2 = VK_TRUE;
             }
 #endif
-            chain(timing);
+            chainFeatures(timing);
             fci.enabledExtensionCount = static_cast<uint32_t>(fexts.size());
             fci.ppEnabledExtensionNames = fexts.data();
             res = createDevice(physDev, &fci, pAllocator, pDevice);
@@ -691,7 +691,7 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
                 BDEX_WARN("device creation with present timing failed (%s); retrying without it", vkResultName(res));
                 timing = false;
                 fexts.resize(fexts.size() - 3);
-                chain(false);
+                chainFeatures(false);
                 fci.enabledExtensionCount = static_cast<uint32_t>(fexts.size());
                 fci.ppEnabledExtensionNames = fexts.data();
                 res = createDevice(physDev, &fci, pAllocator, pDevice);

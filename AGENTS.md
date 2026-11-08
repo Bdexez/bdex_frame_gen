@@ -1228,7 +1228,10 @@ x2/x3/x4), sauf le correctif HDR (les chemins SDR restent identiques).
   par ses threads, pas MSVC — un `LARGE_INTEGER` sans `windows.h` dans un
   fichier de la couche y passe et casse MSVC. Les appels Win32 vont dans
   `platform.cpp`. Et MSVC `/W4 /WX` refuse une variable qui masque un
-  paramètre (C4457 : `msg` dans une `WndProc`).
+  paramètre (C4457 : `msg` dans une `WndProc`) ou une autre locale (C4456 :
+  un `lock_guard lock` sous le `unique_lock lock` de `present()` a cassé les
+  deux builds Windows le 01/11, après un mois sans CI Windows) —
+  `tools/ci/mingw/check.sh` passe `-Werror=shadow=local` depuis.
 
 ### Variantes allégées des shaders (2026-09-25)
 

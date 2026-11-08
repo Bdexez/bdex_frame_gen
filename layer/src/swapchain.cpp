@@ -1513,7 +1513,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
         // with it. A grid at the wrong phase (our presents where the
         // compositor latches) gets frames replaced: moved half a period.
         const bool x11 = x11Grid();
-        std::lock_guard<std::mutex> lock(fbMutex_);
+        std::lock_guard<std::mutex> fbLock(fbMutex_);
         const double nowMs = msOf(t0);
         if (cfg_.virtualGrid && adaptivePeriodMs_ > 0.0 && !(feedback_ && displayClock_.valid()) && !x11) {  // (x11 first)
             if (vgAnchorMs_ <= 0.0) vgAnchorMs_ = fbLastMs_ > 0.0 ? fbLastMs_ : nowMs;
