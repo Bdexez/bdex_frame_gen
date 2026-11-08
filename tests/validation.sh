@@ -61,7 +61,8 @@ k=-1
 # synthesis of its own, the comparison), from the primed cache above.
 for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hybrid:state extrapolate:direct \
            interpolate:async extrapolate:async interpolate:probe extrapolate:probe hybrid:adaptive interpolate:x8 interpolate:hold hybrid:hold \
-           interpolate:even hybrid:predict1 interpolate:fast interpolate:waitcap interpolate:reflexcap; do
+           interpolate:even hybrid:predict1 interpolate:fast interpolate:waitcap interpolate:reflexcap interpolate:depth \
+           hybrid:depth; do
   k=$((k + 1))
   [ $((k % shard_n)) -eq "$shard_i" ] || continue
   # BDEX_VALIDATION_RUNS="run ...": only those (while working on one path).
@@ -93,6 +94,10 @@ for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hy
     state="$state BDEX_FG_LEARNED_CORRECTION=1 BDEX_FG_FALSE_DETAIL=1"  # (two passes over the finished output)
     state="$state BDEX_FG_INTERP_SPLAT=1 BDEX_FG_PIXEL_VECTORS=1"
     state="$state BDEX_FG_ROT_WEIGHT=1"  # (the matcher's rotation-only variant)
+  elif [ "${run#*:}" = depth ]; then
+    # depth: the demo draws with a depth buffer (reversed Z), which the layer
+    # finds in its commands and reads at each present on the demo's queue.
+    state="BDEX_FG_DEPTH=1"; mult=3; demo_args="--depth --frames 60 --duration 40"
   elif [ "${run#*:}" = predict1 ]; then
     # hybrid_predict 1 at x4: interpolated, interpolated, real, predicted.
     state="BDEX_FG_HYBRID_PREDICT=1"; mult=4; demo_args="--frames 60 --duration 40 --size 640x360"
@@ -149,6 +154,7 @@ for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hy
   if [ "${run#*:}" = fast ]; then grep -q "even motion (even_fast)" "$LOG" && echo "$run: planned by even_fast" || echo "$run: no refresh grid, usual plan"; fi
   if [ "${run#*:}" = waitcap ]; then grep -q "held where it waits" "$LOG" && echo "$run: fps_limit at the present wait" || echo "$run: no present wait on this driver, fps_limit at the present"; fi
   if [ "${run#*:}" = reflexcap ] && ! grep -q "Reflex's own limiter" "$LOG"; then echo "$run: fps_limit not handed to Reflex"; status=1; fi
+  if [ "${run#*:}" = depth ] && ! grep -q "reversed Z" "$LOG"; then echo "$run: the demo's depth buffer was not found"; grep "depth:" "$LOG"; status=1; fi
   if [ "$n" -gt 0 ]; then grep -E "VUID-|SYNC-" "$LOG" | grep -vE "$IGNORE" | head -20; status=1; fi
   if [ "$rc" -ne 0 ]; then tail -20 "$LOG"; status=1; fi
   # The rebuild levels exist only if the flow is not already at 1/4.

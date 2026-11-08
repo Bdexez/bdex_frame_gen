@@ -13,6 +13,7 @@ Usage: test_determinism.py BUILD_DIR       (exit 77 without a Vulkan device)
 """
 import hashlib
 import os
+import struct
 import subprocess
 import sys
 import tempfile
@@ -23,6 +24,9 @@ ROOT = Path(__file__).resolve().parent.parent
 # Each setting, the modes it acts in (i interpolate, e extrapolate, h hybrid),
 # extra bdex_offline arguments.
 SETTINGS = [
+    # The game's depth (--depth: a made-up one for `occlude`, a few levels of
+    # its luma — wrong, but every decision of the depth test is taken).
+    ("depth=1", "ih", ["--depth", "{seq}/depth"]),
     # Hybrid (frame_order.h) at x4: one interpolated output, then predictions.
     ("zero_bias_contrast=0.02", "h", ["--multiplier", "4"]),
     # (hybrid_predict: interpolated, interpolated, real, predicted)
@@ -90,9 +94,17 @@ def main():
         subprocess.run([sys.executable, str(ROOT / "tools" / "make_corpus.py"), str(tmp / "corpus"), "--frames", "13"],
                        check=True, stdout=subprocess.DEVNULL)
         seq = tmp / "corpus" / "occlude"
+        (seq / "depth").mkdir()
+        for f in sorted(seq.glob("*.ppm")):  # (depth=1's input: nearness in four steps of luma)
+            data = f.read_bytes()
+            parts = data.split(b"\n", 3)
+            w, h = map(int, parts[1].split())
+            px = parts[3]
+            vals = [0.001 * (1 + ((px[3 * i] * 2 + px[3 * i + 1] * 5 + px[3 * i + 2]) // 512)) for i in range(w * h)]
+            (seq / "depth" / (f.stem + ".f32")).write_bytes(struct.pack(f"<{w * h}f", *vals))
         for setting in SETTINGS:
             spec, modes = setting[0], setting[1]
-            extra = setting[2] if len(setting) > 2 else []
+            extra = [a.replace("{seq}", str(seq)) for a in (setting[2] if len(setting) > 2 else [])]
             env = dict(os.environ, BDEX_FG_CONFIG="/dev/null", BDEX_FG_PRESET="balanced", BDEX_FG_CACHE_DIR="")
             for kv in spec.split(","):
                 k, v = kv.split("=")

@@ -130,6 +130,17 @@ def main():
         if not chroma > base + 3.0:
             print(f"chroma: chroma_weight {chroma:.2f} dB does not beat luma-only matching {base:.2f} dB")
             return 1
+        # depth: the game's depth buffer (an exact one, tools/edge_bench's)
+        # orders the layers at the edges of objects moving on their own
+        # (+1.6 dB on 33 frames on a discrete GPU).
+        subprocess.run([sys.executable, str(ROOT / "tools" / "edge_bench" / "make_sequence.py"), str(d / "edges"), "still",
+                        "9"], check=True, stdout=subprocess.DEVNULL)
+        env = {"BDEX_FG_MODE": "interpolate"}
+        base = evaluate(build, d / "edges", env)[0]
+        depth = evaluate(build, d / "edges", env, ["--offline-args", f"--depth {d / 'edges' / 'depth'}"])[0]
+        if not depth > base + 0.4:
+            print(f"edges: with the depth {depth:.2f} dB, without {base:.2f} dB")
+            return 1
     return 0
 
 

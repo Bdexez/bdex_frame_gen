@@ -2,16 +2,23 @@
 // path, the one that deadlocked before hide_present_ext): a flip-model
 // swapchain on a command queue, a moving bar drawn by clearing rectangles of
 // the back buffer, a fence per frame, 30 fps for a few seconds.
-//   d3d12_probe.exe [SECONDS] [uncapped [waitable N]]
+//   d3d12_probe.exe [SECONDS] [uncapped [waitable N]] [depth [load N]]
 // uncapped: no limit of its own (the layer's fps_limit then holds it); it
 // also reports how long after a frame began (its input read) the GPU had
 // done it — what a limit holding VKD3D-Proton's present thread adds: the
 // frames queued behind the held present reach the GPU late. waitable N: a
 // frame-latency waitable swapchain at maximum latency N, waited at the start
 // of each frame, as many Direct3D 12 games pace themselves.
+// depth: drawn as a game draws, with a depth buffer (D32, cleared to 0 — a
+// reversed Z — and written by the pixel shader: the bar nearer than the
+// background), the scene a draw; shaders compiled at run time by
+// d3dcompiler_47 (Wine's). The layer's depth option finds it there. load N:
+// the scene drawn N times a frame, a game limited by its GPU (VKD3D-Proton's
+// application thread then runs frames ahead of its present thread).
 //   x86_64-w64-mingw32-g++ -O2 -static d3d12_probe.cpp -ld3d12 -ldxgi -o d3d12_probe.exe
 #include <windows.h>
 #include <d3d12.h>
+#include <d3dcompiler.h>
 #include <dxgi1_4.h>
 #include <dxgi1_3.h>
 #include <algorithm>
@@ -20,6 +27,25 @@
 #include <cstdlib>
 #include <cstring>
 #include <vector>
+
+// depth: the scene as one draw — a full-screen triangle, the bar where its
+// x range is (a root constant), colour and depth from the pixel shader.
+static const char kHlsl[] =
+    "cbuffer C : register(b0) { float barX; float barY0; float barY1; };\n"
+    "float4 vsmain(uint id : SV_VertexID) : SV_Position {\n"
+    "    float2 p = float2((id << 1) & 2, id & 2);\n"
+    "    return float4(p * 2 - 1, 0, 1);\n"
+    "}\n"
+    "struct O { float4 c : SV_Target; float d : SV_Depth; };\n"
+    "O psmain(float4 pos : SV_Position) {\n"
+    "    O o;\n"
+    "    bool bar = pos.x >= barX && pos.x < barX + 40 && pos.y >= barY0 && pos.y < barY1;\n"
+    "    o.c = bar ? float4(0.9, 0.8, 0.2, 1) : float4(0.1, 0.12, 0.15, 1);\n"
+    "    o.d = bar ? 0.1 / 8 : 0.1 / 100;\n"
+    "    return o;\n"
+    "}\n";
+typedef HRESULT(WINAPI* PFN_Compile)(const void*, SIZE_T, const char*, const void*, void*, const char*, const char*, UINT,
+                                     UINT, ID3DBlob**, ID3DBlob**);
 
 static LRESULT CALLBACK wndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     if (m == WM_DESTROY) PostQuitMessage(0);
@@ -85,6 +111,12 @@ int main(int argc, char** argv) {
     const int seconds = argc > 1 ? atoi(argv[1]) : 8;
     const bool uncapped = argc > 2 && strcmp(argv[2], "uncapped") == 0;
     const UINT waitable = argc > 4 && strcmp(argv[3], "waitable") == 0 ? UINT(atoi(argv[4])) : 0;
+    bool withDepth = false;
+    int load = 1;
+    for (int i = 2; i < argc; ++i) {
+        withDepth = withDepth || strcmp(argv[i], "depth") == 0;
+        if (strcmp(argv[i], "load") == 0 && i + 1 < argc) load = std::max(1, atoi(argv[i + 1]));
+    }
     constexpr UINT kBuffers = 3;
     WNDCLASSA wc{};
     wc.lpfnWndProc = wndProc;
@@ -147,6 +179,70 @@ int main(int argc, char** argv) {
     CHECK(dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, alloc[0], nullptr,
                                  __uuidof(ID3D12GraphicsCommandList), reinterpret_cast<void**>(&list)));
     list->Close();
+    // depth: the depth buffer, its view, the root signature and the pipeline.
+    ID3D12Resource* depthBuf = nullptr;
+    D3D12_CPU_DESCRIPTOR_HANDLE dsv{};
+    ID3D12RootSignature* rootSig = nullptr;
+    ID3D12PipelineState* pso = nullptr;
+    if (withDepth) {
+        D3D12_DESCRIPTOR_HEAP_DESC dh{};
+        dh.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+        dh.NumDescriptors = 1;
+        ID3D12DescriptorHeap* dsvHeap = nullptr;
+        CHECK(dev->CreateDescriptorHeap(&dh, __uuidof(ID3D12DescriptorHeap), reinterpret_cast<void**>(&dsvHeap)));
+        dsv = dsvHeap->GetCPUDescriptorHandleForHeapStart();
+        D3D12_HEAP_PROPERTIES hp{};
+        hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC rd{};
+        rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        rd.Width = w;
+        rd.Height = h;
+        rd.DepthOrArraySize = rd.MipLevels = 1;
+        rd.Format = DXGI_FORMAT_D32_FLOAT;
+        rd.SampleDesc.Count = 1;
+        rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+        D3D12_CLEAR_VALUE cv{};
+        cv.Format = DXGI_FORMAT_D32_FLOAT;
+        cv.DepthStencil.Depth = 0.f;
+        CHECK(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_DEPTH_WRITE, &cv,
+                                           __uuidof(ID3D12Resource), reinterpret_cast<void**>(&depthBuf)));
+        dev->CreateDepthStencilView(depthBuf, nullptr, dsv);
+        D3D12_ROOT_PARAMETER rp{};
+        rp.ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+        rp.Constants.Num32BitValues = 3;
+        rp.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        D3D12_ROOT_SIGNATURE_DESC rsd{};
+        rsd.NumParameters = 1;
+        rsd.pParameters = &rp;
+        ID3DBlob *rsBlob = nullptr, *err = nullptr, *vsb = nullptr, *psb = nullptr;
+        CHECK(D3D12SerializeRootSignature(&rsd, D3D_ROOT_SIGNATURE_VERSION_1, &rsBlob, &err));
+        CHECK(dev->CreateRootSignature(0, rsBlob->GetBufferPointer(), rsBlob->GetBufferSize(), __uuidof(ID3D12RootSignature),
+                                       reinterpret_cast<void**>(&rootSig)));
+        HMODULE dc = LoadLibraryA("d3dcompiler_47.dll");
+        auto compile = dc ? reinterpret_cast<PFN_Compile>(GetProcAddress(dc, "D3DCompile")) : nullptr;
+        if (!compile) { report("d3d12 probe: depth: no d3dcompiler_47\n"); return 1; }
+        CHECK(compile(kHlsl, sizeof kHlsl - 1, "probe", nullptr, nullptr, "vsmain", "vs_5_0", 0, 0, &vsb, &err));
+        CHECK(compile(kHlsl, sizeof kHlsl - 1, "probe", nullptr, nullptr, "psmain", "ps_5_0", 0, 0, &psb, &err));
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC pd{};
+        pd.pRootSignature = rootSig;
+        pd.VS = {vsb->GetBufferPointer(), vsb->GetBufferSize()};
+        pd.PS = {psb->GetBufferPointer(), psb->GetBufferSize()};
+        pd.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        pd.SampleMask = UINT_MAX;
+        pd.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        pd.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        pd.RasterizerState.DepthClipEnable = TRUE;
+        pd.DepthStencilState.DepthEnable = TRUE;
+        pd.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+        pd.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+        pd.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        pd.NumRenderTargets = 1;
+        pd.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+        pd.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+        pd.SampleDesc.Count = 1;
+        CHECK(dev->CreateGraphicsPipelineState(&pd, __uuidof(ID3D12PipelineState), reinterpret_cast<void**>(&pso)));
+        report("d3d12 probe: drawing with a D32 depth buffer (reversed Z)\n");
+    }
     ID3D12Fence* fence = nullptr;
     CHECK(dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, __uuidof(ID3D12Fence), reinterpret_cast<void**>(&fence)));
     HANDLE event = CreateEventA(nullptr, FALSE, FALSE, nullptr);
@@ -185,10 +281,25 @@ int main(int argc, char** argv) {
         b.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
         list->ResourceBarrier(1, &b);
         const float bg[4] = {0.1f, 0.12f, 0.15f, 1.f}, bar[4] = {0.9f, 0.8f, 0.2f, 1.f};
-        list->ClearRenderTargetView(rtv[i], bg, 0, nullptr);
         const LONG x = (f * 8) % (LONG)(w > 48 ? w - 40 : 1);  // a bar sliding 8 px a frame
-        const D3D12_RECT r{x, (LONG)h / 4, x + 40, (LONG)h * 3 / 4};
-        list->ClearRenderTargetView(rtv[i], bar, 1, &r);
+        if (withDepth) {  // the same bar, drawn, with its depth
+            list->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 0.f, 0, 0, nullptr);
+            list->OMSetRenderTargets(1, &rtv[i], FALSE, &dsv);
+            list->SetGraphicsRootSignature(rootSig);
+            list->SetPipelineState(pso);
+            const float c[3] = {float(x), float(h / 4), float(h * 3 / 4)};
+            list->SetGraphicsRoot32BitConstants(0, 3, c, 0);
+            D3D12_VIEWPORT vp{0.f, 0.f, float(w), float(h), 0.f, 1.f};
+            D3D12_RECT sc{0, 0, LONG(w), LONG(h)};
+            list->RSSetViewports(1, &vp);
+            list->RSSetScissorRects(1, &sc);
+            list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            for (int k = 0; k < load; ++k) list->DrawInstanced(3, 1, 0, 0);
+        } else {
+            list->ClearRenderTargetView(rtv[i], bg, 0, nullptr);
+            const D3D12_RECT r{x, (LONG)h / 4, x + 40, (LONG)h * 3 / 4};
+            list->ClearRenderTargetView(rtv[i], bar, 1, &r);
+        }
         b.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
         b.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
         list->ResourceBarrier(1, &b);

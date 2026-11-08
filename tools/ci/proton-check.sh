@@ -67,6 +67,20 @@ check() {  # check NAME EXE
 }
 check "Direct3D 11 (DXVK $dxvk_ver)" /tmp/d3d11.exe
 check "Direct3D 12 (VKD3D-Proton $vkd3d_ver)" /tmp/d3d12.exe
+# depth: the probes draw with a depth buffer (D24S8 / D32, cleared to 0, the
+# shaders compiled by Wine'"'"'s d3dcompiler_47); the layer must find it in
+# DXVK'"'"'s / VKD3D-Proton'"'"'s commands and read it at each present.
+depthrun() {  # depthrun NAME EXE
+  local out
+  out="$(XDG_DATA_HOME=/tmp/xdg VK_ICD_FILENAMES=$icd BDEX_FG=1 BDEX_FG_CONFIG=/dev/null BDEX_FG_LOG=2 BDEX_FG_DEPTH=1 \
+    DXVK_LOG_LEVEL=warn VKD3D_DEBUG=err timeout 90 "$wine" "$2" 6 depth 2>&1 || true)"
+  grep -q "frames presented" <<<"$out" || { echo "$1: the program did not finish:"; tail -30 <<<"$out"; exit 1; }
+  grep -q "reversed Z" <<<"$out" || { echo "$1: its depth buffer was not found:"; grep -E "depth" <<<"$out"; exit 1; }
+  grep -E "depth: [0-9]|depth: none" <<<"$out" | sed "s/^/  /"
+  "$(command -v wineserver || echo /usr/lib/wine/wineserver)" -k 2>/dev/null || true
+}
+depthrun "Direct3D 11 depth (DXVK $dxvk_ver)" /tmp/d3d11.exe
+depthrun "Direct3D 12 depth (VKD3D-Proton $vkd3d_ver)" /tmp/d3d12.exe
 # fps_limit on a game without a limit of its own (fps_limit_wait): DXVK and
 # VKD3D-Proton are offered FIFO alone and present wait, and the layer holds
 # the game in that wait, before it reads its input — not in their present
