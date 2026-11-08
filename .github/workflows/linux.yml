@@ -6,16 +6,56 @@
 # 28.91 / 23.52 on hardware, balanced preset), so the thresholds below sit
 # just under it (28.0 normal / 23.0 at --speed 2) — a tight gate that still
 # leaves headroom for renderer noise while catching any matcher regression.
-# Every push, under 15 minutes in all; what takes longer (other
-# distributions, source packages, Proton, Nix, the release archives) is in
-# compat.yml, nightly, on tags and by hand.
+# Every push to main, under 15 minutes; what takes longer (other
+# distributions, source packages, Proton, Nix, the release archives, and
+# since 2026-11-01 the Khronos validation runs, the swapchain stress run,
+# the sanitizers and the fuzzing) is in compat.yml, nightly when the code
+# changed, on tags and by hand.
+#
+# Minutes (2026-11-01, the user's request: as few Actions minutes a push as
+# possible): one job instead of ten (each installed the same packages and
+# built the same tree; tools/ci/linux-tests.sh runs the tests side by side),
+# the compiler cache kept between runs, and no run at all for a push of
+# documentation only (Markdown — README.md excepted —, docs/, the other
+# workflows, the Windows scripts). Pushes to other branches run nothing: a
+# pull request, or Actions -> linux -> Run workflow on that branch.
 name: linux
 
 on:
   push:
-    branches: ["**"]
+    branches: [main]
     tags: ["v*"]
+    paths:
+      - "**"
+      - "!**.md"
+      - "README.md"            # (option_keys: the README's option table)
+      - "!docs/**"
+      - "!LICENSE"
+      - "!.github/dependabot.yml"
+      - "!.github/workflows/windows.yml"
+      - "!.github/workflows/compat.yml"
+      - "!tools/*.ps1"
+      - "!capture/src/**"       # (the Windows capture app: MSVC x64 in windows.yml)
+      - "!capture/CMakeLists.txt"
+      - "!tests/proton/**"      # (the Wine probes: compat.yml's proton checks)
+      - "!packaging/decky/package.json"
+      - "!packaging/decky/pnpm-lock.yaml"
   pull_request:
+    paths:  # (the same list: no YAML anchors, to keep to the plainest syntax)
+      - "**"
+      - "!**.md"
+      - "README.md"            # (option_keys: the README's option table)
+      - "!docs/**"
+      - "!LICENSE"
+      - "!.github/dependabot.yml"
+      - "!.github/workflows/windows.yml"
+      - "!.github/workflows/compat.yml"
+      - "!tools/*.ps1"
+      - "!capture/src/**"       # (the Windows capture app: MSVC x64 in windows.yml)
+      - "!capture/CMakeLists.txt"
+      - "!tests/proton/**"      # (the Wine probes: compat.yml's proton checks)
+      - "!packaging/decky/package.json"
+      - "!packaging/decky/pnpm-lock.yaml"
   workflow_dispatch:
 
 # A newer push on the same branch cancels the run in progress (tags excepted:
@@ -30,40 +70,24 @@ permissions:
   contents: read
 
 jobs:
-  # The tests in parallel jobs, each with its own build (half a minute):
-  # under 15 minutes in all (measured on 4 CPUs, 2026-10-08: ctest alone
-  # took 11 minutes, validation 5.5 of them, swapchain_stress 2). "core" also
-  # runs the f2cec5f invariant and the PSNR gates; validation is sharded
-  # (BDEX_VALIDATION_SHARD, tests/validation.sh). A new long test goes into
-  # the part with the most room, or a part of its own.
-  build:
-    name: build (${{ matrix.part }})
+  # One job: the lanes of tools/ci/linux-tests.sh one after the other (on a
+  # private repository's 2-CPU runner, tests side by side starve the pacing
+  # tests — measured 2026-11-01). About 12 minutes in the CI replica on 2
+  # CPUs; a new long test that would take it past 15 goes into the nightly
+  # lanes (compat.yml) or a job of its own.
+  test:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - part: core
-            ctest: "-E '^validation$|integration|latency_probe|gamescope_limit|capture_linux|live_config|limit_session|record_live|replay_bench|swapchain_stress|acquire_timeout|multithread_config'"
-            extras: true
-          - part: display
-            ctest: "-R 'integration|latency_probe|gamescope_limit|capture_linux|live_config|limit_session|record_live|replay_bench|swapchain_stress|acquire_timeout|multithread_config'"
-          - part: validation-1
-            ctest: "-R '^validation$'"
-            shard: 1/3
-          - part: validation-2
-            ctest: "-R '^validation$'"
-            shard: 2/3
-          - part: validation-3
-            ctest: "-R '^validation$'"
-            shard: 3/3
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 500M
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # (gitleaks reads the whole history)
       # The last build before the census term: the default matcher path must
       # stay byte-identical to it (AGENTS.md, invariant n°1).
       - uses: actions/checkout@v4
-        if: matrix.extras
         with:
           ref: f2cec5f29d90775a3d1a847620058ffaccca19af
           path: baseline
@@ -71,8 +95,9 @@ jobs:
       - name: Dependencies
         run: |
           tools/ci/runner-apt.sh \
-            cmake g++ pkg-config glslc libvulkan-dev vulkan-tools \
-            mesa-vulkan-drivers libglfw3-dev libxcomposite-dev libxdamage-dev libxfixes-dev libxext-dev openbox picom xvfb python3-numpy python3-pil vulkan-validationlayers
+            cmake g++ pkg-config glslc libvulkan-dev vulkan-tools ccache \
+            mesa-vulkan-drivers libglfw3-dev libxcomposite-dev libxdamage-dev libxfixes-dev libxext-dev openbox picom xvfb python3-numpy python3-pil vulkan-validationlayers \
+            g++-mingw-w64-i686-posix
 
       # The runners have no GPU; force Mesa's software Vulkan (lavapipe).
       # Resolve the ICD path rather than hardcoding it — it varies across
@@ -97,24 +122,33 @@ jobs:
             exit 1
           fi
 
-      - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBDEX_WERROR=ON
+      # The compiler's output kept from one run to the next (ccache): an
+      # unchanged file is not compiled again.
+      - name: Compiler cache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-linux-${{ github.sha }}
+          restore-keys: ccache-linux-
 
       - name: Build
         run: |
+          ccache -z
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBDEX_WERROR=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build build -j"$(nproc)"
-          if [ "${{ matrix.extras }}" = true ]; then
-            cmake -S baseline -B baseline/build -DCMAKE_BUILD_TYPE=Release
-            cmake --build baseline/build -j
-          fi
+          cmake -S baseline -B baseline/build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build baseline/build -j"$(nproc)"
+          ccache -s
 
       # How the tests find the layer: the runner's loader (Ubuntu 24.04:
       # 1.3.275) ignores VK_IMPLICIT_LAYER_PATH and VK_ADD_IMPLICIT_LAYER_PATH,
       # but every loader searches $XDG_DATA_HOME/vulkan/implicit_layer.d. The
       # test scripts copy the manifest of the build under test into a private
       # XDG_DATA_HOME (tools/layer_env.sh), so nothing is installed
-      # system-wide — which also keeps the f2cec5f comparison below honest
-      # (a global layer would load for both builds). Check both facts here.
+      # system-wide — which also keeps the f2cec5f comparison honest (a
+      # global layer would load for both builds). Check both facts here.
       - name: Layer discovery
         run: |
           # Capture first: under the step's `bash -eo pipefail`, `vulkaninfo |
@@ -133,161 +167,35 @@ jobs:
           fi
           echo "layer discovered through XDG_DATA_HOME"
 
-      # Unit tests run headless; the integration test (demo through the
-      # layer, checks the doubled frame rate) needs a display, hence Xvfb.
-      # --repeat until-pass:2 absorbs a one-off software-renderer hiccup.
-      - name: Tests
-        env:
-          BDEX_VALIDATION_SHARD: ${{ matrix.shard || '1/1' }}
-        run: |
-          BDEX_REQUIRE_DISPLAY=1 BDEX_TEST_COMPOSITOR=1 xvfb-run -a \
-            ctest --test-dir build --output-on-failure --repeat until-pass:2 ${{ matrix.ctest }}
-
-      # Default generated frames must match the pre-census build byte for byte.
-      # Each run loads only its own build's layer (private XDG_DATA_HOME, and
-      # nothing installed system-wide — checked in "Layer discovery").
-      - name: Matcher invariant (bit-for-bit vs f2cec5f)
-        if: matrix.extras
-        run: |
-          BDEX_INVARIANT_SEQUENTIAL=1 xvfb-run -a -s '-screen 0 1280x800x24' \
-            python3 tests/check_matcher_invariant.py build baseline/build
-
-      # Quality regression gate: PSNR of the generated frames against the
-      # 60 fps ground truth, normal and fast-motion scenes.
-      - name: Quality eval
-        if: matrix.extras
-        run: |
-          normal="$(xvfb-run -a tools/run_eval.sh build 40 | awk '/^  mean/{print $2; exit}')"
-          fast="$(xvfb-run -a env BDEX_EVAL_ARGS='--speed 2' tools/run_eval.sh build 40 | awk '/^  mean/{print $2; exit}')"
-          echo "PSNR normal: ${normal} dB, fast: ${fast} dB"
-          python3 - "$normal" "$fast" <<'EOF'
-          import sys
-          normal, fast = float(sys.argv[1]), float(sys.argv[2])
-          failures = []
-          if normal < 28.0: failures.append(f"normal {normal:.2f} < 28.0 dB")
-          if fast < 23.0:   failures.append(f"fast {fast:.2f} < 23.0 dB")
-          if failures:
-              print("quality regression:", "; ".join(failures)); sys.exit(1)
-          EOF
-          # x3/x4 score every generated position (local reference on llvmpipe:
-          # 31.81/31.98 dB at 800x600); same 28 dB floor, shorter runs.
-          for mult in 3 4; do
-            report="$(BDEX_FG_MULTIPLIER=$mult xvfb-run -a tools/run_eval.sh build 12)"
-            echo "$report"
-            echo "$report" | awk '/^  mean/ { seen=1; if ($2 < 28) bad=1 } END { exit !seen || bad }'
-          done
-
       # Recorded game sequences (tools/corpus_pack.py), attached to the
-      # repository's release named "corpus": scored like the synthetic corpus
-      # against tests/corpus_reference.json (a sequence without references is
-      # reported, not failed: add them with `test_corpus.py build --update`).
-      # Skipped when there is no such release.
+      # repository's release named "corpus": scored by the corpus test with
+      # the synthetic ones, against tests/corpus_reference.json (a sequence
+      # without references is reported, not failed: add them with
+      # `test_corpus.py build --update`). Skipped when there is no such release.
       - name: Recorded game corpus
-        if: matrix.extras
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release download corpus --repo "$GITHUB_REPOSITORY" --dir corpus-archives --pattern '*.tar.gz'; then
             python3 tools/corpus_fetch.py corpus-real corpus-archives/*.tar.gz
-            BDEX_CORPUS_DIR=corpus-real python3 tests/test_corpus.py build
+            echo "BDEX_CORPUS_DIR=$PWD/corpus-real" >> "$GITHUB_ENV"
           else
             echo "no \"corpus\" release: recorded sequences skipped"
           fi
 
-  # The layer and the demo built with ASan+UBSan, then with TSan, running the
-  # GPU tests on lavapipe (the swapchain virtualisation has a worker thread,
-  # three mutexes and condition variables). The tests load the build's layer
-  # through a private XDG_DATA_HOME (tools/layer_env.sh); nothing is
-  # installed globally here.
-  sanitizers:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: asan-ubsan
-            flags: "-fsanitize=address,undefined -fno-omit-frame-pointer"
-            env: "ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1"
-          - name: tsan
-            flags: "-fsanitize=thread -fno-omit-frame-pointer"
-            env: "TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1:suppressions=$GITHUB_WORKSPACE/tests/tsan.supp"
-    name: sanitizers (${{ matrix.name }})
-    steps:
-      - uses: actions/checkout@v4
-      - name: Dependencies
-        run: |
-          tools/ci/runner-apt.sh \
-            cmake g++ pkg-config glslc libvulkan-dev vulkan-tools \
-            mesa-vulkan-drivers libglfw3-dev libxcomposite-dev libxdamage-dev libxfixes-dev libxext-dev openbox picom xvfb python3-numpy python3-pil
-      - name: Build
-        run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DCMAKE_CXX_FLAGS="${{ matrix.flags }}" \
-            -DCMAKE_SHARED_LINKER_FLAGS="${{ matrix.flags }}" \
-            -DCMAKE_EXE_LINKER_FLAGS="${{ matrix.flags }}"
-          cmake --build build -j"$(nproc)"
-      - name: GPU tests under the sanitizer
-        run: |
-          icd="$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -1)"
-          out="$(vulkaninfo 2>/dev/null || true)"   # not piped into grep -q (pipefail + SIGPIPE)
-          if grep -qi bdex <<<"$out"; then
-            echo "an installed BDEX layer would shadow the sanitized build"; exit 1
-          fi
-          env ${{ matrix.env }} VK_ICD_FILENAMES="$icd" BDEX_REQUIRE_DISPLAY=1 \
-            xvfb-run -a -s '-screen 0 1280x800x24' \
-            ctest --test-dir build -R "unit|offline|integration|acquire" --output-on-failure
+      # core: GPU tests without a display (bdex_offline), the f2cec5f
+      # invariant, the PSNR gates; display: the demo through the layer;
+      # mingw: the Windows C++ for 32-bit x86 (MSVC x64 runs in
+      # windows.yml). Khronos validation over every option and the swapchain
+      # stress run: nightly (compat.yml). --repeat until-pass:2 (in the
+      # script) absorbs a one-off software-renderer hiccup.
+      - name: Tests
+        run: tools/ci/linux-tests.sh build baseline/build core display mingw
 
-  # The parsers (configuration and profiles, status files, options_ui.conf,
-  # online_tune cache) under libFuzzer + ASan + UBSan, from the seed corpus,
-  # a minute each. A failing input is uploaded; commit it to
-  # tests/fuzz/corpus/<target>/ with the fix (every build replays them).
-  fuzz:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-      - name: Dependencies
-        run: |
-          tools/ci/runner-apt.sh cmake clang libclang-rt-18-dev glslc libvulkan-dev
-      - name: Fuzz
-        run: tools/ci/fuzz.sh 60
-      - name: Failing inputs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: fuzz-failures
-          path: tests/fuzz/corpus/*/crash-*
-
-  # The Windows C++ (layer, unit tests, capture app except its C++/WinRT
-  # file) compiled with MinGW for x64 and 32-bit x86, syntax only: reports
-  # in a minute what the MSVC jobs (windows.yml) would fail on — the Win32
-  # handle casts, the capture target's include order — so both kinds of
-  # breakage surface on every push, next to the Linux results.
-  windows-syntax:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-      - name: Dependencies
-        run: |
-          tools/ci/runner-apt.sh \
-            cmake g++ pkg-config glslc libvulkan-dev \
-            g++-mingw-w64-x86-64-posix g++-mingw-w64-i686-posix
-      - name: MinGW syntax check (x64, x86)
-        run: tools/ci/mingw/check.sh
-
-  # No secret (token, key, password) in any commit, the history included:
-  # gitleaks, pinned, in a few seconds. Checked clean on 2026-10-13 (305
-  # commits). A false positive goes into .gitleaksignore (its fingerprint).
-  secrets:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: gitleaks
+      # No secret (token, key, password) in any commit, the history included:
+      # gitleaks, pinned, in a few seconds. Checked clean on 2026-10-13 (305
+      # commits). A false positive goes into .gitleaksignore (its fingerprint).
+      - name: Secrets (gitleaks)
         run: |
           docker run --rm -v "$PWD:/repo:ro" zricethezav/gitleaks:v8.21.2 \
             detect --source /repo --log-opts="--all" --redact --no-banner -v

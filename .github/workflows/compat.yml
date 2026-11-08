@@ -1,10 +1,13 @@
 # Compatibility CI: what takes too long for every push (linux.yml stays under
 # 15 minutes). Other distributions' builds, their source packages, Proton /
-# Wine, the control panel, Nix, and the prebuilt archives installed on older
-# and newer distributions. Runs every night on main when it changed in the
-# last 24 hours, on every v* tag (a release is always fully checked, and the
-# package job attaches the archives to it), and by hand (Actions → compat →
-# Run workflow, on any branch).
+# Wine, the control panel, Nix, the prebuilt archives installed on older
+# and newer distributions, and (since 2026-11-01, out of every push to save
+# Actions minutes) the Khronos validation and swapchain stress runs, the
+# sanitizer builds and the fuzzing. Runs every night on
+# main when something other than documentation changed in the last 24 hours,
+# on every v* tag (a release is always fully checked, and the package job
+# attaches the archives to it), and by hand (Actions → compat → Run
+# workflow, on any branch).
 name: compat
 
 on:
@@ -21,7 +24,8 @@ permissions:
 
 jobs:
   # A nightly run with nothing new since the previous one is skipped (minutes
-  # of a private repository are counted).
+  # of a private repository are counted), and so is one after a day of
+  # documentation only (Markdown, docs/, LICENSE: nothing these jobs build).
   changes:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -29,14 +33,115 @@ jobs:
       run: ${{ steps.check.outputs.run }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 200   # (a day of commits, for git log --since)
       - id: check
         run: |
           run=true
-          if [ "$GITHUB_EVENT_NAME" = schedule ] &&
-             [ "$(git log -1 --format=%ct)" -lt "$(( $(date +%s) - 86400 ))" ]; then
-            run=false; echo "no commit in the last 24 hours: skipped"
+          if [ "$GITHUB_EVENT_NAME" = schedule ]; then
+            changed="$(git log --since='24 hours ago' --format= --name-only | sort -u |
+                       grep -vE '\.md$|^docs/|^LICENSE$' || true)"
+            if [ -z "$changed" ]; then
+              run=false; echo "nothing but documentation changed in the last 24 hours: skipped"
+            else
+              echo "changed in the last 24 hours:"; head -20 <<<"$changed"
+            fi
           fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
+
+  # The demo through the layer under the Khronos validation layers
+  # (synchronization included): every option (tests/validation.sh), then the
+  # swapchain stress run — 9 and 3 minutes on 2 CPUs, the two longest lanes
+  # of tools/ci/linux-tests.sh (linux.yml runs the others on every push).
+  validation:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          tools/ci/runner-apt.sh \
+            cmake g++ pkg-config glslc libvulkan-dev vulkan-tools \
+            mesa-vulkan-drivers libglfw3-dev libxcomposite-dev libxdamage-dev libxfixes-dev libxext-dev openbox picom xvfb python3-numpy python3-pil vulkan-validationlayers
+      - name: Build
+        run: |
+          echo "VK_ICD_FILENAMES=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -1)" >> "$GITHUB_ENV"
+          echo "LIBGL_ALWAYS_SOFTWARE=1" >> "$GITHUB_ENV"
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBDEX_WERROR=ON
+          cmake --build build -j"$(nproc)"
+      - name: Validation and swapchain stress
+        run: tools/ci/linux-tests.sh build none validation stress
+
+  # The layer and the demo built with ASan+UBSan, then with TSan, running the
+  # GPU tests on lavapipe (the swapchain virtualisation has a worker thread,
+  # three mutexes and condition variables). The tests load the build's layer
+  # through a private XDG_DATA_HOME (tools/layer_env.sh); nothing is
+  # installed globally here.
+  sanitizers:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: asan-ubsan
+            flags: "-fsanitize=address,undefined -fno-omit-frame-pointer"
+            env: "ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1"
+          - name: tsan
+            flags: "-fsanitize=thread -fno-omit-frame-pointer"
+            env: "TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1:suppressions=$GITHUB_WORKSPACE/tests/tsan.supp"
+    name: sanitizers (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          tools/ci/runner-apt.sh \
+            cmake g++ pkg-config glslc libvulkan-dev vulkan-tools \
+            mesa-vulkan-drivers libglfw3-dev libxcomposite-dev libxdamage-dev libxfixes-dev libxext-dev openbox picom xvfb python3-numpy python3-pil
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_CXX_FLAGS="${{ matrix.flags }}" \
+            -DCMAKE_SHARED_LINKER_FLAGS="${{ matrix.flags }}" \
+            -DCMAKE_EXE_LINKER_FLAGS="${{ matrix.flags }}"
+          cmake --build build -j"$(nproc)"
+      - name: GPU tests under the sanitizer
+        run: |
+          icd="$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -1)"
+          out="$(vulkaninfo 2>/dev/null || true)"   # not piped into grep -q (pipefail + SIGPIPE)
+          if grep -qi bdex <<<"$out"; then
+            echo "an installed BDEX layer would shadow the sanitized build"; exit 1
+          fi
+          env ${{ matrix.env }} VK_ICD_FILENAMES="$icd" BDEX_REQUIRE_DISPLAY=1 \
+            xvfb-run -a -s '-screen 0 1280x800x24' \
+            ctest --test-dir build -R "unit|offline|integration|acquire" --output-on-failure
+
+  # The parsers (configuration and profiles, status files, options_ui.conf,
+  # online_tune cache) under libFuzzer + ASan + UBSan, from the seed corpus,
+  # a minute each. A failing input is uploaded; commit it to
+  # tests/fuzz/corpus/<target>/ with the fix (every build replays them).
+  fuzz:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          tools/ci/runner-apt.sh cmake clang libclang-rt-18-dev glslc libvulkan-dev
+      - name: Fuzz
+        run: tools/ci/fuzz.sh 60
+      - name: Failing inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-failures
+          path: tests/fuzz/corpus/*/crash-*
 
   # Builds from source in other distributions' containers — their own
   # compiler, CMake, Vulkan headers and shader compiler (glslc or
