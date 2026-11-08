@@ -79,7 +79,10 @@ log is in [`CHANGELOG.md`](CHANGELOG.md).
   commands (Vulkan, and DXVK / VKD3D-Proton under Proton, checked under
   Wine), reads it at each present and orders the candidate trajectories at
   the edges by it; exact depth: sharp edges +0.22 to +1.68 dB, blurred
-  game-like scenes −0.05 to +0.01. Next: real games (the status line says
+  game-like scenes −0.05 to +0.01. First real game the same day: Oblivion
+  Remastered (VKD3D-Proton, 1440p x2) reads its depth (`depth=on`), and the
+  player saw fewer artifacts (an impression, not a measurement). Next: other
+  games, including a DXVK game and a native Vulkan one (the status line says
   whether a depth buffer is read; `debug=depth` shows it), then predicted
   frames (`reveal_fill`, the splat's priority by depth).
 - **x4 on a 30 fps game** (2026-10-13 to 21): x4 is again exactly 4 frames a

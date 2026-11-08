@@ -1328,7 +1328,10 @@ Tenus à jour dans `ROADMAP.md` (où en est le projet, ce qui reste) et
   rapide devant » (−0,44 sur fast) ne tranchent ; la profondeur exacte gagne
   sur toutes les séquences (+0,17 à +1,54 dB, `tools/edge_bench/
   depth_oracle.py`) → **implémenté le 01/11 : option `depth`** (opt-in,
-  §5 « Profondeur du jeu ») ; reste à la valider dans de vrais jeux.
+  §5 « Profondeur du jeu ») ; premier vrai jeu le même jour : Oblivion
+  Remastered (VKD3D-Proton, 1440p ×2), `depth=on`, « moins d'artefacts »
+  selon l'utilisateur (impression, sans mesure) ; reste à tester un jeu DXVK
+  et un jeu Vulkan natif.
 - **Options en attente de vrais jeux** : `tools/pending_decisions.py
   SEQ…` (verdict par option ; liste `CANDIDATES` à tenir à jour quand une
   option est tranchée ou ajoutée).

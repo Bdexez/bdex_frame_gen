@@ -4167,7 +4167,13 @@ d'architecture dans AGENTS §5 « Profondeur du jeu ».
   ouvre une fenêtre : ~3,6 s de démo sur le bureau de l'utilisateur avant
   d'échouer (« not given the sequence's size »). Les tests d'affichage
   seulement dans gamescope sans tête (mémoire déjà notée).
-- **Reste** : de vrais jeux (le statut dit `depth=on` ou pourquoi pas ; le
-  panneau a la case) ; les images prédites (priorité du splat et
+- **Premier vrai jeu (01/11, après l'installation)** : Oblivion Remastered
+  (Unreal Engine 5, D3D12 → VKD3D-Proton), 2560×1440, interpolation ×2,
+  42,3 → 84,6 i/s, GPU occupé à 82 %. Le statut indique `depth=on`
+  (`engine=vkd3d`) : le tampon de profondeur est trouvé et lu dans un vrai
+  jeu. Retour de l'utilisateur : « j'ai vu une différence, notamment moins
+  d'artefacts ». C'est une impression en jeu, sans mesure ni A/B enregistré.
+- **Reste** : d'autres jeux (le statut dit `depth=on` ou pourquoi pas ; le
+  panneau a la case), dont un jeu Vulkan natif et un jeu DXVK ; les images prédites (priorité du splat et
   `reveal_fill` par la profondeur) ; la couche Windows (même code, jamais
   exécutée sur matériel) ; MSAA (images multi-échantillonnées ignorées).
