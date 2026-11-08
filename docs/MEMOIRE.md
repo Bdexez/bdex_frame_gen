@@ -4099,3 +4099,75 @@ l'utilisateur jouait (mêmes chiffres à 0,07 dB près).
 - **Budget** (1440p ×4, `balanced`) : analyse 0,09 + flux 0,47 ms par image
   du jeu, synthèse 5,24 (1,75 par image générée, toutes passes) : seule la
   1re générée est sur le chemin de la latence.
+
+### 01/11 (suite) — l'option `depth` : la profondeur du jeu, implémentée
+
+Demande de l'utilisateur après l'étude : « vas-y implémente la lecture de la
+profondeur ». Option `depth` (opt-in, lue au lancement du jeu), détail
+d'architecture dans AGENTS §5 « Profondeur du jeu ».
+
+- **Moteur** (le shader de `depth_oracle.py depthv`, dans
+  `interpolate.comp`, bit `SYNTH_DEPTH`) contre la même sortie sans
+  profondeur, profondeur exacte : `still` +1,62 dB, `pan` +0,82, `fast`
+  +0,67, `lowcon` +0,22 — autant ou mieux que le prototype (passes
+  suivantes comprises).
+- **Flou de mouvement : piège mesuré.** Scènes `make_game.py` ×4 (le flou
+  d'un jeu à 30 i/s) : −1,5 dB (turn), −1,4 (fps). Vu à l'œil : des
+  morceaux nets d'ailleurs collés dans le pilier flou. Cause : un choix d'un
+  seul côté n'a pas de test photométrique, et sous le flou aucune
+  trajectoire ne tient près d'un contour mobile (la profondeur est nette,
+  les couleurs étalées). Le même virage sans flou : +0,05. Corrections, dans
+  l'ordre : extrémités hors image exclues (−1,2 dB aux bords, le travail de
+  `border_fill`) ; **le vecteur choisi doit expliquer sa couche à 6 ou 12 px**
+  (les deux bouts sur cette profondeur, erreur < 0,04) ; **dosage** par
+  `smoothstep(0,04, 0,12)` de l'erreur des trajectoires du moteur (un bord
+  flou se trompe modérément, un contour net franchement). Seuil dur 0,08
+  essayé : flou ±0, mais contours nets −⅓ du gain. Final : contours nets
+  +0,33 à +1,59, scènes floues ×4 turn −0,01, walk −0,05, fps 0, strafe
+  −0,05 ; virage net +0,14 dB, scintillement 5,41 → 5,29.
+- **Coût** (1440p ×4, virage net agrandi, mesures appariées) : d'abord
+  +0,9 ms par image du jeu **même bloc inactif** — le compilateur déroulait
+  les trois boucles imbriquées (32 itérations) et les registres pesaient sur
+  toute la synthèse ; ni le tableau de 9 erreurs ni les lectures n'y étaient
+  pour rien (bloc retiré : surcoût nul). `[[dont_unroll]]` sur une boucle
+  unique : +0,06 ms inactif, +1,4 à 1,6 ms actif dans ce pire cas (tous les
+  contours bougent), ~0,5 ms par image générée. Erreur sur fenêtres
+  calculée seulement pour les candidats d'une même surface aux deux bouts.
+- **Couche** : la démo (`--depth`, D32, Z inversé) — tampon trouvé (« 2
+  passes a frame, reversed Z »), `debug=depth` cohérent, **0 message de la
+  validation Khronos avec synchronisation** (90 images ; passes
+  `interpolate:depth`, `hybrid:depth` ajoutées au test). Sous Wine 11.20
+  avec Proton 10, dans gamescope sans tête : sonde D3D11 + DXVK (D24S8,
+  format 129) et sonde D3D12 + VKD3D-Proton (D32, 6 passes par image)
+  trouvées en Z inversé ; image k+1 dans la profondeur de la paire k→k+1
+  (pas d'image de retard) ; validation D3D11 : les 20 messages
+  `VUID-RuntimeSpirv-vulkanMemoryModel-06265` existent aussi sans l'option
+  (antérieurs) ; VKD3D-Proton ne démarre pas sous la couche de validation
+  (s'arrête à son instance). D3D12 sans limite : 476,6 → 450,0 i/s avec la
+  lecture (632×326, 2 ms par image), aucun avertissement. Banc CI
+  `proton-check.sh` (lavapipe, DXVK 2.5.3, VKD3D-Proton 3.0.1) : passes
+  `depth` des deux sondes ajoutées, tampons trouvés.
+- **Alignement couleur / profondeur** (craint à la relecture : DXVK et
+  VKD3D-Proton présentent depuis un fil à eux, le jeu peut avoir soumis les
+  images suivantes, qui réécrivent le tampon) : sonde D3D12 sans limite
+  avec `load N` (le dessin répété N fois, un jeu limité par son GPU),
+  `debug=depth` : la barre (8 px par image) dans la profondeur de cur est à
+  la position de la couleur de cur — 0 px sur 25 paires à 101 i/s comme à
+  77 i/s (16 ms de GPU par image). En D3D12, `Present` est une opération de
+  la file de commandes : VKD3D-Proton la soumet dans l'ordre avec les
+  `ExecuteCommandLists` (DXVK : son fil de soumission) — la lecture au
+  present voit l'image présentée. Un moteur Vulkan natif qui soumettrait
+  l'image suivante avant de présenter casserait cela (pas vu ; ne pas
+  l'oublier si un jeu natif montre des contours décalés en `debug=depth`).
+- **Sortie identique octet pour octet** option coupée (68 images, ×2 et
+  ×4, contre le binaire d'avant). Tests : unitaires (`test_depth.cpp`, 7),
+  déterminisme (profondeur fabriquée sur `occlude`), hors ligne (`still` 9
+  images : +1,21 dB, seuil +0,4), `option_keys`, validation.
+- **Incident de session** : `ctest -R …replay…` a lancé `replay_bench`, qui
+  ouvre une fenêtre : ~3,6 s de démo sur le bureau de l'utilisateur avant
+  d'échouer (« not given the sequence's size »). Les tests d'affichage
+  seulement dans gamescope sans tête (mémoire déjà notée).
+- **Reste** : de vrais jeux (le statut dit `depth=on` ou pourquoi pas ; le
+  panneau a la case) ; les images prédites (priorité du splat et
+  `reveal_fill` par la profondeur) ; la couche Windows (même code, jamais
+  exécutée sur matériel) ; MSAA (images multi-échantillonnées ignorées).

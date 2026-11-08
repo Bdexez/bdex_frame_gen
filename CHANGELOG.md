@@ -6,6 +6,56 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### The game's depth buffer at the edges of moving objects (`depth`, opt-in, 2026-11-01)
+
+- New option `depth` (off by default, read when the game starts). At the
+  edge of an object moving on its own, part of the picture is visible in
+  only one of the two frames — covered or uncovered between them — and
+  measured on 2026-11-01 those pixels hold 62 to 89 % of all the remaining
+  error: two frames cannot tell which layer is in front (frame N−2 alone,
+  −0.95 dB; an exact per-pixel segmentation with "the faster layer in
+  front", −0.44 on fast motion), so the synthesis kept a wrong trajectory
+  that looked consistent, or a cross-fade (the object smears).
+- The Vulkan layer now finds the game's depth buffer in the game's own
+  commands, as ReShade's generic depth does: depth images, framebuffers,
+  render passes and dynamic rendering, image barriers and depth clears,
+  applied in submission order; the depth image most drawn into in the
+  frame, of the picture's proportions, wins (`depth_tracker.{h,cpp}`,
+  `depth_select.cpp`). Under Proton it sees DXVK's and VKD3D-Proton's
+  commands: checked under Wine with Proton 10's DXVK (D24S8) and
+  VKD3D-Proton (D32), and with the demo's new `--depth` (a reversed-Z depth
+  buffer). Only with the option on when the game starts are these commands
+  watched; otherwise nothing changes.
+- At each present the depth is read on the game's own queue (it takes the
+  game's present semaphores, and its last barrier holds the game's next
+  frame until the read is done) into an image of the engine
+  (`depth_import.comp`: nearness, for a reversed or a standard Z — told
+  apart by its clear value —, a render resolution under DLSS / FSR or a
+  dynamic resolution followed).
+- Interpolation: where no trajectory explains a pixel, the vectors of the
+  flow texels around it are ordered by depth — the nearest layer wins, a
+  side covered or uncovered comes from the frame it is visible in, each
+  vector carries only the layer of the block it was measured on, and a
+  one-sided pick only where its vector explains its layer a few pixels away
+  (under motion blur none does: the engine's blend stays), weighted by how
+  badly the engine's trajectories failed. Exact depth, sharp edges
+  (`tools/edge_bench`): +0.22 to +1.68 dB on the whole frame; x4 game-like
+  scenes at a 30 fps game's real speed with its motion blur −0.05 to
+  +0.01, the same fast turn without blur +0.15 and less flicker. GPU at
+  1440p x4: +0.06 ms a game frame when nothing triggers, up to ~0.5 ms a
+  generated frame in a fast turn where every edge does; the read ~0.1 ms of
+  the game's queue. Off, the output is the same byte for byte.
+- `debug=depth` shows the depth read in the generated frames (grey; magenta
+  where a pair has none); the status says `depth=on`, or why not
+  (`--report`, the panel). `bdex_offline --depth DIR` (and
+  `--depth-standard`) feeds a sequence's depth through the same read;
+  `tools/edge_bench/make_sequence.py` and `make_game.py` write the exact
+  depth of their scenes; `tools/edge_bench/depth_oracle.py` is the
+  measurement behind the option. Tests: unit (`test_depth.cpp`),
+  determinism, offline (+1.2 dB on a short sequence), validation runs
+  `interpolate:depth` and `hybrid:depth`, the D3D11 / D3D12 probes' new
+  `depth` mode.
+
 ### The frame limit adds no latency with Reflex in Direct3D 12 games (2026-10-31)
 
 - With NVIDIA Reflex on in a Direct3D 12 game, the layer held the game inside

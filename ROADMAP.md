@@ -74,10 +74,14 @@ log is in [`CHANGELOG.md`](CHANGELOG.md).
   (−0.95 dB, it mistakes uncovered pixels for covered ones), and even an
   exact per-pixel segmentation with "the faster layer in front" loses on
   fast motion (−0.44 dB); the exact depth wins on every sequence (+0.17 to
-  +1.54 dB, the edge pixels only). Next step: **read the game's depth
-  buffer in the layer** (as ReShade's generic depth does): a copy at present
-  time and a depth test at motion boundaries, under 0.5 ms of GPU on the
-  first generated frame's path (under 1.5 ms of latency even GPU-bound).
+  +1.54 dB, the edge pixels only). **Implemented the same day as the opt-in
+  `depth` option**: the layer finds the game's depth buffer in its
+  commands (Vulkan, and DXVK / VKD3D-Proton under Proton, checked under
+  Wine), reads it at each present and orders the candidate trajectories at
+  the edges by it; exact depth: sharp edges +0.22 to +1.68 dB, blurred
+  game-like scenes −0.05 to +0.01. Next: real games (the status line says
+  whether a depth buffer is read; `debug=depth` shows it), then predicted
+  frames (`reveal_fill`, the splat's priority by depth).
 - **x4 on a 30 fps game** (2026-10-13 to 21): x4 is again exactly 4 frames a
   game frame by default (the player's choice, 2026-10-20: `refresh_fill`
   off); on 144 Hz that leaves ~24 refreshes a second held whatever the

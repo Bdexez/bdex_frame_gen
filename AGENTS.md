@@ -41,7 +41,9 @@ tous les shaders de `layer/shaders/`.
   `vkGetInstanceProcAddr`), `swapchain.cpp` (virtualisation des swapchains,
   côté thread du jeu : création, acquire, `present`) + `swapchain_worker.cpp`
   (le worker : `runJob`, copies, présentations cadencées, retour d'affichage ;
-  pacing), `present_slice.{h,cpp}` (réindexation des tableaux `pNext` lors
+  pacing), `depth_tracker.{h,cpp}` + `depth_select.cpp` (option `depth` :
+  le tampon de profondeur du jeu repéré dans ses commandes, lu à chaque
+  present sur sa file — §5), `present_slice.{h,cpp}` (réindexation des tableaux `pNext` lors
   d'un present multi-swapchain), `framegen.cpp` (orchestration du pipeline ;
   `framegen_output.cpp` = étage de sortie de l'image réelle, CAS ;
   `framegen_internal.h` = push constants et disposition du tampon d'état ;
@@ -129,6 +131,9 @@ python3 tools/recording_report.py SEQUENCE             # temps des images réell
 build/demo/bdex_demo --replay SEQ --replay-timing --replay-log /tmp/rejeu.csv  # rejoue les temps source ; journal nouveau, retards de rejeu visibles
 tools/eval_sequence.py <dir_ppm> --variant KEY=VAL     # éval hors ligne (bdex_offline, sans fenêtre) sur séquence enregistrée
 tools/pending_decisions.py SEQ... [--only K,...]       # options en attente notées sur des jeux enregistrés : verdict par option
+bdex_offline SEQ OUT --depth SEQ/depth [--depth-standard]  # option depth hors ligne : profondeur par image (make_sequence.py / make_game.py l'écrivent, Z inversé)
+build/demo/bdex_demo --depth ...                       # la démo dessine avec un tampon de profondeur (D32, Z inversé) : banc de l'option depth dans la couche
+tests/proton/d3d11_probe.exe 6 depth | d3d12_probe.exe 6 depth  # sous Wine : tampon D24S8 (DXVK) / D32 (VKD3D-Proton) dessiné, effacé à 0
 tools/edge_bench/depth_oracle.py SEQ OUT [N] [n2,depth,depthv,seg,quad]  # sur make_sequence.py + bdex_offline --dump-flow : ce qu'une profondeur (ou N−2, une segmentation) donnerait aux occultations
 tools/edge_bench/make_game.py DIR turn|walk|dark|strafe|fps|fence|flick|subs  # un jeu à 30 i/s vu à 120 Hz, vérité exacte : eval_sequence.py --multiplier 4 (le vrai ×4) ; subs : sous-titres qui changent et disparaissent
 tools/replay_bench.py SEQ [--multiplier M] [--other-layer NAME]  # éval EN LIGNE : séquence rejouée comme un jeu (bdex_demo --replay) à travers la couche
@@ -478,6 +483,41 @@ Les décisions du cadencement sont des fonctions pures de `pacing.h`
 règle de cadencement, avec son scénario. **`vkCreateDevice` réessayé : remettre `chain->u.pLayerInfo` au lien
 suivant avant chaque essai** (les couches du dessous l'avancent ; sinon
 plantage sous la couche WSI de gamescope).
+
+### Profondeur du jeu (`depth`, opt-in, 01/11)
+
+Seule information qui tranche l'ordre des couches aux occultations (MEMOIRE
+§7 « 01/11 »). **Couche** (`depth_tracker.{h,cpp}`) : interceptions
+`vkCreateImage` (ajoute `SAMPLED` aux images de profondeur, sauf mémoire
+externe ; repli sans si la création échoue), vues, framebuffers, render
+passes 1/2, `vkCmdBeginRenderPass*`, `vkCmdBeginRendering*`, barrières 1/2,
+effacements de profondeur, `vkGetDeviceQueue*`, `vkBeginCommandBuffer` ;
+**données seulement si `depth=1` à `vkCreateDevice`** (`g_depthHooks` rendus
+par `layerGetDeviceProcAddr`), sinon rien ne change. Événements par command
+buffer, appliqués à la soumission (ordre GPU, pas d'enregistrement : VKD3D
+enregistre en parallèle) ; test d'appartenance des barrières sans verrou
+(`fast_`) ; périphérique sans `g_mapMutex` (`g_depthDev`). Choix pur
+`depth::choose` (`depth_select.cpp`, bdex_core, `test_depth.cpp`) :
+proportions de l'image ±10 %, ≥ 30 % de sa largeur, passes × aire,
+hystérésis ½. Sens de Z par la valeur d'effacement (inconnu → pas de
+lecture). **Lecture** (`VirtualSwapchain::importDepth`) : sur la file où le
+jeu présente (famille connue par `vkGetDeviceQueue`, calcul requis), elle
+consomme les sémaphores du present du jeu et rend le sien à la synthèse ;
+barrière finale `COMPUTE → ALL_COMMANDS` : l'image suivante du jeu attend la
+lecture (écriture après lecture sur sa propre file). Pool par famille,
+command buffer + sémaphore par créneau (le fence du créneau les couvre).
+**Moteur** : `depth_[source]` (r16f, taille de rendu), `recordDepthImport`
+(`depth_import.comp`, zone de rendu suivie), `depthValid_` ; liaisons 11/12
+de la synthèse (fictives pour les jeux d'une passe), bit `SYNTH_DEPTH`,
+interpolation seule, active si les deux images de la paire ont la leur.
+**Pièges mesurés** : (1) flou de mouvement — choix d'un seul côté sans test
+photométrique : −1,5 dB sur `make_game turn` ; garde « le vecteur explique
+sa couche à 6/12 px » + dosage `smoothstep(0,04, 0,12)` de l'erreur du
+moteur ; (2) **boucles déroulées** : le bloc compilé coûtait +0,9 ms par
+image du jeu à 1440p ×4 *même sans s'exécuter* (registres) —
+`[[dont_unroll]]`, une seule boucle de 32 : +0,06 ms ; tout gros bloc
+ajouté à `interpolate.comp` doit être mesuré inactif ; (3) extrémités hors
+image → `border_fill` (sinon −1,2 dB aux bords dans un virage).
 
 ### Passes optionnelles (`fg_pass.h`, depuis le 2026-09-25)
 
@@ -1272,7 +1312,7 @@ Tenus à jour dans `ROADMAP.md` (où en est le projet, ce qui reste) et
 `docs/MEMOIRE.md` §9 (problèmes ouverts, essais à ne pas refaire). Retenir :
 - **Options retirées le 2026-10-04** (mesurées négatives ou neutres) :
   `alt_vectors`, `affine_flow`, `flow_upsample`, `confidence_fallback`,
-  `extrapolate_hold`. Bit `SYNTH_*` 8192 libre (128 = `border_fill`, 512 = `still_occluder`). Vérification :
+  `extrapolate_hold`. Bit `SYNTH_*` 8192 = `depth` depuis le 01/11 (128 = `border_fill`, 512 = `still_occluder`). Vérification :
   hachage des sorties de `bdex_offline` pour chaque réglage de
   `test_determinism.py` × séquences × modes, avant et après — identiques.
   Méthode à reprendre pour toute suppression ou refactorisation du moteur.
@@ -1287,8 +1327,8 @@ Tenus à jour dans `ROADMAP.md` (où en est le projet, ce qui reste) et
   découvert confondus) ni une segmentation exacte au pixel avec « le plus
   rapide devant » (−0,44 sur fast) ne tranchent ; la profondeur exacte gagne
   sur toutes les séquences (+0,17 à +1,54 dB, `tools/edge_bench/
-  depth_oracle.py`) → piste : lire le tampon de profondeur du jeu dans la
-  couche (< 1,5 ms de latence estimée ; MEMOIRE §7, 01/11).
+  depth_oracle.py`) → **implémenté le 01/11 : option `depth`** (opt-in,
+  §5 « Profondeur du jeu ») ; reste à la valider dans de vrais jeux.
 - **Options en attente de vrais jeux** : `tools/pending_decisions.py
   SEQ…` (verdict par option ; liste `CANDIDATES` à tenir à jour quand une
   option est tranchée ou ajoutée).
