@@ -4,7 +4,7 @@
 //
 //   bdex_demo [--fps N] [--frames N] [--size WxH] [--mode fifo|mailbox|immediate]
 //             [--deterministic] [--speed X] [--srgb] [--cut N] [--repeat N] [--duration S]
-//             [--gpu-load N] [--latency-test [auto]] [--latency-log FILE]
+//             [--gpu-load N] [--latency-test [auto]] [--latency-log FILE] [--depth]
 //             [--present-thread L [--engine NAME] [--sim-thread [--reflex [--reflex-limit] [--reflex-lock]]]]
 //             [--stress KIND:N[,KIND:N...]] [--stress-until N]
 //             [--replay DIR [--replay-step N] [--replay-start N]
@@ -19,6 +19,11 @@
 // --replay-timing uses the recording's timestamps.csv instead of --fps and
 // stops after the last selected source. --replay-log records source offsets,
 // requested deadlines, actual presents and overload shifts (steady ms).
+//
+// --depth: the scene is drawn with a depth buffer, as a game's (D32_SFLOAT,
+// cleared to 0 and written near / z: a D3D game's reversed Z), each object at
+// its own distance — what the layer's depth option looks for (not with
+// --replay).
 //
 // Run it with BDEX_FG=1 (and VK_LAYER_PATH pointing at the build tree if the
 // layer is not installed) to see the generated frames.
@@ -66,6 +71,7 @@ struct Options {
     long repeat = 1;             // present every image N times (e.g. 2: 30 fps content in a 60 fps loop)
     double duration = 0.0;       // also stop after this many seconds (0 = no limit): bounds tests on slow drivers
     long gpuLoad = 1;            // draw the scene this many times a frame (same image): a GPU-bound game
+    bool depth = false;          // --depth: a depth buffer, written by the scene (reversed Z)
     // --latency-test: an "input" (a key press, or with `auto` one every half
     // second, taken at the start of a frame) makes the next frame flat white;
     // --latency-log gets "flash <input ms> <present ms>" per flash (steady
@@ -169,6 +175,11 @@ private:
     std::vector<VkImageView> views_;
     std::vector<VkFramebuffer> framebuffers_;
     VkRenderPass renderPass_ = VK_NULL_HANDLE;
+    // --depth: the depth buffer (one: the frames in flight are drawn in turn)
+    VkImage depthImage_ = VK_NULL_HANDLE;
+    VkDeviceMemory depthMem_ = VK_NULL_HANDLE;
+    VkImageView depthView_ = VK_NULL_HANDLE;
+    bool withDepth() const { return opt_.depth && opt_.replayDir.empty(); }
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     VkCommandPool pool_ = VK_NULL_HANDLE;
@@ -584,10 +595,12 @@ void Demo::createSwapchain() {
         att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         att.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
         VkAttachmentReference ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        VkAttachmentReference dref{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
         VkSubpassDescription sub{};
         sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         sub.colorAttachmentCount = 1;
         sub.pColorAttachments = &ref;
+        if (withDepth()) sub.pDepthStencilAttachment = &dref;
         VkSubpassDependency dep{};
         dep.srcSubpass = VK_SUBPASS_EXTERNAL;
         dep.dstSubpass = 0;
@@ -595,14 +608,52 @@ void Demo::createSwapchain() {
         dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         dep.srcAccessMask = 0;
         dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        if (withDepth()) {  // the previous frame's depth tests and whatever read it since
+            dep.srcStageMask |= VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+            dep.dstStageMask |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+            dep.dstAccessMask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        }
+        VkAttachmentDescription atts[2] = {att, {}};
+        atts[1].format = VK_FORMAT_D32_SFLOAT;
+        atts[1].samples = VK_SAMPLE_COUNT_1_BIT;
+        atts[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        atts[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        atts[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        atts[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        atts[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        atts[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         VkRenderPassCreateInfo rci{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
-        rci.attachmentCount = 1;
-        rci.pAttachments = &att;
+        rci.attachmentCount = withDepth() ? 2 : 1;
+        rci.pAttachments = atts;
         rci.subpassCount = 1;
         rci.pSubpasses = &sub;
         rci.dependencyCount = 1;
         rci.pDependencies = &dep;
         VK_CHECK(vkCreateRenderPass(device_, &rci, nullptr, &renderPass_));
+    }
+    if (withDepth()) {
+        VkImageCreateInfo ici{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        ici.imageType = VK_IMAGE_TYPE_2D;
+        ici.format = VK_FORMAT_D32_SFLOAT;
+        ici.extent = {extent_.width, extent_.height, 1};
+        ici.mipLevels = ici.arrayLayers = 1;
+        ici.samples = VK_SAMPLE_COUNT_1_BIT;
+        ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+        ici.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        VK_CHECK(vkCreateImage(device_, &ici, nullptr, &depthImage_));
+        VkMemoryRequirements req;
+        vkGetImageMemoryRequirements(device_, depthImage_, &req);
+        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        ai.allocationSize = req.size;
+        ai.memoryTypeIndex = findMemory(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        VK_CHECK(vkAllocateMemory(device_, &ai, nullptr, &depthMem_));
+        VK_CHECK(vkBindImageMemory(device_, depthImage_, depthMem_, 0));
+        VkImageViewCreateInfo dvi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        dvi.image = depthImage_;
+        dvi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        dvi.format = VK_FORMAT_D32_SFLOAT;
+        dvi.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+        VK_CHECK(vkCreateImageView(device_, &dvi, nullptr, &depthView_));
     }
 
     views_.resize(in);
@@ -616,8 +667,9 @@ void Demo::createSwapchain() {
         VK_CHECK(vkCreateImageView(device_, &vci, nullptr, &views_[i]));
         VkFramebufferCreateInfo fci{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
         fci.renderPass = renderPass_;
-        fci.attachmentCount = 1;
-        fci.pAttachments = &views_[i];
+        const VkImageView fbViews[2] = {views_[i], depthView_};
+        fci.attachmentCount = withDepth() ? 2 : 1;
+        fci.pAttachments = fbViews;
         fci.width = extent_.width;
         fci.height = extent_.height;
         fci.layers = 1;
@@ -634,6 +686,12 @@ void Demo::createSwapchain() {
 void Demo::destroySwapchain() {
     for (VkFramebuffer f : framebuffers_) vkDestroyFramebuffer(device_, f, nullptr);
     for (VkImageView v : views_) vkDestroyImageView(device_, v, nullptr);
+    if (depthView_) vkDestroyImageView(device_, depthView_, nullptr);
+    if (depthImage_) vkDestroyImage(device_, depthImage_, nullptr);
+    if (depthMem_) vkFreeMemory(device_, depthMem_, nullptr);
+    depthView_ = VK_NULL_HANDLE;
+    depthImage_ = VK_NULL_HANDLE;
+    depthMem_ = VK_NULL_HANDLE;
     framebuffers_.clear();
     views_.clear();
 }
@@ -692,6 +750,11 @@ void Demo::createPipeline() {
     pci.pMultisampleState = &ms;
     pci.pColorBlendState = &cb;
     pci.pDynamicState = &ds;
+    VkPipelineDepthStencilStateCreateInfo dss{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    dss.depthTestEnable = VK_TRUE;  // (written by the fragment shader, which knows each pixel's object)
+    dss.depthWriteEnable = VK_TRUE;
+    dss.depthCompareOp = VK_COMPARE_OP_ALWAYS;
+    if (withDepth()) pci.pDepthStencilState = &dss;
     pci.layout = layout_;
     pci.renderPass = renderPass_;
     VK_CHECK(vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &pci, nullptr, &pipeline_));
@@ -755,6 +818,9 @@ void Demo::drawFrame() {
     rbi.renderPass = renderPass_;
     rbi.framebuffer = framebuffers_[imageIndex];
     rbi.renderArea = {{0, 0}, extent_};
+    VkClearValue clears[2] = {};  // (--depth: cleared to 0, the far plane of a reversed Z)
+    rbi.clearValueCount = withDepth() ? 2 : 0;
+    rbi.pClearValues = clears;
     vkCmdBeginRenderPass(cmd, &rbi, VK_SUBPASS_CONTENTS_INLINE);
     VkViewport viewport{0.f, 0.f, float(extent_.width), float(extent_.height), 0.f, 1.f};
     VkRect2D scissor{{0, 0}, extent_};
@@ -1515,6 +1581,7 @@ Options parseArgs(int argc, char** argv) {
         else if (a == "--speed") o.speed = atof(value().c_str());
         else if (a == "--repeat") o.repeat = std::max(1L, atol(value().c_str()));
         else if (a == "--gpu-load") o.gpuLoad = std::clamp(atol(value().c_str()), 1L, 1000L);
+        else if (a == "--depth") o.depth = true;
         else if (a == "--duration") o.duration = std::max(0.0, atof(value().c_str()));
         else if (a == "--latency-test") {
             o.latencyTest = 1;

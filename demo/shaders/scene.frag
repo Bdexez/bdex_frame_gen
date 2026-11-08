@@ -2,7 +2,10 @@
 // Procedural test scene: scrolling backdrop, several objects moving at
 // different speeds, a rotating textured square (pure rotation), a static
 // "HUD" and a frame counter so that generated frames are easy to tell apart
-// from real ones.
+// from real ones. gl_FragDepth: each object's distance as a game's depth
+// buffer holds it (reversed Z, near / z; used with bdex_demo --depth, ignored
+// without a depth attachment): backdrop 100, bar 20, circles 15 to 11, box
+// 8, rotating square 6; the HUD and the counter have none.
 layout(location = 0) in vec2 vUV;
 layout(location = 0) out vec4 outColor;
 
@@ -50,6 +53,7 @@ void main() {
     vec2 g = floor((uv + vec2(t * 0.15, 0.0)) * 8.0);
     float chk = mod(g.x + g.y, 2.0);
     vec3 col = mix(vec3(0.12, 0.13, 0.18), vec3(0.18, 0.2, 0.26), chk);
+    float z = 100.0;
     if (pc.variant == 1u) {
         // Completely different scene: warm vertical stripes scrolling the other way.
         float st = step(0.5, fract((uv.x - t * 0.3) * 6.0));
@@ -61,6 +65,7 @@ void main() {
     float bx = 0.5 * aspect + 0.45 * aspect * sin(t * 2.2);
     float bar = 1.0 - smoothstep(0.02, 0.025, abs(uv.x - bx));
     col = mix(col, vec3(0.95, 0.85, 0.2), bar * step(0.25, vUV.y) * step(vUV.y, 0.75));
+    if (bar * step(0.25, vUV.y) * step(vUV.y, 0.75) > 0.5) z = 20.0;
 
     // Circles orbiting at different speeds and sizes.
     for (int i = 0; i < 5; ++i) {
@@ -71,6 +76,7 @@ void main() {
         float d = length(uv - c) - r;
         vec3 cc = 0.5 + 0.5 * cos(fi * 1.7 + vec3(0.0, 2.1, 4.2));
         col = mix(col, cc, 1.0 - smoothstep(0.0, 0.004, d));
+        if (d < 0.002) z = 15.0 - fi;
         col = mix(col, vec3(0.0), (1.0 - smoothstep(0.0, 0.004, abs(d))) * 0.7);
     }
 
@@ -81,6 +87,7 @@ void main() {
         vec2 lp = (uv - bc) * 40.0;
         float stripes = step(0.5, fract(lp.x + lp.y));
         col = mix(vec3(0.9, 0.3, 0.3), vec3(0.3, 0.3, 0.9), stripes);
+        z = 8.0;
     }
 
     // Rotating textured square at a fixed position: pure rotation, which
@@ -96,6 +103,7 @@ void main() {
             vec2 cell = floor(pr * 22.0);
             float chk2 = mod(cell.x + cell.y, 2.0);
             col = mix(vec3(0.15, 0.65, 0.72), vec3(0.95, 0.9, 0.35), chk2);
+            z = 6.0;
         }
     }
 
@@ -121,4 +129,5 @@ void main() {
     }
 
     outColor = vec4(col, 1.0);
+    gl_FragDepth = 0.1 / z;
 }
