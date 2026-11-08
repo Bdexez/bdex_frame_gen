@@ -38,6 +38,13 @@
 //   --steady-content  with --jitter: a fixed-timestep game instead, image k
 //                   shows time k*S and is presented within +-J*S/2 of it
 //                   (only the present times jitter, the content does not)
+//   --depth DIR     the game's depth buffer of each frame (the depth option):
+//                   DIR/<frame name>.f32, width x height little-endian floats
+//                   with a reversed Z (D3D's: 0 far, 1 near; --depth-standard:
+//                   0 near, 1 far), uploaded into a D32_SFLOAT image and read
+//                   as the layer reads a game's (FrameGen::recordDepthImport);
+//                   a frame without its file has no depth (make_sequence.py
+//                   and make_game.py write DIR = <sequence>/depth)
 //   --limit-shared KB, --limit-storage-images N   a smaller GPU's limits
 //                   (Vulkan guarantees 16 KB and 4): the engine's fallbacks
 //                   — a lean matcher only, or no generation — on any GPU
@@ -236,7 +243,8 @@ int main(int argc, char** argv) {
     uint64_t seed = 1;
     bool verbose = false, steadyContent = false, scoreReal = false;
     int benchReps = 1;
-    std::string flowDumpDir;
+    std::string flowDumpDir, depthDir;
+    bool depthStandard = false;
     bool hudCounter = false, refreshKnown = false, reuseEqualOutputs = true, rawDumps = false;
     double refreshHz = 0.0;
     std::string fmtName = "rgba8", csName = "srgb";
@@ -262,6 +270,8 @@ int main(int argc, char** argv) {
         else if (a == "--steady-content") steadyContent = true;
         else if (a == "--bench" && i + 1 < argc) benchReps = std::max(1, atoi(argv[++i]));
         else if (a == "--dump-flow" && i + 1 < argc) flowDumpDir = argv[++i];
+        else if (a == "--depth" && i + 1 < argc) depthDir = argv[++i];
+        else if (a == "--depth-standard") depthStandard = true;
         else if (a == "--hud-counter") hudCounter = true;
         else if (a == "--refresh" && i + 1 < argc) refreshHz = atof(argv[++i]);
         else if (a == "--refresh-known") refreshKnown = true;
@@ -315,6 +325,7 @@ int main(int argc, char** argv) {
     cfg.enabled = true;
     cfg.multiplier = mult;
     cfg.overlayMode = 0;
+    if (!depthDir.empty()) cfg.depth = true;  // (--depth: the option with its input)
     log_set_level(cfg.logLevel);
 
     // Headless Vulkan: no surface extension. VK_KHR_swapchain is enabled on
@@ -420,6 +431,32 @@ int main(int argc, char** argv) {
         auto fgp = std::make_unique<FrameGen>(dev, format, render, extent, static_cast<uint32_t>(mult - 1), sources,
                                               colorSpace);
         FrameGen& fg = *fgp;
+        // --depth: a D32_SFLOAT image per history image, as a game's depth
+        // buffer, and the staging of its values.
+        std::vector<AllocatedImage> depthImg;
+        std::vector<VkImageView> depthView;
+        AllocatedBuffer depthStaging;
+        void* depthMapped = nullptr;
+        if (!depthDir.empty() && fg.depthEnabled()) {
+            for (size_t i = 0; i < hist.size(); ++i) {
+                depthImg.push_back(dev.createImage(VK_FORMAT_D32_SFLOAT, extent,
+                                                   VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, false));
+                VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+                vi.image = depthImg.back().image;
+                vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+                vi.format = VK_FORMAT_D32_SFLOAT;
+                vi.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+                VkImageView v = VK_NULL_HANDLE;
+                check(vkCreateImageView(device, &vi, nullptr, &v), "vkCreateImageView (depth)");
+                depthView.push_back(v);
+            }
+            depthStaging = dev.createBuffer(VkDeviceSize(extent.width) * extent.height * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                            true);
+            check(vkMapMemory(device, depthStaging.memory, 0, VK_WHOLE_SIZE, 0, &depthMapped), "vkMapMemory");
+        } else if (!depthDir.empty()) {
+            fprintf(stderr, "bdex_offline: --depth: the engine keeps no depth (no generated frames?)\n");
+        }
+        size_t depthFrames = 0;
 
         fs::create_directories(outDir);
         std::ofstream manifest(outDir / "manifest.txt");
@@ -528,6 +565,15 @@ int main(int argc, char** argv) {
                 }
             }
             const bool dumpReal = (schedule || scoreReal) && fg.packReal();
+            bool haveDepth = false;
+            if (depthMapped) {
+                const fs::path dp = fs::path(depthDir) / (frames[fi].stem().string() + ".f32");
+                std::ifstream df(dp, std::ios::binary);
+                const size_t bytes = size_t(extent.width) * extent.height * 4;
+                haveDepth = df && df.read(static_cast<char*>(depthMapped), std::streamsize(bytes)) &&
+                            size_t(df.gcount()) == bytes;
+                depthFrames += haveDepth ? 1 : 0;
+            }
             dev.immediate([&](VkCommandBuffer cmd) {
                 // Upload into the history image and hand it over the way a
                 // game does: in PRESENT_SRC.
@@ -552,6 +598,35 @@ int main(int argc, char** argv) {
                 vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0,
                                      nullptr, 0, nullptr, 1, &b);
 
+                // The game's depth of this frame (the layer imports it on the
+                // game's queue before the synthesis: the same order).
+                if (haveDepth) {
+                    VkImageMemoryBarrier d{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+                    d.srcQueueFamilyIndex = d.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    d.image = depthImg[cur].image;
+                    d.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+                    d.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                    d.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                    d.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0,
+                                         nullptr, 0, nullptr, 1, &d);
+                    VkBufferImageCopy dr{};
+                    dr.imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+                    dr.imageExtent = {extent.width, extent.height, 1};
+                    vkCmdCopyBufferToImage(cmd, depthStaging.buffer, depthImg[cur].image,
+                                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &dr);
+                    d.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                    d.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+                    d.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                    d.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0,
+                                         nullptr, 0, nullptr, 1, &d);
+                    fg.recordDepthImport(cmd, static_cast<uint32_t>(cur), depthView[cur],
+                                         VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, extent, {{0, 0}, extent},
+                                         !depthStandard);
+                } else {
+                    fg.clearDepth(static_cast<uint32_t>(cur));
+                }
                 // The same sequence as VirtualSwapchain::present.
                 fg.profileBegin(cmd, 0);
                 fg.recordAcquireSources(cmd, prev, cur);
@@ -669,6 +744,12 @@ int main(int argc, char** argv) {
         dev.destroyBuffer(staging);
         fgp.reset();  // the engine holds views of the history images
         for (auto& h : hist) dev.destroyImage(h);
+        if (!depthDir.empty())
+            fprintf(stderr, "bdex_offline: depth for %zu of %zu inputs\n", depthFrames, sched.size());
+        for (VkImageView v : depthView) vkDestroyImageView(device, v, nullptr);
+        for (auto& d : depthImg) dev.destroyImage(d);
+        if (depthMapped) vkUnmapMemory(device, depthStaging.memory);
+        if (depthStaging.buffer) dev.destroyBuffer(depthStaging);
     }
     vkDestroyCommandPool(device, dev.cmdPool, nullptr);
     vkDestroyDevice(device, nullptr);

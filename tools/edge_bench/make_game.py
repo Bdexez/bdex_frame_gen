@@ -24,7 +24,11 @@ starting and stopping inside a game frame), then still again, every 48
 frames; `subs` the turn with subtitles: a see-through box at the bottom with
 two lines of anti-aliased white text that change every second (120 frames)
 and vanish for its last fifth — HUD text appearing over the moving scene,
-what an overlay mask must learn anew each time (241 frames by default)."""
+what an overlay mask must learn anew each time (241 frames by default).
+Also DIR/depth/fNNNN.f32, the depth buffer of the frame's time (reversed Z,
+near / z with near = 0.1, not motion-blurred, as a game's): the background
+at 200, the near layer at 200 / its parallax factor, the character at 40, the
+weapon at 0.5; the HUD and subtitles have none (bdex_offline --depth)."""
 import sys
 from pathlib import Path
 
@@ -193,6 +197,24 @@ def main():
             sc, s_a = subs[f // 120]
             img = img * (1 - s_a[..., None]) + sc * s_a[..., None]
         img = img * (1 - hud_a[..., None]) + hud * hud_a[..., None]
+        # the depth buffer at the frame's own time (one sample: no blur)
+        ox, oy = campos(float(f))
+        z = np.full((H, W), 200.0, np.float32)
+        z[shift(near_a[..., None], 200 + ox * near_k, 200 + oy * near_k)[..., 0] > 0.5] = 200.0 / near_k
+        px = 900 - 7.0 * f - 0.2 * ox; py = 300 + 1.5 * f
+        x0, y0 = int(np.floor(px)), int(np.floor(py))
+        sx0, sy0, ex, ey = max(0, -x0), max(0, -y0), min(120, W - x0), min(260, H - y0)
+        if ex > sx0 and ey > sy0:
+            zc = z[y0 + sy0:y0 + ey, x0 + sx0:x0 + ex]
+            zc[char_a[sy0:ey, sx0:ex] > 0.5] = 40.0
+        if kind == "fps":
+            sx, sy = 3.0 * np.sin(f * 0.11), 2.0 * np.sin(f * 0.07 + 1.0)
+            x0, y0 = int(round(W - ww + 20 + sx)), int(round(H - wh + 30 + sy))
+            ex, ey = min(ww, W - x0), min(wh, H - y0)
+            zw = z[y0:y0 + ey, x0:x0 + ex]
+            zw[weap_a[:ey, :ex] > 0.5] = 0.5
+        (out / "depth").mkdir(exist_ok=True)
+        (0.1 / z).astype("<f4").tofile(out / "depth" / f"f{f:04d}.f32")
         a8 = (np.clip(img, 0, 1) * 255 + 0.5).astype(np.uint8)
         with open(out / f"f{f:04d}.ppm", "wb") as fh:
             fh.write(b"P6\n%d %d\n255\n" % (W, H)); fh.write(a8.tobytes())

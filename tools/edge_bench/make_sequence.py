@@ -5,8 +5,12 @@ camera, seven textured objects (z-ordered, integer motion), a static HUD.
 
     make_sequence.py DIR still|pan|fast|lowcon [N=33]
 
-Writes DIR/fNNNN.ppm (score with x2: odd frames are the ground truth) and
-DIR/truth.npz (owner of every pixel, per frame; velocity of every owner).
+Writes DIR/fNNNN.ppm (score with x2: odd frames are the ground truth),
+DIR/truth.npz (owner of every pixel, per frame; velocity of every owner) and
+DIR/depth/fNNNN.f32, the depth buffer a game would have (reversed Z, D3D's:
+near / z, near = 0.1; the world at 100, object i at 20 - 2i, painted in that
+order; the HUD is drawn without depth: the world's there) — bdex_offline
+--depth DIR/depth.
 Then: bdex_offline DIR OUT --multiplier 2 [--dump-flow OUT/flow]; score.py DIR OUT [--flow]."""
 import sys, numpy as np
 from pathlib import Path
@@ -84,6 +88,9 @@ def main():
             own[y0:y1, x0:x1][m] = 2 + i
         img[640:700, 980:1240] = hud; own[640:700, 980:1240] = 1
         owners[f] = own
+        z = np.where(own >= 2, 20.0 - 2.0 * (own.astype(np.float32) - 2.0), 100.0)  # (HUD pixels: the world)
+        (out / "depth").mkdir(exist_ok=True)
+        (0.1 / z).astype("<f4").tofile(out / "depth" / f"f{f:04d}.f32")
         a = (img * 255 + 0.5).astype(np.uint8)
         with open(out / f"f{f:04d}.ppm", "wb") as fh:
             fh.write(b"P6\n%d %d\n255\n" % (W, H)); fh.write(a.tobytes())
