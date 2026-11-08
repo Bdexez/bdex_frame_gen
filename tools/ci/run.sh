@@ -2,10 +2,10 @@
 # Replays the Linux CI (.github/workflows/linux.yml) in an Ubuntu 24.04
 # container with the runner's Vulkan loader (1.3.275) and lavapipe, so a
 # change can be checked before pushing:
-#   tools/ci/run.sh            # the "build" job (tests, f2cec5f invariant, PSNR gates)
-#   tools/ci/run.sh asan|tsan  # one "sanitizers" job
+#   tools/ci/run.sh            # the "test" job (tools/ci/linux-tests.sh: tests, f2cec5f invariant, PSNR gates)
+#   tools/ci/run.sh asan|tsan  # one "sanitizers" job (compat.yml, nightly)
 #   tools/ci/run.sh mingw      # the Windows C++ with MinGW, x64 and 32-bit x86 (catches Win32-only errors)
-#   BDEX_CI_CPUS=4 tools/ci/run.sh ...  # with a GitHub runner's CPU count
+#   BDEX_CI_CPUS=2 tools/ci/run.sh ...  # with a GitHub runner's CPU count (private repository: 2)
 # Needs Docker. Works on a copy of the working tree (tracked + untracked files).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -33,12 +33,8 @@ if [ "$1" = build ]; then
   cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBDEX_WERROR=ON >/dev/null && cmake --build build -j"$(nproc)" >/dev/null || exit 1
   cmake -S /work/baseline -B /work/baseline/build -DCMAKE_BUILD_TYPE=Release >/dev/null
   cmake --build /work/baseline/build -j"$(nproc)" >/dev/null || exit 1
-  BDEX_REQUIRE_DISPLAY=1 BDEX_TEST_COMPOSITOR=1 xvfb-run -a ctest --test-dir build --output-on-failure --repeat until-pass:2 || exit 1
-  BDEX_INVARIANT_SEQUENTIAL=1 xvfb-run -a -s '-screen 0 1280x800x24' \
-    python3 tests/check_matcher_invariant.py build /work/baseline/build || exit 1
-  for a in "" "--speed 2"; do
-    echo "PSNR ${a:-normal}: $(xvfb-run -a env BDEX_EVAL_ARGS="$a" tools/run_eval.sh build 40 | grep '^  mean')"
-  done
+  # The CI job's own test script: its lanes, invariant and PSNR gates.
+  tools/ci/linux-tests.sh build /work/baseline/build || exit 1
 else
   if [ "$1" = asan ]; then
     flags="-fsanitize=address,undefined -fno-omit-frame-pointer"
@@ -54,6 +50,12 @@ else
     ctest --test-dir build -R "unit|offline|integration|acquire" --output-on-failure
 fi
 JOB
-# BDEX_CI_CPUS=4 caps the container at a GitHub runner's 4 vCPUs: lavapipe
-# scales with cores, so an uncapped replay can pass timeouts CI then misses.
-docker run --rm ${BDEX_CI_CPUS:+--cpus "$BDEX_CI_CPUS"} --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$work:/work" bdex-ci:24.04 bash /work/job.sh "$job"
+# BDEX_CI_CPUS=N gives the container N CPUs (the last ones), as a runner
+# has: lavapipe scales with cores, so an uncapped replay can pass timeouts
+# CI then misses. A CPU set, not --cpus: under --cpus, nproc still sees
+# every CPU, and lavapipe's threads (and make -j) oversubscribe the quota.
+cpuset=""
+if [ -n "${BDEX_CI_CPUS:-}" ]; then
+  n=$(nproc); cpuset="--cpuset-cpus $(( n - BDEX_CI_CPUS ))-$(( n - 1 ))"
+fi
+docker run --rm $cpuset --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$work:/work" bdex-ci:24.04 bash /work/job.sh "$job"

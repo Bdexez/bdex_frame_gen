@@ -53,6 +53,9 @@ if(MSVC)
   # getenv / fopen / strerror: the portable standard calls, used safely here;
   # MSVC's "unsafe" deprecation (C4996) would otherwise be the bulk of the log.
   add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+  # The files of a project compiled in parallel (MSBuild's --parallel only
+  # builds projects side by side): the CI's Windows minutes count double.
+  add_compile_options(/MP)
 endif()
 # Warnings as errors for a target (BDEX_WERROR): /WX or -Werror.
 function(bdex_strict target)

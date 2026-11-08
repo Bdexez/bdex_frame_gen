@@ -8,11 +8,20 @@
 # /WX C4456/C4457 (a local hiding another local or a parameter: a
 # lock_guard named like the function's unique_lock broke both Windows builds
 # on 2026-11-01, after a month without the Windows CI). Run through tools/ci/run.sh mingw (Docker), or
-# directly where both MinGW toolchains are installed (the CI's windows-syntax job).
+# directly where both MinGW toolchains are installed (the CI's Linux job).
+#
+# In the CI's Linux job (2026-11-01, Actions minutes): BDEX_MINGW_ARCHS=i686
+# (MSVC x64 itself runs on the pushes that change what it compiles) and
+# BDEX_MINGW_GEN=build (the job's own build already generated shaders.h).
+# The files are checked in parallel (one compiler per CPU).
 set -uo pipefail
 cd "$(dirname "$0")/../../.."
+archs="${BDEX_MINGW_ARCHS:-x86_64 i686}"
+gen="${BDEX_MINGW_GEN:-build-gen}"
 # shaders.h (generated) is included by the engine files.
-cmake -S . -B build-gen -DCMAKE_BUILD_TYPE=Release >/dev/null && cmake --build build-gen --target bdex_layer_shaders >/dev/null || exit 1
+if [ ! -f "$gen/layer/generated/shaders.h" ]; then
+  cmake -S . -B "$gen" -DCMAKE_BUILD_TYPE=Release >/dev/null && cmake --build "$gen" --target bdex_layer_shaders >/dev/null || exit 1
+fi
 # Only the Vulkan headers of the system (the rest would be glibc's).
 mkdir -p /tmp/vkinc && ln -sf /usr/include/vulkan /usr/include/vk_video /tmp/vkinc/
 # What the Windows CI builds (CMakeLists.txt): the layer and the unit tests
@@ -20,21 +29,26 @@ mkdir -p /tmp/vkinc && ln -sf /usr/include/vulkan /usr/include/vk_video /tmp/vki
 # capture app for x64 only; bdex_offline is not built on Windows.
 common=$(ls layer/src/*.cpp layer/src/passes/*.cpp tests/test_*.cpp | xargs grep -L "GLFW/glfw3.h")
 status=0
-for cxx in x86_64-w64-mingw32-g++-posix i686-w64-mingw32-g++-posix; do
+# One file: its errors, and a non-zero status when it fails.
+check_one() {
+  local cxx=$1 f=$2 out
+  out=$($cxx -std=c++20 -fsyntax-only -Werror=shadow=local -DWIN32_LEAN_AND_MEAN -DNOMINMAX \
+        -DVK_USE_PLATFORM_WIN32_KHR -DBDEX_LAYER_NAME='"VK_LAYER_BDEX_framegen"' -DBDEX_LAYER_VERSION_STR='"0"' -DBDEX_VERSION_STR='"0"' \
+        -Ilayer/src -Icapture/src -Itests -I"$GEN/layer/generated" -isystem /tmp/vkinc "$f" 2>&1) && return 0
+  printf 'FAIL [%s] %s\n%s\n' "$cxx" "$f" "$(grep -E "error" <<<"$out" | head -5)"
+  return 1
+}
+export -f check_one
+export GEN="$gen"
+for arch in $archs; do
+  cxx=$arch-w64-mingw32-g++-posix
   files=$common
-  [[ $cxx == x86_64* ]] && files="$files capture/src/vkctx.cpp capture/src/launcher.cpp capture/src/main.cpp capture/src/tray.cpp capture/src/injection.cpp capture/src/report.cpp tools/calibrate/bdex_calibrate.cpp"
-  n=0
-  for f in $files; do
-    out=$($cxx -std=c++20 -fsyntax-only -Werror=shadow=local -DWIN32_LEAN_AND_MEAN -DNOMINMAX \
-          -DVK_USE_PLATFORM_WIN32_KHR -DBDEX_LAYER_NAME='"VK_LAYER_BDEX_framegen"' -DBDEX_LAYER_VERSION_STR='"0"' -DBDEX_VERSION_STR='"0"' \
-          -Ilayer/src -Icapture/src -Itests -Ibuild-gen/layer/generated -isystem /tmp/vkinc "$f" 2>&1)
-    if [ $? -ne 0 ]; then
-      echo "FAIL [$cxx] $f"; grep -E "error" <<<"$out" | head -5; status=1
-    fi
-    n=$((n + 1))
-  done
+  [ "$arch" = x86_64 ] && files="$files capture/src/vkctx.cpp capture/src/launcher.cpp capture/src/main.cpp capture/src/tray.cpp capture/src/injection.cpp capture/src/report.cpp tools/calibrate/bdex_calibrate.cpp"
+  n=$(wc -w <<<"$files")
+  printf '%s\n' $files | xargs -P "$(nproc)" -I{} bash -c 'check_one "$0" "$1"' "$cxx" {} || status=1
   echo "$cxx: $n files checked"
 done
+if [[ " $archs " != *" x86_64 "* ]]; then exit $status; fi
 # The capture target compiles the engine too, with capture/src among its
 # include directories (capture/CMakeLists.txt order): a header name both
 # define (log.h) must still resolve to the layer's in the engine's files.
@@ -42,7 +56,7 @@ n=0
 for f in layer/src/*.cpp layer/src/passes/*.cpp; do
   out=$(x86_64-w64-mingw32-g++-posix -std=c++20 -fsyntax-only -DWIN32_LEAN_AND_MEAN -DNOMINMAX \
         -DVK_USE_PLATFORM_WIN32_KHR -DBDEX_LAYER_NAME='"VK_LAYER_BDEX_framegen"' -DBDEX_LAYER_VERSION_STR='"0"' -DBDEX_VERSION_STR='"0"' \
-        -Ilayer/src -Ibuild-gen/layer/generated -Icapture/src -isystem /tmp/vkinc "$f" 2>&1)
+        -Ilayer/src -I"$gen/layer/generated" -Icapture/src -isystem /tmp/vkinc "$f" 2>&1)
   if [ $? -ne 0 ]; then echo "FAIL [capture include order] $f"; grep -E "error" <<<"$out" | head -5; status=1; fi
   n=$((n + 1))
 done
@@ -55,7 +69,7 @@ echo "capture include order: $n files checked"
 # members are left out.)
 obj=$(mktemp -d)
 for f in capture/src/main.cpp capture/src/launcher.cpp capture/src/injection.cpp capture/src/report.cpp capture/src/tray.cpp capture/src/vkctx.cpp; do
-  x86_64-w64-mingw32-g++-posix -std=c++20 -c -o "$obj/$(basename "$f" .cpp).o" -DWIN32_LEAN_AND_MEAN -DNOMINMAX     -DVK_USE_PLATFORM_WIN32_KHR -DBDEX_LAYER_NAME='"VK_LAYER_BDEX_framegen"' -DBDEX_LAYER_VERSION_STR='"0"' -DBDEX_VERSION_STR='"0"'     -Ilayer/src -Ibuild-gen/layer/generated -Icapture/src -isystem /tmp/vkinc "$f" 2>/dev/null || { echo "FAIL [objects] $f"; status=1; }
+  x86_64-w64-mingw32-g++-posix -std=c++20 -c -o "$obj/$(basename "$f" .cpp).o" -DWIN32_LEAN_AND_MEAN -DNOMINMAX     -DVK_USE_PLATFORM_WIN32_KHR -DBDEX_LAYER_NAME='"VK_LAYER_BDEX_framegen"' -DBDEX_LAYER_VERSION_STR='"0"' -DBDEX_VERSION_STR='"0"'     -Ilayer/src -I"$gen/layer/generated" -Icapture/src -isystem /tmp/vkinc "$f" 2>/dev/null || { echo "FAIL [objects] $f"; status=1; }
 done
 declared=$(grep -hoE "\b[a-zA-Z_][a-zA-Z0-9_]*\(" capture/src/launcher.h capture/src/injection.h capture/src/report.h capture/src/tray.h capture/src/vkctx.h | tr -d '(' | sort -u)
 defined=$(for o in "$obj"/*.o; do x86_64-w64-mingw32-nm -C --defined-only "$o"; done | awk '$2 == "T" { $1 = ""; $2 = ""; print }')
