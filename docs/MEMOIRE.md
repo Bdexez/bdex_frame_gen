@@ -4221,7 +4221,8 @@ minutes Windows comptées double, chaque job arrondi à la minute.
   x64 seul, `/MP`, seulement si quelque chose qu'il compile a changé
   (≈ 2 × 7 min estimées) ; ≈ 27 min par push qui touche le C++, ≈ 12
   sinon, **estimés dans la réplique** — le vrai runner a pris 21 min pour
-  Linux (ci-dessous), d'où la voie `slow` la nuit : ~13 min attendues.
+  Linux (ci-dessous), d'où la voie `slow` la nuit : **7 min 54 mesurées**
+  ensuite (cache de compilation plein).
   Push seulement sur `main` et les tags (les PR Dependabot ne tournent
   qu'une fois).
 - **Mesures qui ont décidé** (réplique Docker, `--cpuset-cpus` 2 CPU : avec
@@ -4262,6 +4263,8 @@ minutes Windows comptées double, chaque job arrondi à la minute.
   (« 1 job, sous 15 min ») : `determinism` (154 s dans la réplique) et
   `output_reuse` (33 s) la nuit (voie `slow`), ~13 min attendues avec le
   cache de compilation plein (C++ 72 s sur 2 CPU dans la réplique, shaders
-  2,6 s : rien à gagner à cacher les shaders). Pas d'accès à l'API Actions
-  d'un dépôt privé : les durées viennent de l'utilisateur (page du run ;
-  le résumé du run liste maintenant chaque voie et son temps).
+  2,6 s : rien à gagner à cacher les shaders). **Run suivant (f2a6d61,
+  cache plein) : `linux / test` en 7 min 54**, vert (au lieu de 21 min).
+  Pas d'accès à l'API Actions d'un dépôt privé : les durées viennent de
+  l'utilisateur (page du run ; le résumé du run liste chaque voie et son
+  temps).

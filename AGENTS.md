@@ -112,7 +112,8 @@ tous les shaders de `layer/shaders/`.
   MinGW i686 ; gitleaks. **Runner GitHub ≈ 1,8 × la réplique à 2 CPU**
   (1er run, 19bcb39 : 21 min — dépendances 36 s, build 3 min 40 à cache
   vide, tests 16 min 26) → `determinism` et `output_reuse` (voie `slow`)
-  la nuit aussi, choix de l'utilisateur : ~13 min. Validation Khronos (552 s
+  la nuit aussi, choix de l'utilisateur : **7 min 54** au run suivant
+  (f2a6d61, cache plein). Validation Khronos (552 s
   sur 2 CPU dans la réplique) et `swapchain_stress` (166 s), sanitizers,
   fuzz : `compat.yml` la nuit. Temps par voie dans le résumé du run
   (`$GITHUB_STEP_SUMMARY`). `tools/ci/run.sh` rejoue toutes les voies.
