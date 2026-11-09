@@ -856,25 +856,39 @@ passe par `tr()` et la table `_EN`. Le rapport `--report` reste en français.
 d'affichage tournent dans `gamescope --backend headless` ou dans Docker
 (Xvfb + lavapipe).
 
-**CI GitHub**
-- `linux.yml`, à chaque push, sous 15 min (demande du 08/10) :
-  - build + tests + seuil PSNR (28,0 / 23,0 dB) ;
-  - sanitizers (ASan, UBSan, TSan) ;
-  - fuzz ; syntaxe Windows (MinGW x64/i686) ; `secrets` (gitleaks).
-- `compat.yml`, chaque nuit (si `main` a bougé dans les 24 h), sur les tags
-  `v*` et à la main (Actions → compat → Run workflow) :
+**CI GitHub** (minutes réduites le 01/11, demande : « minimiser au maximum
+les minutes d'actions utilisées à chaque push » ; dépôt privé : runners à
+2 CPU, minutes Windows comptées double ; octobre sans CI, minutes épuisées)
+- Déclencheurs : `push` sur `main` et les tags seulement (une autre branche :
+  pull request ou Actions → Run workflow) ; filtres `paths` — un push de
+  documentation seule (Markdown sauf README.md, `docs/`, autres workflows,
+  scripts PowerShell) ne lance rien.
+- `linux.yml`, **un job** (`test`, ~12 min dans la réplique à 2 CPU, budget
+  15 min du 08/10) : build avec ccache gardé entre les runs, puis
+  `tools/ci/linux-tests.sh … core display mingw` — tests sans affichage,
+  invariant f2cec5f, seuils PSNR (28,0 / 23,0 dB), tests d'affichage, MinGW
+  i686 ; gitleaks. Les voies l'une après l'autre : côte à côte sur 2 CPU, la
+  démo tombait à 2 i/s et les tests de cadence échouaient.
+- `windows.yml` : MSVC **x64** seul par push (build `/MP` + tests), et
+  seulement si quelque chose que MSVC compile a changé ; Win32, zips et
+  bundle sur les tags et à la main. En cas d'échec, les logs sont poussés
+  sur `ci-log-x64` / `ci-log-Win32` (lisibles par l'assistant).
+- `compat.yml`, chaque nuit si autre chose que de la documentation a changé
+  dans les 24 h, sur les tags `v*` et à la main :
+  - `validation` (validation Khronos 552 s + `swapchain_stress` 166 s sur
+    2 CPU) ; `sanitizers` (ASan, UBSan, TSan) ; `fuzz` ;
   - `distros` : 6 distributions ; `source-packages` (dont Proton/Wine) ;
     `panel` ; `nix` ;
   - `package` : archives + `archive-check`, jointes à la release.
 - Chaque job a un `timeout-minutes` ; apt sur le runner passe par
   `tools/ci/runner-apt.sh` (le miroir Azure a bloqué une CI 4 h le 08/10).
-- `windows.yml` : MSVC x64 et Win32 (SDK Vulkan en cache), tests, zips. En cas d'échec, les logs
-  sont poussés sur les branches `ci-log-x64` / `ci-log-Win32`.
-- **Le dépôt est privé** : l'assistant ne voit pas la CI.
+- **Le dépôt est privé** : l'assistant ne voit pas la CI (sauf les branches
+  `ci-log-*`).
 
 **Rejouer localement, avant de pousser**
 - `tools/ci/run.sh build` (et `asan`, `tsan`, `mingw`) : la CI Linux dans
-  Docker.
+  Docker, toutes les voies ; `BDEX_CI_CPUS=2` pour un runner (jeu de CPU,
+  pas `--cpus`) ; `rhysd/actionlint:1.7.7` pour les workflows.
 - `tools/ci/distro-check.sh`, `archive-check.sh`, `panel-check.sh`,
   `package-release.sh`.
 
@@ -1284,6 +1298,15 @@ vrai absent des 4×4 texels voisins : 3 à 8 % seulement (lowcon 16).
   seule perd (−0,95 dB, elle confond recouvert et découvert). La profondeur
   exacte gagne partout (+0,17 à +1,54 dB, `tools/edge_bench/depth_oracle.py`)
   → piste : lire le tampon de profondeur du jeu dans la couche.
+- **Course de synchronisation possible sous `fps_limit_wait`** (vue le 01/11,
+  pas encore cherchée) : la réplique de la CI sur 2 CPU, run
+  `interpolate:waitcap` de `tests/validation.sh`, 3 messages
+  `SYNC-HAZARD-PRESENT-AFTER-WRITE` — un `vkQueuePresentKHR` de la couche
+  sur une image de la vraie swapchain dont la transition de disposition
+  (`vkCmdPipelineBarrier`) n'est pas ordonnée avant la présentation par un
+  sémaphore. Une fois sur deux : le second essai passe (`until-pass:2`) ;
+  jamais vue sur 12 CPU. Probablement un chemin de présentation où le
+  sémaphore de la copie n'est pas attendu quand le CPU est lent.
 
 **Windows**
 - Transmettre le plein écran exclusif (mode 1).
@@ -4177,3 +4200,53 @@ d'architecture dans AGENTS §5 « Profondeur du jeu ».
   panneau a la case), dont un jeu Vulkan natif et un jeu DXVK ; les images prédites (priorité du splat et
   `reveal_fill` par la profondeur) ; la couche Windows (même code, jamais
   exécutée sur matériel) ; MSAA (images multi-échantillonnées ignorées).
+
+### 01/11 (fin) — la CI au minimum de minutes par push
+
+Demande de l'utilisateur, la CI revenue (octobre sans CI, minutes sans doute
+épuisées) : « je veux que tu optimises la CI pour minimiser au maximum les
+minutes d'actions utilisées à chaque push ». Dépôt privé : runners à 2 CPU,
+minutes Windows comptées double, chaque job arrondi à la minute.
+- **Avant** (estimé, push qui touche le code) : linux.yml 10 jobs (5 de
+  tests, chacun apt + build ; 2 sanitizers ; fuzz 4 min ; MinGW ; gitleaks)
+  ≈ 67 min ; windows.yml MSVC x64 + Win32 sans `/MP`, paquets (DXVK /
+  VKD3D téléchargés) et bundle à chaque push ≈ 2 × 2 × 10 + 1 ≈ 45 min
+  facturées ; **≈ 110 min par push**, et autant pour un push de
+  documentation seule, ou pour les branches Dependabot (push + pull request).
+- **Après** : un push de documentation seule (Markdown hors README.md,
+  `docs/`, autres workflows, scripts PowerShell) ne lance rien ; Linux = un
+  job, ~12 min (réplique à 2 CPU : builds 69 s, voie core 358 s, voie
+  display 168 s, MinGW i686 26 s ; ccache entre les runs) ; Windows = MSVC
+  x64 seul, `/MP`, seulement si quelque chose qu'il compile a changé
+  (≈ 2 × 7 min) ; **≈ 27 min par push qui touche le C++, ≈ 12 sinon**. Push
+  seulement sur `main` et les tags (les PR Dependabot ne tournent qu'une fois).
+- **Mesures qui ont décidé** (réplique Docker, `--cpuset-cpus` 2 CPU : avec
+  `--cpus 2`, `nproc` vaut 12, lavapipe lance 12 fils sur 2 CPU et la
+  compilation prend 106 s au lieu de 67) :
+  - voies côte à côte dans un job (une Xvfb chacune) : offline 264 s au lieu
+    de 75, corpus 203 au lieu de 49, et `capture_linux`, `limit_session` ×2
+    en échec (démo à 2 i/s) → voies l'une après l'autre ;
+  - par test sur 2 CPU : validation 552 s (et un échec au premier essai,
+    §9), `swapchain_stress` 166, determinism 154, offline 75, capture_linux
+    61, corpus 49, output_reuse 33, limit_session 32 ×2, live_config 26 ;
+    invariant f2cec5f 3 s ; quatre évaluations PSNR 26 s ;
+  - validation + `swapchain_stress` = 12 des 21 min de tests d'un push → la
+    nuit (`compat.yml`, job `validation`), avec sanitizers et fuzz.
+- **Gardé à chaque push** : unit, matcher, frame_state, offline, corpus,
+  formats, min_limits, determinism, output_reuse, option_keys, panel,
+  scripts, invariant bit à bit, seuils PSNR ×2/×3/×4, integration,
+  capture_linux, live_config, limit_session ×2, record_live, replay,
+  acquire, MinGW i686, gitleaks, MSVC x64 (build + tests unitaires).
+- **La nuit** (`compat.yml`, seulement si autre chose que de la
+  documentation a changé dans les 24 h) : validation Khronos sur toutes les
+  options, `swapchain_stress`, ASan/UBSan, TSan, fuzz — plus l'existant
+  (distributions, paquets source, Proton, panneau, Nix, archives).
+- **Tags et à la main** : Win32 MSVC, zips Windows, bundle, release.
+- Outils : `tools/ci/linux-tests.sh` (les voies, aussi rejoué par
+  `tools/ci/run.sh`), `BDEX_CI_CPUS=2 tools/ci/run.sh` (jeu de CPU),
+  `tools/ci/mingw/check.sh` en parallèle (`BDEX_MINGW_ARCHS`,
+  `BDEX_MINGW_GEN`), `rhysd/actionlint:1.7.7` dans Docker (workflows
+  vérifiés : ni expression ni contexte faux).
+- Non mesuré ici : la vraie durée sur les runners GitHub (pas d'accès à
+  l'API Actions d'un dépôt privé) ; `/MP` et les filtres `paths` ne se
+  vérifient qu'au premier push.

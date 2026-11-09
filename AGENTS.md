@@ -88,23 +88,42 @@ tous les shaders de `layer/shaders/`.
   `integration.sh` (démo 30 fps à travers la couche, vérifie le ratio x2 et
   "generation on") et `test_acquire.cpp` (délais nuls/finis après épuisement
   des images virtuelles, puis réveil à la libération).
-- `.github/workflows/windows.yml` — build MSVC x64 + Win32, tests, zip par arch
-  (`bdex-framegen-windows-<arch>`), logs poussés sur `ci-log-<arch>` en cas
-  d'échec ; tags `v*` → GitHub Release (pré-release si suffixe `-`).
+- **Minutes Actions** (01/11, demande utilisateur : « minimiser au maximum
+  les minutes d'actions utilisées à chaque push » ; dépôt privé, minutes
+  Windows comptées double) : `push` seulement sur `main` et les tags (une
+  autre branche : pull request ou `workflow_dispatch`) ; filtres `paths` —
+  un push de documentation seule (Markdown hors README.md, `docs/`, les
+  autres workflows, les scripts PowerShell) ne lance rien, Windows ne tourne
+  que si quelque chose que MSVC compile a changé. Tout nouveau fichier lu
+  par un build ou un test doit tomber dans ces listes (sinon, ajouter son
+  chemin aux deux `paths` du workflow).
+- `.github/workflows/windows.yml` — par push : MSVC **x64** seul (build +
+  tests unitaires, `/MP`), logs poussés sur `ci-log-<arch>` en cas d'échec ;
+  Win32, paquets zip par arch (`bdex-framegen-windows-<arch>`), bundle :
+  tags `v*` et à la main seulement (Actions → windows → Run workflow : les
+  zips à essayer) ; tags `v*` → GitHub Release (pré-release si suffixe `-`).
 - `.github/workflows/linux.yml` — à chaque push, **sous 15 min** (demande
-  utilisateur, 2026-10-08) : build + tests unit/intégration (Xvfb,
-  lavapipe) + gate qualité PSNR (échec sous 28,0 dB normal / 23,0 dB rapide),
-  sanitizers, fuzz, syntaxe MinGW.
+  utilisateur, 2026-10-08), **un seul job** depuis le 01/11 (il y en avait
+  10, chacun refaisait apt + build) : build (ccache gardé entre les runs) +
+  `tools/ci/linux-tests.sh build baseline/build core display mingw` — voies
+  l'une après l'autre (côte à côte sur 2 CPU : tests de cadence affamés,
+  démo à 2 i/s, mesuré) : tests sans affichage + invariant f2cec5f + gates
+  PSNR (échec sous 28,0 dB normal / 23,0 dB rapide), tests d'affichage,
+  MinGW i686 ; gitleaks. ~12 min dans la réplique à 2 CPU. Validation
+  Khronos (552 s sur 2 CPU) et `swapchain_stress` (166 s), sanitizers,
+  fuzz : `compat.yml` la nuit. `tools/ci/run.sh` rejoue toutes les voies.
 - **Sécurité** (2026-10-13, `SECURITY.md`) : jeton CI en lecture seule par
   défaut (`permissions` en tête de chaque workflow, un job qui publie
   demande `contents: write` lui-même), actions tierces épinglées par commit,
-  `.github/dependabot.yml`, job `secrets` (gitleaks), `SHA256SUMS-*.txt` et
+  `.github/dependabot.yml`, étape gitleaks (job `test` de linux.yml), `SHA256SUMS-*.txt` et
   source de VKD3D-Proton (LGPL §4) sur chaque release, étape « Sign »
   (Authenticode, inactive sans secrets). Le panneau affiche tout en texte
   brut (`_PlainAdw`) : ne pas réintroduire de balisage Pango dans une ligne.
 - `.github/workflows/compat.yml` — le lourd, **hors push** : chaque nuit
-  (s'il y a eu un commit dans les 24 h), sur les tags `v*`, à la main
-  (`workflow_dispatch`) : `distros` (6 distributions), `source-packages`
+  (si autre chose que de la documentation a changé dans les 24 h), sur les
+  tags `v*`, à la main (`workflow_dispatch`) : `validation` (voies
+  `validation` + `stress` de `linux-tests.sh`), `sanitizers` (ASan+UBSan,
+  TSan), `fuzz`, `distros` (6 distributions), `source-packages`
   (dont Proton/Wine), `panel`, `nix`, `package` (archives x86_64/aarch64,
   vérifiées par `archive-check.sh`, jointes à la release). Un job ajouté à
   `linux.yml` doit tenir le budget de 15 min, sinon il va dans `compat.yml`. Pièges runner (cf. §9) : paquet `glslc` (pas `glslc-tools`),
@@ -885,7 +904,8 @@ réintroduire) :
   identiques ; une nouvelle option doit y être ajoutée), `matcher` (vrai shader vs modèle C++ du départage ; attrape
   0549e44), `offline`, `corpus` (références `tests/corpus_reference.json`,
   `--update` après un changement voulu), `formats`, `validation` (Khronos +
-  sync), plus le job CI `sanitizers` (ASan+UBSan, TSan).
+  sync), plus le job CI `sanitizers` (ASan+UBSan, TSan ; `compat.yml`,
+  la nuit, depuis le 01/11).
 - **Options opt-in (défaut 0 = bit à bit)** : `zero_bias_contrast`,
   `subpixel`, `pixel_vectors`, `static_guard` (gardé par le flow au pixel),
   `temporal_prediction`, `extrapolate_splat` ; **défaut changé** :
@@ -1212,11 +1232,17 @@ x2/x3/x4), sauf le correctif HDR (les chemins SDR restent identiques).
   bornées, miroir Azure retiré de la liste après un échec) ; chaque job a
   son `timeout-minutes` ; le wrapper des conteneurs borne aussi chaque
   tentative (900 s).
-- **Avant de pousser un changement de CI** : `tools/ci/run.sh` (build) et
-  `tools/ci/run.sh asan|tsan` rejouent les jobs dans Docker, même loader,
-  lavapipe.
-- **Job `windows-syntax`** (linux.yml, à chaque push) : le même contrôle
-  MinGW x64/i686, en une minute, à côté des résultats Linux.
+- **Avant de pousser un changement de CI** : `tools/ci/run.sh` (build : les
+  voies de `linux-tests.sh`) et `tools/ci/run.sh asan|tsan` rejouent les
+  jobs dans Docker, même loader, lavapipe ; `--cpuset-cpus 4,5` (2 CPU
+  visibles : `nproc` = 2, comme un runner de dépôt privé) pour les temps —
+  `--cpus 2` laisse `nproc` = 12 et lavapipe lance 12 fils sur 2 CPU (temps
+  faux, tests de cadence en échec). `docker run --rm -v "$PWD:/repo:ro"
+  --workdir /repo rhysd/actionlint:1.7.7 -shellcheck=` vérifie les
+  workflows (expressions, contextes) avant de pousser.
+- **Contrôle MinGW en CI** (linux.yml, à chaque push, voie `mingw` de
+  `linux-tests.sh`) : i686 seul (`BDEX_MINGW_ARCHS=i686`, x64 = le vrai
+  MSVC du même push), fichiers en parallèle, `shaders.h` du build du job.
 - **Avant de pousser du C++** : `tools/ci/run.sh mingw` compile (syntaxe)
   ce que la CI Windows construit, avec MinGW x64 **et i686** — le passage
   32 bits attrape les erreurs propres à MSVC Win32 (handles Vulkan non
