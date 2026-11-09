@@ -3,13 +3,47 @@
 # in the development environment, so this job is the MSVC build the docs'
 # validation checklists start with. Artifacts: one zip per architecture;
 # register-layer.ps1 generates the per-user manifest when installed.
+#
+# Minutes (2026-11-01, the user's request: as few Actions minutes a push as
+# possible; a private repository's Windows minutes count double): a push to
+# main or a pull request runs MSVC x64 only (build + unit tests), and only
+# when something MSVC compiles changed — the 32-bit layer's own pitfalls
+# (handles as uint64_t) are checked on every push by linux.yml's MinGW i686
+# pass. The Win32 build, the packages and the bundle run on v* tags and by
+# hand (Actions -> windows -> Run workflow: the zips to try on a Windows PC).
 name: windows
 
 on:
   push:
-    branches: ["**"]
+    branches: [main]
     tags: ["v*"]
+    paths:
+      - "CMakeLists.txt"
+      - "cmake/**"
+      - "layer/**"
+      - "capture/**"
+      - "!capture/linux/**"
+      - "tests/*.cpp"
+      - "tests/*.h"
+      - "tests/CMakeLists.txt"
+      - "tests/fuzz/**"
+      - "demo/replay_timing.h"
+      - "tools/calibrate/**"
+      - ".github/workflows/windows.yml"
   pull_request:
+    paths:  # (the same list: no YAML anchors, to keep to the plainest syntax)
+      - "CMakeLists.txt"
+      - "cmake/**"
+      - "layer/**"
+      - "capture/**"
+      - "!capture/linux/**"
+      - "tests/*.cpp"
+      - "tests/*.h"
+      - "tests/CMakeLists.txt"
+      - "tests/fuzz/**"
+      - "demo/replay_timing.h"
+      - "tools/calibrate/**"
+      - ".github/workflows/windows.yml"
   workflow_dispatch:
 
 # A newer push on the same branch cancels the run in progress (tags excepted:
@@ -32,7 +66,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [x64, Win32]
+        # Win32 on tags and by hand only (see the top of this file).
+        arch: ${{ fromJSON((startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch') && '["x64","Win32"]' || '["x64"]') }}
+    env:
+      # The packages (and the DXVK / VKD3D-Proton download): tags and by hand.
+      PACKAGE: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -151,6 +189,7 @@ jobs:
           }
 
       - name: Package
+        if: env.PACKAGE == 'true'
         shell: pwsh
         run: |
           $out = "dist/bdex-framegen-windows-${{ matrix.arch }}"
@@ -176,6 +215,7 @@ jobs:
           Get-ChildItem -Recurse $out
 
       - uses: actions/upload-artifact@v4
+        if: env.PACKAGE == 'true'
         with:
           name: bdex-framegen-windows-${{ matrix.arch }}
           path: dist/bdex-framegen-windows-${{ matrix.arch }}
@@ -185,6 +225,7 @@ jobs:
   # (the launcher registers both: 32-bit games inject too).
   bundle:
     needs: build
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
