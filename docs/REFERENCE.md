@@ -289,3 +289,210 @@ cmake --build build32 -j && cmake --install build32 --prefix ~/.local
 
 ---
 
+## Usage
+
+Once installed the layer loads into **every** Vulkan game automatically, but
+stays a pure pass-through — it does nothing until you turn it on. There is
+nothing to add to your Steam launch options.
+
+### Control panel (recommended)
+
+Run **`bdex-framegen-gui`** (or `bdex-framegen --gui`, or the *bdex-framegen*
+entry in the applications menu), the way you would open Lossless Scaling:
+launch your game normally (Steam...), pick it in **Jeux détectés**, set the
+options, **Démarrer**. Frame generation starts in that game and the options
+apply live; **Arrêter**, or closing the panel, stops it. Every Vulkan game is
+armed meanwhile (the layer passes its frames through), desktop programs
+excepted (browsers, Steam, gamescope, GTK 4 applications).
+
+**Limite d'images du jeu** (the game's frame cap, before generation): a
+slider from 0 (none) to 240 fps, with a field for an exact rate, applied live
+to the running game (written once the slider rests). Marks at the usual
+rates and, unlabelled, at the caps that fill the screen (144 Hz: 72, 48, 36);
+*Limite automatique* caps at screen ÷ multiplier instead. *Limite sans latence
+ajoutée* (`FPS_LIMIT_WAIT`, on) holds Direct3D games under Proton where they
+wait for their earlier frames, not in DXVK's / VKD3D-Proton's present thread;
+the game's status then says « Limite d'images retenue dans l'attente du jeu ».
+
+**GPU calibration** (*Calibration du GPU*, measured by itself at the first
+start; `bdex-framegen --calibrate [--apply]` from a terminal): `bdex-calibrate`
+runs the engine on synthetic frames at the screen's size and refresh, for the
+automatic preset and each fixed one, and recommends the preset and the highest
+multiplier whose cost stays within a quarter of the GPU's time (no game below
+30 fps: 60 Hz x2, 144 Hz x4, 240 Hz x8). *Appliquer* takes them; *Auto* never
+goes above the calibrated multiplier anyway. **Record** (the button on a
+detected game): its next 150 real frames for the evaluation corpus
+(`~/.cache/bdex-framegen/recordings`, packed by `tools/corpus_pack.py`).
+Panel recordings include `timestamps.csv`, sampled at each source present;
+`python3 tools/recording_report.py SEQUENCE` reports frame-time variation.
+`bdex_demo --replay SEQUENCE --replay-timing --replay-log /tmp/replay.csv`
+reproduces those intervals through the online path instead of using `--fps`,
+then stops at the last selected source. Missing/inconsistent timestamps are
+rejected. The log records requested and actual source presents; if a frame
+is late by over 0.5 ms, following deadlines shift instead of catching up in
+a burst. Reported shifts identify replay overload. This timing mode is
+separate from the constant-rate quality benchmark, `replay_bench.py`.
+Packing and unpacking preserve these times when selecting a subsequence.
+
+**Without the panel** — *Mode Jeu — sans le panneau*: every game (*Tous les
+jeux*), or the selected one, generates from its start with the panel's
+settings, the panel closed. That is how Steam's Game Mode is used (below),
+also from a terminal: `bdex-framegen --always-on [GAME]` / `--always-off`.
+
+Everything is written to `~/.config/bdex-framegen.conf`, which the layer reads
+on its own (games in a Flatpak launcher get a copy). The panel needs Python 3
+with PyGObject and GTK 4; libadwaita 1.4+ is used when present.
+
+### Steam Deck / SteamOS
+
+Install in **Desktop Mode** (Konsole), into `~/.local` — SteamOS's read-only
+system is not touched, and its updates keep it:
+
+```sh
+tar xzf bdex-framegen-linux-x86_64-*.tar.gz && cd bdex-framegen-linux-x86_64-*/ && ./install.sh
+```
+
+The control panel runs in Desktop Mode (SteamOS ships GTK 4 and PyGObject).
+**Game Mode** runs one application at a time, so the panel cannot stay open
+beside a game there. Either:
+
+- *Mode Jeu — sans le panneau* in the panel (or `bdex-framegen --always-on
+  [GAME]`): every game, or the chosen one, generates from its start in Game
+  Mode, with the panel's settings — change them in Desktop Mode, or live from
+  the config file; or
+- per game, Steam's launch options (*Properties → Launch options*, also
+  editable in Game Mode): `BDEX_FG=1 %command%` — the panel's copy button
+  gives the whole line with its settings.
+
+**Steam's framerate limit** (Quick Access Menu → Performance) caps what
+gamescope shows, generated frames included: under it the layer only fills up
+to the limit (a 30 fps game under a 30 fps limit gets no generated frame, a
+20 fps one is brought to 30), keeping one frame queued at most. For 60 fps
+from a 30 fps game, set the limit to **Off** (or to the refresh rate: 60, or
+90 on an OLED Deck) and cap the game itself — its own limiter, or `fps_limit
+= 30` — or let *Adaptatif* fill the refresh rate. `bdex-framegen --report`
+and the panel say when the limit is on. Measured in gamescope 3.16 (the
+SteamOS 3.9 one) with that limit at 30 fps, a 30 fps game at x2: 30 fps and
+19–66 ms from present to screen, where it fell to 15 fps and 233 ms before;
+x2 again, without a queue left behind, once the limit is lifted.
+
+gamescope's own refresh rate (and the limit) comes from its WSI layer, so
+*Auto* and *Adaptatif* know the Deck's 60 / 90 Hz at once. HDR (OLED) passes
+through, metadata included. On the Deck's integrated GPU the automatic preset
+is *performance*. The same holds in any gamescope session (Bazzite,
+ChimeraOS...).
+
+### Capture mode: `bdex-capture` (anti-cheat games, a second GPU)
+
+`bdex-capture` generates frames for a game **window** by capture, like
+Lossless Scaling, instead of inside the game: nothing is loaded into the
+game. Use it for the games the layer stays out of (anti-cheat), for programs
+that do not present through Vulkan, and to generate on **another GPU** than
+the game's — the one driving the screen (`--gpu`), Lossless Scaling's
+two-GPU setup.
+
+```sh
+bdex-capture --list                       # the windows it can capture
+bdex-capture --name "Game title" -m 2     # or --pid PID, --window 0xID; nothing: click the window
+bdex-capture --list-gpus                  # then --gpu 1 (or a part of its name: --gpu radeon)
+```
+
+X11 sessions and Xwayland windows (most Proton games on a Wayland desktop):
+the game window is redirected off-screen (XComposite), each new frame comes
+as an XDamage event and is read with MIT-SHM straight into GPU-visible memory
+(host-memory import, no copy where the driver allows it); an
+override-redirect overlay without input region shows the real and generated
+frames above the game and follows it, clicks and keys going through to it.
+The settings are the layer's (configuration file with the game's `[section]`,
+`BDEX_FG_*`), then `-m`, `--mode`, `--preset`, `--hud`. Ctrl+Alt+G toggles
+the generation, Ctrl+Alt+Q quits (`--hotkey` rebinds the toggle).
+
+**Native Wayland windows** (a native game, Wine's Wayland driver):
+`bdex-capture --wayland [--name GAME] [--rect X,Y,W,H]` goes through the
+desktop's screen-cast portal — the desktop asks once which window to share
+(the choice is kept for the next times) — and PipeWire; the frames are read
+in place as on X11. A Wayland window's position is the compositor's, so the
+overlay covers `--rect`, by default the whole screen: a fullscreen game's.
+`--screen` shares a whole screen instead (then show the result on another
+screen: the overlay would be captured too). In the panel: *Fenêtre Wayland
+(portail)…*. Checked end to end in a container (`tools/ci/wayland-capture-check.sh`:
+sway headless, xdg-desktop-portal-wlr, PipeWire): a 30 fps game x2.00, read
+in place, 20 ms from the frame to the screen.
+
+Measured on an RTX 3060 Ti (a 60 fps game, 144 Hz): x2 120 fps with 10 ms
+from the game's frame to the screen in interpolation, 0.6 ms in
+extrapolation; hybrid x3 178 fps, 8 ms (from the frame's arrival at the X
+server: the game's own presentation to it and the compositing of the overlay
+come on top). The layer, inside the game's presentation, stays the first
+choice when it can load. Not available: inside gamescope (Steam Deck Game Mode), where games
+present through gamescope's own WSI layer, not to the X window; native
+Wayland windows (the PipeWire screen-cast portal is not implemented yet).
+
+### Turning it on by hand
+
+`~/.config/bdex-framegen.conf` is a plain INI file. `[*]` applies to every game;
+a `[name]` section applies to the game whose executable is `name`:
+
+```ini
+[*]
+enabled = 0            # off for everything by default
+preset  = balanced
+
+[kenshi]
+enabled = 1            # ...but on for Kenshi, no launch options needed
+multiplier = 3
+```
+
+### Environment variables (per-game, still supported)
+
+Setting `BDEX_FG=1` turns the layer on for a single process, overriding the
+config file — handy for a one-off, from the command line, or as a per-game
+Steam launch option:
+
+```sh
+BDEX_FG=1 ./my_game                      # x2 (default)
+bdex-framegen -m 3 -- ./my_game          # x3 through the launcher
+bdex-framegen -x -- ./my_game            # extrapolation: no added latency
+bdex-framegen --preset performance --profile -- vkcube
+bdex-framegen --check                    # does the loader find the layer?
+```
+
+**Steam** → game properties → *Launch options*:
+
+```
+BDEX_FG=1 %command%
+BDEX_FG=1 BDEX_FG_MULTIPLIER=3 BDEX_FG_MODE=extrapolate %command%
+```
+
+Without installing, from the build tree:
+
+```sh
+VK_IMPLICIT_LAYER_PATH=$PWD/build/layer BDEX_FG=1 ./build/demo/bdex_demo --fps 30
+```
+
+This command uses the build-tree layer even if another version is installed.
+
+The layer periodically prints its statistics to the terminal:
+
+```
+[bdex-fg  4.128 INFO] game 30.0 fps -> output 60.0 fps (x2.00), present call 0.14 ms, real frame delayed 17.1 ms
+```
+
+### The demo
+
+`bdex_demo` renders a procedural scene (moving objects, static HUD, frame
+counter) at a capped frame rate, to test without a game:
+
+```sh
+build/demo/bdex_demo --fps 30               # without the layer: 30 fps
+BDEX_FG=1 build/demo/bdex_demo --fps 30     # with it: 60 fps displayed
+build/demo/bdex_demo --help                 # --size, --mode, --speed, --cut, --srgb…
+```
+
+`--latency-test` answers every key press (`--latency-test auto`: one
+"input" every half second) with a flat white frame, and `--latency-log FILE`
+records when each input came and when its frame was presented — the game
+side of an input-to-screen measurement (see Latency).
+
+---
+
