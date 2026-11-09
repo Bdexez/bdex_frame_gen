@@ -863,11 +863,11 @@ les minutes d'actions utilisées à chaque push » ; dépôt privé : runners à
   pull request ou Actions → Run workflow) ; filtres `paths` — un push de
   documentation seule (Markdown sauf README.md, `docs/`, autres workflows,
   scripts PowerShell) ne lance rien.
-- `linux.yml`, **un job** (`test`, ~12 min dans la réplique à 2 CPU, budget
-  15 min du 08/10) : build avec ccache gardé entre les runs, puis
-  `tools/ci/linux-tests.sh … core display mingw` — tests sans affichage,
-  invariant f2cec5f, seuils PSNR (28,0 / 23,0 dB), tests d'affichage, MinGW
-  i686 ; gitleaks. Les voies l'une après l'autre : côte à côte sur 2 CPU, la
+- `linux.yml`, **un job** (`test`, budget 15 min du 08/10) : build avec
+  ccache gardé entre les runs, puis `tools/ci/linux-tests.sh … core display
+  mingw` — tests sans affichage (sauf `determinism` et `output_reuse`, la
+  nuit), invariant f2cec5f, seuils PSNR (28,0 / 23,0 dB), tests
+  d'affichage, MinGW i686 ; gitleaks. Temps par voie dans le résumé du run. Les voies l'une après l'autre : côte à côte sur 2 CPU, la
   démo tombait à 2 i/s et les tests de cadence échouaient.
 - `windows.yml` : MSVC **x64** seul par push (build `/MP` + tests), et
   seulement si quelque chose que MSVC compile a changé ; Win32, zips et
@@ -875,8 +875,9 @@ les minutes d'actions utilisées à chaque push » ; dépôt privé : runners à
   sur `ci-log-x64` / `ci-log-Win32` (lisibles par l'assistant).
 - `compat.yml`, chaque nuit si autre chose que de la documentation a changé
   dans les 24 h, sur les tags `v*` et à la main :
-  - `validation` (validation Khronos 552 s + `swapchain_stress` 166 s sur
-    2 CPU) ; `sanitizers` (ASan, UBSan, TSan) ; `fuzz` ;
+  - `validation` (`determinism` + `output_reuse`, validation Khronos 552 s,
+    `swapchain_stress` 166 s, sur 2 CPU) ; `sanitizers` (ASan, UBSan,
+    TSan) ; `fuzz` ;
   - `distros` : 6 distributions ; `source-packages` (dont Proton/Wine) ;
     `panel` ; `nix` ;
   - `package` : archives + `archive-check`, jointes à la release.
@@ -4218,8 +4219,11 @@ minutes Windows comptées double, chaque job arrondi à la minute.
   job, ~12 min (réplique à 2 CPU : builds 69 s, voie core 358 s, voie
   display 168 s, MinGW i686 26 s ; ccache entre les runs) ; Windows = MSVC
   x64 seul, `/MP`, seulement si quelque chose qu'il compile a changé
-  (≈ 2 × 7 min) ; **≈ 27 min par push qui touche le C++, ≈ 12 sinon**. Push
-  seulement sur `main` et les tags (les PR Dependabot ne tournent qu'une fois).
+  (≈ 2 × 7 min estimées) ; ≈ 27 min par push qui touche le C++, ≈ 12
+  sinon, **estimés dans la réplique** — le vrai runner a pris 21 min pour
+  Linux (ci-dessous), d'où la voie `slow` la nuit : ~13 min attendues.
+  Push seulement sur `main` et les tags (les PR Dependabot ne tournent
+  qu'une fois).
 - **Mesures qui ont décidé** (réplique Docker, `--cpuset-cpus` 2 CPU : avec
   `--cpus 2`, `nproc` vaut 12, lavapipe lance 12 fils sur 2 CPU et la
   compilation prend 106 s au lieu de 67) :
@@ -4231,15 +4235,17 @@ minutes Windows comptées double, chaque job arrondi à la minute.
     61, corpus 49, output_reuse 33, limit_session 32 ×2, live_config 26 ;
     invariant f2cec5f 3 s ; quatre évaluations PSNR 26 s ;
   - validation + `swapchain_stress` = 12 des 21 min de tests d'un push → la
-    nuit (`compat.yml`, job `validation`), avec sanitizers et fuzz.
+    nuit (`compat.yml`, job `validation`), avec sanitizers et fuzz ; puis
+    `determinism` + `output_reuse` (ci-dessous, le vrai runner).
 - **Gardé à chaque push** : unit, matcher, frame_state, offline, corpus,
-  formats, min_limits, determinism, output_reuse, option_keys, panel,
+  formats, min_limits, option_keys, panel,
   scripts, invariant bit à bit, seuils PSNR ×2/×3/×4, integration,
   capture_linux, live_config, limit_session ×2, record_live, replay,
   acquire, MinGW i686, gitleaks, MSVC x64 (build + tests unitaires).
 - **La nuit** (`compat.yml`, seulement si autre chose que de la
-  documentation a changé dans les 24 h) : validation Khronos sur toutes les
-  options, `swapchain_stress`, ASan/UBSan, TSan, fuzz — plus l'existant
+  documentation a changé dans les 24 h) : `determinism`, `output_reuse`,
+  validation Khronos sur toutes les options, `swapchain_stress`,
+  ASan/UBSan, TSan, fuzz — plus l'existant
   (distributions, paquets source, Proton, panneau, Nix, archives).
 - **Tags et à la main** : Win32 MSVC, zips Windows, bundle, release.
 - Outils : `tools/ci/linux-tests.sh` (les voies, aussi rejoué par
@@ -4249,6 +4255,13 @@ minutes Windows comptées double, chaque job arrondi à la minute.
   vérifiés : ni expression ni contexte faux).
 - Premier run (19bcb39, poussé le 01/11) : `linux / test` et
   `windows / build (x64)` verts, aucun autre job (ni Win32 ni bundle), selon
-  l'utilisateur ; `/MP` passe sous MSVC. Durées réelles sur GitHub pas
-  encore relevées (pas d'accès à l'API Actions d'un dépôt privé : les
-  demander à l'utilisateur, page du run).
+  l'utilisateur ; `/MP` passe sous MSVC. Mais `linux / test` a duré
+  **21 min** (dépendances 36 s, build 3 min 40 à cache vide, tests
+  16 min 26) : le runner est ~1,8 fois plus lent que la réplique à 2 CPU
+  (tests 526 s + MinGW), la compilation ~3 fois. Choix de l'utilisateur
+  (« 1 job, sous 15 min ») : `determinism` (154 s dans la réplique) et
+  `output_reuse` (33 s) la nuit (voie `slow`), ~13 min attendues avec le
+  cache de compilation plein (C++ 72 s sur 2 CPU dans la réplique, shaders
+  2,6 s : rien à gagner à cacher les shaders). Pas d'accès à l'API Actions
+  d'un dépôt privé : les durées viennent de l'utilisateur (page du run ;
+  le résumé du run liste maintenant chaque voie et son temps).

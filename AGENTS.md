@@ -109,9 +109,13 @@ tous les shaders de `layer/shaders/`.
   l'une après l'autre (côte à côte sur 2 CPU : tests de cadence affamés,
   démo à 2 i/s, mesuré) : tests sans affichage + invariant f2cec5f + gates
   PSNR (échec sous 28,0 dB normal / 23,0 dB rapide), tests d'affichage,
-  MinGW i686 ; gitleaks. ~12 min dans la réplique à 2 CPU. Validation
-  Khronos (552 s sur 2 CPU) et `swapchain_stress` (166 s), sanitizers,
-  fuzz : `compat.yml` la nuit. `tools/ci/run.sh` rejoue toutes les voies.
+  MinGW i686 ; gitleaks. **Runner GitHub ≈ 1,8 × la réplique à 2 CPU**
+  (1er run, 19bcb39 : 21 min — dépendances 36 s, build 3 min 40 à cache
+  vide, tests 16 min 26) → `determinism` et `output_reuse` (voie `slow`)
+  la nuit aussi, choix de l'utilisateur : ~13 min. Validation Khronos (552 s
+  sur 2 CPU dans la réplique) et `swapchain_stress` (166 s), sanitizers,
+  fuzz : `compat.yml` la nuit. Temps par voie dans le résumé du run
+  (`$GITHUB_STEP_SUMMARY`). `tools/ci/run.sh` rejoue toutes les voies.
 - **Sécurité** (2026-10-13, `SECURITY.md`) : jeton CI en lecture seule par
   défaut (`permissions` en tête de chaque workflow, un job qui publie
   demande `contents: write` lui-même), actions tierces épinglées par commit,
@@ -122,7 +126,7 @@ tous les shaders de `layer/shaders/`.
 - `.github/workflows/compat.yml` — le lourd, **hors push** : chaque nuit
   (si autre chose que de la documentation a changé dans les 24 h), sur les
   tags `v*`, à la main (`workflow_dispatch`) : `validation` (voies
-  `validation` + `stress` de `linux-tests.sh`), `sanitizers` (ASan+UBSan,
+  `slow` + `validation` + `stress` de `linux-tests.sh`), `sanitizers` (ASan+UBSan,
   TSan), `fuzz`, `distros` (6 distributions), `source-packages`
   (dont Proton/Wine), `panel`, `nix`, `package` (archives x86_64/aarch64,
   vérifiées par `archive-check.sh`, jointes à la release). Un job ajouté à

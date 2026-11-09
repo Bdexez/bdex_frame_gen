@@ -2,8 +2,8 @@
 # 15 minutes). Other distributions' builds, their source packages, Proton /
 # Wine, the control panel, Nix, the prebuilt archives installed on older
 # and newer distributions, and (since 2026-11-01, out of every push to save
-# Actions minutes) the Khronos validation and swapchain stress runs, the
-# sanitizer builds and the fuzzing. Runs every night on
+# Actions minutes) the determinism, Khronos validation and swapchain stress
+# runs, the sanitizer builds and the fuzzing. Runs every night on
 # main when something other than documentation changed in the last 24 hours,
 # on every v* tag (a release is always fully checked, and the package job
 # attaches the archives to it), and by hand (Actions → compat → Run
@@ -49,10 +49,11 @@ jobs:
           fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
 
-  # The demo through the layer under the Khronos validation layers
-  # (synchronization included): every option (tests/validation.sh), then the
-  # swapchain stress run — 9 and 3 minutes on 2 CPUs, the two longest lanes
-  # of tools/ci/linux-tests.sh (linux.yml runs the others on every push).
+  # The slow lanes of tools/ci/linux-tests.sh (linux.yml runs the others on
+  # every push): determinism (every option twice) and output_reuse, then the
+  # demo through the layer under the Khronos validation layers
+  # (synchronization included) over every option, and the swapchain stress
+  # run — 3, 9 and 3 minutes on 2 CPUs in the CI replica.
   validation:
     needs: changes
     if: needs.changes.outputs.run == 'true'
@@ -71,8 +72,8 @@ jobs:
           echo "LIBGL_ALWAYS_SOFTWARE=1" >> "$GITHUB_ENV"
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBDEX_WERROR=ON
           cmake --build build -j"$(nproc)"
-      - name: Validation and swapchain stress
-        run: tools/ci/linux-tests.sh build none validation stress
+      - name: Determinism, validation and swapchain stress
+        run: tools/ci/linux-tests.sh build none slow validation stress
 
   # The layer and the demo built with ASan+UBSan, then with TSan, running the
   # GPU tests on lavapipe (the swapchain virtualisation has a worker thread,

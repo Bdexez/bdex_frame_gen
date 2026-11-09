@@ -4,8 +4,8 @@
 # lanes one after the other — all of them, even after a failure, so that a
 # run reports everything — and the script fails if one of them did.
 #   tools/ci/linux-tests.sh BUILD BASELINE_BUILD [LANE...]
-#   lanes: core display mingw (every push, linux.yml), validation stress
-#   (nightly, compat.yml); default: core display stress validation
+#   lanes: core display mingw (every push, linux.yml), slow validation
+#   stress (nightly, compat.yml); default: all but mingw
 # BDEX_CORPUS_DIR adds the recorded game sequences to the corpus test.
 #
 # Not side by side (measured 2026-11-01, the CI replayed on 2 CPUs — a
@@ -19,7 +19,10 @@
 # display 168 s (capture_linux 61, limit_session x2 65, live_config 26);
 # mingw 26 s; stress 166 s; validation 552 s — the two lanes under the
 # Khronos layers went to the nightly run: alone they were 12 of a push's
-# 21 minutes of tests.
+# 21 minutes of tests. On GitHub's runner, 1.8 times as long (the first run,
+# 2026-11-01: tests 16 min 26, build 3 min 40 with an empty compiler cache):
+# determinism and output_reuse (the slow lane, 187 s here) went to the
+# nightly run too, to keep the push under 15 minutes (the user's choice).
 set -uo pipefail
 build=${1:?build directory}
 baseline=${2:?f2cec5f build directory}
@@ -27,8 +30,9 @@ cd "$(dirname "$0")/../.."
 logs="${BDEX_CI_LOGS:-$build/ci-logs}"
 mkdir -p "$logs"
 display_re='integration|latency_probe|gamescope_limit|capture_linux|live_config|limit_session|record_live|replay_bench|acquire_timeout|multithread_config'
+slow_re='^determinism$|^output_reuse$'
 # The core lane: every test the others do not run.
-others_re="^validation\$|swapchain_stress|$display_re"
+others_re="^validation\$|swapchain_stress|$slow_re|$display_re"
 start=$(date +%s)
 stamp() { echo "[$(( $(date +%s) - start ))s] $*"; }
 
@@ -82,6 +86,12 @@ lane_validation() {
     ctest --test-dir "$build" --output-on-failure --repeat until-pass:2 -R '^validation$'
 }
 
+# Every option run twice, byte-identical (determinism), and outputs shared
+# at equal display moments against full synthesis (output_reuse).
+lane_slow() {
+  xvfb-run -a ctest --test-dir "$build" --output-on-failure --repeat until-pass:2 -R "$slow_re"
+}
+
 # The swapchain stress run (resizes, recreations, fullscreen) under the
 # Khronos layers.
 lane_stress() {
@@ -95,7 +105,9 @@ lane_mingw() {
 
 shift 2
 lanes=("$@")
-[ ${#lanes[@]} -gt 0 ] || lanes=(core display stress validation)
+[ ${#lanes[@]} -gt 0 ] || lanes=(core display slow stress validation)
+summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+{ echo "### Tests on $(nproc) CPUs"; echo; echo "| lane | exit | seconds |"; echo "|---|---|---|"; } >> "$summary"
 status=0
 for l in "${lanes[@]}"; do
   declare -F "lane_$l" >/dev/null || { echo "unknown lane: $l"; status=1; continue; }
@@ -113,6 +125,7 @@ for l in "${lanes[@]}"; do
   fi
   [ -n "${GITHUB_ACTIONS:-}" ] && echo "::endgroup::"
   stamp "$l: exit $rc after ${secs}s"
+  echo "| $l | $rc | $secs |" >> "$summary"
   [ "$rc" = 0 ] || { status=1; [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error::lane $l failed (exit $rc)"; }
 done
 exit $status

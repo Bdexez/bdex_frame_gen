@@ -8,9 +8,9 @@
 # leaves headroom for renderer noise while catching any matcher regression.
 # Every push to main, under 15 minutes; what takes longer (other
 # distributions, source packages, Proton, Nix, the release archives, and
-# since 2026-11-01 the Khronos validation runs, the swapchain stress run,
-# the sanitizers and the fuzzing) is in compat.yml, nightly when the code
-# changed, on tags and by hand.
+# since 2026-11-01 the determinism test, the Khronos validation runs, the
+# swapchain stress run, the sanitizers and the fuzzing) is in compat.yml,
+# nightly when the code changed, on tags and by hand.
 #
 # Minutes (2026-11-01, the user's request: as few Actions minutes a push as
 # possible): one job instead of ten (each installed the same packages and
@@ -72,9 +72,12 @@ permissions:
 jobs:
   # One job: the lanes of tools/ci/linux-tests.sh one after the other (on a
   # private repository's 2-CPU runner, tests side by side starve the pacing
-  # tests — measured 2026-11-01). About 12 minutes in the CI replica on 2
-  # CPUs; a new long test that would take it past 15 goes into the nightly
-  # lanes (compat.yml) or a job of its own.
+  # tests — measured 2026-11-01). The first run took 21 minutes on GitHub
+  # (1.8 times the CI replica on 2 CPUs; build 3 min 40 with an empty
+  # compiler cache, tests 16 min 26): determinism and output_reuse then went
+  # to the nightly run, for about 13. A new long test that would take it
+  # past 15 goes into the nightly lanes (compat.yml). The run's summary page
+  # shows each lane's time.
   test:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -186,9 +189,10 @@ jobs:
       # core: GPU tests without a display (bdex_offline), the f2cec5f
       # invariant, the PSNR gates; display: the demo through the layer;
       # mingw: the Windows C++ for 32-bit x86 (MSVC x64 runs in
-      # windows.yml). Khronos validation over every option and the swapchain
-      # stress run: nightly (compat.yml). --repeat until-pass:2 (in the
-      # script) absorbs a one-off software-renderer hiccup.
+      # windows.yml). Determinism and output_reuse, Khronos validation over
+      # every option and the swapchain stress run: nightly (compat.yml).
+      # --repeat until-pass:2 (in the script) absorbs a one-off
+      # software-renderer hiccup.
       - name: Tests
         run: tools/ci/linux-tests.sh build baseline/build core display mingw
 
