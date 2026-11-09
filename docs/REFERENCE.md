@@ -823,3 +823,119 @@ photon 7.6 to 11.9 ms).
 
 ---
 
+## Limitations
+
+- **Latency**: interpolation displays the real frame half a frame later (at
+  x2); `INTERP_HOLD` shortens that within what the screen's refresh allows,
+  `MODE=extrapolate` removes it but predicts. Input is not touched.
+- **Vsync**: by default the layer presents with mailbox (no tearing, no
+  queueing). With `PRESENT_MODE=app` and a FIFO game on a 60 Hz display, x2
+  caps the game at 30 fps, x3 at 20 fps, and queued frames add latency.
+- **Artefacts**: block-matching optical flow handles translations and static
+  HUDs well; fast rotations, large occlusions and repetitive patterns produce
+  local artefacts. `DEBUG=flow` shows what the layer "understands" of the
+  motion.
+- **Supported formats**: 8-bit RGBA/BGRA (UNORM and sRGB),
+  A2B10G10R10 / A2R10G10B10, RGBA16F. Others pass through without generation.
+- Not supported (passed through): multi-layer (VR) and protected swapchains.
+- Handled extensions: `VK_KHR_present_id` / `present_wait`,
+  `VK_EXT_swapchain_maintenance1` (present fences, present mode switching,
+  `vkReleaseSwapchainImagesEXT`). The other calls on a swapchain — HDR
+  metadata, `VK_GOOGLE_display_timing`, `VK_NV_low_latency2` — go to the real
+  swapchain the layer presents to, re-created underneath the game's handle
+  when the window changes size.
+- **Steam's framerate limit** (gamescope, Game Mode) caps generated frames
+  too: see [Steam Deck / SteamOS](#steam-deck--steamos).
+
+---
+
+## Validation
+
+The layer is clean under `VK_LAYER_KHRONOS_validation`, synchronization
+validation included, with the demo, `vkcube` and `vkgears`:
+
+```sh
+VK_LOADER_LAYERS_ENABLE='*validation' BDEX_FG=1 build/demo/bdex_demo --fps 30 --frames 90
+```
+
+It also loads inside the Steam Linux Runtime container (pressure-vessel).
+
+---
+
+## Development
+
+```sh
+cmake -S . -B build && cmake --build build -j
+ctest --test-dir build --output-on-failure     # unit, evaluator and GPU integration tests
+tools/run_eval.sh build 40                      # PSNR against ground truth
+BDEX_EVAL_ARGS="--speed 2.5" tools/run_eval.sh build 40   # fast-motion scene
+```
+
+**Online benchmark on recorded content** — `tools/replay_bench.py SEQ
+[--multiplier M] [--env BDEX_FG_MODE=...] [--other-layer NAME]` plays a
+recorded sequence (*Enregistrer* in the panel, `--record`, `make_corpus.py`)
+as a game (`bdex_demo --replay`) through the layer — pacing and swapchain
+included — and scores every frame actually presented against the frames left
+out, next to the repeat and cross-fade references. It gives exactly the
+offline engine's numbers (pan 47.29 dB, demo 23.36, occlusions 34.20 at x2
+on the 960x540 corpus). `--other-layer` measures another frame generation
+layer on the same frames: it goes above ours, which only records what it
+presents (its real frames are the ones identical to a recorded frame). Needs
+a display: Xvfb or headless gamescope.
+
+`tools/run_eval.sh` renders the demo at `30 × MULTIPLIER` fps (reference) and
+then at 30 fps through the layer. Set `BDEX_FG_MULTIPLIER=3` or `4` to evaluate
+every generated position. The report includes quality in changing regions and
+on moving edges, pixels revealed by the moving yellow bar, and moving edges
+around the rotating square, as well as whole-frame PSNR. The local scores
+exclude the demo's frame-counter patch, which is only used for temporal alignment. The
+runner ignores `~/.config/bdex-framegen.conf`; pass `BDEX_FG_*` variables to
+compare variants. It prints aligned, expected and dumped frame counts, and
+fails below 75% of the expected generated frames (rounded down).
+
+---
+
+## Layout
+
+```
+layer/
+├─ src/layer.cpp        layer entry points, dispatch, Vulkan hooks
+├─ src/swapchain.cpp    virtual swapchain, game-thread side (creation, acquire, present)
+├─ src/swapchain_worker.cpp  its worker thread (paced presents, copies, display feedback)
+├─ src/framegen.cpp     GPU resources and pass recording
+├─ src/config.cpp       options (environment, file, per-game sections)
+└─ shaders/             downsample, block_match, flow_smooth, flow_refine, interpolate
+demo/                   GLFW test application (procedural scene)
+tests/                  unit tests and integration test
+tools/                  launcher, install/uninstall, quality evaluation
+docs/                   Windows guides; MEMOIRE.md: the project's memory (in French) —
+                        how it works on each system, history, measurements, open issues
+```
+
+---
+
+## Contributing
+
+Reports from real games (DXVK, VKD3D-Proton, NVIDIA, Intel…) are what the
+project needs most. While the game runs, `bdex-framegen --report` (or
+« Rapport… » in the panel) writes `bdex-framegen-report.txt` and prints a
+link to the issue form already filled with its summary (version,
+distribution, GPU, session, installation, quick read — not your settings or
+log): describe what you see and attach the file. `bdex-framegen --issue-url
+FILE` makes the link again. What to try on which machine:
+[docs/linux-validation.md](../docs/linux-validation.md).
+
+To contribute code, read [CONTRIBUTING.md](../CONTRIBUTING.md): setup, what to
+check before a pull request (tests, Khronos validation, quality and
+performance measurements) and code conventions. The version history is in
+[CHANGELOG.md](../CHANGELOG.md). Security model, what the software never does
+(network, data collection) and how to report a vulnerability:
+[SECURITY.md](../SECURITY.md).
+
+---
+
+<div align="center">
+
+Proprietary software — all rights reserved ([LICENSE](../LICENSE); versions up to 0.5.5 were MIT). Third-party components: [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
+
+</div>
