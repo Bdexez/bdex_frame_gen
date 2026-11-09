@@ -1,535 +1,142 @@
-<div align="center">
+<p align="center">
+  <img src="docs/visuals/framegen-cover.webp" width="100%" alt="BDEX FRAMEGEN — real-time frame generation. Concept artwork showing two source frames and an intermediate frame.">
+</p>
 
 # bdex-framegen
 
-**Frame generation for Vulkan games on Linux — one layer, no changes to the game.**
+**GPU frame generation for Linux games, built as an implicit Vulkan layer.**
 
-[![License: proprietary](https://img.shields.io/badge/license-proprietary-red.svg)](LICENSE)
-[![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C.svg?logo=cplusplus&logoColor=white)](#)
-[![Vulkan](https://img.shields.io/badge/Vulkan-1.0%2B-AC162C.svg?logo=vulkan&logoColor=white)](#)
-[![Platform](https://img.shields.io/badge/platform-Linux-FCC624.svg?logo=linux&logoColor=black)](#)
-[![Khronos validation](https://img.shields.io/badge/Khronos%20validation-0%20errors-success.svg)](#validation)
+An independent C++20 / Vulkan engine that estimates motion between rendered images and synthesizes new frames between them. It controls presentation through a virtual swapchain, with a shared engine for layer injection and capture-based output.
 
-30 fps rendered → **60 to 240 fps displayed** (x2 to x8, or exactly the
-screen's refresh rate with the adaptive mode: 50 fps → 144 fps), on any Vulkan
-game (native, or Direct3D through DXVK / VKD3D-Proton).
+`C++20` · `Vulkan compute` · `GLSL → SPIR-V` · `Linux` · `Windows capture`
 
-<img src="docs/demo.gif" alt="Demo: 30 fps on the left, 60 fps with bdex-framegen on the right (4x slow motion)" width="812">
+[See it in motion](#see-it-in-motion) · [How it works](#how-it-works) · [Get started](#installation) · [Technical reference](docs/REFERENCE.md) · [Windows](docs/windows-README.md)
 
-*The demo as the game renders it at 30 fps (left) and what the layer displays (right), in 4x slow motion: every other frame is synthesised.*
+| Generation | Integration | Control |
+| :--- | :--- | :--- |
+| **×2–×8**, plus adaptive output | Native Vulkan and Proton through **DXVK / VKD3D-Proton** | Per-game profiles, live settings and a desktop panel |
+| Interpolation, extrapolation and hybrid modes | Layer and capture share the same GPU engine | GPU calibration, frame recording and offline evaluation |
 
-</div>
+<sub>The cover is conceptual artwork. The demonstration and frame comparison below are output from the project's Vulkan demo.</sub>
 
----
+## See it in motion
 
-## Contents
+<p align="center">
+  <img src="docs/demo.gif" width="100%" alt="Actual Vulkan demo: 30 rendered fps on the left, x2 frame generation on the right, shown at four times slow motion.">
+</p>
 
-- [How it works](#how-it-works)
-- [Which games](#which-games)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Configuration](#configuration)
-- [Performance and quality](#performance-and-quality)
-- [Limitations](#limitations)
-- [Validation](#validation)
-- [Development](#development)
-- [Layout](#layout)
-- [Contributing](#contributing)
+**30 rendered fps → 60 presented fps, shown in 4× slow motion.** The right-hand view inserts a synthesized image between consecutive rendered frames. This is a controlled demo of interpolation; performance and visible quality depend on the scene, GPU and presentation stack.
 
----
+<details>
+<summary><b>Inspect an actual generated frame and its optical flow</b></summary>
+
+![Real frame A, the engine-generated intermediate image, real frame B](docs/comparison.png)
+
+The middle image is generated from its two neighbours. Fast edges and occlusions also make the engine's remaining artifacts visible.
+
+![Estimated optical flow from the demo](docs/flow.png)
+
+In the diagnostic view, hue represents motion direction and saturation its magnitude.
+
+</details>
 
 ## How it works
 
-`bdex-framegen` is an **implicit Vulkan layer** (`VK_LAYER_BDEX_framegen`).
-It sits between the game and the graphics driver, grabs every frame the game
-presents, estimates the motion between two consecutive frames, and inserts
-one or more intermediate frames before the real one.
+![Three GPU processing stages followed by a schematic x4 interpolation sequence](docs/visuals/interpolation.svg)
 
-```
-Game ──► vkQueuePresentKHR ──► [ bdex-framegen ] ──► display
-                                      │
-      game thread (≈ 0.1 ms):         │
-      ├─ luma pyramid + hierarchical block matching
-      │  (forward and backward optical flow, median filter, 4×4 refinement)
-      └─ synthesis of the intermediate frames: bidirectional warping
-         weighted by photometric consistency, scene cut detection,
-         cross-fade in occluded regions
-                                      │
-      presentation thread:            │
-      └─ copy into the real swapchain, pacing, presentation:
-         generated frame(s), then the real frame
-```
+| Engineering challenge | Implementation |
+| :--- | :--- |
+| **Own the presentation path** | A virtual swapchain gives the game renderable images while the layer manages the real swapchain and output order. |
+| **Recover motion from images** | A luma pyramid feeds hierarchical forward/backward block matching, flow smoothing and refinement in compute shaders. |
+| **Build a plausible intermediate image** | Bidirectional warping synthesizes frames, with scene-cut handling and optional passes for HUDs, boundaries and depth-assisted interpolation. |
+| **Present at useful times** | A dedicated worker handles output, pacing and display feedback. A separate compute queue is used when available. |
+| **Measure the result** | Offline replay compares generated images with held-out rendered frames and repetition/blend baselines; pacing tools inspect presentation timing. |
 
-Design notes:
+The pipeline runs on the GPU. The core optical-flow method is image-based; it does not require a game's motion-vector integration. The optional `depth` path can additionally use a depth buffer tracked by the layer.
 
-| | |
-|---|---|
-| **Virtual swapchain** | The game renders into private images handed out by the layer. The real swapchain belongs to the layer, which decides what to present and when. |
-| **Dedicated thread** | The game is never blocked by the presentation of generated frames: `vkQueuePresentKHR` costs it ≈ 0.1 ms. |
-| **Separate queue** | The layer's work runs on a compute queue distinct from the game's whenever the GPU has one. |
-| **No frame copies** | The images the game renders into double as the frame history: nothing is copied before the analysis. |
-| **Latency first** | FIFO is replaced by mailbox + pacing from the GPU's completion (queued frames are pure display latency); the game's present returns just in time for its next frame to reach the GPU (a Reflex-like limiter); an extrapolation mode predicts the next frame instead of holding the real one back, and a hybrid mode (x3/x4) holds it only 1/m of a frame. |
-| **All on the GPU** | Compute shaders handle the luma pyramid, flow, synthesis, upscaling and sharpening without a CPU round trip. |
-| **Scene cuts** | When the motion cannot be explained and the brightness distribution moved too (a real cut, not grain or fast motion), the layer shows the real frame rather than a blend — per region, so a menu opening over part of the screen is not warped. |
+### Three generation modes
 
-<img src="docs/comparison.png" alt="Real frame, generated frame, next real frame" width="900">
-
-*The middle frame was never rendered by the game: it is synthesised from the two neighbouring frames.*
-
-<details>
-<summary>See the estimated optical flow (<code>BDEX_FG_DEBUG=flow</code>)</summary>
-<br>
-<img src="docs/flow.png" alt="Optical flow visualisation" width="480">
-
-*Hue = motion direction, saturation = magnitude. The static HUD stays grey.*
-</details>
-
----
+| Mode | Source of generated images | Trade-off |
+| :--- | :--- | :--- |
+| **Interpolation** | Two available rendered frames | More information for synthesis; delays output to use the next source frame. |
+| **Extrapolation** | Motion estimated from previous frames | Predicts forward with less holding; errors grow with unpredictable motion. |
+| **Hybrid** | Interpolation before the real frame, prediction after it | Available from ×3; balances source-frame delay and predicted output. |
 
 ## Which games
 
-The layer works on anything that presents through a Vulkan swapchain. That
-covers more than native Vulkan games:
+| Path | Target | Current evidence |
+| :--- | :--- | :--- |
+| **Linux Vulkan layer** | Native Vulkan, plus Direct3D translated through Proton | Demo/integration coverage and recorded use with DXVK and VKD3D-Proton. |
+| **Linux capture** | X11 / Xwayland windows; a separate generation GPU is possible | Dedicated capture implementation and integration checks. Wayland portal support has its own validation path. |
+| **Windows capture** | Windowed / borderless D3D9–12, OpenGL and Vulkan | Hardware validation is recorded for D3D9/11/12 titles. |
+| **Windows layer** | Vulkan, including translation-layer setups | Built and exercised in CI / Wine; native Windows hardware validation remains open. |
 
-| Game | How | Status |
-|---|---|---|
-| Native Linux Vulkan | `BDEX_FG=1 game` | Works (demo, `vkcube`, `vkgears`) |
-| Windows Direct3D 8–12 through Steam Play / Proton | `BDEX_FG=1 %command%` — DXVK and VKD3D-Proton translate to Vulkan | **Works** — verified on DXVK (Direct3D 11) and VKD3D-Proton (Direct3D 12) titles |
-| Windows games outside Steam (Wine, Lutris, Heroic, Bottles) | Enable DXVK in the runner and set `BDEX_FG=1` in the environment | Same as above |
-| Native Linux **OpenGL** | `bdex-framegen --gl -- game`: Mesa's Zink runs OpenGL on Vulkan (`MESA_LOADER_DRIVER_OVERRIDE=zink`, plus `__GLX_VENDOR_LIBRARY_NAME=mesa` and the Mesa EGL vendor — without them the NVIDIA driver keeps the game on its own GL, silently out of reach) | Works (`glxgears` 900 → 1800 fps on NVIDIA, an SDL3 game); Zink itself can be slower than the native GL driver on some games and iGPUs |
-| Emulators, 2D engines, anything else | Run it inside [gamescope](https://github.com/ValveSoftware/gamescope) with its SDL backend: `BDEX_FG=1 gamescope --backend sdl -- game` — the compositor presents the whole game through its own Vulkan swapchain. The shipped `[gamescope]` profile exposes `VK_KHR_present_id`/`present_wait`, which gamescope requires. Put `enabled = 1` in a `[gamescope]` section (rather than `BDEX_FG=1`) to avoid generating twice for a Vulkan game inside it. The default Wayland backend presents without a swapchain: no generation there | Works (`glxgears` 337 → 675 fps) |
-| Games with anti-cheat (the layer stays out), non-Vulkan programs | `bdex-capture` (capture, see [Capture mode](#capture-mode-bdex-capture-anti-cheat-games-a-second-gpu)) — X11 / Xwayland windows | Works (x2 at 0.6–10 ms on a GPU, plus the X server's round trip) |
-| Software rendering / no GPU presentation | — | Not possible |
-
-The layer never sees game logic or input: it only interpolates what reaches
-the display, so gameplay, anti-cheat interaction and mods are unaffected.
-Steam's overlay and MangoHud sit in the same layer chain and keep working.
-MangoHud usually loads *above* the layer (on the game's side): it counts and
-draws on the game's frames only, its text then carried into the generated
-ones. `bdex-framegen --mangohud -- <game>` (or, in Steam's launch options,
-`MANGOHUD=1 VK_INSTANCE_LAYERS=VK_LAYER_BDEX_framegen:VK_LAYER_MANGOHUD_overlay_x86_64:VK_LAYER_MANGOHUD_overlay_x86 %command%`)
-puts it under: it shows the frame rate on screen and draws on every frame.
-Launchers installed natively (Lutris, Heroic, Bottles, itch…) need nothing:
-the layer loads into their games as into Steam's.
-
----
+See the [compatibility reference](docs/REFERENCE.md#which-games), [Linux validation notes](docs/linux-validation.md) and [Windows guide](docs/windows-README.md) for setup-specific details. Anti-cheat compatibility is title-specific; capture and injection have different constraints.
 
 ## Installation
 
-### Distribution packages
+For prebuilt archives and distribution packages, use the [installation reference](docs/REFERENCE.md#installation). Building from source requires **CMake ≥ 3.20**, a C++20 compiler, Vulkan headers and `glslc` or `glslangValidator`.
 
-Each release also ships the prebuilt layer as packages of the distribution —
-installed to `/usr`, updated and removed by its package manager:
-
-| Distribution | Package | Install |
-|---|---|---|
-| Debian, Ubuntu, Mint, Pop!_OS, Zorin… | `bdex-framegen_<version>_amd64.deb` (`arm64`) | `sudo apt install ./bdex-framegen_*.deb` |
-| Fedora, Nobara, openSUSE, RHEL 9… | `bdex-framegen-<version>-1.x86_64.rpm` (`aarch64`) | `sudo dnf install ./bdex-framegen-*.rpm` / `sudo zypper in ./bdex-framegen-*.rpm` |
-| Bazzite, Silverblue, Kinoite (immutable) | the `.rpm` | `rpm-ostree install ./bdex-framegen-*.rpm`, reboot — or the archive below, in `~/.local` |
-| Arch, Manjaro, EndeavourOS, CachyOS | `packaging/arch/bdex-framegen-bin` (prebuilt) or `-git` (from source, 32-bit layer included) | `makepkg -si` in that directory |
-| NixOS | the flake (`flake.nix`) | below |
-
-The same files as the archives (64-bit layer, 32-bit one for 32-bit games,
-CLI, panel), in the distribution's library directories
-(`/usr/lib/x86_64-linux-gnu`, `/usr/lib64`…). Every CI run installs the
-`.deb` on Ubuntu 20.04 to 24.04 and Debian 12, the `.rpm` on Fedora and
-openSUSE Tumbleweed, and generates x2 there (`tools/ci/archive-check.sh`);
-`tools/package-native.sh <archive>` builds them. A package cannot write into
-your home: for **Steam, Heroic, Lutris or Bottles installed as a Flatpak**
-(or Steam as a Snap), run `bdex-framegen --sandboxes` once, as your user.
-
-**Flatpak launchers** (Steam, Heroic, Lutris from Flathub): the layer also
-exists as a Flatpak Vulkan layer extension, like MangoHud and vkBasalt —
-`packaging/flatpak/org.freedesktop.Platform.VulkanLayer.BdexFramegen.yml`
-(Freedesktop runtime 25.08, 64 and 32-bit). Once installed (`flatpak-builder
---user --install build-dir <that file>`, or from Flathub when it is
-published there), every app on that runtime loads it and `flatpak update`
-keeps it current; `bdex-framegen --sandboxes` then copies only the settings
-into those apps. Built and loaded by the runtime's loader in CI
-(`tools/ci/flatpak-check.sh`).
-
-**Source packages for the distributions' build services** — rebuilt by the
-distribution, updated with the system:
-
-| | Recipe | Checked by |
-|---|---|---|
-| Fedora COPR, openSUSE Build Service | `packaging/rpm/bdex-framegen.spec` (32-bit layer on x86_64: enable multilib in COPR) | `tools/ci/srpm-check.sh` (Fedora, Tumbleweed) |
-| Launchpad PPA, OBS for Debian/Ubuntu | `packaging/debian/` (copy to `debian/`) | `tools/ci/debsrc-check.sh` (Ubuntu 24.04, 22.04, Debian 12) |
-| Gentoo | overlay `packaging/gentoo` (`games-util/bdex-framegen`, `ABI_X86="64 32"`, `USE=gui`) | `tools/ci/gentoo-check.sh` |
-| Void Linux (glibc, musl) | `packaging/void/bdex-framegen/template` (void-packages) | `tools/ci/void-check.sh` |
-
-Each check builds the recipe from the checkout in the distribution's
-container, installs the result and checks the libraries and manifests (CI
-job `source-packages`). Publishing them needs the repository to be public.
-
-**Laptops with two GPUs**: the game should run on the GPU the screen is
-plugged into, or every frame — generated ones included — is copied from one
-GPU to the other (`bdex-framegen --report` says so). `bdex-framegen --gpu
-screen -- <game>` (or `discrete`, `integrated`, `nvidia`, `amd`, `intel`;
-`--gpu list`) sets Mesa's device selection, NVIDIA's PRIME offload and
-DXVK / VKD3D-Proton's device filter.
-
-**NixOS** — in the system's flake:
-
-```nix
-inputs.bdex-framegen.url = "github:Bdexez/bdex_frame_gen";
-# ...
-modules = [ bdex-framegen.nixosModules.default { programs.bdex-framegen.enable = true; } ];
+```bash
+git clone https://github.com/Bdexez/bdex_frame_gen.git
+cd bdex_frame_gen
+tools/install.sh
 ```
 
-The module installs the layer and the 32-bit one (`enable32Bit`, on by
-default on x86_64) with `share/vulkan` linked into the system profile, where
-the Vulkan loader finds implicit layers. (Nix on another distribution: use
-that distribution's package or the archive instead — a layer linked against
-the store's glibc loads into the host's games, whose glibc may be older.)
-Built, and loaded by the store's Vulkan loader, in CI (job `nix`).
-
-### Prebuilt (nothing to compile)
-
-Download from the [GitHub releases](https://github.com/Bdexez/bdex_frame_gen/releases)
-(or the `bdex-framegen-linux` artifact of any `linux` CI run):
-
-- `bdex-framegen-linux-x86_64-<version>.tar.gz` — Intel / AMD PCs, Steam Deck
-  (64-bit layer, and the 32-bit one for 32-bit games);
-- `bdex-framegen-linux-aarch64-<version>.tar.gz` — ARM64: Asahi Linux (Apple
-  Silicon), Snapdragon laptops, Raspberry Pi 5…
-  (native ARM64 Vulkan programs; on Asahi, Steam's x86 games run in a
-  muvm + FEX virtual machine whose x86_64 Vulkan loader cannot load an ARM64
-  layer — not covered yet)
-
-```sh
-tar xzf bdex-framegen-linux-*.tar.gz
-cd bdex-framegen-linux-*/
-./install.sh          # into ~/.local: no root, also on immutable systems (SteamOS, Bazzite, Silverblue…)
-```
-
-The layers are built on Ubuntu 20.04 and carry their own C++ runtime: they
-only need glibc 2.29 (x86_64) or 2.30 (arm64) — Ubuntu 20.04 and later,
-Debian 11+, Linux Mint 20+, Pop!_OS, Zorin, Fedora, Arch, Manjaro,
-EndeavourOS, SteamOS, Bazzite, openSUSE Leap 15.3+ and Tumbleweed, RHEL 9
-and its clones — and work inside Steam's runtime (Proton games). Musl
-distributions (Alpine, Void musl) build from source (below). Every CI run
-installs each archive as above in other distributions' containers and runs
-it on Mesa's software Vulkan with their own loader (1.2.131 to 1.4): it loads
-on Ubuntu 20.04 to 24.04, Debian 11 and 12, Fedora, and generates x2 (vkcube)
-everywhere Mesa can present to a virtual display — arm64 on Debian arm64
-under emulation (`tools/ci/archive-check.sh`).
-
-**Steam, Heroic, Lutris or Bottles installed as a Flatpak**: their sandbox
-sees neither `~/.local` nor `~/.config`. `install.sh` also installs the layer
-inside each one found (`~/.var/app/<app>/data`, where its Vulkan loader
-looks), and the control panel keeps their copy of the settings up to date and
-finds their games (each sandbox has its own process numbers). Install the
-Flatpak launcher first (and run it once), or run `install.sh` again after
-(or `bdex-framegen --sandboxes`). **Steam as a Snap** (Ubuntu's Software
-centre) likewise: the layer goes into `~/snap/steam` (`common` for the
-library, the manifest and settings in the snap's own home) — written from the
-snap's documented layout, not yet tried on a real snap.
-
-The control panel needs `python3-gobject` and GTK 4 (libadwaita is used when
-present). Without GTK 4 (Ubuntu 20.04, Debian 11) it runs in text mode, in a
-terminal — the same session, options and Steam string (`bdex-framegen-gui
---text` forces it). `./uninstall.sh` removes everything, Flatpak copies
-included.
-`tools/ci/package-release.sh` builds the same archives (Docker).
-
-### Requirements (building from source)
-
-- Linux with a Vulkan driver whose GPU does compute (Mesa RADV / ANV / NVK /
-  Turnip / Honeykrisp / V3DV / lavapipe, NVIDIA…). The engine fits in the
-  limits every Vulkan GPU guarantees (4 storage images per shader, 16 KB of
-  shared memory — checked by the `min_limits` test); where a GPU allows less
-  than 32 KB of shared memory the block matcher's optional terms stay off, and
-  a GPU below the guarantees gets its frames passed through, the reason in
-  `bdex-framegen --report`.
-- To build: CMake ≥ 3.20, GCC ≥ 10 or Clang, the Vulkan headers ≥ 1.3.204,
-  `glslc` (shaderc) or `glslangValidator` (glslang); GLFW (optional) for the
-  demo. Checked in CI by building in each distribution's container, then
-  running the demo through the layer there (`tools/ci/distro-check.sh`:
-  Ubuntu 22.04, Debian 12, Fedora, Arch, openSUSE Tumbleweed, Alpine):
-
-```sh
-sudo apt install cmake g++ libvulkan-dev glslang-tools libglfw3-dev             # Ubuntu 22.04+, Debian 12+, Mint, Pop!_OS
-sudo dnf install cmake gcc-c++ vulkan-headers vulkan-loader-devel glslang glfw-devel  # Fedora
-sudo pacman -S cmake gcc vulkan-headers shaderc glfw vulkan-tools                # Arch, Manjaro, SteamOS
-sudo zypper in cmake gcc-c++ vulkan-devel shaderc libglfw-devel                  # openSUSE
-sudo apk add cmake g++ vulkan-headers vulkan-loader-dev glslang glfw-dev         # Alpine (musl)
-```
-
-Older Vulkan headers (Debian 11, Ubuntu 20.04): pass newer ones with
-`-DBDEX_VULKAN_INCLUDE_DIR=` (CMake says how). Without a GLSL compiler,
-`-DBDEX_SPIRV_DIR=<a build's layer/spv>` uses SPIR-V compiled elsewhere.
-
-### One command
-
-```sh
-tools/install.sh      # builds and installs into ~/.local (64-bit, plus 32-bit with multilib)
-```
-
-The installation drops:
-
-```
-~/.local/lib/libVkLayer_bdex_framegen.so
-~/.local/lib32/libVkLayer_bdex_framegen.so                      (32-bit games)
-~/.local/share/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen.json
-~/.local/share/vulkan/implicit_layer.d/VK_LAYER_BDEX_framegen_32.json
-~/.local/bin/bdex-framegen                                      (launcher)
-```
-
-Uninstall: `tools/uninstall.sh`.
-
-The 32-bit layer is built when a 32-bit C++ toolchain is installed:
-`gcc-multilib g++-multilib` (Debian, Ubuntu), `glibc-devel.i686
-libstdc++-devel.i686 libatomic.i686` (Fedora), `lib32-gcc-libs` (Arch).
-The 32-bit Vulkan loader is not needed to build it. `BDEX_NO_32BIT=1`
-skips it.
-
-> **Arch Linux**: `packaging/arch/bdex-framegen-git/PKGBUILD` builds a
-> `bdex-framegen-git` package (`makepkg -si` in that directory) installing to
-> `/usr`, the 32-bit layer included (multilib); `bdex-framegen-bin` packages
-> the release archive.
-
-### Windows
-
-Two products, built by the Windows CI (download the `bdex-framegen-windows-x64`
-artifact or a release zip) — see [`docs/windows-README.md`](docs/windows-README.md):
-
-- **`bdex_capture.exe` — recommended.** Captures a game's window
-  (Windows.Graphics.Capture), generates frames with the same engine and shows
-  them in an overlay on top of the game. Works with every API (Direct3D 9–12,
-  OpenGL, Vulkan) and is safe with anti-cheats (nothing is injected), at the
-  cost of about one frame of latency. Run it without arguments for the
-  launcher (window picker, options, per-game profiles, global on/off hotkey).
-  Validated on hardware on D3D9/11/12 titles (Intel iGPU + RTX 3050).
-- **The Vulkan layer DLL** (native-Vulkan games and emulators): register it
-  with `tools\register-layer.ps1`, then enable it per game from Steam's
-  launch options (`cmd /c "set BDEX_FG=1 && %command%"`). Built and
-  unit-tested by the CI but **not yet validated on Windows hardware**.
-
-<details>
-<summary>Manual build</summary>
-
-```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-cmake --install build --prefix ~/.local
-
-# 32-bit variant (multilib required)
-cmake -S . -B build32 -DCMAKE_BUILD_TYPE=Release -DBDEX_32BIT=ON
-cmake --build build32 -j && cmake --install build32 --prefix ~/.local
-```
-</details>
-
----
+The installer builds and installs into `~/.local`. The [full guide](docs/REFERENCE.md#requirements-building-from-source) lists dependency commands for Arch, Debian/Ubuntu, Fedora, openSUSE and Alpine, along with 32-bit and Flatpak setup.
 
 ## Usage
 
-Once installed the layer loads into **every** Vulkan game automatically, but
-stays a pure pass-through — it does nothing until you turn it on. There is
-nothing to add to your Steam launch options.
-
-### Control panel (recommended)
-
-Run **`bdex-framegen-gui`** (or `bdex-framegen --gui`, or the *bdex-framegen*
-entry in the applications menu), the way you would open Lossless Scaling:
-launch your game normally (Steam...), pick it in **Jeux détectés**, set the
-options, **Démarrer**. Frame generation starts in that game and the options
-apply live; **Arrêter**, or closing the panel, stops it. Every Vulkan game is
-armed meanwhile (the layer passes its frames through), desktop programs
-excepted (browsers, Steam, gamescope, GTK 4 applications).
-
-**Limite d'images du jeu** (the game's frame cap, before generation): a
-slider from 0 (none) to 240 fps, with a field for an exact rate, applied live
-to the running game (written once the slider rests). Marks at the usual
-rates and, unlabelled, at the caps that fill the screen (144 Hz: 72, 48, 36);
-*Limite automatique* caps at screen ÷ multiplier instead. *Limite sans latence
-ajoutée* (`FPS_LIMIT_WAIT`, on) holds Direct3D games under Proton where they
-wait for their earlier frames, not in DXVK's / VKD3D-Proton's present thread;
-the game's status then says « Limite d'images retenue dans l'attente du jeu ».
-
-**GPU calibration** (*Calibration du GPU*, measured by itself at the first
-start; `bdex-framegen --calibrate [--apply]` from a terminal): `bdex-calibrate`
-runs the engine on synthetic frames at the screen's size and refresh, for the
-automatic preset and each fixed one, and recommends the preset and the highest
-multiplier whose cost stays within a quarter of the GPU's time (no game below
-30 fps: 60 Hz x2, 144 Hz x4, 240 Hz x8). *Appliquer* takes them; *Auto* never
-goes above the calibrated multiplier anyway. **Record** (the button on a
-detected game): its next 150 real frames for the evaluation corpus
-(`~/.cache/bdex-framegen/recordings`, packed by `tools/corpus_pack.py`).
-Panel recordings include `timestamps.csv`, sampled at each source present;
-`python3 tools/recording_report.py SEQUENCE` reports frame-time variation.
-`bdex_demo --replay SEQUENCE --replay-timing --replay-log /tmp/replay.csv`
-reproduces those intervals through the online path instead of using `--fps`,
-then stops at the last selected source. Missing/inconsistent timestamps are
-rejected. The log records requested and actual source presents; if a frame
-is late by over 0.5 ms, following deadlines shift instead of catching up in
-a burst. Reported shifts identify replay overload. This timing mode is
-separate from the constant-rate quality benchmark, `replay_bench.py`.
-Packing and unpacking preserve these times when selecting a subsequence.
-
-**Without the panel** — *Mode Jeu — sans le panneau*: every game (*Tous les
-jeux*), or the selected one, generates from its start with the panel's
-settings, the panel closed. That is how Steam's Game Mode is used (below),
-also from a terminal: `bdex-framegen --always-on [GAME]` / `--always-off`.
-
-Everything is written to `~/.config/bdex-framegen.conf`, which the layer reads
-on its own (games in a Flatpak launcher get a copy). The panel needs Python 3
-with PyGObject and GTK 4; libadwaita 1.4+ is used when present.
-
-### Steam Deck / SteamOS
-
-Install in **Desktop Mode** (Konsole), into `~/.local` — SteamOS's read-only
-system is not touched, and its updates keep it:
-
-```sh
-tar xzf bdex-framegen-linux-x86_64-*.tar.gz && cd bdex-framegen-linux-x86_64-*/ && ./install.sh
+```bash
+bdex-framegen-gui               # select a running game and start generation
+bdex-framegen --calibrate       # measure a suitable preset on this GPU
+bdex-framegen --report          # inspect the active configuration and status
 ```
 
-The control panel runs in Desktop Mode (SteamOS ships GTK 4 and PyGObject).
-**Game Mode** runs one application at a time, so the panel cannot stay open
-beside a game there. Either:
+For explicit activation in a game's **Steam launch options**:
 
-- *Mode Jeu — sans le panneau* in the panel (or `bdex-framegen --always-on
-  [GAME]`): every game, or the chosen one, generates from its start in Game
-  Mode, with the panel's settings — change them in Desktop Mode, or live from
-  the config file; or
-- per game, Steam's launch options (*Properties → Launch options*, also
-  editable in Game Mode): `BDEX_FG=1 %command%` — the panel's copy button
-  gives the whole line with its settings.
-
-**Steam's framerate limit** (Quick Access Menu → Performance) caps what
-gamescope shows, generated frames included: under it the layer only fills up
-to the limit (a 30 fps game under a 30 fps limit gets no generated frame, a
-20 fps one is brought to 30), keeping one frame queued at most. For 60 fps
-from a 30 fps game, set the limit to **Off** (or to the refresh rate: 60, or
-90 on an OLED Deck) and cap the game itself — its own limiter, or `fps_limit
-= 30` — or let *Adaptatif* fill the refresh rate. `bdex-framegen --report`
-and the panel say when the limit is on. Measured in gamescope 3.16 (the
-SteamOS 3.9 one) with that limit at 30 fps, a 30 fps game at x2: 30 fps and
-19–66 ms from present to screen, where it fell to 15 fps and 233 ms before;
-x2 again, without a queue left behind, once the limit is lifted.
-
-gamescope's own refresh rate (and the limit) comes from its WSI layer, so
-*Auto* and *Adaptatif* know the Deck's 60 / 90 Hz at once. HDR (OLED) passes
-through, metadata included. On the Deck's integrated GPU the automatic preset
-is *performance*. The same holds in any gamescope session (Bazzite,
-ChimeraOS...).
-
-### Capture mode: `bdex-capture` (anti-cheat games, a second GPU)
-
-`bdex-capture` generates frames for a game **window** by capture, like
-Lossless Scaling, instead of inside the game: nothing is loaded into the
-game. Use it for the games the layer stays out of (anti-cheat), for programs
-that do not present through Vulkan, and to generate on **another GPU** than
-the game's — the one driving the screen (`--gpu`), Lossless Scaling's
-two-GPU setup.
-
-```sh
-bdex-capture --list                       # the windows it can capture
-bdex-capture --name "Game title" -m 2     # or --pid PID, --window 0xID; nothing: click the window
-bdex-capture --list-gpus                  # then --gpu 1 (or a part of its name: --gpu radeon)
-```
-
-X11 sessions and Xwayland windows (most Proton games on a Wayland desktop):
-the game window is redirected off-screen (XComposite), each new frame comes
-as an XDamage event and is read with MIT-SHM straight into GPU-visible memory
-(host-memory import, no copy where the driver allows it); an
-override-redirect overlay without input region shows the real and generated
-frames above the game and follows it, clicks and keys going through to it.
-The settings are the layer's (configuration file with the game's `[section]`,
-`BDEX_FG_*`), then `-m`, `--mode`, `--preset`, `--hud`. Ctrl+Alt+G toggles
-the generation, Ctrl+Alt+Q quits (`--hotkey` rebinds the toggle).
-
-**Native Wayland windows** (a native game, Wine's Wayland driver):
-`bdex-capture --wayland [--name GAME] [--rect X,Y,W,H]` goes through the
-desktop's screen-cast portal — the desktop asks once which window to share
-(the choice is kept for the next times) — and PipeWire; the frames are read
-in place as on X11. A Wayland window's position is the compositor's, so the
-overlay covers `--rect`, by default the whole screen: a fullscreen game's.
-`--screen` shares a whole screen instead (then show the result on another
-screen: the overlay would be captured too). In the panel: *Fenêtre Wayland
-(portail)…*. Checked end to end in a container (`tools/ci/wayland-capture-check.sh`:
-sway headless, xdg-desktop-portal-wlr, PipeWire): a 30 fps game x2.00, read
-in place, 20 ms from the frame to the screen.
-
-Measured on an RTX 3060 Ti (a 60 fps game, 144 Hz): x2 120 fps with 10 ms
-from the game's frame to the screen in interpolation, 0.6 ms in
-extrapolation; hybrid x3 178 fps, 8 ms (from the frame's arrival at the X
-server: the game's own presentation to it and the compositing of the overlay
-come on top). The layer, inside the game's presentation, stays the first
-choice when it can load. Not available: inside gamescope (Steam Deck Game Mode), where games
-present through gamescope's own WSI layer, not to the X window; native
-Wayland windows (the PipeWire screen-cast portal is not implemented yet).
-
-### Turning it on by hand
-
-`~/.config/bdex-framegen.conf` is a plain INI file. `[*]` applies to every game;
-a `[name]` section applies to the game whose executable is `name`:
-
-```ini
-[*]
-enabled = 0            # off for everything by default
-preset  = balanced
-
-[kenshi]
-enabled = 1            # ...but on for Kenshi, no launch options needed
-multiplier = 3
-```
-
-### Environment variables (per-game, still supported)
-
-Setting `BDEX_FG=1` turns the layer on for a single process, overriding the
-config file — handy for a one-off, from the command line, or as a per-game
-Steam launch option:
-
-```sh
-BDEX_FG=1 ./my_game                      # x2 (default)
-bdex-framegen -m 3 -- ./my_game          # x3 through the launcher
-bdex-framegen -x -- ./my_game            # extrapolation: no added latency
-bdex-framegen --preset performance --profile -- vkcube
-bdex-framegen --check                    # does the loader find the layer?
-```
-
-**Steam** → game properties → *Launch options*:
-
-```
+```bash
 BDEX_FG=1 %command%
-BDEX_FG=1 BDEX_FG_MULTIPLIER=3 BDEX_FG_MODE=extrapolate %command%
 ```
 
-Without installing, from the build tree:
+Start with ×2, compare generation on/off, then adjust the preset and multiplier for the available GPU headroom. Generation improves displayed motion; it does not increase the game's simulation or input sampling rate.
 
-```sh
-VK_IMPLICIT_LAYER_PATH=$PWD/build/layer BDEX_FG=1 ./build/demo/bdex_demo --fps 30
+[Desktop panel](docs/REFERENCE.md#control-panel-recommended) · [Steam Deck / SteamOS](docs/REFERENCE.md#steam-deck--steamos) · [Capture setup](docs/REFERENCE.md#capture-mode-bdex-capture-anti-cheat-games-a-second-gpu)
+
+## Performance and quality
+
+The repository includes **recorded measurements**, GPU profiling, frame-quality evaluation and pacing reports. Figures are specific to their test conditions.
+
+| Recorded setup | Engine stage timing |
+| :--- | :--- |
+| RTX 3060 Ti · 2560×1440 · offline ×2 | **0.92 ms** analysis + flow + synthesis per generated frame |
+| RTX 3060 Ti · 3840×2160 · offline ×2 | **1.84 ms** analysis + flow + synthesis per generated frame |
+
+Recorded after the 2026-10-03 shader specialization work. These offline measurements exclude the complete game's rendering, capture, compositor and display costs. See [conditions and quality baselines](docs/REFERENCE.md#performance-and-quality).
+
+## Validation
+
+The repository's checks cover configuration and formats, shader determinism, swapchain handling, offline quality, Vulkan validation and synchronization, and presentation cadence. The Linux workflows distinguish regular build checks from broader compatibility runs.
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
 ```
 
-This command uses the build-tree layer even if another version is installed.
+Run headless checks or the isolated display suites as described in [CONTRIBUTING.md](CONTRIBUTING.md). Offline evaluation and recording tools are documented in the [development reference](docs/REFERENCE.md#development).
 
-The layer periodically prints its statistics to the terminal:
+## Limitations
 
-```
-[bdex-fg  4.128 INFO] game 30.0 fps -> output 60.0 fps (x2.00), present call 0.14 ms, real frame delayed 17.1 ms
-```
+Occlusions, thin geometry, fast turns, film grain and changing HUD elements remain difficult image-synthesis cases. Higher multipliers generate more images from the same source information. Available GPU time, frame cadence and the compositor determine how much of that output reaches the screen.
 
-### The demo
-
-`bdex_demo` renders a procedural scene (moving objects, static HUD, frame
-counter) at a capped frame rate, to test without a game:
-
-```sh
-build/demo/bdex_demo --fps 30               # without the layer: 30 fps
-BDEX_FG=1 build/demo/bdex_demo --fps 30     # with it: 60 fps displayed
-build/demo/bdex_demo --help                 # --size, --mode, --speed, --cut, --srgb…
-```
-
-`--latency-test` answers every key press (`--latency-test auto`: one
-"input" every half second) with a flat white frame, and `--latency-log FILE`
-records when each input came and when its frame was presented — the game
-side of an input-to-screen measurement (see Latency).
-
----
+[Known limits](docs/REFERENCE.md#limitations) · [Frame-rate and pacing notes](docs/framerate.md) · [Roadmap](ROADMAP.md)
 
 ## Configuration
+
+Defaults, per-game profiles and `BDEX_FG_*` environment overrides use the same engine options. Expand the reference for every setting, its default and the per-game configuration syntax.
+
+<details>
+<summary><b>Full option table and per-game configuration</b></summary>
 
 Every option can be set through `BDEX_FG_<KEY>` environment variables or in
 `~/.config/bdex-framegen.conf` (`key = value`, one per line; the environment
@@ -672,303 +279,22 @@ present_mode = mailbox
 debug = flow
 ```
 
----
 
-## Performance and quality
-
-GPU time per rendered frame, measured with `BDEX_FG_PROFILE=1` on an
-integrated **AMD Radeon Vega 8** (≈ 1.1 TFLOPS, laptop on battery), demo
-fullscreen at 1920×1080, x2:
-
-| Preset | Analysis | Flow | Interpolation | Copies | Total |
-|---|:---:|:---:|:---:|:---:|:---:|
-| `performance` | 0.5 ms | 0.6 ms | 1.5 ms | 1.6 ms | ≈ 4.2 ms |
-| `balanced` (default) | 0.6 ms | 2.4 ms | 1.5 ms | 1.6 ms | ≈ 6.1 ms |
-| `quality` | 1.1 ms | 8.8 ms | 1.7 ms | 1.6 ms | ≈ 13 ms |
-
-The copies are the two 8 MB transfers into the real swapchain (generated +
-real frame); on this iGPU they are memory-bound. On a discrete GPU, with
-the automatic preset's quality options (per-pixel vectors, both-frame
-splatting, rotation-aware matching, local scene cuts) — RTX 3060 Ti,
-`bdex_offline` + `BDEX_FG_PROFILE=1`, x2, per generated frame:
-
-| Resolution | Analysis | Flow | Synthesis | Total |
-|---|:---:|:---:|:---:|:---:|
-| 2560×1440 | 0.09 ms | 0.34 ms | 0.49 ms | **0.92 ms** |
-| 3840×2160 | 0.15 ms | 0.65 ms | 1.04 ms | **1.84 ms** |
-
-(1.63 and 2.96 ms before 03/10: the synthesis is now compiled for the
-options in use, and the splat runs at half resolution.) The game thread spends ≈ 0.1 ms in
-`vkQueuePresentKHR`; the layer adds one image to the game's swapchain and
-allocates `multiplier - 1` full-resolution output images plus the flow
-pyramids (a few megabytes).
-
-Quality measured with `tools/run_eval.sh` (PSNR of the generated frames
-against the real frame rendered at 60 fps):
-
-| Method | PSNR |
-|---|:---:|
-| Duplicating the previous frame | ≈ 22 dB |
-| Blending the two neighbouring frames | ≈ 25 dB |
-| **bdex-framegen**, `performance` | ≈ 27 dB |
-| **bdex-framegen**, `balanced` | **≈ 30 dB** |
-| **bdex-framegen**, `quality` | ≈ 31 dB |
-| **bdex-framegen**, `MODE=extrapolate` | ≈ 23 dB |
-
-### Game settings that help
-
-- **Film grain off.** Grain is new noise on every real frame: no generated
-  frame can predict it, and it pulses between the grainy real frames and the
-  smoother generated ones (measured: a 3x3 pre-blur of the analysis does not
-  help — the block matcher already averages it).
-- **Motion blur low or off.** A fast turn with heavy blur leaves the motion
-  search too little texture: blocks of the picture break away (Cyberpunk
-  2077, recorded).
-- **Optional refresh alignment.** A fixed multiplier accepts changing or
-  uncapped source rates and may produce more frames than the screen's Hz.
-  30 fps x4 on 144 Hz produces 120 frames: some refreshes repeat a frame.
-  `refresh_fill=1` optionally fills the screen by varying the output count;
-  it is off by default to preserve the chosen multiplier. A cap is optional.
-- **Railings, fences or poles breaking up when you strafe past them:** turn
-  on `PARALLAX_SEARCH` (« Recherche de parallaxe » in the panel): thin near
-  structures pass faster than the scenery and the motion search misses
-  them; it costs about 0.3 ms of GPU a game frame at 1440p.
-
-### Latency
-
-Delay between the game's `vkQueuePresentKHR` and the moment the real frame
-is handed to the presentation engine (`real frame delayed` in the
-statistics), demo at 30 fps on a 60 Hz display:
-
-| Configuration | Real frame delay |
-|---|:---:|
-| Game's FIFO kept (`PRESENT_MODE=app`) | ≈ 60 ms (frames queue up in the presentation engine) |
-| Default (`auto` → mailbox, interpolation) | ≈ 17 ms (half a game frame, by construction) |
-| `MODE=extrapolate` | **≈ 0.5 ms** |
-
-**For the lowest input lag, use `--preset latency` (or `-x`)**: it selects
-extrapolation with x2 and the default mailbox present mode. Measured on a
-discrete GPU (game 60 fps → 120 fps) the real frame is held ≈ 0.1 ms, versus
-≈ 8 ms for interpolation at the same rate. Keep x2 and mailbox — x3, `fifo`
-and `immediate` all give up that gain. `LOW_LATENCY` does **not** help on top
-of extrapolation (it only throttles the game so it cannot run ahead, which
-matters with FIFO); leave it off here.
-
-Interpolation must hold the real frame back by half a frame interval to show
-the in-between frame first; extrapolation shows the real frame immediately
-and predicts the following one from the motion of the last two, at the cost
-of prediction errors on abrupt changes of direction. Predicted frames that
-are still pending when the next real frame is ready are skipped rather than
-delaying it.
-
-At x3 and x4, **`MODE=hybrid`** sits in between: one interpolated frame,
-the real one, then predictions — the real frame is held 1/m of a frame
-instead of (m − 1)/m. Measured with a GPU-bound game (4K, x3): every one of
-the 283 frames a second displayed, 25.5 ms from the game's frame start to
-the screen (18.3 ms with the latency limiter below).
-
-When the GPU is the bottleneck, two defaults cut the queueing a game
-otherwise builds up in front of it: `MAX_FRAME_LATENCY=1` (the game's present
-returns once the GPU has finished its previous frame) and `LATENCY_LIMITER=1`
-(it returns just in time for the next frame to reach the GPU as it frees up,
-like Reflex or Anti-Lag). Measured, GPU-bound demo at 4K x2: 26.8 ms from
-frame start to screen with the first alone, 18.3 ms with both, and 97 → 101
-game fps. With the CPU busy elsewhere (the game's wake-ups late), the limiter
-still cost 6 % of the frame rate there: `LATENCY_LIMITER=0` if the frame rate
-matters more. The statistics line reports both figures (`frame-to-screen`,
-`next frame held`).
-
-**Measuring it.** `tools/latency_bench.sh` runs the demo through the layer in
-a headless gamescope with automatic inputs, each answered by a white frame,
-and joins the demo's log with the layer's (`LATENCY_LOG`): the input to the
-first frame on screen carrying it, and to the real frame. Demo at 40 fps,
-144 Hz, medians:
-
-| | first photon | real frame |
-|---|---|---|
-| x1 (no generation) | 6.8 ms | 6.8 ms |
-| interpolation x2 | 10.0 ms | 19.9 ms |
-| interpolation x2, `INTERP_HOLD=auto` | 9.2 ms | 16.2 ms |
-| extrapolation x2 | 6.7 ms | 6.7 ms |
-
-With interpolation the first photon is a generated frame, half of it the new
-image; extrapolation costs nothing measurable. Run it for a setting with
-`tools/latency_bench.sh LABEL=BDEX_FG_X=Y,...`; on a real screen,
-`bdex_demo --latency-test` (key presses) with `BDEX_FG_LATENCY_LOG`, then
-`tools/latency_report.py`, or a photodiode on the flashes.
-
-**`INTERP_HOLD`** trades interpolation's even spacing for latency: below 1
-the generated frames are shown closer together before the real one, which
-then goes out sooner (each frame still shows the content of its own display
-time). The screen bounds it — never two frames in one refresh — so the gain
-grows with the refresh rate and with lower game frame rates: 40 fps x2 on
-144 Hz, frame-to-screen 43.4 → 37.6 ms at `INTERP_HOLD=0.5`; 60 fps x2 on
-144 Hz, under a millisecond. On a 240 Hz screen 60 fps x2 can go down to
-half the hold.
-
-A game that has its own **Reflex** (`VK_NV_low_latency2`, e.g. through
-DXVK-NVAPI) or **Anti-Lag** (`VK_AMD_anti_lag`) turned on paces itself
-through the driver: the layer's `LATENCY_LIMITER` then steps aside rather
-than adding a second hold (the statistics line says `latency limiter off`).
-
-**The frame limit** (`FPS_LIMIT`) holds the game just before it begins a new
-frame, where its own limiter would, never a finished frame: at the end of its
-present for a Vulkan game, at Reflex's sleep or Anti-Lag's input stage when
-it uses them. DXVK and VKD3D-Proton present from a thread of their own and
-let the game run up to three frames ahead of it: holding that present queued
-the frames behind it. With `FPS_LIMIT_WAIT` (the default) the layer holds
-these games where they wait for their earlier presents instead (the status
-says `cap_point=wait`). Demo presenting as they do (`bdex_demo
---present-thread L`), a 40 fps cap at x2, 144 Hz, input to the real frame on
-screen:
-
-| | held at the present (before) | held at the game's wait |
-|---|---|---|
-| VKD3D-Proton, its own bound (3 frames) | 72.3 ms | 23.3 ms |
-| DXVK, DXGI's default latency (3) | 98.2 ms | 23.4 ms |
-| DXVK, maximum frame latency 1 | 48.3 ms | 23.4 ms |
-| the game's own limiter | | 22.3 ms |
-
-Engines that read the input on a game thread a frame ahead of the one that
-presents (**Unreal Engine**, **RE Engine**: Oblivion Remastered, PRAGMATA)
-still read it a frame early when the present wait holds them — the game
-thread is only held a frame later. Their own limiter, and **NVIDIA Reflex**'s
-sleep, are on the game thread: with Reflex on in the game (Proton enables
-NVAPI on NVIDIA by default), the layer hands its limit to Reflex's own
-limiter (`cap_point=input`), which holds the game before its input, as the
-game's own limit does — never a sleep of the layer's inside the Reflex
-call: VKD3D-Proton makes it holding a lock its render and present threads
-need for every latency marker (in Oblivion Remastered at 30 fps, 66.7 ms
-from a frame's simulation to its present, two frames, against 12.5–13.2
-through Reflex's limiter and 13.8–15.5 with the game's own limit: the
-game's Reflex reports, `reflex_sim_present_ms` in its status). Same demo with such a game
-thread (`--sim-thread`), 40 fps cap at x2, input to the real frame: the
-game's own limiter 27.3 ms, the layer at the present wait 46.9 ms, at
-Reflex's sleep 26.2 ms (the old present hold: 96.9 ms). Unreal hands its
-own frame rate limit to Reflex when Reflex is on (the driver's limiter):
-the layer at Reflex's sleep measures the same (`--reflex-limit`, 40 fps:
-9.3–10.3 ms at x1, 24.5–26.9 at x3, either way). A cap of a whole number of
-refreshes a frame (48 fps on 144 Hz) has the game's frames ready at the same
-moment of the refresh cycle for a whole run, but a different one at each
-launch, whichever limiter caps: from one launch to the next, up to a
-refresh more from input to screen (headless gamescope, five runs: first
-photon 7.6 to 11.9 ms).
-
----
-
-## Limitations
-
-- **Latency**: interpolation displays the real frame half a frame later (at
-  x2); `INTERP_HOLD` shortens that within what the screen's refresh allows,
-  `MODE=extrapolate` removes it but predicts. Input is not touched.
-- **Vsync**: by default the layer presents with mailbox (no tearing, no
-  queueing). With `PRESENT_MODE=app` and a FIFO game on a 60 Hz display, x2
-  caps the game at 30 fps, x3 at 20 fps, and queued frames add latency.
-- **Artefacts**: block-matching optical flow handles translations and static
-  HUDs well; fast rotations, large occlusions and repetitive patterns produce
-  local artefacts. `DEBUG=flow` shows what the layer "understands" of the
-  motion.
-- **Supported formats**: 8-bit RGBA/BGRA (UNORM and sRGB),
-  A2B10G10R10 / A2R10G10B10, RGBA16F. Others pass through without generation.
-- Not supported (passed through): multi-layer (VR) and protected swapchains.
-- Handled extensions: `VK_KHR_present_id` / `present_wait`,
-  `VK_EXT_swapchain_maintenance1` (present fences, present mode switching,
-  `vkReleaseSwapchainImagesEXT`). The other calls on a swapchain — HDR
-  metadata, `VK_GOOGLE_display_timing`, `VK_NV_low_latency2` — go to the real
-  swapchain the layer presents to, re-created underneath the game's handle
-  when the window changes size.
-- **Steam's framerate limit** (gamescope, Game Mode) caps generated frames
-  too: see [Steam Deck / SteamOS](#steam-deck--steamos).
-
----
-
-## Validation
-
-The layer is clean under `VK_LAYER_KHRONOS_validation`, synchronization
-validation included, with the demo, `vkcube` and `vkgears`:
-
-```sh
-VK_LOADER_LAYERS_ENABLE='*validation' BDEX_FG=1 build/demo/bdex_demo --fps 30 --frames 90
-```
-
-It also loads inside the Steam Linux Runtime container (pressure-vessel).
-
----
-
-## Development
-
-```sh
-cmake -S . -B build && cmake --build build -j
-ctest --test-dir build --output-on-failure     # unit, evaluator and GPU integration tests
-tools/run_eval.sh build 40                      # PSNR against ground truth
-BDEX_EVAL_ARGS="--speed 2.5" tools/run_eval.sh build 40   # fast-motion scene
-```
-
-**Online benchmark on recorded content** — `tools/replay_bench.py SEQ
-[--multiplier M] [--env BDEX_FG_MODE=...] [--other-layer NAME]` plays a
-recorded sequence (*Enregistrer* in the panel, `--record`, `make_corpus.py`)
-as a game (`bdex_demo --replay`) through the layer — pacing and swapchain
-included — and scores every frame actually presented against the frames left
-out, next to the repeat and cross-fade references. It gives exactly the
-offline engine's numbers (pan 47.29 dB, demo 23.36, occlusions 34.20 at x2
-on the 960x540 corpus). `--other-layer` measures another frame generation
-layer on the same frames: it goes above ours, which only records what it
-presents (its real frames are the ones identical to a recorded frame). Needs
-a display: Xvfb or headless gamescope.
-
-`tools/run_eval.sh` renders the demo at `30 × MULTIPLIER` fps (reference) and
-then at 30 fps through the layer. Set `BDEX_FG_MULTIPLIER=3` or `4` to evaluate
-every generated position. The report includes quality in changing regions and
-on moving edges, pixels revealed by the moving yellow bar, and moving edges
-around the rotating square, as well as whole-frame PSNR. The local scores
-exclude the demo's frame-counter patch, which is only used for temporal alignment. The
-runner ignores `~/.config/bdex-framegen.conf`; pass `BDEX_FG_*` variables to
-compare variants. It prints aligned, expected and dumped frame counts, and
-fails below 75% of the expected generated frames (rounded down).
-
----
+</details>
 
 ## Layout
 
-```
-layer/
-├─ src/layer.cpp        layer entry points, dispatch, Vulkan hooks
-├─ src/swapchain.cpp    virtual swapchain, game-thread side (creation, acquire, present)
-├─ src/swapchain_worker.cpp  its worker thread (paced presents, copies, display feedback)
-├─ src/framegen.cpp     GPU resources and pass recording
-├─ src/config.cpp       options (environment, file, per-game sections)
-└─ shaders/             downsample, block_match, flow_smooth, flow_refine, interpolate
-demo/                   GLFW test application (procedural scene)
-tests/                  unit tests and integration test
-tools/                  launcher, install/uninstall, quality evaluation
-docs/                   Windows guides; MEMOIRE.md: the project's memory (in French) —
-                        how it works on each system, history, measurements, open issues
-```
-
----
+| Path | Responsibility |
+| :--- | :--- |
+| [`layer/src/`](layer/src/) | Vulkan interception, virtual swapchains, generation engine and pacing |
+| [`layer/shaders/`](layer/shaders/) | Optical flow, synthesis and optional compute passes |
+| [`capture/`](capture/) | Linux and Windows capture front ends |
+| [`tools/`](tools/) | Launcher, control panel, calibration, recording and evaluation |
+| [`tests/`](tests/) | Unit, GPU, integration and compatibility checks |
+| [`docs/REFERENCE.md`](docs/REFERENCE.md) | Complete installation, configuration and measurement guide |
 
 ## Contributing
 
-Reports from real games (DXVK, VKD3D-Proton, NVIDIA, Intel…) are what the
-project needs most. While the game runs, `bdex-framegen --report` (or
-« Rapport… » in the panel) writes `bdex-framegen-report.txt` and prints a
-link to the issue form already filled with its summary (version,
-distribution, GPU, session, installation, quick read — not your settings or
-log): describe what you see and attach the file. `bdex-framegen --issue-url
-FILE` makes the link again. What to try on which machine:
-[docs/linux-validation.md](docs/linux-validation.md).
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and [SECURITY.md](SECURITY.md) for the security model. Architectural notes live in [docs/MEMOIRE.md](docs/MEMOIRE.md); release history is in [CHANGELOG.md](CHANGELOG.md).
 
-To contribute code, read [CONTRIBUTING.md](CONTRIBUTING.md): setup, what to
-check before a pull request (tests, Khronos validation, quality and
-performance measurements) and code conventions. The version history is in
-[CHANGELOG.md](CHANGELOG.md). Security model, what the software never does
-(network, data collection) and how to report a vulnerability:
-[SECURITY.md](SECURITY.md).
-
----
-
-<div align="center">
-
-Proprietary software — all rights reserved ([LICENSE](LICENSE); versions up to 0.5.5 were MIT). Third-party components: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-</div>
+**Proprietary software — all rights reserved.** See [LICENSE](LICENSE) and [third-party notices](THIRD_PARTY_NOTICES.md). Versions through 0.5.5 used the MIT license.
