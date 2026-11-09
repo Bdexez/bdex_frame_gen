@@ -4247,6 +4247,8 @@ minutes Windows comptées double, chaque job arrondi à la minute.
   `tools/ci/mingw/check.sh` en parallèle (`BDEX_MINGW_ARCHS`,
   `BDEX_MINGW_GEN`), `rhysd/actionlint:1.7.7` dans Docker (workflows
   vérifiés : ni expression ni contexte faux).
-- Non mesuré ici : la vraie durée sur les runners GitHub (pas d'accès à
-  l'API Actions d'un dépôt privé) ; `/MP` et les filtres `paths` ne se
-  vérifient qu'au premier push.
+- Premier run (19bcb39, poussé le 01/11) : `linux / test` et
+  `windows / build (x64)` verts, aucun autre job (ni Win32 ni bundle), selon
+  l'utilisateur ; `/MP` passe sous MSVC. Durées réelles sur GitHub pas
+  encore relevées (pas d'accès à l'API Actions d'un dépôt privé : les
+  demander à l'utilisateur, page du run).
