@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <chrono>
+#include <thread>
 #include <fstream>
 
 #ifdef _WIN32
@@ -18,6 +19,8 @@
 // _environ comes from <stdlib.h> (the UCRT makes it a macro over
 // __p__environ(): redeclaring it here was an inconsistent-linkage warning).
 #else
+#include <cerrno>
+#include <csignal>
 #include <dirent.h>
 #include <dlfcn.h>
 #include <fstream>
@@ -334,6 +337,13 @@ bool platformIsNonGame(const std::string& name) {
         "obs", "vulkaninfo", "vkcube", "bdex-framegen-gui", "bdex-capture", "bdex_capture",
         "zed-editor", "zeditor",  // the Zed editor draws with Vulkan (wgpu)
         "explorer", "xalia",  // Wine's desktop and accessibility helpers (Proton: next to every game)
+        // Steam's shader pre-caching: it replays a game's pipelines into the
+        // driver's cache, a device without a window, run by the hundred
+        // (555 status files in six days, 10/11, never removed: Steam kills
+        // them). What the layer adds to a device (a queue, present_id /
+        // present_wait, a queue priority) does not change how a pipeline is
+        // compiled, so the cache it fills still matches the game's.
+        "fossilize_replay",
     };
     for (const char* n : kNonGames)
         if (name == n) return true;
@@ -350,6 +360,52 @@ void platformFineTimer(bool on) {
     if (fn) fn(1);
 #else
     (void)on;
+#endif
+}
+
+#ifdef _WIN32
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION  // (Windows 10 1803 SDKs and later; older MinGW headers)
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+namespace {
+// One timer per thread (a waitable timer is a kernel object: never shared
+// between two sleeping threads), closed when the thread ends.
+struct ThreadTimer {
+    HANDLE handle = nullptr;
+    ThreadTimer() {
+        handle = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+        // (Before Windows 10 1803 the flag is refused: a plain timer, as
+        // precise as the timer resolution — platformFineTimer raises it.)
+        if (!handle) handle = CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_ALL_ACCESS);
+    }
+    ~ThreadTimer() {
+        if (handle) CloseHandle(handle);
+    }
+    ThreadTimer(const ThreadTimer&) = delete;
+    ThreadTimer& operator=(const ThreadTimer&) = delete;
+};
+} // namespace
+#endif
+
+void platformSleepUntil(std::chrono::steady_clock::time_point until) {
+#ifdef _WIN32
+    using namespace std::chrono;
+    thread_local ThreadTimer timer;
+    for (;;) {
+        const auto left = until - steady_clock::now();
+        if (left <= steady_clock::duration::zero()) return;
+        LARGE_INTEGER due;
+        due.QuadPart = -std::max<LONGLONG>(1, LONGLONG(duration_cast<nanoseconds>(left).count() / 100));  // 100 ns units, relative
+        if (timer.handle && SetWaitableTimer(timer.handle, &due, 0, nullptr, nullptr, FALSE)) {
+            WaitForSingleObject(timer.handle, INFINITE);
+        } else {
+            const auto ms = duration_cast<milliseconds>(left).count();
+            if (ms > 0) Sleep(DWORD(ms));
+            else SwitchToThread();
+        }
+    }
+#else
+    std::this_thread::sleep_until(until);
 #endif
 }
 
@@ -371,6 +427,20 @@ long platformPid() {
     return static_cast<long>(GetCurrentProcessId());
 #else
     return static_cast<long>(getpid());
+#endif
+}
+
+bool platformProcessAlive(long pid) {
+    if (pid <= 0) return false;
+#ifdef _WIN32
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+    if (!h) return GetLastError() != ERROR_INVALID_PARAMETER;  // (no such process; access denied: alive)
+    DWORD code = 0;
+    const bool alive = !GetExitCodeProcess(h, &code) || code == STILL_ACTIVE;
+    CloseHandle(h);
+    return alive;
+#else
+    return kill(static_cast<pid_t>(pid), 0) == 0 || errno != ESRCH;
 #endif
 }
 

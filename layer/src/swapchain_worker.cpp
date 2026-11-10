@@ -432,7 +432,7 @@ bool VirtualSwapchain::predictedCancelled() {
 // CPU to the load. Not done.
 void VirtualSwapchain::sleepUntilPrecise(clock::time_point target) {
     if (target <= clock::now()) return;
-    std::this_thread::sleep_until(target);
+    platformSleepUntil(target);  // (Windows: a high-resolution timer, see platform.h)
     const int64_t late = std::chrono::duration_cast<std::chrono::microseconds>(clock::now() - target).count();
     statsWakeLateUs_.fetch_add(uint64_t(std::max<int64_t>(late, 0)), std::memory_order_relaxed);
     statsWakes_.fetch_add(1, std::memory_order_relaxed);
@@ -442,7 +442,20 @@ bool VirtualSwapchain::waitUntilOrCancelled(clock::time_point target) {
     VkFence next = VK_NULL_HANDLE;
     {
         std::unique_lock<std::mutex> wlock(workerMutex_);
-        workerCv_.wait_until(wlock, target, [this] { return cancelPredicted_ || stop_ || !jobs_.empty(); });
+        const auto newer = [this] { return cancelPredicted_ || stop_ || !jobs_.empty(); };
+        if constexpr (kPreciseTimedWaits) {
+            workerCv_.wait_until(wlock, target, newer);
+        } else {
+            // Windows: the timed wait ends on the timer's ticks (platform.h) —
+            // up to 20 ms before the moment, then 1 ms slices of the precise
+            // sleep, the condition checked between them.
+            workerCv_.wait_until(wlock, target - std::chrono::milliseconds(20), newer);
+            while (!newer() && clock::now() < target) {
+                wlock.unlock();
+                platformSleepUntil(std::min(target, clock::now() + std::chrono::milliseconds(1)));
+                wlock.lock();
+            }
+        }
         if (cancelPredicted_ || stop_) return false;
         if (jobs_.empty()) return true;  // the target, nothing newer
         next = jobs_.front().ready;

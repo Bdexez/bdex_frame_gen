@@ -1325,8 +1325,13 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
     acquireCv_.notify_all();
 
     // The refresh rate the system reports: gamescope's cycle, else the
-    // control panel's reading (require_app).
-    if (const double hint = gsHz_.load() > 0.0 ? gsHz_.load() : ptRefreshHz_.load() > 0.0 ? ptRefreshHz_.load() : cfg_.panelDisplayHz;
+    // driver's (VK_EXT_present_timing) where the control panel's reading
+    // (require_app) does not contradict it by more than 5 % — a hint that
+    // divides the true period is taken by the display clock — else the
+    // panel's.
+    const double pt = ptRefreshHz_.load(), panel = cfg_.panelDisplayHz;
+    const bool ptAgrees = pt > 0.0 && (panel <= 0.0 || std::fabs(pt - panel) < 0.05 * panel);
+    if (const double hint = gsHz_.load() > 0.0 ? gsHz_.load() : ptAgrees ? pt : panel;
         hint != clockHintHz_) {
         clockHintHz_ = hint;
         if (x11Clock_) x11Clock_->setHint(clockHintHz_);
@@ -2255,7 +2260,7 @@ void VirtualSwapchain::syncFrameStart(double waitedMs) {
     const auto until = clock::now() + std::chrono::duration_cast<clock::duration>(
                                           std::chrono::duration<double, std::milli>(delay));
     const auto coarse = until - std::chrono::microseconds(500);
-    if (coarse > clock::now()) std::this_thread::sleep_until(coarse);
+    if (coarse > clock::now()) platformSleepUntil(coarse);
     while (clock::now() < until) std::this_thread::yield();
 }
 

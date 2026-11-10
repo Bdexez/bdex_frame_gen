@@ -1,4 +1,5 @@
 #pragma once
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -93,6 +94,26 @@ std::string platformCacheDir();
 // default 15.6 ms makes a 4 ms sleep last 15. Elsewhere a no-op (Linux
 // sleeps are precise; see prctl in the worker).
 void platformFineTimer(bool on);
+// Sleeps until `until` (never earlier). Linux: std::this_thread::sleep_until,
+// precise. Windows: a high-resolution waitable timer (Windows 10 1803+, a
+// plain one before) — the standard library's timed waits end on the timer's
+// ticks there: under Wine, MinGW's sleep_until and condition-variable waits
+// woke 9 to 15 ms late where the waitable timer and Sleep() woke 0.07 ms late
+// (2026-11-10); MSVC's are whole milliseconds of Sleep(), as precise as the
+// process's timer resolution (15.6 ms by default).
+void platformSleepUntil(std::chrono::steady_clock::time_point until);
+// Whether a timed wait on a condition variable ends close to its deadline
+// (Linux): false on Windows, where it ends on the timer's ticks — wait on it
+// with a margin, then finish with platformSleepUntil.
+constexpr bool kPreciseTimedWaits =
+#ifdef _WIN32
+    false;
+#else
+    true;
+#endif
 long platformPid();
+// False only when process `pid` (as this process numbers them) is known not
+// to run any more; true when it runs or cannot be told (no permission).
+bool platformProcessAlive(long pid);
 
 } // namespace bdex
