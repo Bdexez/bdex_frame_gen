@@ -1995,7 +1995,8 @@ NOT_GAMES = {"steam", "steamwebhelper", "gamescope", "gamescopereaper", "gamesco
              "firefox", "librewolf", "brave", "zen", "electron", "discord", "vesktop", "code",
              "obs", "vulkaninfo", "vkcube", "bdex-framegen-gui", "bdex-capture",
              "zed-editor", "zeditor",   # the Zed editor draws with Vulkan (wgpu)
-             "explorer", "xalia"}   # Wine's desktop and accessibility helpers (Proton)
+             "explorer", "xalia",   # Wine's desktop and accessibility helpers (Proton)
+             "fossilize_replay"}   # Steam's shader pre-caching
 
 
 def layer_name(arg):

@@ -31,13 +31,38 @@ Board& board() {
     return *b;
 }
 
+// The status files of processes gone (killed: Steam's shader pre-caching
+// left 555 in six days, 10/11; a crashed game), once per process: those of a
+// pid that no longer runs and left alone for 10 minutes — a game in another
+// pid namespace sharing the directory (a sandbox) rewrites its own every
+// second while it presents.
+void sweepStale(const std::string& dir) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const auto now = fs::file_time_type::clock::now();
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+        const fs::path p = it->path();
+        if (p.extension() != ".status") continue;
+        const std::string stem = p.stem().string();
+        if (stem.empty() || stem.find_first_not_of("0123456789") != std::string::npos || stem.size() > 9) continue;
+        const long pid = std::stol(stem);
+        if (pid == platformPid() || platformProcessAlive(pid)) continue;
+        std::error_code e2;
+        const auto written = fs::last_write_time(p, e2);
+        if (e2 || now - written < std::chrono::minutes(10)) continue;
+        fs::remove(p, e2);
+    }
+}
+
 void writeLocked(Board& b) {
     if (!b.dirAttempted) {
         b.dirAttempted = true;
         const std::string dir = platformStatusDir();
         std::error_code ec;
-        if (!dir.empty() && (std::filesystem::create_directories(dir, ec) || std::filesystem::is_directory(dir, ec)))
+        if (!dir.empty() && (std::filesystem::create_directories(dir, ec) || std::filesystem::is_directory(dir, ec))) {
             b.path = dir + "/" + std::to_string(platformPid()) + ".status";
+            sweepStale(dir);
+        }
     }
     if (b.path.empty()) return;
     std::error_code ec;

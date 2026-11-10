@@ -143,6 +143,18 @@ flatpak_dirs() {
   fi
 }
 
+# A status file left by a process gone (killed: Steam's shader pre-caching,
+# a crashed game): in the host's directory, its pid no longer runs; in a
+# sandbox's (pids of its own namespace), not rewritten for 10 minutes (a game
+# presenting rewrites its own every second).
+stale_status() {
+  if [ "$(dirname "$1")" = "$2" ]; then
+    [ ! -d "/proc/$(basename "$1" .status)" ]
+  else
+    [ -z "$(find "$1" -mmin -10 2>/dev/null)" ]
+  fi
+}
+
 quick_read() {
   local sdir="$1" sess="$1/app.session" panel_hz="" panel_target="" hz_desktop
   hz_desktop="$(screens | sed -n 's/.*@\([0-9.]*\).*/\1/p' | sort -g | tail -1)"
@@ -167,6 +179,7 @@ quick_read() {
   # the one of its own namespace: compared with the session there.)
   for f in "$sdir"/*.status $(flatpak_dirs run)/*.status; do
     [ -f "$f" ] || continue
+    stale_status "$f" "$sdir" && continue
     found=1
     local pid; pid="$(sed -n 's/^pid=//p' "$f" | head -1)"
     local fdir; fdir="$(dirname "$f")"
@@ -176,13 +189,16 @@ quick_read() {
       [ -f "$fdir/app.session" ] && { read -r _ panel_target _ < "$fdir/app.session" || true; }
       echo "(jeu dans un Flatpak : $fdir)"
     fi
-    # One line per swapchain: state device multiplier game_fps output_fps refresh_hz limit_hz
-    awk -F= '
-      /^\[/ { if (sc) print st "\t" dv "\t" m "\t" g "\t" o "\t" r "\t" l; sc = ($0 ~ /^\[swapchain/); st = dv = m = g = o = r = l = "" }
+    # One line per swapchain: state device multiplier game_fps output_fps refresh_hz limit_hz shown_fps
+    # (separated by 0x1f, not a tab: read merges consecutive whitespace separators, and an empty
+    # limit_hz then took the next field)
+    awk -F= -v S=$'\x1f' '
+      /^\[/ { if (sc) print st S dv S m S g S o S r S l S sh; sc = ($0 ~ /^\[swapchain/); st = dv = m = g = o = r = l = sh = "" }
       $1 == "state" { st = $2 } $1 == "device" { dv = $2 } $1 == "multiplier" { m = $2 }
       $1 == "game_fps" { g = $2 } $1 == "output_fps" { o = $2 } $1 == "refresh_hz" { r = $2 } $1 == "limit_hz" { l = $2 }
-      END { if (sc) print st "\t" dv "\t" m "\t" g "\t" o "\t" r "\t" l }' "$f" |
-    while IFS=$'\t' read -r state dev mult gfps ofps rhz lhz; do
+      $1 == "shown_fps" { sh = $2 }
+      END { if (sc) print st S dv S m S g S o S r S l S sh }' "$f" |
+    while IFS=$'\x1f' read -r state dev mult gfps ofps rhz lhz shown; do
       echo "jeu $(sed -n 's/^process=//p' "$f" | head -1) (pid $pid) : $state, ×$mult, $gfps → $ofps fps, écran selon la couche ${rhz} Hz, GPU $dev"
       if [ -n "$lhz" ]; then
         echo "  → limite d'images/s de Steam (menu rapide, mode Jeu) : ${lhz} i/s. gamescope n'affiche rien au-delà :"
@@ -198,6 +214,14 @@ quick_read() {
       if [ "$state" = generating ] && awk -v o="${ofps:-0}" -v r="${rhz:-0}" 'BEGIN { exit !(r > 0 && o > r * 1.1) }'; then
         echo "  → ${ofps} images/s envoyées pour un écran à ${rhz} Hz : le compositeur en jette l'excédent ; le jeu tourne déjà"
         echo "    près de la fréquence de l'écran, ×$mult n'apporte presque rien (plafonner le jeu : fps_limit, ou multiplicateur Auto)"
+      fi
+      # (shown_fps: the frames that reached the screen, from the display's
+      # own feedback — the 20/10 report had 237 sent and 44.6 shown, which
+      # only the status said)
+      if [ "$state" = generating ] && [ -n "$shown" ] &&
+         awk -v o="${ofps:-0}" -v r="${rhz:-0}" -v d="$shown" 'BEGIN { t = (r > 0 && r < o) ? r : o; exit !(t > 0 && d >= 0 && d < 0.85 * t) }'; then
+        echo "  → ${shown} images/s réellement affichées sur ${ofps} envoyées : GPU saturé (baisser render_scale ou le préréglage,"
+        echo "    plafonner le jeu avec fps_limit), ou compositeur qui en jette (plein écran, VRR)"
       fi
       if [ "$state" = generating ] && [ "$mult" = 1 ]; then
         echo "  → ×1 : le jeu ($gfps fps) atteint déjà la fréquence que la couche croit être celle de l'écran (${rhz} Hz) ;"
@@ -354,12 +378,14 @@ report() {
       if [ -f "$d/app.session" ]; then cat "$d/app.session"; else echo "(none)"; fi
     done
     echo; echo "== running games (live status)"
-    found=0
+    found=0 stale=0
     for f in "$sdir"/*.status $(flatpak_dirs run)/*.status; do
       [ -f "$f" ] || continue
+      if stale_status "$f" "$sdir"; then stale=$((stale + 1)); continue; fi
       found=1; echo "-- $f"; cat "$f"
     done
     [ "$found" = 1 ] || echo "(none: start the game, then run --report while it runs)"
+    [ "$stale" = 0 ] || echo "($stale status file(s) of processes gone skipped)"
     echo; echo "== online_tune decisions (per game and mode)"
     cdir="${BDEX_FG_CACHE_DIR-${XDG_CACHE_HOME:-$HOME/.cache}/bdex-framegen}"
     found=0

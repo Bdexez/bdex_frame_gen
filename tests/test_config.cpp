@@ -249,6 +249,7 @@ TEST(config_game_mode_without_panel) {
     unsetenv("BDEX_FG");
     // Game Mode's compositor and Steam's own processes are desktop programs.
     CHECK(bdex::platformIsNonGame("gamescope") && bdex::platformIsNonGame("steamwebhelper") && bdex::platformIsNonGame("mangoapp"));
+    CHECK(bdex::platformIsNonGame("fossilize_replay"));  // (Steam's shader pre-caching)
     CHECK(!bdex::platformIsNonGame("mygame"));
 }
 

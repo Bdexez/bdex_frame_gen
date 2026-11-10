@@ -380,7 +380,7 @@ void sleepUntilSteadyMs(double ms) {
     const auto now = clock::now();
     if (until <= now) return;
     const auto coarse = until - std::chrono::microseconds(1500);
-    if (coarse > now) std::this_thread::sleep_until(coarse);
+    if (coarse > now) platformSleepUntil(coarse);
     while (clock::now() < until) std::this_thread::yield();
 }
 

@@ -2,7 +2,11 @@
 #include "platform.h"
 #include "test.h"
 
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <string>
+#include <vector>
 
 using namespace bdex;
 
@@ -194,4 +198,51 @@ TEST(status_reflex_reports) {
     const std::string s = statusFormat("game", 1, 1, m);
     CHECK(s.find("reflex_sim_present_ms=4.1\n") != std::string::npos);
     CHECK(s.find("reflex_sim_gpu_ms=12.0\n") != std::string::npos);
+}
+
+TEST(status_process_alive) {
+    CHECK(platformProcessAlive(platformPid()));
+    CHECK(!platformProcessAlive(0));
+    CHECK(!platformProcessAlive(-5));
+}
+
+// The files of processes gone, swept at a process's first status write: a
+// dead pid's untouched for 10 minutes; not a recent one (a sandbox's game,
+// pids of another namespace), not other files.
+TEST(status_sweeps_files_of_processes_gone) {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::path(test::tmpPath("bdex_status_sweep"));
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir);
+    std::vector<long> dead;
+    for (long p = 3999989; p > 100000 && dead.size() < 2; p -= 7919)
+        if (!platformProcessAlive(p)) dead.push_back(p);
+    CHECK(dead.size() == 2);
+    if (dead.size() < 2) return;
+    auto make = [&](const std::string& name, std::chrono::minutes age) {
+        const fs::path p = dir / name;
+        std::ofstream(p) << "process=x\n";
+        fs::last_write_time(p, fs::file_time_type::clock::now() - age);
+        return p;
+    };
+    const fs::path old = make(std::to_string(dead[0]) + ".status", std::chrono::minutes(30));
+    const fs::path recent = make(std::to_string(dead[1]) + ".status", std::chrono::minutes(1));
+    const fs::path session = make("app.session", std::chrono::minutes(30));
+    const fs::path other = make("notapid.status", std::chrono::minutes(30));
+    setenv("BDEX_FG_STATUS_DIR", dir.string().c_str(), 1);
+    StatusEntry e;
+    e.kind = "device";
+    e.state = "active";
+    statusSet(0x5eed, e);  // (this test binary's first status: the directory is read now)
+    const fs::path own = dir / (std::to_string(platformPid()) + ".status");
+    CHECK(fs::exists(own));
+    CHECK(!fs::exists(old));
+    CHECK(fs::exists(recent));
+    CHECK(fs::exists(session));
+    CHECK(fs::exists(other));
+    statusRemove(0x5eed);
+    CHECK(!fs::exists(own));
+    unsetenv("BDEX_FG_STATUS_DIR");
+    fs::remove_all(dir, ec);
 }
