@@ -6,6 +6,77 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Compatibility: Windows timing, the Windows layer on a GPU, depth's memory queries, Steam's shader pre-caching (2026-11-10)
+
+- **Windows: precise paced waits.** The worker's waits for a frame's moment,
+  the frame limit's and the latency limiter's now sleep on a high-resolution
+  waitable timer (`platformSleepUntil`; a plain one before Windows 10 1803).
+  The standard library's timed waits end on the timer's ticks on Windows:
+  under Wine, MinGW's `sleep_until` and condition-variable waits woke 9 to
+  15 ms late where the waitable timer and `Sleep()` woke 0.07 ms late, and
+  MSVC's are whole milliseconds of `Sleep()`. Measured on the GPU (the MinGW
+  DLL under Wine, a 30 fps Vulkan game at x2): wake-ups 9.2 ms → 0.07 ms
+  late, the game back from 24.6 to 30.0 fps, the real frame 37.6 → 17.6 ms
+  late (half a frame, interpolation's own). The predicted frames' wait
+  (extrapolation, hybrid), which a newer frame cancels, waits on its
+  condition variable until 20 ms before the moment, then in 1 ms slices.
+  Linux: unchanged.
+- **The Windows layer on a real GPU, without Windows**:
+  `tools/ci/wine-gpu-check.sh` (MinGW DLLs, Khronos' Windows loader, Wine's
+  winevulkan on the host's driver, headless gamescope, nothing on screen).
+  It runs Vulkan games in 64 and 32 bits (the 32-bit DLL had never run),
+  interpolation, extrapolation and hybrid x3, then Direct3D 11 (64 and 32
+  bits) and 12 games with DXVK / VKD3D-Proton beside them as the injection
+  copies them — the Windows default for D3D games, never run before —, the
+  depth buffer found in both, and a frame limit held at DXVK's present wait.
+  Two Wine-only traps it sets up: DXVK / VKD3D-Proton load `winevulkan.dll`
+  when it exists (skipping Windows' loader: their copies get the name
+  changed), and Windows' loader calls a null `CreateDXGIFactory1` when
+  Wine's own `dxgi.dll` is refused (`dxgi=n,b`). The host's own Linux layer
+  is kept out of winevulkan's instance (it loaded through `XDG_DATA_DIRS`).
+- **depth: memory asked for before an image exists.**
+  `vkGetDeviceImageMemoryRequirements` (and its KHR and sparse variants),
+  which DXVK and VKD3D-Proton use — a D3D12 game sizes the heap it places
+  its depth buffer in so —, is now answered for the image the layer will
+  create, `SAMPLED` added. The same requirements on NVIDIA (measured, four
+  depth formats); a sampleable depth image may need more memory or another
+  alignment elsewhere (AMD's HTILE).
+- **The refresh rate read about twice too high under Xwayland** (Hyprland,
+  NVIDIA; games at 60 fps on a 143.9 Hz screen: Civilization VI 293.7 Hz,
+  GTA IV 299.8 Hz in their status, `held_per_s` 233–240, more than the
+  refresh rate). Watched without touching the game (an X client selecting
+  the window's Present completions, 1,200 in 20 s): a game presenting slower
+  than the screen completes at its own presents' times, 16.3–17.0 ms apart,
+  on no refresh grid, and a short period learned before — 294 Hz — took each
+  interval for about 5 of its refreshes, within the sticky tolerance, and
+  stayed for good (generating, it would have paced on it). A period, sticky
+  or a divisor of the smallest interval, is now kept only where some
+  intervals (10 %) span three periods or fewer. The driver's refresh
+  (`VK_EXT_present_timing`) is the clock's hint only where the panel's
+  reading, when there is one, agrees with it within 5 %. Replaying those
+  completions now gives 60 Hz (the game's own rate: no grid in them), which
+  a generating game's presents correct; headless gamescope still finds
+  144.0 Hz at x1, x2 and x4.
+- **Steam's shader pre-caching** (`fossilize_replay`) is no longer armed
+  like a game: it left a status file each run (555 in six days on the dev
+  box), never removed, Steam killing it. A process's first status write
+  now sweeps the files of processes gone (a pid that no longer runs, left
+  alone for 10 minutes: a sandboxed game in another pid namespace rewrites
+  its own every second), and `bdex-framegen --report` skips them (577 there:
+  a 2.3 MB report down to 3.8 KB).
+- **Validation test**: `SYNC-HAZARD-PRESENT-AFTER-WRITE`, one run in two of
+  `interpolate:waitcap` on 2 CPUs (the nightly job), is ignored with
+  validation layers before 1.3.290 like its `WRITE-AFTER-PRESENT` sibling:
+  traced, the image is acquired (semaphore A) while another is held, its
+  copy waits A and signals R, its present waits R — the warning falls on
+  that very present; 1.4.363 reports nothing there.
+- **`--report`'s quick read** also warns from the status when the frames do
+  not reach the screen (`shown_fps` under 85 % of what is sent, or of the
+  refresh rate): the report of 2026-10-20 had 237 frames a second sent and
+  44.6 shown, which only a log file would have told. Its fields are now
+  separated by 0x1f instead of a tab: `read` merges consecutive tabs, and an
+  empty `limit_hz` took the next field.
+
 ### The game's depth buffer at the edges of moving objects (`depth`, opt-in, 2026-11-01)
 
 - New option `depth` (off by default, read when the game starts). At the

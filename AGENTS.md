@@ -178,6 +178,7 @@ tools/ci/distro-check.sh [image...]                    # build + tests + démo d
 tools/ci/proton-check.sh                               # D3D11 (DXVK) et D3D12 (VKD3D-Proton) sous Wine à travers la couche (lavapipe, Xorg dummy 60 Hz : Xvfb = 0 Hz, DXVK divise par 0)
 tools/ci/proton-wayland-check.sh                       # le même sous le pilote Wayland de Wine 11 (WineHQ), weston headless, sans X
 tools/ci/wine-layer-check.sh                           # la couche Windows (DLL MinGW) chargée par le chargeur officiel Windows sous Wine : x2
+tools/ci/wine-gpu-check.sh [DIR]                       # la même DLL (x64 + Win32) sur le VRAI GPU (Wine de l'hôte, gamescope sans tête) : Vulkan 64/32 bits, D3D11/12 par DXVK/VKD3D copiés à côté (l'injection), depth, limite
 tools/ci/lib32-check.sh                                # couche 32 bits exécutée (vkcube i386)
 bdex-capture --list | --pid PID [--gpu N] [-m N]        # génération par capture (X11/Xwayland), autre GPU possible
 tools/ci/decky-check.sh [outdir]                       # plugin Decky (packaging/decky) : tsc + rollup (Docker Node), zip
@@ -845,6 +846,18 @@ réintroduire) :
 
 ## 9. Pièges transverses
 
+- **Attentes temporisées sous Windows** (10/11) : `std::this_thread::sleep_until`
+  et `condition_variable::wait_until` s'y arrêtent sur les tics de la
+  minuterie (MinGW sous Wine : 9 à 15 ms de retard ; MSVC : des `Sleep` en
+  ms). Toute attente de cadencement passe par `platformSleepUntil`
+  (minuteur haute résolution) ; une attente sur variable de condition qui
+  vise un instant : marge puis tranches (`kPreciseTimedWaits`, cf.
+  `waitUntilOrCancelled`). Linux inchangé.
+- **Banc Wine de l'hôte** : la couche Linux installée se charge aussi sous
+  winevulkan (`XDG_DATA_DIRS` contient `~/.local/share`) — mesures faussées
+  (FIFO seul sous limite, grille masquée) ; `wine-gpu-check.sh` l'exclut.
+  Préfixe Wine : `wineboot` sans `DISPLAY`/`WAYLAND_DISPLAY` (aucune
+  fenêtre), `wineserver -k` à la fin (sinon gamescope ne rend pas la main).
 - `hide_present_ext=1` (défaut) : cacher `swapchain_maintenance1` / present_id
   au jeu, sinon VKD3D-Proton se bloque (la sémantique vise la vraie swapchain
   qu'on virtualise). Exception `fps_limit_wait` : DXVK / VKD3D voient

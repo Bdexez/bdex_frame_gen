@@ -653,6 +653,23 @@ syntaxe Linux n'y vaut pas).
   officiel x86 ne trouve pas `winevulkan` dans un préfixe Wine 32 bits
   (`vkCreateInstance` → `INCOMPATIBLE_DRIVER`, alors que le `vulkan-1` de
   Wine fonctionne) : non exécutée (03/10).
+- **Exécutée sur le vrai GPU le 10/11** (`tools/ci/wine-gpu-check.sh`, à la
+  main : Wine 11.20 de l'hôte en WoW64, winevulkan sur le pilote NVIDIA,
+  gamescope sans tête) : jeux Vulkan 64 **et 32 bits** (la DLL 32 bits
+  tourne enfin : le préfixe WoW64 de Wine ≥ 9 trouve winevulkan),
+  interpolation, extrapolation, hybride ×3 ; **jeux D3D11 (64 et 32 bits)
+  et D3D12 avec DXVK / VKD3D-Proton copiés à côté**, comme l'injection —
+  le chemin Windows par défaut, jamais exécuté avant ; profondeur trouvée
+  dans les deux ; limite tenue à l'attente de présentation de DXVK. Le
+  plantage du 03/10 n'était pas DXVK : le chargeur prend
+  `CreateDXGIFactory1` dans le `dxgi.dll` du système, que
+  `WINEDLLOVERRIDES=dxgi=n` refuse (pointeur nul, `loader_windows.c:389`) ;
+  `dxgi=n,b` le règle. DXVK / VKD3D-Proton chargent `winevulkan.dll` s'il
+  existe (le chargeur Windows est alors sauté) : copies au nom changé.
+  **Piège du banc** : la couche Linux installée dans `~/.local` se chargeait
+  aussi sous winevulkan (par `XDG_DATA_DIRS`) ; avec une limite d'images
+  elle ne proposait que FIFO à la couche Windows — le script l'exclut et le
+  vérifie. Résultats et bogue de minuterie trouvé : §7 « 10/11 (suite) ».
 
 ### 4.6 bis Injection ou capture, et le GPU de génération (03/10)
 
@@ -1314,15 +1331,22 @@ vrai absent des 4×4 texels voisins : 3 à 8 % seulement (lowcon 16).
   `TRANSFER`) → `readySem` → présentation est complète à la lecture ;
   validation 1.4.363 : aucune alerte sans limite, mais `WRITE-AFTER-PRESENT`
   4 fois sur 10 sous X11 avec `fps_limit=40` — que le test n'ignore que pour
-  les couches < 1.3.290. Faux positif probable, non prouvé.
+  les couches < 1.3.290. Faux positif probable, non prouvé. **Tracé le
+  10/11 (suite)** : acquisition de l'image 2 (sémaphore A) pendant que la 1
+  est tenue, copie qui attend A et signale R, présentation qui attend R —
+  l'alerte tombe sur cette présentation même : faux positif de la validation
+  1.3.275 (le motif « plusieurs images acquises » déjà ignoré pour
+  `WRITE-AFTER-PRESENT`) ; `validation.sh` ignore aussi
+  `PRESENT-AFTER-WRITE` pour les couches < 1.3.290 (4 essais sur 4 verts).
 - **Fréquence de l'écran lue ~2× trop haute** (10/11, §7) : jeux à 60 i/s
   armés sous Xwayland/Hyprland (Civilization VI 293,7 Hz, GTA IV 299,8 Hz
-  pour 143,9 ; `held_per_s` 233–240, plus que la fréquence). À confirmer
-  par la ligne « present timing: refresh » d'un journal (`log_file`).
+  pour 143,9 ; `held_per_s` 233–240, plus que la fréquence). **Cause
+  trouvée et corrigée le 10/11 (suite)** : une période courte collante qui
+  « explique » des complétions hors grille (§7).
 - **`depth` : besoins mémoire demandés avant création** (10/11, §7) :
   `vkGetDeviceImageMemoryRequirements` n'est pas intercepté alors que la
   couche ajoute `SAMPLED` dans `vkCreateImage`. Identique sur NVIDIA
-  (mesuré) ; inconnu sur AMD/Intel.
+  (mesuré) ; inconnu sur AMD/Intel. **Intercepté depuis le 10/11 (suite).**
 
 **Windows**
 - Transmettre le plein écran exclusif (mode 1).
@@ -4411,3 +4435,81 @@ reste à vérifier.
   panneau pourrait le dire (« plafonner à 144 en montrerait deux fois
   plus »). Journal : « gpu_headroom: GPU saturated (-1 % busy… » affiche −1
   quand l'occupation n'est pas mesurée.
+
+### 10/11 (suite) — compatibilité entre systèmes : Windows sur GPU réel, Xwayland, Steam
+
+Demande de l'utilisateur : « travailler surtout sur la compatibilité du
+programme avec différents OS », tests permis (« pas besoin de beaucoup de
+fps sur Civ 6 », qui tournait). Tout est sans fenêtre sur l'écran.
+
+- **La couche Windows sur le vrai GPU, sans Windows** :
+  `tools/ci/wine-gpu-check.sh` (§4.6). DLL MinGW x64 et Win32, chargeur
+  officiel 1.4.357, winevulkan sur le pilote NVIDIA 615, gamescope sans tête
+  à 144 Hz. Tout passe (×2,00 / ×3,00, jeu à 30,0 i/s, réveils 70–77 µs) :
+  Vulkan 64 et 32 bits en interpolation, extrapolation, hybride ×3 ; D3D11
+  64 et 32 bits et D3D12 avec DXVK 2.5.3 / VKD3D-Proton 3.0.1 copiés à côté
+  du jeu (l'injection) ; profondeur trouvée (D24S8 2 passes, D32 3 passes,
+  Z inversé) ; limite à 30 tenue à l'attente de DXVK (30,1 i/s, vraie
+  swapchain en mailbox). MMCSS « Games », retour d'affichage (`present_wait`
+  par winevulkan) et grille à 144 Hz trouvés.
+- **Bogue Windows trouvé : les attentes du cadencement.** Mesuré sous Wine
+  (programme Win32 seul, sans couche) : `std::this_thread::sleep_until` de
+  MinGW 11–15 ms en retard, `condition_variable::wait_until` 9–13 ms, avec
+  ou sans `timeBeginPeriod(1)` ; `Sleep()` et le minuteur haute résolution
+  0,06–0,07 ms. Dans la couche (×2, jeu à 30 i/s) : réveils 9,2 ms en
+  retard, jeu ralenti à 24,6 i/s, réelle 37,6 ms en retard. Correctif
+  `platformSleepUntil` (minuteur `CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`
+  par fil, repli sur un minuteur simple avant Windows 10 1803) pour le
+  sommeil du worker, de la limite et du limiteur de latence ; l'attente
+  annulable des prédites attend la variable de condition jusqu'à 20 ms
+  avant puis par tranches d'1 ms. Après : 72 µs, 30,0 i/s, réelle 17,6 ms.
+  La DLL livrée vient de MSVC (des `Sleep` à la milliseconde : 1–2 ms de
+  retard au mieux, 15,6 ms sans résolution relevée) : non mesurable ici,
+  le correctif vaut pour elle aussi. Linux inchangé (même appel).
+- **Plantage « DXVK + chargeur officiel sous Wine » du 03/10 expliqué** :
+  `loader_windows.c:389`, `fpCreateDXGIFactory1` nul — le chargeur prend
+  `CreateDXGIFactory1` dans le `dxgi.dll` du système, refusé par
+  `WINEDLLOVERRIDES=dxgi=n` ; `dxgi=n,b`. (pdb du runtime LunarG + winedbg.)
+- **Piège du banc** : la couche Linux de `~/.local` se chargeait sous
+  winevulkan via `XDG_DATA_DIRS` (même nom, `BDEX_FG=1`) : sous limite elle
+  ne proposait que FIFO à la couche Windows (« presenting with fifo »), et
+  masquait la grille (« display without fixed refresh »). Exclue et
+  vérifiée par le script (`host-layers.txt`).
+- **Xwayland (Hyprland, NVIDIA) : fréquence lue ~2× trop haute pour un jeu
+  à 60 i/s** (axe du 10/11). Observé sans toucher au jeu : un client X
+  abonné aux `PresentCompleteNotify` de la fenêtre de Civ 6 (et de ses
+  filles) — 1 200 complétions en 20 s sur la fille de winevulkan, mode flip,
+  MSC +1 à chaque fois, **intervalles de 16,3 à 17,0 ms, sur aucune
+  grille** : un jeu qui présente moins vite que l'écran complète à ses
+  propres instants. Rejouées dans `PresentTimeline` : 60 Hz (la cadence du
+  contenu). Le 293,7 Hz du statut venait d'une période courte apprise
+  avant et collante : 16,7 ms ≈ 5 × 3,4 ms dans la tolérance (0,76 ms), donc
+  gardée pour toujours, génération comprise. Correctif dans `DisplayClock` :
+  une période collante, ou divisée du plus petit intervalle (k ≥ 2), exige
+  10 % d'intervalles d'au plus 3 périodes (test
+  `present_timeline_drops_a_short_period_no_interval_shows`) ; l'indice de
+  `present_timing` n'est pris que s'il est à ±5 % du panneau (pour une
+  fenêtre non mappée le pilote répond 0 : ce n'était pas la cause ici).
+  Reste : en passage direct à 60 i/s, le statut dira 60 Hz (pas de grille
+  dans les données) ; une fois la génération lancée, les présentations plus
+  nombreuses rétablissent la grille. gamescope sans tête : 144,0 Hz trouvés
+  à ×1 (60 i/s), ×2 et ×4.
+- **`depth` et les besoins mémoire avant création** : crochets
+  `vkGetDeviceImageMemoryRequirements` (+KHR, +sparse) qui appliquent
+  `usageFor` (même résultat sur NVIDIA, mesuré : sans effet chez
+  l'utilisateur ; protège AMD/Intel, où une profondeur échantillonnable peut
+  coûter plus de mémoire).
+- **Steam (`fossilize_replay`) et statuts orphelins** : non-jeu (couche et
+  panneau) ; ménage des statuts morts à la première écriture (pid absent et
+  fichier vieux de 10 min, prudence pour les espaces de PID des bacs à
+  sable) ; `--report` les saute (577 ignorés, rapport 2,3 Mo → 3,8 Ko).
+  Tests : `status_process_alive`, `status_sweeps_files_of_processes_gone`.
+- **Validation (nuit CI)** : la réplique complète a échoué sur le seul
+  `interpolate:waitcap` (deux essais, `PRESENT-AFTER-WRITE`, comme avant
+  ces changements) ; tracé : faux positif de la validation 1.3.275 (§9),
+  ignoré pour les couches < 1.3.290.
+- **Vérifié** : tests unitaires (133), réplique CI complète (core, display,
+  slow, stress verts ; validation verte hormis ce faux positif, puis 4/4
+  avec l'exception ; invariant `f2cec5f` identique), MinGW x64 + i686, la
+  matrice Windows ci-dessus (deux fois, dont l'arbre final), tests
+  d'affichage dans gamescope sans tête (8/8), grille X11 à 144 Hz.

@@ -180,6 +180,16 @@ no `.desktop` concept on Windows. Options, cheapest first:
 - The **Windows CI job** builds x64 and Win32, runs unit tests, and packages
   the layer DLLs for both architectures, the x64 capture executable, register scripts and
   `validate-windows.ps1`. It cannot exercise a game or WGC on hardware.
+- **Under Wine** (no Windows machine here): `tools/ci/wine-layer-check.sh`
+  runs the MinGW-built DLL with Khronos' Windows loader on lavapipe (CI);
+  `tools/ci/wine-gpu-check.sh` runs the x64 and Win32 DLLs on the machine's
+  own GPU (by hand, headless gamescope): Vulkan games, and D3D11/12 games
+  with DXVK / VKD3D-Proton copied beside them as the injection does. It
+  found the paced waits 9 ms late (the standard library's timed waits end on
+  the timer's ticks on Windows: `platformSleepUntil` uses a high-resolution
+  waitable timer since 2026-11-10). Still not covered: the MSVC build itself
+  at run time, WGC capture, full-screen exclusive, a real Windows loader
+  install and driver.
 - **Code signing:** unsigned DLLs trip SmartScreen/AV. For distribution, plan an
   Authenticode signing step (optional for early testers).
 

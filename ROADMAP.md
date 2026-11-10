@@ -31,7 +31,9 @@ log is in [`CHANGELOG.md`](CHANGELOG.md).
    real content, and they are the training data the two learned networks
    lack. See [`docs/corpus-jeux.md`](docs/corpus-jeux.md);
    `tools/pending_decisions.py` gives the verdicts in one command.
-2. **Windows layer on hardware**: the §3 checklist of
+2. **Windows layer on hardware**: it now runs on a real GPU under Wine
+   (`tools/ci/wine-gpu-check.sh`: Vulkan 64/32-bit, D3D11/12 through the
+   copied DXVK / VKD3D-Proton, 2026-11-10), not yet on Windows itself: the §3 checklist of
    [`docs/windows-port.md`](docs/windows-port.md) and
    `tools/validate-windows.ps1`, then a D3D game through the copied
    DXVK / VKD3D-Proton.
@@ -117,16 +119,12 @@ log is in [`CHANGELOG.md`](CHANGELOG.md).
   headless gamescope cannot tell its missed refreshes from ours
   (`tools/cadence_report.py` on the real screen can).
 - **Found on 2026-11-10** (detail and numbers: MEMOIRE §7, « 10/11 »):
-  - the refresh rate read about twice too high for 60 fps games under
-    Xwayland (Civilization VI 293.7 Hz, GTA IV 299.8 Hz on a 143.9 Hz
-    screen): a hint that is a divisor of the true period is accepted, and
-    `VK_EXT_present_timing`'s refresh comes before the panel's reading —
-    to confirm with a log, then cross-check the hint against the panel;
-  - `depth`: `vkGetDeviceImageMemoryRequirements` (used by DXVK and
-    VKD3D-Proton) is not intercepted while `vkCreateImage` adds `SAMPLED`
-    (same requirements on NVIDIA, measured; AMD / Intel unknown);
-  - Steam's `fossilize_replay` is armed and leaves a status file each run
-    (555 in six days), which `--report` copies whole;
+  - fixed the same day (CHANGELOG): the refresh rate read about twice too
+    high for 60 fps games under Xwayland (a sticky short period that
+    "explained" completions on no grid), `vkGetDeviceImageMemoryRequirements`
+    for `depth`, Steam's `fossilize_replay` armed and its status files, and
+    on Windows the paced waits (9 ms late under Wine) — found by running the
+    Windows layer on the GPU (`tools/ci/wine-gpu-check.sh`);
   - the GPU cost at 1440p x4: `false_detail` is ~25 % of the generation
     (1.75–1.9 ms a game frame) for a few hundredths of a dB on average; under
     saturation the low-value passes should go before the game is held back
