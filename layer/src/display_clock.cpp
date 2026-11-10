@@ -31,22 +31,31 @@ void DisplayClock::estimate() {
     // Whole multiples of `p` within the observer's jitter (times `loose`):
     // the refined period over the fitting intervals, 0 if fewer than
     // `share` of them fit (90 %).
-    auto fitPeriod = [&d, this](double p, double loose = 1.0, double share = 0.9) {
+    // `shortNeeded`: the period must also be seen — some intervals one to
+    // three periods long (10 % of them). Without, a short period explains
+    // intervals that are all several of its periods within the tolerance:
+    // under Xwayland, a game presenting at 60 fps on a 143.9 Hz screen has
+    // completions at its presents' own times, 16.3-17.0 ms apart, and a
+    // 294 Hz period learned before took each for 5 of its refreshes, sticky
+    // for good (Civilization VI, 10/11: refresh_hz 293.7 in the status).
+    auto fitPeriod = [&d, this](double p, double loose = 1.0, double share = 0.9, bool shortNeeded = false) {
         // The tolerance also shrinks with the period: with a loose one, a
         // short period "explains" any set of intervals (a variable-refresh
         // display at 120 fps fitted 360 Hz).
         const double tol = loose * std::min(jitterMs_, jitterShare_ * p);
         double sumD = 0.0, sumN = 0.0;
-        size_t fit = 0;
+        size_t fit = 0, shortFit = 0;
         for (double x : d) {
             const double n = std::round(x / p);
             if (n >= 1.0 && n <= 8.0 && std::fabs(x - n * p) < tol) {
                 ++fit;
+                shortFit += n <= 3.0;
                 sumD += x;
                 sumN += n;
             }
         }
         const size_t need = share >= 0.9 ? d.size() * 9 / 10 : size_t(std::ceil(double(d.size()) * share));
+        if (shortNeeded && shortFit * 10 < d.size()) return 0.0;
         return fit >= need ? sumD / sumN : 0.0;
     };
     // (Hyprland's callbacks under load, a minute and a half replayed: valid
@@ -55,7 +64,7 @@ void DisplayClock::estimate() {
     // 12.5 %. Random intervals — a variable-refresh display — never keep
     // it: 0 in 40 000.)
     if (sticky_ && learnedMs_ > 0.0) {  // (also to take it back after a burst of late ones)
-        if (const double p = fitPeriod(learnedMs_, 1.5, 0.65); p > 0.0) {
+        if (const double p = fitPeriod(learnedMs_, 1.5, 0.65, true); p > 0.0) {
             periodMs_ = p;
             setPhase(t);
             return;
@@ -77,7 +86,9 @@ void DisplayClock::estimate() {
     for (int k = 1; k <= 4; ++k) {
         const double p = dmin / k;
         if (p < kMinPeriodMs || p > kMaxPeriodMs) continue;
-        if (const double fitted = fitPeriod(p); fitted > 0.0) {
+        // (a divisor of the smallest interval: no interval is shorter than k
+        // periods, the evidence must be there — see fitPeriod)
+        if (const double fitted = fitPeriod(p, 1.0, 0.9, k >= 2); fitted > 0.0) {
             periodMs_ = fitted;  // refined over every fitting interval
             setPhase(t);
             return;

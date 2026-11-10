@@ -1,6 +1,7 @@
 #include "x11_present_clock.h"
 #include "test.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 
@@ -108,4 +109,33 @@ TEST(present_timeline_sticky_grid_rejects_variable_refresh) {
     double ust = 1000.0;
     for (uint64_t msc = 1; msc <= 400; ++msc) t.add(msc, ust += 7.0 + std::fabs(jitter(s, 6.0)));
     CHECK(!t.valid());
+}
+
+// A game presenting slower than the display under Xwayland (Civilization VI
+// at 60 fps on 143.9 Hz, Hyprland, 10/11): the completions are the presents'
+// own times, 16.3 to 17.0 ms apart, on no refresh grid. A short period learned
+// before (here a 294 Hz one) "explains" them all — 16.7 ms is about 5 of its
+// periods, within the sticky tolerance — and stayed for good: the status said
+// 293.7 Hz, held_per_s 233, and so would the pacing once generating. A period
+// that no interval spans three times or less is not kept.
+TEST(present_timeline_drops_a_short_period_no_interval_shows) {
+    PresentTimeline t;
+    uint32_t s = 9;
+    double ust = 1000.0;
+    uint64_t msc = 1;
+    const double p294 = 1000.0 / 294.0;
+    for (; msc <= 96; ++msc) t.add(msc, ust += ((msc % 3) ? 1 : 2) * p294 + jitter(s, 0.1));  // a 294 Hz grid
+    CHECK(t.valid() && std::fabs(t.refreshHz() - 294.0) < 1.0);
+    for (int i = 0; i < 600; ++i) t.add(msc++, ust += 16.67 + jitter(s, 0.35));  // 60 fps, off any grid
+    CHECK(!t.valid() || std::fabs(t.refreshHz() - 294.0) > 20.0);
+    // ...while the same 60 fps on the 143.9 Hz grid (2 and 3 refreshes apart) keeps it.
+    PresentTimeline g;
+    g.setHint(143.912);
+    double u = 1000.0, content = 1000.0;
+    for (uint64_t m = 1; m <= 600; ++m) {
+        content += 16.67;
+        u = std::max(u + kP, std::ceil(content / kP) * kP);
+        g.add(m, u + jitter(s, 0.3));
+    }
+    CHECK(g.valid() && std::fabs(g.periodMs() - kP) < 0.05);
 }
