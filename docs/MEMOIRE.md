@@ -1,6 +1,6 @@
 # Mémoire du projet bdex-framegen
 
-État du code au **29 octobre 2026** — dernière version publiée **0.5.6** (05/10), qui
+État du code au **29 octobre 2026** (axes d'amélioration relevés le 10/11, §7) — dernière version publiée **0.5.6** (05/10), qui
 regroupe tout depuis la 0.5.5 : parité Lossless Scaling, compatibilité
 matériel/distributions, SteamOS, capture Linux, injection Windows par défaut,
 ménage du 04/10. Première version propriétaire.
@@ -1308,6 +1308,21 @@ vrai absent des 4×4 texels voisins : 3 à 8 % seulement (lowcon 16).
   sémaphore. Une fois sur deux : le second essai passe (`until-pass:2`) ;
   jamais vue sur 12 CPU. Probablement un chemin de présentation où le
   sémaphore de la copie n'est pas attendu quand le CPU est lent.
+  **Cherchée le 10/11** (§7, « axes d'amélioration ») : ce n'est pas le
+  chemin `fps_limit_wait` (lavapipe n'a pas `present_wait` : la limite est
+  au `present`) ; la chaîne acquisition → copie (barrière depuis
+  `TRANSFER`) → `readySem` → présentation est complète à la lecture ;
+  validation 1.4.363 : aucune alerte sans limite, mais `WRITE-AFTER-PRESENT`
+  4 fois sur 10 sous X11 avec `fps_limit=40` — que le test n'ignore que pour
+  les couches < 1.3.290. Faux positif probable, non prouvé.
+- **Fréquence de l'écran lue ~2× trop haute** (10/11, §7) : jeux à 60 i/s
+  armés sous Xwayland/Hyprland (Civilization VI 293,7 Hz, GTA IV 299,8 Hz
+  pour 143,9 ; `held_per_s` 233–240, plus que la fréquence). À confirmer
+  par la ligne « present timing: refresh » d'un journal (`log_file`).
+- **`depth` : besoins mémoire demandés avant création** (10/11, §7) :
+  `vkGetDeviceImageMemoryRequirements` n'est pas intercepté alors que la
+  couche ajoute `SAMPLED` dans `vkCreateImage`. Identique sur NVIDIA
+  (mesuré) ; inconnu sur AMD/Intel.
 
 **Windows**
 - Transmettre le plein écran exclusif (mode 1).
@@ -4268,3 +4283,131 @@ minutes Windows comptées double, chaque job arrondi à la minute.
   Pas d'accès à l'API Actions d'un dépôt privé : les durées viennent de
   l'utilisateur (page du run ; le résumé du run liste chaque voie et son
   temps).
+
+### 10/11 — axes d'amélioration : ce que les données de l'utilisateur et les mesures montrent
+
+Demande (/goal) : « trouve des axes d'amélioration du projet ». Sources :
+les fichiers de statut restés dans `~/.cache/bdex-framegen/run` (parties du
+04 au 10/11), le rapport du 20/10, des mesures GPU sans fenêtre
+(`bdex_offline`, RTX 3060 Ti) et la réplique de la validation dans Docker.
+Rien n'est changé dans le code ; chaque point dit ce qui est établi et ce qui
+reste à vérifier.
+
+- **`depth` trouvé dans les trois familles** (statuts, `depth=on`) : CK3
+  (Vulkan natif, Clausewitz), GTA IV et State of Decay 2 (DXVK), Civilization
+  VI (VKD3D-Proton), en plus d'Oblivion. La détection marche ; la qualité
+  n'est jugée nulle part, et les enregistrements du panneau ne gardent pas
+  la profondeur (images + `timestamps.csv`), alors que `bdex_offline --depth`
+  la lit. **Axe : enregistrer la profondeur** (un `.f32` par image, comme
+  `make_game.py`), puis mettre `depth` dans `pending_decisions.py`.
+- **Fréquence de l'écran mal lue pour les jeux à 60 i/s** : Civilization VI
+  (60,0 i/s, armé) `refresh_hz=293.7`, GTA IV (59,9 i/s) `299.8`, tous deux
+  `display_grid=3` (grille X11) sur l'écran à 143,9 Hz ; CK3 à 125 i/s et
+  SoD2 à 270 i/s lisent 143,9. `held_per_s` = 233 et 240 (plus que la
+  fréquence : il est calculé avec la mauvaise période). Mécanisme vérifié
+  dans un simulateur (le vrai `DisplayClock`, gigue 1 ms / 15 %, collant) :
+  un indice qui propose un **diviseur** de la vraie période est accepté
+  (indice 287,8 Hz → 287,8 appris et gardé ; les intervalles de 2 et 3
+  rafraîchissements y font 4 et 6 périodes), et la période collante est
+  testée avant l'indice. L'indice prend `ptRefreshHz_`
+  (`VK_EXT_present_timing`, que le pilote NVIDIA 615 expose) **avant** la
+  lecture du panneau ; non reproduit sous gamescope sans tête (`present
+  timing: refresh variable or unknown`, grille juste à 144 Hz). Les valeurs
+  observées (16,67 / 5 = 3,334 ms ≈ 299,9 Hz) collent à un indice voisin de
+  300 Hz. **À vérifier** : la ligne « present timing: refresh … Hz » d'une
+  partie avec `log_file`, et le statut une fois « Démarrer » pressé (une
+  grille à 300 Hz fausserait tout le cadencement). **Corrections
+  possibles** : ne prendre l'indice de `present_timing` que s'il est à ±5 %
+  de la lecture du panneau ; refuser une période plus courte que 0,95 fois
+  celle du panneau ; borner `held` à la fréquence moins `shown`.
+- **`depth` et `vkGetDeviceImageMemoryRequirements`** : DXVK (`d3d11.dll`,
+  `dxgi.dll`, `d3d9.dll`) et VKD3D-Proton (`d3d12core.dll`) chargent cette
+  fonction (chaînes des DLL de Proton Experimental) ; la couche ne
+  l'intercepte pas (ni la variante KHR, ni la variante sparse) mais ajoute
+  `SAMPLED` aux images de profondeur dans `vkCreateImage`. Un jeu D3D12 qui
+  place sa profondeur dans un tas (`CreatePlacedResource` après
+  `GetResourceAllocationInfo`) dimensionne donc pour une image sans
+  `SAMPLED`. Mesuré sur la RTX 3060 Ti : taille, alignement et types de
+  mémoire identiques avec et sans (D16, D24S8, D32, D32S8 ; 1000 à 2560 px)
+  → sans effet ici, d'où les jeux sans souci ; AMD (HTILE compatible
+  échantillonnage) et Intel inconnus. **Axe** : intercepter ces fonctions
+  et y appliquer `DepthTracker::usageFor` (peu de code).
+- **`fossilize_replay` armé, statuts orphelins** : 555 fichiers `.status`
+  de `fossilize_replay` (précompilation des shaders par Steam) en six jours,
+  2,3 Mo, plus 12 de jeux fermés ; Steam tue ces processus, la couche ne
+  retire pas leur statut. Le panneau efface les fichiers morts quand il lit,
+  mais `bdex-framegen --report` les recopie tous (« running games ») et sa
+  lecture rapide liste des jeux fermés depuis des jours. Ce que la couche
+  ajoute au périphérique (une file, `present_id`/`present_wait`, la
+  priorité) ne change pas la compilation des pipelines : sortir
+  `fossilize_replay` du jeu comme les autres non-jeux est sans risque pour
+  le cache de shaders ; le journal de plantage enchaîne déjà vers le
+  gestionnaire précédent (pas de conflit avec celui de Fossilize).
+  **Axe** : `fossilize_replay` dans `kNonGames` (et `NOT_GAMES` du
+  panneau), `--report` qui saute les pid morts, la couche qui efface les
+  statuts de pid morts à sa première écriture.
+- **Lecture rapide du rapport** : elle ne lit `shown_fps` / `held_per_s`
+  que dans un `log_file` (rarement posé). Le rapport du 20/10 (Cyberpunk ×4,
+  237 i/s envoyées, **44,6 affichées**) n'en disait rien alors que le statut
+  l'avait. **Axe** : la tirer du statut.
+- **Coût GPU des passes (×4, 2560×1440, défauts du GPU dédié)** :
+  horodatages autour de chaque passe (correctif de mesure de ~70 lignes,
+  non commité), contenus `make_game.py turn` généré en 2560×1440 et un
+  enregistrement Cyberpunk agrandi, médianes de 3, machine au calme : par
+  image du jeu (3 générées), synthèse 3,3–3,6 ms, **`false_detail`
+  1,75–1,9 ms (~25 % du total, la moitié de la synthèse)**, `hud_layer` 0,6,
+  `mosaic_blur` 0,4–0,7, splat 0,4–0,5, `hud_mask` 0,3 (une fois par
+  image) ; total ~7,3 ms (×2 : ~3 ms). Concorde avec le tableau du 21/10
+  (§7 : options auto 4,3 ms sur 6,4 pour ~+0,07 dB en moyenne). Or
+  `gpu_budget` est à 0 par défaut et son échelle ne coupe aucune de ces
+  passes ; sous saturation, `gpu_headroom` ralentit le jeu. **Axe** : sous
+  saturation, retirer d'abord les passes au plus faible gain par ms
+  (`false_detail`, `rot_weight`, `hud_mask`…) avant de brider le jeu, ou
+  les mettre au niveau 1 de `gpu_budget`. **Outil** : le profil par passe
+  (`BDEX_FG_PROFILE=2`, dans `bdex_offline` et les stats de la couche)
+  remplace les balayages par option — mesuré inutilisable : écarts de
+  7 à 15 ms d'un run à l'autre, deltas cumulés plus grands que le total.
+  Piège : un conteneur Docker sur 2 CPU en parallèle doublait les temps GPU
+  (15 au lieu de 7,3 ms).
+- **Essai écarté** : l'atomique globale par pixel de `hud_mask.comp`
+  (`cnt.changed`) remplacée par une réduction par groupe — sorties
+  identiques octet pour octet, aucun gain sur NVIDIA (les atomiques d'un
+  warp sur la même adresse y sont regroupées). Sa branche `static_soft`
+  (15 lectures par pixel sous mouvement) fait environ la moitié de la passe.
+- **Validation sous limite d'images** (le point du §9) : reproduite dans la
+  réplique CI (Ubuntu 24.04, validation 1.3.275, 2 CPU) :
+  `PRESENT-AFTER-WRITE` 5 essais sur 10, toujours sur la barrière de la
+  copie vers l'image réelle. Ce n'est pas `fps_limit_wait` : lavapipe n'a
+  pas `present_wait`, la limite reste au `present`. Validation 1.4.363
+  (celle de l'hôte, montée dans le conteneur Arch `bdex-wayland`, lavapipe,
+  2 CPU) : Wayland 0/10 ; X11 (Xwayland) **0/10 sans limite, 4/10 avec
+  `fps_limit=40`**, en `WRITE-AFTER-PRESENT` (« image présentée alors
+  qu'une présentation précédente n'y est pas ordonnée »), que
+  `validation.sh` n'ignore que pour les couches < 1.3.290 : le test
+  échouerait par intermittence avec la couche de validation du poste. À la
+  lecture : une seule acquisition (`submitCopy`), sa copie attend le
+  sémaphore à `TRANSFER`, la barrière part de `TRANSFER`, la présentation
+  attend `readySem` ; `presentMode_` est pris après le remplacement FIFO →
+  immediate (le worker cadence bien). **Axe** : un programme minimal
+  (deux images acquises d'avance, copies, présentations espacées) pour
+  trancher faux positif ou non, puis signalement en amont ou correction.
+- **Vecteurs de mouvement du jeu** (jamais envisagés) : la suite logique
+  de `depth`. Tout jeu à TAA / DLSS / FSR écrit un tampon de vitesse
+  (souvent RG16F, R16G16_UNORM encodé chez Unreal) à la résolution de rendu,
+  dans les passes qui utilisent la profondeur — `DepthTracker` lit déjà ces
+  débuts de passes. C'est ce qu'utilisent DLSS-FG et FSR3-FG : un vecteur
+  exact par pixel là où le flux par blocs est faux sur toute la bande des
+  contours (05/10). Pièges : encodage et sens propres à chaque moteur
+  (ajustement contre notre flux sur les zones sûres), Unreal n'y écrit que
+  les objets mobiles (la caméra est reconstruite depuis la profondeur) — or
+  ce sont justement les contours où le moteur se trompe —, rien pour les
+  particules, transparents et le HUD. **Avant tout code** : un oracle dans
+  `tools/edge_bench` (vecteurs exacts de `make_game.py` + profondeur) pour
+  chiffrer le gain au-delà de `depth`, puis un `debug=velocity` qui montre
+  les tampons candidats dans de vrais jeux.
+- **Vu en passant** : SoD2 armé à 270 i/s sur 144 Hz, `shown_fps=71.8` et
+  `held_per_s=71.8` : un rafraîchissement sur deux sans image neuve, jeu non
+  plafonné, GPU sans doute saturé (compositeur affamé, cf. 21/10). Le
+  panneau pourrait le dire (« plafonner à 144 en montrerait deux fois
+  plus »). Journal : « gpu_headroom: GPU saturated (-1 % busy… » affiche −1
+  quand l'occupation n'est pas mesurée.

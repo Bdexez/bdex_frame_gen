@@ -81,10 +81,13 @@ log is in [`CHANGELOG.md`](CHANGELOG.md).
   the edges by it; exact depth: sharp edges +0.22 to +1.68 dB, blurred
   game-like scenes −0.05 to +0.01. First real game the same day: Oblivion
   Remastered (VKD3D-Proton, 1440p x2) reads its depth (`depth=on`), and the
-  player saw fewer artifacts (an impression, not a measurement). Next: other
-  games, including a DXVK game and a native Vulkan one (the status line says
-  whether a depth buffer is read; `debug=depth` shows it), then predicted
-  frames (`reveal_fill`, the splat's priority by depth).
+  player saw fewer artifacts (an impression, not a measurement). Since then
+  the status files show the depth buffer found (`depth=on`) in CK3 (native
+  Vulkan), GTA IV and State of Decay 2 (DXVK) and Civilization VI
+  (VKD3D-Proton); its quality is judged nowhere yet, and the panel's
+  recordings do not keep the depth (`bdex_offline --depth` reads it). Next:
+  record it, judge it on real games, then predicted frames (`reveal_fill`,
+  the splat's priority by depth), then the game's own motion vectors (below).
 - **x4 on a 30 fps game** (2026-10-13 to 21): x4 is again exactly 4 frames a
   game frame by default (the player's choice, 2026-10-20: `refresh_fill`
   off); on 144 Hz that leaves ~24 refreshes a second held whatever the
@@ -113,6 +116,27 @@ log is in [`CHANGELOG.md`](CHANGELOG.md).
   bloom halos. And the user's own screen: the 1440p cadence bench in
   headless gamescope cannot tell its missed refreshes from ours
   (`tools/cadence_report.py` on the real screen can).
+- **Found on 2026-11-10** (detail and numbers: MEMOIRE §7, « 10/11 »):
+  - the refresh rate read about twice too high for 60 fps games under
+    Xwayland (Civilization VI 293.7 Hz, GTA IV 299.8 Hz on a 143.9 Hz
+    screen): a hint that is a divisor of the true period is accepted, and
+    `VK_EXT_present_timing`'s refresh comes before the panel's reading —
+    to confirm with a log, then cross-check the hint against the panel;
+  - `depth`: `vkGetDeviceImageMemoryRequirements` (used by DXVK and
+    VKD3D-Proton) is not intercepted while `vkCreateImage` adds `SAMPLED`
+    (same requirements on NVIDIA, measured; AMD / Intel unknown);
+  - Steam's `fossilize_replay` is armed and leaves a status file each run
+    (555 in six days), which `--report` copies whole;
+  - the GPU cost at 1440p x4: `false_detail` is ~25 % of the generation
+    (1.75–1.9 ms a game frame) for a few hundredths of a dB on average; under
+    saturation the low-value passes should go before the game is held back
+    (`gpu_budget` is off and skips them); a per-pass profile
+    (`BDEX_FG_PROFILE=2`) would replace the noisy per-option sweeps;
+  - the game's motion vectors (TAA / DLSS / FSR velocity buffers), found
+    like the depth buffer: never considered; an `edge_bench` oracle first;
+  - the validation warning under a frame limit: not the `fps_limit_wait`
+    path; with validation 1.4.363 it is `WRITE-AFTER-PRESENT`, 4 runs in 10
+    under X11 with a limit, none without — a minimal repro to settle it.
 - **Windows**: forward `VK_EXT_full_screen_exclusive` through the virtual
   swapchain; an installer with Authenticode signing; a Desktop Duplication
   fallback for capture; measuring capture latency from the game's present
