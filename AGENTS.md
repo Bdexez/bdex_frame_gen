@@ -846,6 +846,14 @@ réintroduire) :
 
 ## 9. Pièges transverses
 
+- **Ne jamais chercher la fonction suivante au moment de l'appel** (10/11) :
+  sous le `device_select` de Mesa 22 (Ubuntu 22.04, Debian 12), une
+  recherche faite après `vkCreateInstance` remonte en haut de la chaîne
+  (récursion infinie : tout programme X11 plantait). Résoudre à
+  `vkCreateInstance` / `vkCreateDevice` (`vt`, `nextCreateXcbSurface`…), et
+  garder le `pfnNext…ProcAddr` de la chaîne, pas sa réponse à son propre nom.
+  Une démo qui utilise une extension récente : ses définitions recopiées si
+  l'en-tête ne l'a pas (Ubuntu 22.04 = 1.3.204).
 - **Attentes temporisées sous Windows** (10/11) : `std::this_thread::sleep_until`
   et `condition_variable::wait_until` s'y arrêtent sur les tics de la
   minuterie (MinGW sous Wine : 9 à 15 ms de retard ; MSVC : des `Sleep` en

@@ -4504,6 +4504,20 @@ fps sur Civ 6 », qui tournait). Tout est sans fenêtre sur l'écran.
   fichier vieux de 10 min, prudence pour les espaces de PID des bacs à
   sable) ; `--report` les saute (577 ignorés, rapport 2,3 Mo → 3,8 Ko).
   Tests : `status_process_alive`, `status_sweeps_files_of_processes_gone`.
+- **Ubuntu 22.04 et Debian 12 : tout programme Vulkan X11 plantait sous la
+  couche** (trouvé par `distro-check.sh`, la démo d'abord non compilable :
+  `VK_NV_low_latency2` absent des en-têtes 1.3.204 / 1.3.239 depuis
+  `--reflex` du 31/10 — définitions recopiées dans la démo). gdb dans Debian
+  12 : `CreateXcbSurfaceKHR` → `createX11Surface` → lui-même, 348 000
+  appels. Le crochet de surface X11 de `x11_clock` (17/10) cherchait la
+  fonction suivante au moment de l'appel ; sous le `device_select` de Mesa
+  22, une recherche faite après `vkCreateInstance` remonte en haut de la
+  chaîne (et ce `device_select` répond à `"vkGetInstanceProcAddr"` par le
+  point d'entrée exporté du chargeur). Correctif : les pointeurs suivants
+  des surfaces X11 et de `vkDestroySurfaceKHR` résolus à `vkCreateInstance`,
+  et `vt.GetInstanceProcAddr` / `vt.GetDeviceProcAddr` = ceux de la chaîne.
+  Les sept distributions repassent (×2,00–2,01). Invisible en octobre (CI
+  coupée), puis masqué par l'échec de compilation de la démo.
 - **Validation (nuit CI)** : la réplique complète a échoué sur le seul
   `interpolate:waitcap` (deux essais, `PRESENT-AFTER-WRITE`, comme avant
   ces changements) ; tracé : faux positif de la validation 1.3.275 (§9),

@@ -105,6 +105,16 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateInstance(const VkInstanceCreateInfo* pCreat
     auto data = std::make_unique<InstanceData>();
     data->instance = *pInstance;
     data->vt.load(*pInstance, gpa);
+    // The chain's next GetInstanceProcAddr itself, not what it answers for
+    // "vkGetInstanceProcAddr": Mesa 22's device_select layer (Ubuntu 22.04,
+    // Debian 12) answers with the loader's exported entry point, the top of
+    // the chain — every later lookup through it came back to this layer, and
+    // CreateXcbSurfaceKHR called itself until the stack ran out (any X11
+    // Vulkan program crashed at its first surface, found 11/10).
+    data->vt.GetInstanceProcAddr = gpa;
+    data->nextCreateXlibSurface = gpa(*pInstance, "vkCreateXlibSurfaceKHR");
+    data->nextCreateXcbSurface = gpa(*pInstance, "vkCreateXcbSurfaceKHR");
+    data->nextDestroySurface = gpa(*pInstance, "vkDestroySurfaceKHR");
     data->config = Config::load();
     if (pCreateInfo->pApplicationInfo && pCreateInfo->pApplicationInfo->apiVersion)
         data->apiVersion = pCreateInfo->pApplicationInfo->apiVersion;
@@ -333,12 +343,12 @@ struct XcbSurfaceCreateInfo {
 };
 
 template <typename Info>
-VkResult createX11Surface(VkInstance instance, const char* name, const Info* pCreateInfo,
+VkResult createX11Surface(VkInstance instance, PFN_vkVoidFunction InstanceData::*nextFn, const Info* pCreateInfo,
                           const VkAllocationCallbacks* pAllocator, VkSurfaceKHR* pSurface) {
     InstanceData* inst = getInstance(dispatchKey(instance));
     if (!inst) return VK_ERROR_INITIALIZATION_FAILED;
     using Fn = VkResult(VKAPI_PTR*)(VkInstance, const Info*, const VkAllocationCallbacks*, VkSurfaceKHR*);
-    auto next = reinterpret_cast<Fn>(inst->vt.GetInstanceProcAddr(instance, name));
+    auto next = reinterpret_cast<Fn>(inst->*nextFn);
     if (!next) return VK_ERROR_EXTENSION_NOT_PRESENT;
     const VkResult r = next(instance, pCreateInfo, pAllocator, pSurface);
     if (r == VK_SUCCESS && pCreateInfo && pSurface) {
@@ -350,12 +360,12 @@ VkResult createX11Surface(VkInstance instance, const char* name, const Info* pCr
 
 VKAPI_ATTR VkResult VKAPI_CALL CreateXlibSurfaceKHR(VkInstance instance, const XlibSurfaceCreateInfo* pCreateInfo,
                                                     const VkAllocationCallbacks* pAllocator, VkSurfaceKHR* pSurface) {
-    return createX11Surface(instance, "vkCreateXlibSurfaceKHR", pCreateInfo, pAllocator, pSurface);
+    return createX11Surface(instance, &InstanceData::nextCreateXlibSurface, pCreateInfo, pAllocator, pSurface);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL CreateXcbSurfaceKHR(VkInstance instance, const XcbSurfaceCreateInfo* pCreateInfo,
                                                    const VkAllocationCallbacks* pAllocator, VkSurfaceKHR* pSurface) {
-    return createX11Surface(instance, "vkCreateXcbSurfaceKHR", pCreateInfo, pAllocator, pSurface);
+    return createX11Surface(instance, &InstanceData::nextCreateXcbSurface, pCreateInfo, pAllocator, pSurface);
 }
 #endif
 
@@ -371,7 +381,7 @@ VKAPI_ATTR void VKAPI_CALL DestroySurfaceKHR(VkInstance instance, VkSurfaceKHR s
         inst->fifoSurfaces.erase(surface);
         inst->fifoAsked.erase(surface);
     }
-    auto next = reinterpret_cast<PFN_vkDestroySurfaceKHR>(inst->vt.GetInstanceProcAddr(instance, "vkDestroySurfaceKHR"));
+    auto next = reinterpret_cast<PFN_vkDestroySurfaceKHR>(inst->nextDestroySurface);
     if (next) next(instance, surface, pAllocator);
 }
 
@@ -728,6 +738,7 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physDev, const VkDe
 
     data->device = *pDevice;
     data->vt.load(*pDevice, gdpa);
+    data->vt.GetDeviceProcAddr = gdpa;  // (the chain's, as the instance's: see CreateInstance)
     // gamescope's WSI layer answers vkGetRefreshCycleDurationGOOGLE for its
     // swapchains whether or not the extension is enabled (it never reaches
     // the driver, which may not have it: NVIDIA's has not).

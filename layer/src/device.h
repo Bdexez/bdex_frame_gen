@@ -54,6 +54,10 @@ struct InstanceData {
     std::mutex surfMutex;
     std::unordered_map<VkSurfaceKHR, WaylandSurfaceState> waylandSurfaces;
     std::unordered_map<VkSurfaceKHR, uint32_t> x11Windows;  // X11 surfaces: the window (XID) each shows (x11_clock)
+    // The next layer's surface entry points, looked up at vkCreateInstance
+    // (layer.cpp: a later lookup came back to this layer under Mesa 22's
+    // device_select, Ubuntu 22.04 / Debian 12); null where it has none.
+    PFN_vkVoidFunction nextCreateXlibSurface = nullptr, nextCreateXcbSurface = nullptr, nextDestroySurface = nullptr;
 };
 
 struct AllocatedImage {

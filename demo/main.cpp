@@ -49,6 +49,55 @@
 #include "demo_shaders.h"
 #include "replay_timing.h"
 
+// --reflex uses VK_NV_low_latency2, newer than the oldest Vulkan headers the
+// project builds with (1.3.204, Ubuntu 22.04; Debian 12's 1.3.239 lacks it
+// too: the demo stopped building there on 2026-10-31, found 11/10 by
+// tools/ci/distro-check.sh). What the demo uses of it, as the newer headers
+// define it; the driver tells at run time whether it has the extension.
+#ifndef VK_NV_low_latency2
+#define VK_NV_LOW_LATENCY_2_EXTENSION_NAME "VK_NV_low_latency2"
+#define VK_STRUCTURE_TYPE_LATENCY_SLEEP_MODE_INFO_NV static_cast<VkStructureType>(1000505000)
+#define VK_STRUCTURE_TYPE_LATENCY_SLEEP_INFO_NV static_cast<VkStructureType>(1000505001)
+#define VK_STRUCTURE_TYPE_SET_LATENCY_MARKER_INFO_NV static_cast<VkStructureType>(1000505002)
+#define VK_STRUCTURE_TYPE_LATENCY_SUBMISSION_PRESENT_ID_NV static_cast<VkStructureType>(1000505005)
+typedef enum VkLatencyMarkerNV {
+    VK_LATENCY_MARKER_SIMULATION_START_NV = 0,
+    VK_LATENCY_MARKER_SIMULATION_END_NV = 1,
+    VK_LATENCY_MARKER_RENDERSUBMIT_START_NV = 2,
+    VK_LATENCY_MARKER_RENDERSUBMIT_END_NV = 3,
+    VK_LATENCY_MARKER_PRESENT_START_NV = 4,
+    VK_LATENCY_MARKER_PRESENT_END_NV = 5,
+    VK_LATENCY_MARKER_MAX_ENUM_NV = 0x7FFFFFFF
+} VkLatencyMarkerNV;
+typedef struct VkLatencySleepModeInfoNV {
+    VkStructureType sType;
+    const void* pNext;
+    VkBool32 lowLatencyMode;
+    VkBool32 lowLatencyBoost;
+    uint32_t minimumIntervalUs;
+} VkLatencySleepModeInfoNV;
+typedef struct VkLatencySleepInfoNV {
+    VkStructureType sType;
+    const void* pNext;
+    VkSemaphore signalSemaphore;
+    uint64_t value;
+} VkLatencySleepInfoNV;
+typedef struct VkSetLatencyMarkerInfoNV {
+    VkStructureType sType;
+    const void* pNext;
+    uint64_t presentID;
+    VkLatencyMarkerNV marker;
+} VkSetLatencyMarkerInfoNV;
+typedef struct VkLatencySubmissionPresentIdNV {
+    VkStructureType sType;
+    const void* pNext;
+    uint64_t presentID;
+} VkLatencySubmissionPresentIdNV;
+typedef VkResult(VKAPI_PTR* PFN_vkSetLatencySleepModeNV)(VkDevice, VkSwapchainKHR, const VkLatencySleepModeInfoNV*);
+typedef VkResult(VKAPI_PTR* PFN_vkLatencySleepNV)(VkDevice, VkSwapchainKHR, const VkLatencySleepInfoNV*);
+typedef void(VKAPI_PTR* PFN_vkSetLatencyMarkerNV)(VkDevice, VkSwapchainKHR, const VkSetLatencyMarkerInfoNV*);
+#endif
+
 #define VK_CHECK(x)                                                                             \
     do {                                                                                        \
         VkResult _r = (x);                                                                      \

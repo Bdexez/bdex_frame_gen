@@ -6,6 +6,26 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Ubuntu 22.04 and Debian 12: X11 Vulkan programs crashed under the layer (2026-11-10)
+
+- **Fixed: every X11 / Xwayland Vulkan program crashed at its first surface
+  on Ubuntu 22.04 and Debian 12** (Mesa 22's `VK_LAYER_MESA_device_select`
+  below the layer), since the X11 surface hooks of `x11_clock` (2026-10-17):
+  the hook looked the next `vkCreateXcbSurfaceKHR` up when called, and
+  under that `device_select` a lookup made after `vkCreateInstance` comes
+  back to the top of the chain — the hook called itself until the stack ran
+  out (gdb: 348,000 frames). The next surface entry points
+  (`vkCreateXlibSurfaceKHR`, `vkCreateXcbSurfaceKHR`, `vkDestroySurfaceKHR`)
+  are now looked up at `vkCreateInstance`, and the layer keeps the chain's
+  own next `GetInstanceProcAddr` / `GetDeviceProcAddr` (that
+  `device_select` answers `"vkGetInstanceProcAddr"` with the loader's
+  exported entry point). Unseen in October (no CI) and since 2026-10-31,
+  as the demo no longer built there either: `--reflex` used
+  `VK_NV_low_latency2`, absent from their Vulkan headers (1.3.204, 1.3.239)
+  — the demo now carries the few definitions it needs. Found by
+  `tools/ci/distro-check.sh`; Ubuntu 22.04, Debian 12, 24.04, Fedora, Arch,
+  Tumbleweed and Alpine all at x2.00–2.01 again.
+
 ### Compatibility: Windows timing, the Windows layer on a GPU, depth's memory queries, Steam's shader pre-caching (2026-11-10)
 
 - **Windows: precise paced waits.** The worker's waits for a frame's moment,
