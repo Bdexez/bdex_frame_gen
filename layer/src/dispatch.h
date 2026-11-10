@@ -124,7 +124,11 @@ namespace bdex {
     X(CmdPipelineBarrier2)            \
     X(CmdPipelineBarrier2KHR)         \
     X(CmdClearDepthStencilImage)      \
-    X(CmdClearAttachments)
+    X(CmdClearAttachments)            \
+    X(GetDeviceImageMemoryRequirements)          \
+    X(GetDeviceImageMemoryRequirementsKHR)       \
+    X(GetDeviceImageSparseMemoryRequirements)    \
+    X(GetDeviceImageSparseMemoryRequirementsKHR)
 // Newer than the oldest Vulkan headers the layer builds with (1.3.204).
 #ifdef VK_NV_low_latency2
 #define BDEX_DEVICE_FUNCS_LOW_LATENCY2(X) \

@@ -874,6 +874,59 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateImage(VkDevice device, const VkImageCreateI
     return r;
 }
 
+// An image's memory asked for before it exists (VK_KHR_maintenance4, Vulkan
+// 1.3: DXVK and VKD3D-Proton both use it — a D3D12 game sizes the heap it
+// places its depth buffer in so): asked for the image CreateImage will create,
+// SAMPLED added, else the heap could be too small or misaligned for it. (The
+// same on NVIDIA, measured 10/11; a sampleable depth buffer may differ
+// elsewhere: AMD's HTILE.)
+template <typename Call>
+void withCreatedUsage(DeviceData* dev, const VkDeviceImageMemoryRequirements* pInfo, Call&& call) {
+    DepthTracker* t = dev->depthTracker.get();
+    if (!t || !pInfo || !pInfo->pCreateInfo) return call(pInfo);
+    VkImageCreateInfo ci = *pInfo->pCreateInfo;
+    ci.usage = t->usageFor(*pInfo->pCreateInfo);
+    if (ci.usage == pInfo->pCreateInfo->usage) return call(pInfo);
+    VkDeviceImageMemoryRequirements q = *pInfo;
+    q.pCreateInfo = &ci;
+    call(&q);
+}
+
+VKAPI_ATTR void VKAPI_CALL GetDeviceImageMemoryRequirements(VkDevice device, const VkDeviceImageMemoryRequirements* pInfo,
+                                                            VkMemoryRequirements2* pReq) {
+    DeviceData* dev = depthDevice(device);
+    withCreatedUsage(dev, pInfo, [&](const VkDeviceImageMemoryRequirements* q) {
+        dev->vt.GetDeviceImageMemoryRequirements(device, q, pReq);
+    });
+}
+
+VKAPI_ATTR void VKAPI_CALL GetDeviceImageMemoryRequirementsKHR(VkDevice device, const VkDeviceImageMemoryRequirements* pInfo,
+                                                               VkMemoryRequirements2* pReq) {
+    DeviceData* dev = depthDevice(device);
+    withCreatedUsage(dev, pInfo, [&](const VkDeviceImageMemoryRequirements* q) {
+        dev->vt.GetDeviceImageMemoryRequirementsKHR(device, q, pReq);
+    });
+}
+
+VKAPI_ATTR void VKAPI_CALL GetDeviceImageSparseMemoryRequirements(VkDevice device, const VkDeviceImageMemoryRequirements* pInfo,
+                                                                  uint32_t* pCount,
+                                                                  VkSparseImageMemoryRequirements2* pReqs) {
+    DeviceData* dev = depthDevice(device);
+    withCreatedUsage(dev, pInfo, [&](const VkDeviceImageMemoryRequirements* q) {
+        dev->vt.GetDeviceImageSparseMemoryRequirements(device, q, pCount, pReqs);
+    });
+}
+
+VKAPI_ATTR void VKAPI_CALL GetDeviceImageSparseMemoryRequirementsKHR(VkDevice device,
+                                                                     const VkDeviceImageMemoryRequirements* pInfo,
+                                                                     uint32_t* pCount,
+                                                                     VkSparseImageMemoryRequirements2* pReqs) {
+    DeviceData* dev = depthDevice(device);
+    withCreatedUsage(dev, pInfo, [&](const VkDeviceImageMemoryRequirements* q) {
+        dev->vt.GetDeviceImageSparseMemoryRequirementsKHR(device, q, pCount, pReqs);
+    });
+}
+
 VKAPI_ATTR void VKAPI_CALL DestroyImage(VkDevice device, VkImage image, const VkAllocationCallbacks* pAllocator) {
     DeviceData* dev = depthDevice(device);
     if (image && dev->depthTracker) dev->depthTracker->imageDestroying(image);
@@ -1603,6 +1656,10 @@ const Hook g_depthHooks[] = {
     HOOK(CmdPipelineBarrier2KHR),
     HOOK(CmdClearDepthStencilImage),
     HOOK(CmdClearAttachments),
+    HOOK(GetDeviceImageMemoryRequirements),
+    HOOK(GetDeviceImageMemoryRequirementsKHR),
+    HOOK(GetDeviceImageSparseMemoryRequirements),
+    HOOK(GetDeviceImageSparseMemoryRequirementsKHR),
 };
 
 template <size_t N>
