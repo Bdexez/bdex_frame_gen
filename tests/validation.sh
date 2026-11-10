@@ -23,10 +23,15 @@ LOG="$(mktemp)"
 # -> present, and is acquired again only after its present; the image count
 # allows the images held (imageCount - minImageCount + 1). 1.4.357 reports
 # nothing on the same runs. Ignored with those old layers only.
+# The same layers report SYNC-HAZARD-PRESENT-AFTER-WRITE in that pattern, one
+# run in two of interpolate:waitcap on 2 CPUs (lavapipe's single queue shared
+# with the demo): traced 2026-11-10 — acquire image 2 (semaphore A) while
+# image 1 is held, its copy waits A and signals R, the present waits R —
+# the hazard reported on that very present; 1.4.363 reports nothing there.
 IGNORE='^$'
 vvl=$(vulkaninfo 2>/dev/null | grep -m1 "VK_LAYER_KHRONOS_validation" | grep -oE "Vulkan version [0-9.]+" | grep -oE "[0-9]+\.[0-9]+\.[0-9]+")
 if [ -n "$vvl" ] && [ "$(printf '%s\n1.3.290\n' "$vvl" | sort -V | head -1)" = "$vvl" ] && [ "$vvl" != "1.3.290" ]; then
-  IGNORE='SYNC-HAZARD-WRITE-AFTER-PRESENT'
+  IGNORE='SYNC-HAZARD-WRITE-AFTER-PRESENT|SYNC-HAZARD-PRESENT-AFTER-WRITE'
   echo "validation layer $vvl: ignoring $IGNORE (false positive of layers before 1.3.290, see the script)"
 fi
 . "$(dirname "$0")/../tools/layer_env.sh"
