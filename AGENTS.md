@@ -1374,6 +1374,14 @@ Tenus à jour dans `ROADMAP.md` (où en est le projet, ce qui reste) et
   SEQ…` (verdict par option ; liste `CANDIDATES` à tenir à jour quand une
   option est tranchée ou ajoutée).
 
+
+### Session 2026-11-10 — présentation des README
+
+- Le README principal présente le projet, la démo réelle et les compromis de génération avant les détails d'exploitation. La table exhaustive des options reste dans `README.md` pour `test_option_keys.py`.
+- `docs/REFERENCE.md` conserve le guide technique complet ; ses liens relatifs sont adaptés à son emplacement. Les nouveaux liens de documentation devraient viser ce guide pour les sous-sections détaillées.
+- `docs/visuals/framegen-cover.webp` est une illustration conceptuelle, pas une capture de jeu ni un résultat mesuré. `docs/visuals/interpolation.svg` est un schéma exact de l'ordre des images en interpolation ×4. `docs/demo.gif`, `comparison.png` et `flow.png` restent les sorties réelles de la démo.
+- Documentation seule : aucune modification du moteur, des shaders, des options ni des workflows. Les mesures historiques sont présentées avec leur périmètre hors ligne.
+
 ---
 
 *Maintenir ce fichier à jour quand l'architecture ou les invariants changent.*
