@@ -61,6 +61,10 @@ TEST(config_apply_values) {
     CHECK(c.apply("multiplier", "9") && c.multiplier == 8);   // clamped
     CHECK(c.apply("enabled", "false") && !c.enabled);
     CHECK(c.apply("enabled", "on") && c.enabled);
+    // profile: a switch, and 2 for the per-pass timings too.
+    CHECK(c.apply("profile", "2") && c.profile && c.profilePasses);
+    CHECK(c.apply("profile", "1") && c.profile && !c.profilePasses);
+    CHECK(c.apply("profile", " 2 ") && c.apply("profile", "0") && !c.profile && !c.profilePasses);
     CHECK(c.apply("present_mode", "mailbox") && c.presentMode == VK_PRESENT_MODE_MAILBOX_KHR);
     CHECK(c.apply("present_mode", "app") && c.presentMode == -1);
     CHECK(c.apply("present_mode", "auto") && c.presentMode == -2);

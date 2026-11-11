@@ -1784,6 +1784,7 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
                     dev_.vt.EndCommandBuffer(cb);
                     cb = slot.cmd2;
                     dev_.vt.BeginCommandBuffer(cb, &bi);
+                    fg_->profileResume(cb);
                 }
             }
             fg_->profileMark(cb, slotIdx, FrameGen::StageInterp);

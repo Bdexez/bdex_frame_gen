@@ -16,7 +16,7 @@ void FrameGen::recordUpscaleReal(VkCommandBuffer cmd, uint32_t cur, int prev) {
     // A pass may provide the frame to pack (upscale_temporal: its history).
     VkDescriptorSet set = dsUpscale_[cur];
     VkExtent2D src = extent_;
-    for (auto& p : passes_) p->realOutput(*this, cmd, cur, set, src);
+    eachPass(cmd, "other", [&](FgPass& p) { p.realOutput(*this, cmd, cur, set, src); });
     vt.CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, upscale_.pipeline);
     UpscalePC pc{{(int32_t)displayExtent_.width, (int32_t)displayExtent_.height},
                  {(int32_t)src.width, (int32_t)src.height},
@@ -33,8 +33,9 @@ void FrameGen::recordUpscaleReal(VkCommandBuffer cmd, uint32_t cur, int prev) {
         const uint32_t N = static_cast<uint32_t>(sources_.size());
         recordSynthesis(cmd, dsInterpReal_[uint32_t(prev) * N + cur], 1.5f, kMaxFrames, true);
     }
+    passMark(cmd, "real_output");
     if (sharpen_) recordCas(cmd, dsCasReal_);  // sharpReal_ -> outReal_
-    for (auto& p : passes_) p->afterOutput(*this, cmd, -1);  // (the fps HUD)
+    eachPass(cmd, "sharpen", [&](FgPass& p) { p.afterOutput(*this, cmd, -1); });  // (the fps HUD)
 }
 
 void FrameGen::recordCas(VkCommandBuffer cmd, VkDescriptorSet set) {

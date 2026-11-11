@@ -434,6 +434,11 @@ void FrameGen::createResources() {
         qi.queryCount = kProfileSlots * (StageCount + 1);
         VK_CHECK(dev_.vt.CreateQueryPool(dev_.device, &qi, nullptr, &queryPool_));
         timestampPeriodNs_ = dev_.props.limits.timestampPeriod;
+        if (cfg.profile && cfg.profilePasses) {
+            qi.queryCount = kProfileSlots * kPassMarks;
+            VK_CHECK(dev_.vt.CreateQueryPool(dev_.device, &qi, nullptr, &passPool_));
+            passLabel_.assign(size_t(kProfileSlots) * kPassMarks, 0);
+        }
     }
 
     VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
@@ -875,6 +880,7 @@ void FrameGen::destroyAll() {
     meanCostMapped_ = nullptr;
     dev_.destroyBuffer(meanCostBuf_);
     if (queryPool_) vt.DestroyQueryPool(d, queryPool_, nullptr);
+    if (passPool_) vt.DestroyQueryPool(d, passPool_, nullptr);
     queryPool_ = VK_NULL_HANDLE;
     for (size_t i = 0; i < dumpBuf_.size(); ++i) {
         if (dumpMapped_[i]) vt.UnmapMemory(d, dumpBuf_[i].memory);
@@ -1112,7 +1118,7 @@ void FrameGen::recordAnalysis(VkCommandBuffer cmd, uint32_t parity, uint32_t cur
             memoryBarrier(cmd);
         }
     }
-    for (auto& p : passes_) p->analysisDone(*this, cmd, parity);
+    eachPass(cmd, "analysis", [&](FgPass& p) { p.analysisDone(*this, cmd, parity); });
 }
 
 // Compute and indirect-argument reads of the state pass's results.
@@ -1293,7 +1299,7 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity, int costSlot) {
     recordedOutputs_ = {};
     auto& vt = dev_.vt;
     // The flow images still hold the previous pair's flow (online_tune rates it).
-    for (auto& p : passes_) p->flowBegin(*this, cmd, parity);
+    eachPass(cmd, "frame_state", [&](FgPass& p) { p.flowBegin(*this, cmd, parity); });
     const Config cfg = effectiveConfig();
     flowThisFrame_ = true;
     // Keep the previous pair's finest backward flow before this frame
@@ -1376,7 +1382,7 @@ void FrameGen::recordFlow(VkCommandBuffer cmd, uint32_t parity, int costSlot) {
     }
 
     const Level& fine = levels_v_[0];
-    for (auto& p : passes_) p->fineFlow(*this, cmd, parity, cfg);
+    eachPass(cmd, "flow", [&](FgPass& p) { p.fineFlow(*this, cmd, parity, cfg); });
     if (cfg.sceneCutHist > 0.f) {
         // How far the brightness distribution moved (scene_hist.comp): the
         // scene-cut evidence the flow cost cannot give.
@@ -1500,16 +1506,19 @@ void FrameGen::recordInterpolate(VkCommandBuffer cmd, uint32_t prev, uint32_t cu
     const uint32_t N = static_cast<uint32_t>(sources_.size());
     const VkDescriptorSet own = dsInterp_[(prev * N + cur) * outputs_ + output];
     VkDescriptorSet set = own;
-    for (auto& p : passes_)
-        if (VkDescriptorSet alt = p->synthesisInputs(*this, cmd, prev, cur, output)) set = alt;
+    // (profile = 2: before the first synthesis, the scene-cut reduction)
+    eachPass(cmd, output == 0 ? "scene_cut" : "other", [&](FgPass& p) {
+        if (VkDescriptorSet alt = p.synthesisInputs(*this, cmd, prev, cur, output)) set = alt;
+    });
     // depth: the engine's own set binds the two frames' depth; a pass's
     // inputs (upscale_temporal's history) bind none.
     depthActive_ = !predicted && set == own && prev < depthValid_.size() && cur < depthValid_.size() &&
                    depthValid_[prev] && depthValid_[cur];
     recordSynthesis(cmd, set, t, timingActive_ ? int32_t(output) + 1 : 0, false);
     depthActive_ = false;
+    passMark(cmd, "synthesis");
     if (sharpen_) recordCas(cmd, dsCas_[output]);  // sharp_[output] -> out_[output]
-    for (auto& p : passes_) p->afterOutput(*this, cmd, int32_t(output));  // (the fps HUD)
+    eachPass(cmd, "sharpen", [&](FgPass& p) { p.afterOutput(*this, cmd, int32_t(output)); });  // (the fps HUD)
     if (reuse) recordedOutputs_[output] = {true, predicted, prev, cur};
 }
 
@@ -1556,7 +1565,7 @@ void FrameGen::recordSynthesisImpl(VkCommandBuffer cmd, const Pass& pipe, VkDesc
     // Passes working ahead of the synthesis (extrapolate_splat) and its
     // inputs from them (the splat map, the acceleration weight).
     SynthesisInputs in;
-    for (auto& p : passes_) p->beforeSynthesis(*this, cmd, t, timing, gated, cfg, in);
+    eachPass(cmd, "other", [&](FgPass& p) { p.beforeSynthesis(*this, cmd, t, timing, gated, cfg, in); });
     // Interpolation output is at display resolution; the flow (in render pixels)
     // and its coverage are scaled to display space, so the same shader also
     // upscales the generated frame when render != display.
@@ -1701,6 +1710,12 @@ void FrameGen::profileBegin(VkCommandBuffer cmd, uint32_t slot, bool passHooks) 
     if (passHooks)
         for (auto& p : passes_) p->slotBegin(*this, slot);
     if (!queryPool_ || slot >= kProfileSlots) return;
+    if (passPool_ && passHooks) {
+        dev_.vt.CmdResetQueryPool(cmd, passPool_, slot * kPassMarks, kPassMarks);
+        passSlot_ = int(slot);
+        passCount_[slot] = 0;
+        passMark(cmd, "wait");  // (the first: a time to count from)
+    }
     const uint32_t base = slot * (StageCount + 1);
     dev_.vt.CmdResetQueryPool(cmd, queryPool_, base, StageCount + 1);
     // Bottom-of-pipe so that a semaphore wait attached to the submission
@@ -1716,8 +1731,46 @@ void FrameGen::profileMark(VkCommandBuffer cmd, uint32_t slot, Stage stage) {
     profileWritten_[slot][stage + 1] = true;
 }
 
+void FrameGen::passMark(VkCommandBuffer cmd, const char* label) {
+    if (!passPool_ || passSlot_ < 0) return;
+    const uint32_t slot = uint32_t(passSlot_), mark = passCount_[slot];
+    if (mark >= kPassMarks) return;
+    // (the names are few: string literals and the passes' own)
+    size_t id = 0;
+    while (id < passNames_.size() && strcmp(passNames_[id], label) != 0) ++id;
+    if (id == passNames_.size()) {
+        std::lock_guard<std::mutex> lock(profileMutex_);
+        passNames_.push_back(label);
+        passMs_.push_back(0.0);
+        passFrames_.push_back(0);
+    }
+    passLabel_[size_t(slot) * kPassMarks + mark] = uint16_t(id);
+    dev_.vt.CmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, passPool_, slot * kPassMarks + mark);
+    passCount_[slot] = mark + 1;
+}
+
 void FrameGen::profileCollect(uint32_t slot) {
     if (!queryPool_ || slot >= kProfileSlots || !profileWritten_[slot][0]) return;
+    if (passPool_ && passCount_[slot] > 1) {
+        // (not waited for: a command buffer recorded and never submitted
+        // leaves them unwritten — the slot's marks are then dropped)
+        const uint32_t n = passCount_[slot];
+        std::vector<uint64_t> ts(n);
+        const VkResult r = dev_.vt.GetQueryPoolResults(dev_.device, passPool_, slot * kPassMarks, n, n * sizeof(uint64_t),
+                                                       ts.data(), sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
+        if (r == VK_SUCCESS) {
+            std::lock_guard<std::mutex> lock(profileMutex_);
+            std::vector<uint8_t> seen(passNames_.size(), 0);
+            for (uint32_t i = 1; i < n; ++i) {
+                const uint16_t id = passLabel_[size_t(slot) * kPassMarks + i];
+                if (ts[i] >= ts[i - 1]) passMs_[id] += double(ts[i] - ts[i - 1]) * timestampPeriodNs_ * 1e-6;
+                seen[id] = 1;
+            }
+            for (size_t id = 0; id < seen.size(); ++id) passFrames_[id] += seen[id];
+        }
+        passCount_[slot] = 0;
+        if (passSlot_ == int(slot)) passSlot_ = -1;
+    }
     uint64_t ts[StageCount + 1]{};
     const uint32_t base = slot * (StageCount + 1);
     // Query each written timestamp individually (unwritten ones would block).
@@ -1806,6 +1859,32 @@ std::string FrameGen::profileReport() {
         out += buf;
         profileMs_[s] = 0;
         profileFrames_[s] = 0;
+    }
+    if (passPool_) {
+        // The mean over the frames each was recorded in, the costliest
+        // first; "wait" (the GPU not on this frame: before its first
+        // command, between its two submissions) is no one's work. Those
+        // under 0.005 ms together as "rest" (idle passes' marks).
+        std::vector<std::pair<double, const char*>> shown;
+        double rest = 0.0;
+        for (size_t i = 0; i < passNames_.size(); ++i) {
+            if (!passFrames_[i] || strcmp(passNames_[i], "wait") == 0) continue;
+            const double ms = passMs_[i] / passFrames_[i];
+            if (ms >= 0.005) shown.emplace_back(ms, passNames_[i]);
+            else rest += ms;
+        }
+        std::stable_sort(shown.begin(), shown.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+        if (!shown.empty()) out += " | per pass:";
+        for (const auto& [ms, name] : shown) {
+            snprintf(buf, sizeof(buf), " %s %.2f", name, ms);
+            out += buf;
+        }
+        if (rest >= 0.005) {
+            snprintf(buf, sizeof(buf), " rest %.2f", rest);
+            out += buf;
+        }
+        std::fill(passMs_.begin(), passMs_.end(), 0.0);
+        std::fill(passFrames_.begin(), passFrames_.end(), 0u);
     }
     return out;
 }

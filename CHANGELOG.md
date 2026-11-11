@@ -6,6 +6,22 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### GPU time per pass: `profile = 2` (2026-11-11)
+
+- **`profile = 2` (`BDEX_FG_PROFILE=2`)**: with the GPU time per stage, the
+  time of each engine step (analysis, flow, scene cut, synthesis, sharpening,
+  the real frame's output) and of each optional pass a game frame, the
+  costliest first — in the layer's statistics line and at the end of
+  `bdex_offline`: `per pass: synthesis 0.72 false_detail 0.45 flow 0.45
+  mosaic_blur 0.22 hud_layer 0.15 …`. A GPU timestamp follows each step and
+  each pass's hook; the time since the one before is that step's or pass's
+  (the stages' sum again, within the noise). What an option costs was
+  measured until now by runs with it on and off: with 7 to 15 ms from one run
+  to the next, the differences added up to more than the total (2026-11-10).
+  The generated frames are the same with and without (test `offline`); no
+  message under the Khronos validation (its x8 run now profiles); `profile`
+  0 and 1 record nothing more than before.
+
 ### The screen's refresh rate is no longer read from the game's own cadence (2026-11-11)
 
 - **Fixed: under Xwayland, a game presenting no faster than the screen

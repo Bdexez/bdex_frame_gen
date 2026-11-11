@@ -199,7 +199,12 @@ public:
     void profileMark(VkCommandBuffer cmd, uint32_t slot, Stage stage);
     void profileCollect(uint32_t slot);
     // Average GPU milliseconds per stage since the last call; resets the accumulators.
+    // profile = 2: followed by the GPU milliseconds a game frame of each
+    // engine step and optional pass, the costliest first.
     std::string profileReport();
+    // profile = 2: the frame's recording goes on in another command buffer
+    // (submitted apart): what the GPU does until it starts is not a pass's.
+    void profileResume(VkCommandBuffer cmd) { passMark(cmd, "wait"); }
     // The mean GPU ms per stage since the last report or take, then reset
     // (bdex-calibrate). False without profiling.
     bool profileTake(double ms[StageCount]);
@@ -310,6 +315,29 @@ private:
     int flowScaleFactor_ = 1;
     Config effectiveConfig() const override;  // the settings with the passes' and the quality level's overrides
     uint32_t profileFrames_[StageCount]{};
+    // profile = 2 (Config::profilePasses): a timestamp after each engine
+    // step and each optional pass's hook of the slot being recorded; the time
+    // since the timestamp before it is that step's or pass's. Recorded by
+    // one thread (the synthesis's: profileBegin with passHooks).
+    static constexpr uint32_t kPassMarks = 512;  // a slot's (x8, a dozen passes: ~300)
+    VkQueryPool passPool_ = VK_NULL_HANDLE;
+    int passSlot_ = -1;
+    uint32_t passCount_[kProfileSlots]{};
+    std::vector<uint16_t> passLabel_;     // [slot * kPassMarks + mark]: index in passNames_
+    std::vector<const char*> passNames_;  // (string literals and FgPass::name())
+    std::vector<double> passMs_;          // per name, since the last report
+    std::vector<uint32_t> passFrames_;    // ...and the frames it was recorded in (as the stages': a frame
+                                          // without generation does not thin the synthesis's mean)
+    void passMark(VkCommandBuffer cmd, const char* label);
+    // A hook of every optional pass, `before` naming the engine's work since
+    // the previous mark.
+    template <class F> void eachPass(VkCommandBuffer cmd, const char* before, F&& hook) {
+        passMark(cmd, before);
+        for (auto& p : passes_) {
+            hook(*p);
+            passMark(cmd, p->name());
+        }
+    }
     bool profileWritten_[kProfileSlots][StageCount + 1]{};
     float timestampPeriodNs_ = 1.f;
     std::vector<void*> dumpMapped_;

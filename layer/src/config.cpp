@@ -577,6 +577,10 @@ bool Config::apply(const std::string& rawKey, const std::string& rawValue) {
     if (key == "hud_avoid") autoOptionsSet |= kAutoHudAvoid;
     if (key == "mosaic_blur") autoOptionsSet |= kAutoMosaicBlur;
     if (key == "hud_layer") autoOptionsSet |= kAutoHudLayer;
+    if (key == "profile") {  // 2: per stage and per optional pass
+        profilePasses = value == "2";
+        if (profilePasses) { profile = true; return true; }
+    }
     if (const OptionDef* d = findOption(key)) {
         switch (d->kind) {
         case Kind::Bool:  return parseBool(value, this->*(d->b));

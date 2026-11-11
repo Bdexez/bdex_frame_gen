@@ -141,6 +141,35 @@ def main():
         if not depth > base + 0.4:
             print(f"edges: with the depth {depth:.2f} dB, without {base:.2f} dB")
             return 1
+        # profile = 2: the GPU time of each engine step and optional pass —
+        # named, the flow and the synthesis among them, adding up to about
+        # the stages' — and the same frames as without the timestamps.
+        outs = {}
+        for profile in ("0", "2"):
+            out = d / f"profile{profile}"
+            out.mkdir()
+            env = dict(os.environ, BDEX_FG_CONFIG="/dev/null", BDEX_FG_PROFILE=profile)
+            log = subprocess.run([str(build / "tools" / "offline" / "bdex_offline"), str(d / "edges"), str(out)],
+                                 check=True, stderr=subprocess.PIPE, text=True, env=env).stderr
+            outs[profile] = {p.name: p.read_bytes() for p in sorted(out.glob("*.ppm"))}
+            line = next((l for l in log.splitlines() if "gpu ms per input" in l), "")
+            if profile == "0" and line:
+                print(f"profile=0 printed GPU timings: {line}")
+                return 1
+            if profile == "2" and line:  # (none: a GPU without timestamps)
+                stages, _, passes = line.partition("| per pass:")
+                words = passes.split()
+                per_pass = dict(zip(words[0::2], map(float, words[1::2])))
+                words = stages.split("input:")[1].split()
+                per_stage = dict(zip(words[0::2], map(float, words[1::2])))
+                print(line)
+                total, known = sum(per_stage.values()), sum(per_pass.values())
+                if not {"flow", "synthesis"} <= set(per_pass) or not 0.5 * total <= known <= 1.5 * total + 0.1:
+                    print(f"profile=2: per pass {known:.2f} ms against {total:.2f} ms per stage")
+                    return 1
+        if not outs["0"] or outs["0"] != outs["2"]:
+            print("profile=2 changed the generated frames")
+            return 1
     return 0
 
 

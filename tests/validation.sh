@@ -83,7 +83,9 @@ for run in interpolate extrapolate hybrid interpolate:state extrapolate:state hy
   elif [ "${run#*:}" = x8 ]; then
     # Eight frames a present: more than most surfaces let the worker hold
     # acquired at once, so part of them go through the staging images.
-    state="BDEX_FG_FALSE_DETAIL=1"; mult=8; demo_args="--frames 40 --duration 40"
+    # (profile = 2: a timestamp after each engine step and pass hook — the
+    # most of them here.)
+    state="BDEX_FG_FALSE_DETAIL=1 BDEX_FG_PROFILE=2"; mult=8; demo_args="--frames 40 --duration 40"
   elif [ "${run#*:}" = adaptive ]; then
     # 30 fps into 75: 2, 3, 2, 3... frames a game frame, one output period apart.
     state="BDEX_FG_ADAPTIVE=1 BDEX_FG_TARGET_FPS=75"; demo_args="--frames 60 --duration 40"
