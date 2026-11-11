@@ -182,6 +182,17 @@ public:
     // (any thread: touches no FrameGen state).
     static bool writePpm(const std::string& path, const void* pixels, VkExtent2D extent, const OutputEncoding& enc,
                          uint32_t downscale = 1);
+    // Recordings: the depth held for the frame in source `cur` (depthValid:
+    // the game's, imported at its present) copied into a host-visible buffer
+    // of depthTexelBytes() a render pixel; writeDepth() then writes it as
+    // bdex_offline --depth reads it — little-endian floats, reversed Z (the
+    // nearness the engine keeps), one per pixel of the size / `downscale`
+    // (the centre texel of each block: a depth is not averaged over an edge).
+    bool depthValid(uint32_t cur) const { return cur < depthValid_.size() && depthValid_[cur]; }
+    uint32_t depthTexelBytes() const { return depthFormat_ == VK_FORMAT_R16_SFLOAT ? 2 : 4; }
+    void recordReadbackDepth(VkCommandBuffer cmd, uint32_t cur, VkBuffer dst);
+    static bool writeDepth(const std::string& path, const void* texels, VkExtent2D extent, uint32_t texelBytes,
+                           uint32_t downscale = 1);
     uint32_t outputCount() const { return outputs_; }
     uint32_t reusedOutputCount() const { return reusedOutputs_; }  // current recorded frame, outputs still presented
     bool outputReuseSupported() const { return outputCopiesSupported_; }

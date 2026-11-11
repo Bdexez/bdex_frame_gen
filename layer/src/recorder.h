@@ -16,6 +16,8 @@ namespace bdex {
 // A recording for the evaluation corpus (the control panel's « Enregistrer »,
 // DeviceData::recordDir): the game's next N real frames as fNNNN.ppm (at most
 // 960 pixels wide), timestamps.csv (the game's present times), then DONE.
+// With the `depth` option on and the game's depth buffer found, also each
+// frame's depth as depth/fNNNN.f32 (the same size; bdex_offline --depth).
 // The GPU copies each frame into one of a few
 // host buffers; a thread of its own converts and writes them. Written in
 // present() — a fence wait, then the conversion and the file, on the game's
@@ -34,6 +36,9 @@ public:
     // The buffer the next frame (`extent`, `encoding`) is copied into; waits
     // for the writer when every buffer is in use. VK_NULL_HANDLE: stopped.
     VkBuffer next(VkExtent2D extent, const OutputEncoding& encoding, const SlotDone& done);
+    // After next(), for a frame whose depth is known: the buffer its depth
+    // (`texelBytes` a pixel of `extent`) is copied into. VK_NULL_HANDLE: none.
+    VkBuffer depthBuffer(VkExtent2D extent, uint32_t texelBytes);
     // That copy went into submission (slot, generation).
     void queued(uint32_t slot, uint64_t generation, double gameFps, double presentMs);
     // Frames whose submission finished go to the writer.
@@ -46,6 +51,9 @@ private:
         AllocatedBuffer buf;
         void* mapped = nullptr;
         VkDeviceSize size = 0;
+        AllocatedBuffer depth;  // the frame's depth, when it has one
+        void* depthMapped = nullptr;
+        VkDeviceSize depthSize = 0;
         bool busy = false;  // between next() and the writer
     };
     struct Frame {
@@ -55,6 +63,7 @@ private:
         int index = 0;
         VkExtent2D extent{};
         OutputEncoding encoding;
+        uint32_t depthTexel = 0;  // bytes a pixel of its depth, 0: none
         double gameFps = 0.0;
         double presentMs = 0.0;  // steady clock, sampled on the game thread, not when the file is written
     };
@@ -75,6 +84,7 @@ private:
     const uint32_t scale_;         // record_scale: 1/N of the size written, 0 = about 960 pixels wide
     std::deque<Frame> toWrite_;
     int written_ = 0;
+    int depthWritten_ = 0;
     bool failed_ = false, stop_ = false;
     std::thread writer_;
 };

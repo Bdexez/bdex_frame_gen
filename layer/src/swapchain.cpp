@@ -1798,6 +1798,11 @@ VkResult VirtualSwapchain::present(uint32_t imageIndex, const VkPresentInfoKHR& 
             fg_->recordDump(cb, fg_->outputCount(), imageIndex);
         }
         if (recBuf_) fg_->recordReadbackSource(cb, imageIndex, recBuf_);
+        // (depth: the frame's, imported above — after it on the GPU, as the
+        // synthesis that reads it)
+        if (recBuf_ && fg_->depthValid(imageIndex))
+            if (VkBuffer depth = recorder_->depthBuffer(extent_, fg_->depthTexelBytes()))
+                fg_->recordReadbackDepth(cb, imageIndex, depth);
         fg_->recordReleaseSources(cb, prev, static_cast<int>(imageIndex));
     } else if (fg_->packReal()) {
         // No frame generation: still process the one real frame (upscale / HUD).

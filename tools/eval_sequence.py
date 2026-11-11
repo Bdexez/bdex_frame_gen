@@ -203,7 +203,13 @@ def main():
     results = []
     for i, (name, env) in enumerate(variants):
         out = base / f"v{i}"
-        run(binary, args.frames, out, args.multiplier, env, args.max_inputs, args.offline_args.split())
+        extra = args.offline_args.split()
+        # DEPTH=1 on a sequence that kept the game's depth (a recording made
+        # with the option, make_game.py): the option with its input.
+        depth = Path(args.frames) / "depth"
+        if env.get("BDEX_FG_DEPTH", "0").lower() in ("1", "on", "true", "yes") and depth.is_dir() and "--depth" not in extra:
+            extra += ["--depth", str(depth)]
+        run(binary, args.frames, out, args.multiplier, env, args.max_inputs, extra)
         rows = score(out, exclude)
         results.append((name, rows))
 

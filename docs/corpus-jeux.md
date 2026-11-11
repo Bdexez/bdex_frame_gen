@@ -55,6 +55,19 @@ retrouver le temps précis de chaque source. Cette mesure porte sur les
 présentations du jeu ; pour les images affichées, utiliser `latency_log` et
 `tools/cadence_report.py`.
 
+**Profondeur du jeu** (11/11) : avec l'option `depth` activée (case
+« Profondeur du jeu » ou `depth = 1`) et la génération lancée (« Démarrer »,
+interpolation), l'enregistrement du panneau garde aussi la profondeur de
+chaque image dans `depth/f0000.f32`… — la taille des images, un flottant par
+pixel, Z inversé (plus grand = plus près), le texel du centre de chaque bloc
+(pas de moyenne à travers un contour). `DONE` en donne le compte (`depth=150`)
+et le statut du jeu dit si le tampon est trouvé (`depth=on`). C'est ce que
+`bdex_offline --depth` lit : `pending_decisions.py` note alors `depth` sur
+ces séquences, et `eval_sequence.py SEQ --variant DEPTH=1` suffit (le dossier
+`depth/` est pris de lui-même). `corpus_pack.py` / `corpus_fetch.py` la
+conservent. Sans génération, sans l'option ou en extrapolation : images
+seules, comme avant.
+
 Pour reproduire ces variations dans la démo à travers la couche :
 
 ```bash

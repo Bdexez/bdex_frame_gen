@@ -6,6 +6,23 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Recordings keep the game's depth (2026-11-11)
+
+- **The panel's recordings keep each frame's depth** when the `depth` option
+  is on and generating: `depth/fNNNN.f32` beside the frames — the frames'
+  size, one little-endian float a pixel, reversed Z (the nearness the engine
+  holds; the centre texel of each block when the recording is scaled down,
+  not an average across an edge) — and `depth=N` in `DONE`. It is what
+  `bdex_offline --depth` reads: the option, found in every family of games
+  since 2026-11-01 (native Vulkan, DXVK, VKD3D-Proton) but judged on
+  synthetic scenes only, can now be scored on what a game really shows.
+  `tools/eval_sequence.py SEQ --variant DEPTH=1` takes the sequence's
+  `depth/` by itself, `tools/pending_decisions.py` scores `depth` on the
+  sequences that have one, and `corpus_pack.py` / `corpus_fetch.py` keep it
+  (nearest sample at the packed size). Checked on the demo drawn with a
+  depth buffer (test `record_live`: 40 frames, 40 depths, aligned with the
+  picture). Recordings without the option are unchanged.
+
 ### GPU time per pass: `profile = 2` (2026-11-11)
 
 - **`profile = 2` (`BDEX_FG_PROFILE=2`)**: with the GPU time per stage, the

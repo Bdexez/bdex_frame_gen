@@ -6,6 +6,8 @@ any directory of consecutive .ppm/.png frames), keeps a window of them,
 downscales them (the CI runs on a software Vulkan driver: the synthetic
 corpus is 480x272) and writes a compact archive of PNGs plus meta.json,
 which tools/corpus_fetch.py unpacks into the layout the corpus test reads.
+A recording made with the `depth` option keeps each frame's depth
+(depth/fNNNN.f32): packed too, at the output size (nearest sample).
 
   tools/corpus_pack.py ~/rec/kenshi kenshi-town.tar.gz --name kenshi-town --start 60 --count 121
 
@@ -73,11 +75,20 @@ def main():
         add("meta.json", json.dumps(meta, indent=1).encode())
         if timing is not None:
             add("timestamps.csv", timing)
+        depths = 0
         for i, f in enumerate(files):
             buf = io.BytesIO()
             Image.open(f).convert("RGB").resize((a.width, h), Image.LANCZOS).save(buf, "PNG", optimize=True)
             add(f"f{i:04d}.png", buf.getvalue())
-    print(f"{a.out}: {len(files)} frames {a.width}x{h} ({meta['source_size'][0]}x{meta['source_size'][1]} source)")
+            # The frame's depth (little-endian floats, the frame's size): the
+            # nearest sample — a depth is not averaged across an edge.
+            d = Path(a.frames) / "depth" / (f.stem + ".f32")
+            if d.exists() and d.stat().st_size == src.width * src.height * 4:
+                depth = Image.frombuffer("F", (src.width, src.height), d.read_bytes(), "raw", "F;32F", 0, 1)
+                add(f"depth_f{i:04d}.f32", depth.resize((a.width, h), Image.NEAREST).tobytes("raw", "F;32F"))
+                depths += 1
+    print(f"{a.out}: {len(files)} frames {a.width}x{h} ({meta['source_size'][0]}x{meta['source_size'][1]} source)"
+          + (f", {depths} with depth" if depths else ""))
 
 
 if __name__ == "__main__":

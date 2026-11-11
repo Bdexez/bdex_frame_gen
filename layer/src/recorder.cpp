@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 
@@ -32,6 +33,8 @@ FrameRecorder::~FrameRecorder() {
     for (auto& b : buffers_) {
         if (b.mapped) dev_.vt.UnmapMemory(dev_.device, b.buf.memory);
         dev_.destroyBuffer(b.buf);
+        if (b.depthMapped) dev_.vt.UnmapMemory(dev_.device, b.depth.memory);
+        dev_.destroyBuffer(b.depth);
     }
 }
 
@@ -87,6 +90,28 @@ VkBuffer FrameRecorder::next(VkExtent2D extent, const OutputEncoding& encoding, 
     return b.buf.buffer;
 }
 
+VkBuffer FrameRecorder::depthBuffer(VkExtent2D extent, uint32_t texelBytes) {
+    if (current_ < 0 || (texelBytes != 2 && texelBytes != 4)) return VK_NULL_HANDLE;
+    Buffer& b = buffers_[size_t(current_)];  // (ours until the writer is done with the frame)
+    const VkDeviceSize bytes = VkDeviceSize(extent.width) * extent.height * texelBytes;
+    if (b.depthSize != bytes) {
+        try {
+            if (b.depthMapped) dev_.vt.UnmapMemory(dev_.device, b.depth.memory);
+            b.depthMapped = nullptr;
+            b.depthSize = 0;
+            dev_.destroyBuffer(b.depth);
+            b.depth = dev_.createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true, true);
+            VK_CHECK(dev_.vt.MapMemory(dev_.device, b.depth.memory, 0, VK_WHOLE_SIZE, 0, &b.depthMapped));
+            b.depthSize = bytes;
+        } catch (const std::exception& e) {
+            BDEX_WARN("recording: no buffer for the depth (%s) — frames only", e.what());
+            return VK_NULL_HANDLE;
+        }
+    }
+    pendingFrame_.depthTexel = texelBytes;
+    return b.depth.buffer;
+}
+
 void FrameRecorder::queued(uint32_t slot, uint64_t generation, double gameFps, double presentMs) {
     if (current_ < 0) return;
     pendingFrame_.slot = slot;
@@ -136,6 +161,7 @@ void FrameRecorder::writerLoop() {
         const Frame f = toWrite_.front();
         toWrite_.pop_front();
         const void* pixels = buffers_[size_t(f.buffer)].mapped;
+        const void* depth = f.depthTexel ? buffers_[size_t(f.buffer)].depthMapped : nullptr;
         const bool failed = failed_;
         lock.unlock();
         // record_scale: 0 = about 960 pixels wide (a 1440p game at a third:
@@ -144,6 +170,16 @@ void FrameRecorder::writerLoop() {
         char name[32];
         snprintf(name, sizeof(name), "/f%04d.ppm", f.index);
         bool ok = !failed && FrameGen::writePpm(dir_ + name, pixels, f.extent, f.encoding, ds);
+        if (ok && depth) {
+            // (the directory at the first depth: none in a recording without)
+            if (depthWritten_ == 0) {
+                std::error_code ec;
+                std::filesystem::create_directories(dir_ + "/depth", ec);
+            }
+            snprintf(name, sizeof(name), "/depth/f%04d.f32", f.index);
+            if (FrameGen::writeDepth(dir_ + name, depth, f.extent, f.depthTexel, ds)) ++depthWritten_;
+            snprintf(name, sizeof(name), "/f%04d.ppm", f.index);
+        }
         if (ok) {
             timestamps << (name + 1) << ',' << f.presentMs << ','
                        << (f.index == 0 ? 0.0 : f.presentMs - previousMs) << '\n';
@@ -162,7 +198,8 @@ void FrameRecorder::writerLoop() {
                 std::ofstream done(dir_ + "/DONE");
                 done << "frames=" << written_ << "\nwidth=" << f.extent.width / ds << "\nheight=" << f.extent.height / ds
                      << "\ngame_fps=" << f.gameFps << "\n";
-                BDEX_INFO("recording done: %d frames in %s", written_, dir_.c_str());
+                if (depthWritten_) done << "depth=" << depthWritten_ << "\n";
+                BDEX_INFO("recording done: %d frames in %s (%d with the game's depth)", written_, dir_.c_str(), depthWritten_);
             }
         }
         cv_.notify_all();

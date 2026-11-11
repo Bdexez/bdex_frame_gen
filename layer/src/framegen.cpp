@@ -417,7 +417,9 @@ void FrameGen::createResources() {
         accelMap_ = accelDummy_.view;
         depthDummy_ = dev_.createImage(VK_FORMAT_R32_SFLOAT, {1, 1}, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, true);
         if (cfg.depth) {
-            for (size_t i = 0; i < sources_.size(); ++i) depth_.push_back(dev_.createImage(depthFormat_, extent_, storageSampled, true));
+            // (TRANSFER_SRC: recordings keep the depth, recordReadbackDepth)
+            for (size_t i = 0; i < sources_.size(); ++i)
+                depth_.push_back(dev_.createImage(depthFormat_, extent_, storageSampled | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, true));
             depthValid_.assign(sources_.size(), false);
             VkSamplerCreateInfo ds{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
             ds.magFilter = ds.minFilter = VK_FILTER_NEAREST;
@@ -920,6 +922,12 @@ void FrameGen::recordReadbackSource(VkCommandBuffer cmd, uint32_t cur, VkBuffer 
     copyToHost(cmd, sources_[cur].image, extent_, dst);
 }
 
+void FrameGen::recordReadbackDepth(VkCommandBuffer cmd, uint32_t cur, VkBuffer dst) {
+    if (!depthValid(cur)) return;
+    memoryBarrier(cmd);
+    copyToHost(cmd, depth_[cur].image, extent_, dst);
+}
+
 void FrameGen::copyToHost(VkCommandBuffer cmd, VkImage src, VkExtent2D extent, VkBuffer dst) {
     auto& vt = dev_.vt;
     VkBufferImageCopy region{};
@@ -972,6 +980,28 @@ bool FrameGen::writeRawDump(const std::string& path, uint32_t which) const {
     const bool written = std::fwrite(dumpMapped_[which], 1, bytes, f) == bytes;
     const int closed = std::fclose(f);
     return written && closed == 0;
+}
+
+bool FrameGen::writeDepth(const std::string& path, const void* texels, VkExtent2D extent, uint32_t texelBytes,
+                          uint32_t downscale) {
+    downscale = std::max(1u, downscale);
+    const uint32_t ow = extent.width / downscale, oh = extent.height / downscale;
+    std::vector<float> out(size_t(ow) * oh);
+    for (uint32_t y = 0; y < oh; ++y) {
+        const size_t row = size_t(y * downscale + downscale / 2) * extent.width;
+        for (uint32_t x = 0; x < ow; ++x) {
+            const size_t i = row + x * downscale + downscale / 2;
+            float v;
+            if (texelBytes == 2) v = halfToFloat(static_cast<const uint16_t*>(texels)[i]);
+            else memcpy(&v, static_cast<const uint8_t*>(texels) + i * 4, 4);
+            out[size_t(y) * ow + x] = v;
+        }
+    }
+    // (little-endian floats: every platform the layer runs on)
+    FILE* f = fopen(path.c_str(), "wb");
+    if (!f) return false;
+    const bool written = fwrite(out.data(), sizeof(float), out.size(), f) == out.size();
+    return fclose(f) == 0 && written;
 }
 
 bool FrameGen::writePpm(const std::string& path, const void* pixels, VkExtent2D extent, const OutputEncoding& encoding,

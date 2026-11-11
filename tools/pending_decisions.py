@@ -47,6 +47,8 @@ CANDIDATES = [
     ("extrapolate_accel=1", "e", "accelerating camera +2.6 dB, pan -0.78, scroll -1.4"),
     ("hud_mask=4", "ie", "+0.20 dB on a HUD scene at render scale 0.75"),
     ("parallax_search=1", "ie", "railing scene x4 +0.32 dB, neutral elsewhere (make_game x4 too); ~1 ms of flow at 1440p"),
+    # (only on the sequences that kept the game's depth: recordings made with depth = 1, depth/fNNNN.f32)
+    ("depth=1", "i", "exact depth: sharp edges +0.22 to +1.68 dB, blurred game-like scenes -0.05 to +0.01; no real game scored yet"),
 ]
 MODES = {"i": "interpolate", "e": "extrapolate"}
 
@@ -87,7 +89,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         for seq in seqs:
             for mode in "ie":
-                variants = [c[0] for c in cands if mode in c[1]]
+                variants = [c[0] for c in cands if mode in c[1] and (c[0] != "depth=1" or (seq / "depth").is_dir())]
                 if not variants:
                     continue
                 print(f"{seq.name} [{MODES[mode]}]: {len(variants)} variants", file=sys.stderr)
