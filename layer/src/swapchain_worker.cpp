@@ -601,6 +601,7 @@ void VirtualSwapchain::feedbackLoop() {
                 }
                 if (fbLastMs_ > 0.0 && now - fbLastMs_ < 0.5) {
                     ++fbReplaced_;
+                    displayClock_.noteReplaced();
                 } else {
                     // virtual_grid: two frames shown a third of a period
                     // apart or less fell on one refresh, seen through

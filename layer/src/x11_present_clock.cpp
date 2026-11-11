@@ -26,6 +26,7 @@ void PresentTimeline::add(uint64_t msc, double ustMs) {
     }
     if (msc == lastMsc_) {  // no new MSC since the previous present: it was overwritten
         ++replaced;
+        clock_.noteReplaced();
         return;
     }
     // A new MSC: the previous present went out with it. Its UST is that tick:

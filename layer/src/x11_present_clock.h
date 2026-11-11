@@ -40,6 +40,7 @@ public:
     PresentTimeline() {  // (compositor frame callbacks: DisplayClock::setJitter, setSticky)
         clock_.setJitter(1.0, 0.15);
         clock_.setSticky(true);
+        clock_.setNeedsEvidence(true);
     }
     void setHint(double hz) { clock_.setHint(hz); hintMs_ = hz > 0.0 ? 1000.0 / hz : 0.0; }
     void add(uint64_t msc, double ustMs);

@@ -80,6 +80,13 @@ VirtualSwapchain::VirtualSwapchain(DeviceData& dev, const VkSwapchainCreateInfoK
                 if (it != dev_.inst->x11Windows.end()) window = it->second;
             }
             if (window) x11Clock_ = X11PresentClock::start(window, cfg_.panelDisplayHz);
+            if (x11Clock_) {
+                // An X11 window: under Xwayland the present feedback times our
+                // own presents — a regular cadence there is not the screen's
+                // grid (DisplayClock::setNeedsEvidence).
+                std::lock_guard<std::mutex> fbLock(fbMutex_);
+                displayClock_.setNeedsEvidence(true);
+            }
             if (x11Clock_ && !latencyLogPath_.empty()) logX11Completions();
         }
     } catch (...) {

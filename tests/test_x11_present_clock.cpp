@@ -139,3 +139,60 @@ TEST(present_timeline_drops_a_short_period_no_interval_shows) {
     }
     CHECK(g.valid() && std::fabs(g.periodMs() - kP) < 0.05);
 }
+
+// A game that presents no faster than the screen refreshes, under Xwayland:
+// each present completes at its own time, one MSC each. A steady cadence
+// fits a "grid" — the game's: State of Decay 2 armed at 79.6 fps on a
+// 143.9 Hz screen read 82.0 Hz (11/11), and at 72.8 fps 71.3 Hz. « Auto »
+// aims at the refresh rate: a game at its own "refresh rate" got no generated
+// frame, and so never showed the screen's grid. Not a grid: every interval
+// is one period, no present met another in a refresh, and the system reports
+// another rate (or none).
+TEST(present_timeline_does_not_take_the_games_cadence_for_the_screen) {
+    for (const double hint : {143.912, 0.0}) {
+        PresentTimeline t;
+        t.setHint(hint);
+        uint32_t s = 21;
+        double ust = 1000.0;
+        uint64_t msc = 1;
+        for (int i = 0; i < 600; ++i) t.add(msc++, ust += 1000.0 / 79.6 + jitter(s, 0.3));
+        CHECK(!t.valid());
+        // Generation starts: three frames a game frame, more than the screen
+        // takes — ticks on its grid, presents replaced. The grid is learned...
+        double present = ust;
+        uint64_t tick = uint64_t(std::ceil(ust / kP));
+        for (int i = 0; i < 1200; ++i) {
+            present += 1000.0 / (3 * 79.6);
+            const uint64_t at = uint64_t(std::ceil(present / kP));  // the callback after this present
+            if (at != tick) {
+                ++msc;
+                ust = double(at) * kP + jitter(s, 0.3);  // (one callback, one time: the same for the presents it takes)
+            }
+            tick = at;
+            t.add(msc, ust);
+        }
+        CHECK(t.valid() && std::fabs(t.periodMs() - kP) < 0.05);
+        CHECK(t.replaced > 300);
+        // ...and stays when the frames then go out one a refresh, paced on it
+        // (no interval of two periods, no replaced present any more).
+        for (int i = 0; i < 600; ++i) t.add(++msc, double(++tick) * kP + jitter(s, 0.3));
+        CHECK(t.valid() && std::fabs(t.periodMs() - kP) < 0.05);
+    }
+}
+
+// A real grid away from the hint (the panel reads the fastest monitor, the
+// game is on a 60 Hz one): 45 fps there completes one or two refreshes
+// apart — the intervals show the grid, and it is taken.
+TEST(present_timeline_takes_a_grid_the_intervals_show) {
+    PresentTimeline t;
+    t.setHint(143.912);
+    uint32_t s = 4;
+    const double p60 = 1000.0 / 60.0;
+    double content = 1000.0, ust = 1000.0;
+    for (uint64_t msc = 1; msc <= 400; ++msc) {
+        content += 1000.0 / 45.0;
+        ust = std::max(ust + p60, std::ceil(content / p60) * p60);
+        t.add(msc, ust + jitter(s, 0.3));
+    }
+    CHECK(t.valid() && std::fabs(t.refreshHz() - 60.0) < 0.5);
+}

@@ -6,6 +6,34 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### The screen's refresh rate is no longer read from the game's own cadence (2026-11-11)
+
+- **Fixed: under Xwayland, a game presenting no faster than the screen
+  refreshes had its own frame rate read as the screen's refresh rate.**
+  There each present completes at its own time, and a steady cadence fits a
+  "grid": State of Decay 2 (DXVK) waiting for « Start » at 79.6 fps on the
+  143.9 Hz screen read `refresh_hz=82.0`, at 72.8 fps 71.3 (the player's
+  status files of 11/11). « Auto » and the adaptive multiplier aim at that
+  rate: a game at its own "refresh rate" got no generated frame, and so never
+  showed the screen's grid; the frame limit `auto`, `even_fast`'s band and
+  the held-refresh count used it too. For an X11 window (x11_clock, and the
+  present feedback of a swapchain it watches) a period is now the display's
+  only when the times show it: frames a different number of refreshes apart
+  (60 fps on 144 Hz: two, then three), presents that met in one refresh,
+  the refresh rate the system reports (within 5 %), or a period that showed
+  those before (one frame a refresh, paced on the grid, shows neither).
+  Intervals that are all the same two or more periods of the system's rate
+  keep that rate instead of one refined to the game's cadence (67.6 fps read
+  135.2 Hz). Replayed through the real estimator, cadences from 20 to
+  143 fps with 0.1–1 ms of jitter, with the panel's reading and without:
+  a wrong rate in 426 runs of 584 before, 14 after — all a game within 5 %
+  of the refresh rate, read as that. Real grids (36 to 480 presents a
+  second on 143.9 Hz) are found as before; without any system reading, one
+  frame a refresh from the start has no grid until frames meet in a refresh.
+  Headless gamescope (its Xwayland completes on the grid): 144.0 Hz found
+  at x1 (80 fps), x2 and x3, the display tests unchanged. Wayland surfaces:
+  unchanged.
+
 ### Ubuntu 22.04 and Debian 12: X11 Vulkan programs crashed under the layer (2026-11-10)
 
 - **Fixed: every X11 / Xwayland Vulkan program crashed at its first surface

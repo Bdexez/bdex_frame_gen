@@ -122,3 +122,33 @@ TEST(dynamic_multiplier_stays_under_the_target) {
     CHECK(dynamicMultiplier(2, ratio(47.5), 4) == 2);
     CHECK(dynamicMultiplier(2, ratio(46), 4) == 3);
 }
+
+// needsEvidence (an X11 window's present feedback, which under Xwayland
+// times our own presents): a steady cadence away from the system's refresh
+// rate is not a grid; without the flag (a Wayland surface's feedback: real
+// display times) one frame a refresh still is, whatever the hint — the
+// panel reads the fastest monitor, the game may be on another.
+TEST(display_clock_needs_evidence_only_where_asked) {
+    uint32_t s = 13;
+    DisplayClock plain, x11;
+    plain.setHint(144.0);
+    x11.setHint(144.0);
+    x11.setNeedsEvidence(true);
+    for (int i = 0; i < 96; ++i) {
+        const double t = i * (1000.0 / 80.0) + jitter(s, 0.15);
+        plain.add(t);
+        x11.add(t);
+    }
+    CHECK(plain.valid() && std::fabs(plain.refreshHz() - 80.0) < 0.5);
+    CHECK(!x11.valid());
+    // Presents replaced within a refresh: they outnumber the refreshes, the
+    // times are the display's.
+    DisplayClock fast;
+    fast.setHint(144.0);
+    fast.setNeedsEvidence(true);
+    for (int i = 0; i < 96; ++i) {
+        if (i % 8 == 0) fast.noteReplaced();
+        fast.add(i * (1000.0 / 80.0) + jitter(s, 0.15));
+    }
+    CHECK(fast.valid() && std::fabs(fast.refreshHz() - 80.0) < 0.5);
+}

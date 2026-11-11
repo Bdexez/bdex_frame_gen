@@ -1,6 +1,7 @@
 #pragma once
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 namespace bdex {
@@ -57,6 +58,21 @@ public:
     // after a burst of late ones), and the grid's phase is the median of the
     // recent times, not the last one (perhaps late).
     void setSticky(bool on) { sticky_ = on; }
+    // X11 windows (x11_clock, and the present feedback of a swapchain it
+    // watches): under Xwayland a window that presents no faster than the
+    // screen refreshes completes each present at its own time — the "grid"
+    // those times fit is the game's cadence, at its own phase (State of
+    // Decay 2 armed at 79.6 fps on a 143.9 Hz screen, 11/11: refresh_hz
+    // 82.0; at 72.8 fps: 71.3 — and « Auto », which aims at that rate, then
+    // never generates, so never sees the screen's). A display's grid shows
+    // in the times: frames a different number of refreshes apart (60 fps on
+    // 144 Hz: two, then three), or presents that met in one refresh
+    // (noteReplaced). A period with neither, away from the hint's and from
+    // one that had them before, is not taken.
+    void setNeedsEvidence(bool on) { needsEvidence_ = on; }
+    // A present replaced before display since the last add(): presents come
+    // faster than the display takes them.
+    void noteReplaced() { replacedSince_ = true; }
     bool valid() const { return periodMs_ > 0.0; }
     double periodMs() const { return periodMs_; }
     double refreshHz() const { return valid() ? 1000.0 / periodMs_ : 0.0; }
@@ -71,8 +87,12 @@ public:
 
 private:
     void estimate();
-    void setPhase(const std::vector<double>& sorted);
+    void setPhase(const std::vector<double>& sorted, bool refine = true);
     std::vector<double> times_;   // ring of the latest display times
+    std::vector<uint8_t> replacedBefore_;  // ...each: a present was replaced since the time before it
+    bool replacedSince_ = false;
+    bool needsEvidence_ = false;
+    double evidencedMs_ = 0.0;  // the last period the times showed to be a display's (needsEvidence)
     size_t head_ = 0;
     double last_ = 0.0;
     double periodMs_ = 0.0;
