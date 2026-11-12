@@ -4614,7 +4614,19 @@ lui date du 01/11 : **ces correctifs et ceux du 10/11 ne sont pas installés**
    0,06–0,09 ailleurs) — à regarder.
 7. Journal `gpu_headroom` : « load not measured » au lieu de « -1 % busy ».
 
-**Vérifié** : tests unitaires (138), hors ligne (offline, determinism,
-min_limits, formats…), tests d'affichage dans gamescope sans tête (10/10),
-validation Khronos 1.4.363 sur les essais touchés (0 message), MinGW x64 +
-i686, réplique de la CI Linux dans Docker.
+   Windows : la copie vient du bloc d'environnement du processus
+   (`GetEnvironmentStringsW`, converti en page de codes ANSI), pas de la
+   liste étroite du CRT (`_environ`) — dans un programme à point d'entrée
+   large, le CRT ne la construit qu'au premier `getenv`, que la couche
+   n'appelle plus (config introuvable sinon : pas d'`APPDATA`).
+
+**Vérifié** (arbre final) : tests unitaires (138), hors ligne (offline,
+determinism, min_limits, formats…), tests d'affichage dans gamescope sans
+tête (10/10), validation Khronos 1.4.363 sur les essais touchés (0
+message), MinGW x64 + i686 (qui a attrapé un test compilé sans
+`BDEX_SOURCE_DIR`), **réplique complète de la CI Linux** dans Docker sous
+lavapipe (core 18/18, display 11/11, slow, stress, validation : toutes
+vertes, 882 s), et la **couche Windows sur le GPU sous Wine**
+(`wine-gpu-check.sh` : Vulkan 64/32 bits, extrapolation, hybride ×3,
+D3D11 64/32 et D3D12, profondeur, limite à 30 tenue — 10/10, réveils
+70–80 µs) après le changement de lecture de l'environnement.
