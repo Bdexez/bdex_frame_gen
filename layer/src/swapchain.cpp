@@ -1224,13 +1224,17 @@ void VirtualSwapchain::updateHeadroom(bool active, double waitedMs) {
     const double before = headroomCap_.capFps;
     const double cap = headroomCap_.update(nowMs, waitedMs, frameIntervalMs_, busy, cfg_.gpuHeadroom);
     if (cap == before) return;
+    // (no load reading on this GPU, or none yet: said so, not "-1 % busy")
+    char load[32];
+    if (gpuBusy_ >= 0) snprintf(load, sizeof load, "%d %% busy", gpuBusy_);
+    else snprintf(load, sizeof load, "load not measured");
     if (before <= 0.0)
-        BDEX_INFO("gpu_headroom: GPU saturated (%d %% busy, the game waits for it): game held under %.1f fps from %.1f",
-                  gpuBusy_, cap, frameIntervalMs_ > 0.0 ? 1000.0 / frameIntervalMs_ : 0.0);
+        BDEX_INFO("gpu_headroom: GPU saturated (%s, the game waits for it): game held under %.1f fps from %.1f",
+                  load, cap, frameIntervalMs_ > 0.0 ? 1000.0 / frameIntervalMs_ : 0.0);
     else if (cap <= 0.0)
-        BDEX_INFO("gpu_headroom: room again (GPU %d %% busy): game no longer held", gpuBusy_);
+        BDEX_INFO("gpu_headroom: room again (GPU %s): game no longer held", load);
     else
-        BDEX_DBG("gpu_headroom: GPU %d %% busy, cap %.1f -> %.1f fps", gpuBusy_, before, cap);
+        BDEX_DBG("gpu_headroom: GPU %s, cap %.1f -> %.1f fps", load, before, cap);
 }
 
 // gpu_budget: about once a second, compare the generation's GPU time with the
