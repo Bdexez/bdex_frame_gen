@@ -4527,3 +4527,94 @@ fps sur Civ 6 », qui tournait). Tout est sans fenêtre sur l'écran.
   avec l'exception ; invariant `f2cec5f` identique), MinGW x64 + i686, la
   matrice Windows ci-dessus (deux fois, dont l'arbre final), tests
   d'affichage dans gamescope sans tête (8/8), grille X11 à 144 Hz.
+
+### 11/11 — sept axes implémentés un à un (demande : « trouve des axes et implémente-les »)
+
+Pendant la session l'utilisateur jouait (State of Decay 2, puis
+Civilization VI) : ses fichiers de statut et les complétions X de ses jeux,
+écoutées en lecture seule, ont servi de données. La couche installée chez
+lui date du 01/11 : **ces correctifs et ceux du 10/11 ne sont pas installés**
+(`tools/install.sh`, puis relancer panneau et jeux).
+
+1. **La cadence du jeu prise pour la fréquence de l'écran** (`display_clock`).
+   Statuts du jour, SoD2 (DXVK) armé sur l'écran à 143,9 Hz : `refresh_hz`
+   82,0 à 79,6 i/s, 71,3 à 72,8 i/s, 287,8, 143,9 ou 0 selon le lancement.
+   Sous Xwayland, un jeu qui présente moins vite que l'écran complète (en
+   partie) à ses propres instants ; une cadence régulière « tient » une
+   grille. « Auto » et l'adaptatif visent cette fréquence : jeu à « sa »
+   fréquence → ×1, jamais d'image générée, donc jamais la vraie grille.
+   Règle (`setNeedsEvidence` : PresentTimeline, et l'horloge du retour
+   d'affichage d'une swapchain que x11_clock surveille) : une période n'est
+   celle de l'écran que si les temps le montrent — intervalles de longueurs
+   différentes en périodes (10 %), ou présentations remplacées dans un même
+   rafraîchissement (3 dans la fenêtre, k = 1), ou à ±5 % de la fréquence
+   annoncée par le système, ou d'une période déjà montrée ainsi. Intervalles
+   tous égaux à ≥ 2 périodes de l'indice : on garde l'indice, pas la cadence
+   (67,6 i/s lisait 135,2 Hz). Balayage (vrai estimateur, 20–143 i/s, gigue
+   0,1–1 ms, avec/sans indice) : fréquence fausse dans 426 cas sur 584
+   avant, 14 après (tous à moins de 5 % de la vraie). **Trace réelle** de
+   Civ VI à 60 i/s (20 s, dans `tests/data/`) : 329 intervalles à 2,0
+   périodes, 213 à 3,0 (sur la grille), 379 à 2,4 (les 16,67 ms du jeu) ;
+   le code du 10/11 y lisait « 60 Hz » dans 14 estimations sur 75, celui-ci
+   aucune. gamescope sans tête (son Xwayland complète sur la grille) :
+   144,0 Hz à ×1 (80 i/s), ×2, ×3, inchangé. Surfaces Wayland : inchangé
+   (le panneau lit le moniteur le plus rapide : un écran plus lent y reste
+   mesuré par son retour d'affichage).
+   **Ouvert** : SoD2 (DXVK) à ~80 i/s montrait `shown_fps` ≈ la moitié de
+   ses i/s (un MSC pour deux présentations) — cette forme-là n'est pas dans
+   mes données (le jeu était caché pendant l'écoute) ; « présentations
+   remplacées » y compterait comme preuve d'une grille à 40 Hz. À
+   enregistrer jeu visible : `bdex-x11-trace watch 20`.
+   Vu aussi : fenêtre cachée (autre espace de travail Hyprland) → 2 116
+   complétions en 25 s, **MSC et UST figés** ; le statut dit alors
+   `shown_fps=0`. Piste non faite : suspendre la génération tant que rien
+   n'est remis au compositeur (non testable sans toucher à la session).
+2. **`profile = 2`** : temps GPU de chaque étape du moteur et de chaque
+   passe optionnelle (`FrameGen::eachPass`, un horodatage après chaque
+   crochet ; moyenne sur les images où l'entrée apparaît). Stats de la
+   couche et fin de `bdex_offline`. **Méthode de mesure qui marche** : GPU
+   au repos (aucun jeu), `--max-inputs 5` (au-delà le GPU baisse ses
+   horloges : 4,2 ms devenaient 12 à 15) — trois essais identiques au
+   centième. 1440p, défauts du GPU dédié, RTX 3060 Ti, par image du jeu :
+   ×3 4,24 ms (synthèse 1,73, `false_detail` 0,73, flux 0,43, `mosaic_blur`
+   0,33, `hud_layer` 0,22, `hud_mask` 0,19, splat 0,10) ; ×4 6,2 ms
+   (synthèse 2,6, `false_detail` 1,15, `mosaic_blur` 0,6).
+3. **Les enregistrements du panneau gardent la profondeur** (`depth = 1`,
+   génération en cours) : `depth/fNNNN.f32`, format de `bdex_offline
+   --depth` ; `eval_sequence.py --variant DEPTH=1` prend le dossier seul,
+   `pending_decisions.py` note `depth` sur les séquences qui l'ont,
+   `corpus_pack/fetch` la conservent. Vérifié sur la démo (image de
+   profondeur alignée sur l'image). **Reste à faire par l'utilisateur** :
+   enregistrer des jeux avec `depth` — c'est ce qui manquait pour juger
+   l'option sur du réel.
+4. **L'environnement lu une seule fois** (`platformEnv`). La couche appelait
+   `getenv` 10 à 20 fois par seconde toute la partie (config et session
+   relues deux fois par seconde, dossier de statut, batterie) ; avant
+   glibc 2.41 `getenv` n'est pas sûr face à un `setenv` d'un autre fil, et
+   le runtime Steam « sniper » est en 2.31. Copie à la première lecture ; la
+   bibliothèque n'importe plus `getenv`. Trouvé par une **passe d'analyse
+   statique** (clang-tidy + analyseur Clang, base de compilation dans un
+   arbre à part : 309 rapports ; les déréférencements nuls et l'accès hors
+   bornes tracés = faux positifs — `dev_.inst` toujours posé dans la couche,
+   `acquireAhead_` ≥ 1). Un programme qui change son propre environnement
+   avant `Config::load` appelle `platformEnvForget()`.
+5. **`bdex-x11-trace`** (`tools/x11_trace`, non installé) : `watch N` écoute
+   les complétions Present de toutes les fenêtres (lecture seule), `replay`
+   les passe dans `PresentTimeline`. La méthode des correctifs du 10 et du
+   11/11, gardée ; la trace de Civ VI est un test unitaire.
+6. **`gpu_budget`, niveau 1** : coupe aussi `false_detail` et `mosaic_blur`.
+   1440p ×3 : 4,24 → 3,85 ms avant (−9 %, les vecteurs par pixel), 2,59
+   maintenant (−39 %) ; niveau 2 : 2,30. Qualité sur `make_game.py` ×4
+   (turn, walk, fps, strafe) : niveau 1 −0,11 dB en moyenne (−0,31 à
+   +0,24), niveau 2 −0,27. `bdex_offline --quality-level 1|2`. L'option
+   reste à 0 par défaut ; **non fait, à décider par l'utilisateur** : le
+   faire aussi par défaut avant que `gpu_headroom` ne bride le jeu (gain
+   ~4 i/s à 62 i/s ×3 contre le retour de la mosaïque).
+   Vu en passant : `pixel_vectors` perd 0,31 dB sur `walk` ×4 (gagne
+   0,06–0,09 ailleurs) — à regarder.
+7. Journal `gpu_headroom` : « load not measured » au lieu de « -1 % busy ».
+
+**Vérifié** : tests unitaires (138), hors ligne (offline, determinism,
+min_limits, formats…), tests d'affichage dans gamescope sans tête (10/10),
+validation Khronos 1.4.363 sur les essais touchés (0 message), MinGW x64 +
+i686, réplique de la CI Linux dans Docker.

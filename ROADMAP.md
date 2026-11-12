@@ -87,8 +87,9 @@ log is in [`CHANGELOG.md`](CHANGELOG.md).
   the status files show the depth buffer found (`depth=on`) in CK3 (native
   Vulkan), GTA IV and State of Decay 2 (DXVK) and Civilization VI
   (VKD3D-Proton); its quality is judged nowhere yet, and the panel's
-  recordings do not keep the depth (`bdex_offline --depth` reads it). Next:
-  record it, judge it on real games, then predicted frames (`reveal_fill`,
+  recordings keep the depth since 2026-11-11 (`depth/fNNNN.f32`, what
+  `bdex_offline --depth` reads). Next: record games with it, judge it on
+  them, then predicted frames (`reveal_fill`,
   the splat's priority by depth), then the game's own motion vectors (below).
 - **x4 on a 30 fps game** (2026-10-13 to 21): x4 is again exactly 4 frames a
   game frame by default (the player's choice, 2026-10-20: `refresh_fill`
@@ -128,13 +129,28 @@ log is in [`CHANGELOG.md`](CHANGELOG.md).
   - the GPU cost at 1440p x4: `false_detail` is ~25 % of the generation
     (1.75–1.9 ms a game frame) for a few hundredths of a dB on average; under
     saturation the low-value passes should go before the game is held back
-    (`gpu_budget` is off and skips them); a per-pass profile
-    (`BDEX_FG_PROFILE=2`) would replace the noisy per-option sweeps;
+    (`gpu_budget` skipped them: its level 1 takes them since 2026-11-11; by
+    default it is off); the per-pass profile (`BDEX_FG_PROFILE=2`) exists
+    since the same day;
   - the game's motion vectors (TAA / DLSS / FSR velocity buffers), found
     like the depth buffer: never considered; an `edge_bench` oracle first;
   - the validation warning under a frame limit: not the `fps_limit_wait`
     path; with validation 1.4.363 it is `WRITE-AFTER-PRESENT`, 4 runs in 10
     under X11 with a limit, none without — a minimal repro to settle it.
+- **Done on 2026-11-11** (MEMOIRE §7, « 11/11 »): the game's own cadence no
+  longer read as the screen's refresh rate under Xwayland (a real trace of
+  a 60 fps game is a unit test); `profile = 2`, the GPU time per engine step
+  and optional pass (repeatable to 0.01 ms on an idle GPU); the panel's
+  recordings keep the game's depth, and `pending_decisions.py` scores
+  `depth` on them; the layer reads the environment once (`getenv` against a
+  game's `setenv`, found by a static-analysis pass); `bdex-x11-trace`;
+  `gpu_budget`'s level 1 frees 39 % of the generation instead of 9 %.
+  **Left from it**: recordings of real games made with `depth = 1` (the
+  judgement itself); State of Decay 2's completions on screen
+  (`bdex-x11-trace watch`: one MSC for two presents, not in the data yet);
+  generation suspended while the window is hidden (its MSC stands still);
+  whether the low-value passes should also go, by default, before
+  `gpu_headroom` holds the game back (the player's choice).
 - **Windows**: forward `VK_EXT_full_screen_exclusive` through the virtual
   swapchain; an installer with Authenticode signing; a Desktop Duplication
   fallback for capture; measuring capture latency from the game's present

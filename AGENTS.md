@@ -338,6 +338,13 @@ suivi. Actif seulement avec au moins trois sorties, les contrôles de
 pression habituels, hors `low_latency`. Ne pas retirer une sortie déjà
 calculée dans le worker : cela doublait un pas de mouvement (prototype
 écarté). L'ancien détecteur à huit jobs couvre les autres retards durables.
+**Profondeur dans les enregistrements** (11/11) : avec `depth` actif et
+valide pour l'image (`FrameGen::depthValid`), `FrameRecorder::depthBuffer`
++ `recordReadbackDepth` → `depth/fNNNN.f32` (flottants, Z inversé, taille
+des images, texel du centre de chaque bloc), `depth=N` dans `DONE` ; le
+format de `bdex_offline --depth`. `eval_sequence.py --variant DEPTH=1`
+ajoute `--depth SEQ/depth` de lui-même ; `pending_decisions.py` ne note
+`depth` que sur les séquences qui ont le dossier.
 **Enregistrements du panneau** (16/10) : `FrameRecorder::queued` reçoit
 l'heure monotone de `present()` (`t0`), puis le writer produit
 `timestamps.csv` (`frame,present_ms,interval_ms`) avant `DONE`. Ne jamais
@@ -848,6 +855,29 @@ réintroduire) :
 
 ## 9. Pièges transverses
 
+- **Jamais de `getenv` dans le moteur** (11/11) : `platformEnv(nom)` /
+  `platformEnviron()` — une copie de l'environnement prise à la première
+  lecture. La couche relit sa config deux fois par seconde depuis les fils
+  du jeu, et `getenv` n'est pas sûr face à un `setenv` du jeu avant
+  glibc 2.41 (runtime Steam sniper : 2.31). Un programme à nous qui change
+  son environnement avant `Config::load` (captures, `bdex_offline`,
+  calibrage) appelle `platformEnvForget()` ; les tests passent par
+  `test::setEnv` / `test::unsetEnv`.
+- **Grille X11 : une cadence n'est pas une grille** (11/11,
+  `DisplayClock::setNeedsEvidence`) : sous Xwayland (Hyprland), un jeu qui
+  présente moins vite que l'écran complète en partie à ses propres instants.
+  Une période n'est acceptée que montrée par les temps (intervalles de
+  longueurs différentes, présentations remplacées), proche de l'indice du
+  système, ou déjà montrée. Ne pas retirer ces preuves : « Auto » restait à
+  ×1 pour toujours sur un jeu lu à « sa » fréquence. Données réelles :
+  `bdex-x11-trace watch` (lecture seule, jeu **visible** : caché, MSC et UST
+  sont figés) puis `replay` ; `tests/data/x11_present_*.txt`. gamescope sans
+  tête ne reproduit pas ce cas (son Xwayland complète sur la grille).
+- **Mesurer un coût GPU** (11/11) : `BDEX_FG_PROFILE=2 bdex_offline SEQ OUT
+  --max-inputs 5`, GPU au repos (aucun jeu : `nvidia-smi`, statuts) — trois
+  essais identiques au centième de ms ; sans `--max-inputs 5` le GPU baisse
+  ses horloges (×3 les temps). Jamais de balayage « option par option »
+  (bruit > effet). `--quality-level 1|2` : les niveaux de `gpu_budget`.
 - **Ne jamais chercher la fonction suivante au moment de l'appel** (10/11) :
   sous le `device_select` de Mesa 22 (Ubuntu 22.04, Debian 12), une
   recherche faite après `vkCreateInstance` remonte en haut de la chaîne
@@ -1010,7 +1040,9 @@ x2/x3/x4), sauf le correctif HDR (les chemins SDR restent identiques).
   vite que leur période (boîte hachurée de la démo, −1,2 dB).
 - **`gpu_budget`** : gouverneur `budget.{h,cpp}` (testé), niveaux 1–2 =
   surcharges (`FrameGen::effectiveConfig`), 3–4 = reconstruction avec
-  `flowScaleFactor`.
+  `flowScaleFactor`. Niveau 1 (11/11) : aussi `false_detail` et
+  `mosaic_blur` (1440p ×3 : 4,24 → 2,59 ms, −0,11 dB sur `make_game` ×4 ;
+  avant : 3,85 ms) ; `hud_mask` / `hud_layer` restent à tous les niveaux.
 - **GL / gamescope** : `--gl` force aussi le fournisseur Mesa (sinon le GL
   NVIDIA garde le jeu, hors de portée, sans erreur) ; profil fourni
   `[gamescope] hide_present_ext = 0` (backend SDL requis).
@@ -1033,6 +1065,11 @@ x2/x3/x4), sauf le correctif HDR (les chemins SDR restent identiques).
   tuile (déplacement absolu vs tuile centrée sur `base`, et candidat zéro
   hors fenêtre) → non déterministe, corrigé ; `chroma_weight` refuse un
   challenger loin du mouvement de la paire précédente.
+- **Profil par passe** (11/11, `profile = 2`) : `FrameGen::eachPass(cmd,
+  "travail du moteur qui précède", crochet)` remplace toute boucle sur
+  `passes_` qui enregistre des commandes — un horodatage après chaque
+  crochet, cumulé par `FgPass::name()` ; un nouveau point d'appel des passes
+  passe par `eachPass`, sinon son temps va à l'entrée suivante.
 - **Profilage** : `bdex_offline` + `BDEX_FG_PROFILE=1` et `--bench N`
   (flow répété, GPU à fréquence stable). Mesuré : lissage + barrière ≈ 0 ms,
   flow en demi-précision inutile (textures ~32 k texels) → non faits.
