@@ -10,9 +10,21 @@ namespace bdex {
 // sections and the anti-cheat check.
 std::vector<std::string> platformProcessNames();
 
-// The process environment as a NULL-terminated list of "KEY=VALUE" strings
-// (POSIX `environ` / MSVCRT `_environ`).
+// The process environment, as it was when first asked for: a copy taken
+// once. The layer reads it for as long as the game runs (the configuration
+// and the panel's session are polled twice a second, the status written as
+// often), from the game's threads and its own — and getenv is not safe
+// against a setenv on another thread before glibc 2.41 (the Steam Runtime
+// "sniper" every Proton game runs in has 2.31): a game that sets a variable
+// while it runs moves the list getenv is walking. platformEnv: the value of
+// `name`, nullptr when unset (valid for the process's life).
+// platformEnviron: the copy as a NULL-terminated list of "KEY=VALUE".
+// platformEnvForget: this program changed its own environment (the capture
+// tools and bdex_offline before Config::load, the tests) — copied again at
+// the next use.
+const char* platformEnv(const char* name);
 char** platformEnviron();
+void platformEnvForget();
 
 // Full path of the user config file (Linux: $XDG_CONFIG_HOME or
 // ~/.config; Windows: %APPDATA%\bdex-framegen), or "" when no location

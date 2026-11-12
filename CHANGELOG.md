@@ -6,6 +6,27 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### The layer reads the environment once (2026-11-11)
+
+- **Fixed: the layer called `getenv` for as long as the game ran** — 10 to
+  20 times a second, from the game's present thread and its own: the
+  configuration file's path and the panel's session, polled twice a second,
+  the status directory at each status, the battery state. Before glibc 2.41
+  `getenv` is not safe against a `setenv` on another thread (the list it
+  walks is moved), and the Steam Runtime "sniper" that Proton and most
+  native games run in has glibc 2.31: a game setting a variable while it
+  plays could crash inside the layer, rarely and without a trace of why.
+  The environment is now copied once, at the layer's first use
+  (`platformEnv`, `platformEnviron`); the library no longer imports
+  `getenv`. Found by a static-analysis pass over the sources (clang-tidy
+  and the Clang analyzer: 309 reports — this one real; the null-pointer and
+  out-of-bounds ones traced and false). The capture tools, `bdex_offline`
+  and `bdex-calibrate`, which set variables of their own before loading the
+  configuration, say so (`platformEnvForget`). Windows: the same copy (the
+  CRT's `getenv` has the same limit against `_putenv`).
+- `gpu_headroom`'s log lines said "-1 % busy" on a GPU whose load is not
+  measured: "load not measured".
+
 ### Recordings keep the game's depth (2026-11-11)
 
 - **The panel's recordings keep each frame's depth** when the `depth` option

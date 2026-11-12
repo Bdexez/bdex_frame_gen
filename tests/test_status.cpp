@@ -230,7 +230,7 @@ TEST(status_sweeps_files_of_processes_gone) {
     const fs::path recent = make(std::to_string(dead[1]) + ".status", std::chrono::minutes(1));
     const fs::path session = make("app.session", std::chrono::minutes(30));
     const fs::path other = make("notapid.status", std::chrono::minutes(30));
-    setenv("BDEX_FG_STATUS_DIR", dir.string().c_str(), 1);
+    test::setEnv("BDEX_FG_STATUS_DIR", dir.string().c_str());
     StatusEntry e;
     e.kind = "device";
     e.state = "active";
@@ -243,6 +243,6 @@ TEST(status_sweeps_files_of_processes_gone) {
     CHECK(fs::exists(other));
     statusRemove(0x5eed);
     CHECK(!fs::exists(own));
-    unsetenv("BDEX_FG_STATUS_DIR");
+    test::unsetEnv("BDEX_FG_STATUS_DIR");
     fs::remove_all(dir, ec);
 }

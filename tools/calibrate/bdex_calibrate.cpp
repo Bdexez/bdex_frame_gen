@@ -9,6 +9,7 @@
 // Usage: bdex-calibrate [--size WxH] [--refresh HZ] [--gpu NAME] [--frames N] [--json FILE]
 // Run by the control panel and the Windows launcher on first start
 // (« Calibrer »), and by `bdex-framegen --calibrate [--apply]`.
+#include "platform.h"
 #include "config.h"
 #include "device.h"
 #include "framegen.h"
@@ -48,6 +49,7 @@ void setEnv(const char* k, const char* v) {
 #else
     setenv(k, v, 1);
 #endif
+    bdex::platformEnvForget();  // (the engine reads a copy of the environment)
 }
 
 std::string lower(std::string s) {

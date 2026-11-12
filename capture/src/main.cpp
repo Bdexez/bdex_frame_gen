@@ -992,6 +992,7 @@ int main(int argc, char** argv) {
     // not pause it nor turn its HUD off. The CRT's copy of the environment,
     // which getenv reads (SetEnvironmentVariable does not update it).
     _putenv_s("BDEX_FG", "1");
+    bdex::platformEnvForget();  // (the engine reads a copy of the environment, taken by the load above)
     SetConsoleOutputCP(CP_UTF8);
     setDpiAware();
     // 1 ms timer resolution for the pacing waits (see sleepUntil); per

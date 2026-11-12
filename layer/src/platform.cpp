@@ -8,6 +8,8 @@
 #include <chrono>
 #include <thread>
 #include <fstream>
+#include <mutex>
+#include <cstring>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN  // (bdex_capture defines it for the whole target)
@@ -153,28 +155,72 @@ std::vector<std::string> platformProcessNames() {
     return names;
 }
 
-char** platformEnviron() {
+namespace {
+struct EnvCopy {
+    std::vector<std::string> entries;  // "KEY=VALUE"
+    std::vector<char*> list;           // the entries, then nullptr
+};
+std::mutex g_envMutex;
+EnvCopy* g_env = nullptr;         // (never freed: its strings are handed out)
+std::vector<EnvCopy*> g_envOld;   // platformEnvForget: earlier copies, for the pointers given from them
+
+const EnvCopy& envCopy() {
+    std::lock_guard<std::mutex> lock(g_envMutex);
+    if (!g_env) {
+        auto* copy = new EnvCopy;
 #ifdef _WIN32
-    return _environ;  // declared at global scope above
+        char** raw = _environ;  // declared at global scope above
 #else
-    return environ;  // declared at file scope above
+        char** raw = environ;  // declared at file scope above
 #endif
+        for (char** e = raw; e && *e; ++e) copy->entries.emplace_back(*e);
+        for (std::string& entry : copy->entries) copy->list.push_back(entry.data());
+        copy->list.push_back(nullptr);
+        g_env = copy;
+    }
+    return *g_env;
+}
+} // namespace
+
+const char* platformEnv(const char* name) {
+    const size_t n = strlen(name);
+    for (const std::string& entry : envCopy().entries) {
+#ifdef _WIN32
+        // (Windows' variable names are not case-sensitive)
+        const bool same = entry.size() > n && entry[n] == '=' && _strnicmp(entry.c_str(), name, n) == 0;
+#else
+        const bool same = entry.size() > n && entry[n] == '=' && entry.compare(0, n, name) == 0;
+#endif
+        if (same) return entry.c_str() + n + 1;
+    }
+    return nullptr;
+}
+
+char** platformEnviron() {
+    // (the copy lives as long as the process: see g_env)
+    return const_cast<char**>(envCopy().list.data());
+}
+
+void platformEnvForget() {
+    std::lock_guard<std::mutex> lock(g_envMutex);
+    if (g_env) g_envOld.push_back(g_env);
+    g_env = nullptr;
 }
 
 std::string platformConfigPath() {
 #ifdef _WIN32
-    const char* appdata = std::getenv("APPDATA");
+    const char* appdata = platformEnv("APPDATA");
     if (appdata && *appdata) return std::string(appdata) + "\\bdex-framegen\\bdex-framegen.conf";
     return "";
 #else
-    if (const char* x = std::getenv("XDG_CONFIG_HOME")) return std::string(x) + "/bdex-framegen.conf";
-    if (const char* h = std::getenv("HOME")) return std::string(h) + "/.config/bdex-framegen.conf";
+    if (const char* x = platformEnv("XDG_CONFIG_HOME")) return std::string(x) + "/bdex-framegen.conf";
+    if (const char* h = platformEnv("HOME")) return std::string(h) + "/.config/bdex-framegen.conf";
     return "";
 #endif
 }
 
 std::string platformBundledProfilesPath() {
-    if (const char* p = std::getenv("BDEX_FG_PROFILES")) return p;  // "" disables them
+    if (const char* p = platformEnv("BDEX_FG_PROFILES")) return p;  // "" disables them
 #ifdef _WIN32
     // Next to the module that contains this code (the layer DLL, or
     // bdex_capture.exe): the release zip ships profiles.conf beside both.
@@ -223,7 +269,7 @@ std::string platformExpandPath(const std::string& in) {
     for (size_t i = 0; i < in.size();) {
         char c = in[i];
         if (c == '~' && i == 0 && (in.size() == 1 || in[1] == '/')) {
-            if (const char* h = std::getenv("HOME")) out += h;
+            if (const char* h = platformEnv("HOME")) out += h;
             else out += '~';
             ++i;
         } else if (c == '$' && i + 1 < in.size()) {
@@ -234,7 +280,7 @@ std::string platformExpandPath(const std::string& in) {
             while (j < in.size() && (std::isalnum(static_cast<unsigned char>(in[j])) || in[j] == '_')) ++j;
             std::string name = in.substr(start, j - start);
             if (brace) { if (j < in.size() && in[j] == '}') ++j; else name.clear(); }
-            const char* v = name.empty() ? nullptr : std::getenv(name.c_str());
+            const char* v = name.empty() ? nullptr : platformEnv(name.c_str());
             if (v) { out += v; i = j; }
             else { out += c; ++i; }  // leave an unknown/malformed reference as-is
         } else {
@@ -247,9 +293,9 @@ std::string platformExpandPath(const std::string& in) {
 }
 
 std::string platformStatusDir() {
-    if (const char* p = std::getenv("BDEX_FG_STATUS_DIR")) return p;
+    if (const char* p = platformEnv("BDEX_FG_STATUS_DIR")) return p;
 #ifdef _WIN32
-    const char* tmp = std::getenv("TEMP");
+    const char* tmp = platformEnv("TEMP");
     if (tmp && *tmp) return std::string(tmp) + "\\bdex-framegen";
     return "";
 #else
@@ -257,7 +303,7 @@ std::string platformStatusDir() {
     // every Proton game) shares the home but only a few sockets of the
     // runtime directory, and the control panel must see the games' status
     // files and they its session file.
-    if (const char* h = std::getenv("HOME"); h && *h) return std::string(h) + "/.cache/bdex-framegen/run";
+    if (const char* h = platformEnv("HOME"); h && *h) return std::string(h) + "/.cache/bdex-framegen/run";
     // No home: /tmp, where any user can create this name first and plant a
     // session file, or symbolic links our writes would follow. Ours alone,
     // or no status files.
@@ -410,14 +456,14 @@ void platformSleepUntil(std::chrono::steady_clock::time_point until) {
 }
 
 std::string platformCacheDir() {
-    if (const char* p = std::getenv("BDEX_FG_CACHE_DIR")) return p;
+    if (const char* p = platformEnv("BDEX_FG_CACHE_DIR")) return p;
 #ifdef _WIN32
-    const char* app = std::getenv("LOCALAPPDATA");
+    const char* app = platformEnv("LOCALAPPDATA");
     if (app && *app) return std::string(app) + "\\bdex-framegen";
     return "";
 #else
-    if (const char* x = std::getenv("XDG_CACHE_HOME"); x && *x) return std::string(x) + "/bdex-framegen";
-    if (const char* h = std::getenv("HOME"); h && *h) return std::string(h) + "/.cache/bdex-framegen";
+    if (const char* x = platformEnv("XDG_CACHE_HOME"); x && *x) return std::string(x) + "/bdex-framegen";
+    if (const char* h = platformEnv("HOME"); h && *h) return std::string(h) + "/.cache/bdex-framegen";
     return "";
 #endif
 }
@@ -468,7 +514,7 @@ bool platformAntiCheatPresent(std::string* foundName) {
 
 int platformOnBattery() {
     // (Tests: BDEX_POWER=battery|mains.)
-    if (const char* v = std::getenv("BDEX_POWER"); v && *v) return v[0] == 'b' ? 1 : 0;
+    if (const char* v = platformEnv("BDEX_POWER"); v && *v) return v[0] == 'b' ? 1 : 0;
 #ifdef _WIN32
     SYSTEM_POWER_STATUS st;
     if (!GetSystemPowerStatus(&st)) return -1;

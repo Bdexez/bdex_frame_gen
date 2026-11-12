@@ -405,6 +405,7 @@ int main(int argc, char** argv) {
     // purpose, and require_app (the panel's arming of games for the layer)
     // would otherwise pause it and turn its HUD off.
     setenv("BDEX_FG", "1", 1);
+    platformEnvForget();  // (the engine reads a copy of the environment)
     Config cfg = Config::load(target.process);
     log_set_level(cfg.logLevel);
     cfg.enabled = true;
@@ -419,6 +420,7 @@ int main(int argc, char** argv) {
     // Our own Vulkan instance loads the layer too (implicit): it must stay a
     // pass-through there, whatever the configuration or BDEX_FG says.
     setenv("BDEX_FG", "0", 1);
+    platformEnvForget();
 
     const Window overlay = makeOverlay(dpy, found ? target : X11Window{0, 0, "", "", 0, 0, 64, 64});
     if (o.listGpus) {

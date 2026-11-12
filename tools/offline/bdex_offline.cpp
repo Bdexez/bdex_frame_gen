@@ -75,6 +75,7 @@
 // synthesis) of a fixed workload: a reproducible benchmark across GPUs,
 // unlike a live game whose GPU clocks follow its load (still +-15 % from
 // run to run: compare medians of a few runs).
+#include "platform.h"
 #include "config.h"
 #include "device.h"
 #include "framegen.h"
@@ -321,6 +322,7 @@ int main(int argc, char** argv) {
     // do not inherit the user's game profiles unless explicitly asked to.
     setenv("BDEX_FG_DISABLE", "1", 1);
     if (!getenv("BDEX_FG_CONFIG")) setenv("BDEX_FG_CONFIG", "/dev/null", 1);
+    platformEnvForget();  // (the engine reads a copy of the environment)
     Config cfg = Config::load();
     cfg.enabled = true;
     cfg.multiplier = mult;

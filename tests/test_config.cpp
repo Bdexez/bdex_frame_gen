@@ -196,33 +196,33 @@ TEST(config_file_and_env_priority) {
         std::ofstream f(path);
         f << "# comment\nmultiplier = 3\nlevels=5\n\nbogus line\nsearch = 1\n";
     }
-    setenv("BDEX_FG_CONFIG", path.c_str(), 1);
-    setenv("BDEX_FG_LEVELS", "2", 1);
-    unsetenv("BDEX_FG_MULTIPLIER");
+    test::setEnv("BDEX_FG_CONFIG", path.c_str());
+    test::setEnv("BDEX_FG_LEVELS", "2");
+    test::unsetEnv("BDEX_FG_MULTIPLIER");
     Config c = Config::load();
     CHECK(c.multiplier == 3);   // from file
     CHECK(c.levels == 2);       // env overrides file
     CHECK(c.searchRadius == 1);
-    unsetenv("BDEX_FG_CONFIG");
-    unsetenv("BDEX_FG_LEVELS");
+    test::unsetEnv("BDEX_FG_CONFIG");
+    test::unsetEnv("BDEX_FG_LEVELS");
     remove(path.c_str());
 }
 
 TEST(config_product_defaults_and_mode_priority) {
     const std::string path = test::tmpPath("bdex_test_capture_defaults.conf");
     { std::ofstream f(path); f << "mode=interpolate\n"; }
-    setenv("BDEX_FG_CONFIG", path.c_str(), 1);
-    unsetenv("BDEX_FG_MODE");
+    test::setEnv("BDEX_FG_CONFIG", path.c_str());
+    test::unsetEnv("BDEX_FG_MODE");
     Config defaults;
     defaults.extrapolate = true;
     CHECK(!Config::loadWithDefaults(defaults).extrapolate); // file overrides capture default
-    setenv("BDEX_FG_MODE", "extrapolate", 1);
+    test::setEnv("BDEX_FG_MODE", "extrapolate");
     CHECK(Config::loadWithDefaults(defaults).extrapolate);  // env overrides file
-    unsetenv("BDEX_FG_MODE");
+    test::unsetEnv("BDEX_FG_MODE");
     { std::ofstream f(path); f << ""; }
     CHECK(Config::loadWithDefaults(defaults).extrapolate);  // capture default survives
     CHECK(!Config::load().extrapolate);                     // layer default is unchanged
-    unsetenv("BDEX_FG_CONFIG");
+    test::unsetEnv("BDEX_FG_CONFIG");
     remove(path.c_str());
 }
 
@@ -247,10 +247,10 @@ TEST(config_game_mode_without_panel) {
     CHECK(!bundled.processNamed);
     remove(path.c_str());
     // BDEX_FG=1 (a Steam launch option) names the process too.
-    setenv("BDEX_FG", "1", 1);
+    test::setEnv("BDEX_FG", "1");
     Config env = Config::load();
     CHECK(env.enabled && !env.requireApp && env.processNamed);
-    unsetenv("BDEX_FG");
+    test::unsetEnv("BDEX_FG");
     // Game Mode's compositor and Steam's own processes are desktop programs.
     CHECK(bdex::platformIsNonGame("gamescope") && bdex::platformIsNonGame("steamwebhelper") && bdex::platformIsNonGame("mangoapp"));
     CHECK(bdex::platformIsNonGame("fossilize_replay"));  // (Steam's shader pre-caching)
@@ -258,22 +258,22 @@ TEST(config_game_mode_without_panel) {
 }
 
 TEST(config_master_switch) {
-    setenv("BDEX_FG", "0", 1);
+    test::setEnv("BDEX_FG", "0");
     Config c = Config::load();
     CHECK(!c.enabled);
-    setenv("BDEX_FG", "1", 1);
+    test::setEnv("BDEX_FG", "1");
     c = Config::load();
     CHECK(c.enabled);
-    unsetenv("BDEX_FG");
+    test::unsetEnv("BDEX_FG");
 }
 
 TEST(config_scene_cut_ordering) {
-    setenv("BDEX_FG_SCENE_CUT_LOW", "0.9", 1);
-    setenv("BDEX_FG_SCENE_CUT_HIGH", "0.1", 1);
+    test::setEnv("BDEX_FG_SCENE_CUT_LOW", "0.9");
+    test::setEnv("BDEX_FG_SCENE_CUT_HIGH", "0.1");
     Config c = Config::load();
     CHECK(c.sceneCutHigh >= c.sceneCutLow);
-    unsetenv("BDEX_FG_SCENE_CUT_LOW");
-    unsetenv("BDEX_FG_SCENE_CUT_HIGH");
+    test::unsetEnv("BDEX_FG_SCENE_CUT_LOW");
+    test::unsetEnv("BDEX_FG_SCENE_CUT_HIGH");
 }
 
 TEST(config_sections) {
@@ -335,12 +335,12 @@ TEST(config_presets) {
     CHECK(c.flowScaleFor(1920, 1080) == 1 && c.flowScaleFor(2560, 1440) == 2 && c.flowScaleFor(3840, 2160) == 2);
     CHECK(!c.apply("preset", "ultra"));
     // A preset in the environment is applied before the individual variables.
-    setenv("BDEX_FG_FLOW_SCALE", "2", 1);
-    setenv("BDEX_FG_PRESET", "performance", 1);
+    test::setEnv("BDEX_FG_FLOW_SCALE", "2");
+    test::setEnv("BDEX_FG_PRESET", "performance");
     Config d = Config::load();
     CHECK(d.flowScale == 2 && !d.refineAll);
-    unsetenv("BDEX_FG_FLOW_SCALE");
-    unsetenv("BDEX_FG_PRESET");
+    test::unsetEnv("BDEX_FG_FLOW_SCALE");
+    test::unsetEnv("BDEX_FG_PRESET");
 }
 
 // Competitive games keep the layer off even when their anti-cheat has no
@@ -365,16 +365,16 @@ TEST(config_expand_log_file) {
     CHECK(platformExpandPath("") == "");
     CHECK(platformExpandPath("plain/relative.log") == "plain/relative.log");
 #ifdef _WIN32
-    setenv("BDEX_FG_TESTDIR", "C:\\tmp", 1);
+    test::setEnv("BDEX_FG_TESTDIR", "C:\\tmp");
     CHECK(platformExpandPath("%BDEX_FG_TESTDIR%\\bdex-fg.log") == "C:\\tmp\\bdex-fg.log");
-    unsetenv("BDEX_FG_TESTDIR");
+    test::unsetEnv("BDEX_FG_TESTDIR");
     // An undefined variable is left verbatim rather than emptied.
     CHECK(platformExpandPath("%BDEX_FG_NOPE%\\x") == "%BDEX_FG_NOPE%\\x");
 #else
-    setenv("BDEX_FG_TESTDIR", "/var/tmp", 1);
+    test::setEnv("BDEX_FG_TESTDIR", "/var/tmp");
     CHECK(platformExpandPath("$BDEX_FG_TESTDIR/bdex-fg.log") == "/var/tmp/bdex-fg.log");
     CHECK(platformExpandPath("${BDEX_FG_TESTDIR}/bdex-fg.log") == "/var/tmp/bdex-fg.log");
-    unsetenv("BDEX_FG_TESTDIR");
+    test::unsetEnv("BDEX_FG_TESTDIR");
     // An unknown variable is left as-is.
     CHECK(platformExpandPath("$BDEX_FG_NOPE/x") == "$BDEX_FG_NOPE/x");
     // A leading ~ expands to $HOME.
@@ -540,30 +540,57 @@ TEST(config_battery_saver) {
         std::ofstream f(path);
         f << "multiplier = 4\n";
     }
-    setenv("BDEX_FG_CONFIG", path.c_str(), 1);
-    unsetenv("BDEX_FG_MULTIPLIER");
+    test::setEnv("BDEX_FG_CONFIG", path.c_str());
+    test::unsetEnv("BDEX_FG_MULTIPLIER");
     VkPhysicalDeviceProperties props{};
     props.deviceType = VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
     VkPhysicalDeviceMemoryProperties mem{};
     mem.memoryHeapCount = 1;
     mem.memoryHeaps[0].size = 8ull << 30;
     mem.memoryHeaps[0].flags = VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
-    setenv("BDEX_POWER", "mains", 1);
+    test::setEnv("BDEX_POWER", "mains");
     Config m = Config::load();
     m.autoConfigure(props, mem);
     CHECK(!m.onBattery && m.autoTunedTo == "balanced" && m.multiplier == 4);
-    setenv("BDEX_POWER", "battery", 1);
+    test::setEnv("BDEX_POWER", "battery");
     Config b = Config::load();
     b.autoConfigure(props, mem);
     CHECK(b.onBattery && b.autoTunedTo == "performance" && b.multiplier == 4 && !b.pixelVectors);
-    setenv("BDEX_FG_BATTERY_SAVER", "2", 1);
+    test::setEnv("BDEX_FG_BATTERY_SAVER", "2");
     CHECK(Config::load().multiplier == 2);
-    setenv("BDEX_FG_BATTERY_SAVER", "0", 1);
+    test::setEnv("BDEX_FG_BATTERY_SAVER", "0");
     Config off = Config::load();
     off.autoConfigure(props, mem);
     CHECK(!off.onBattery && off.autoTunedTo == "balanced");
-    unsetenv("BDEX_FG_BATTERY_SAVER");
-    unsetenv("BDEX_POWER");
-    unsetenv("BDEX_FG_CONFIG");
+    test::unsetEnv("BDEX_FG_BATTERY_SAVER");
+    test::unsetEnv("BDEX_POWER");
+    test::unsetEnv("BDEX_FG_CONFIG");
     remove(path.c_str());
+}
+
+// The engine reads a copy of the environment taken once: the layer polls
+// its configuration and session for as long as the game runs, and getenv is
+// not safe against the game's own setenv on another thread (glibc before
+// 2.41). A change made by this process is seen after platformEnvForget.
+TEST(platform_reads_the_environment_once) {
+    using namespace bdex;
+    setenv("BDEX_FG_TEST_ENV", "first", 1);
+    platformEnvForget();
+    const char* v = platformEnv("BDEX_FG_TEST_ENV");
+    CHECK(v && std::string(v) == "first");
+    setenv("BDEX_FG_TEST_ENV", "second", 1);  // (the game, behind the layer's back)
+    setenv("BDEX_FG_TEST_ENV_NEW", "1", 1);
+    CHECK(std::string(platformEnv("BDEX_FG_TEST_ENV")) == "first");
+    CHECK(platformEnv("BDEX_FG_TEST_ENV_NEW") == nullptr);
+    CHECK(platformEnv("BDEX_FG_TEST") == nullptr);  // (a prefix of a name is not the name)
+    bool listed = false;
+    for (char** e = platformEnviron(); e && *e; ++e) listed = listed || std::string(*e) == "BDEX_FG_TEST_ENV=first";
+    CHECK(listed);
+    platformEnvForget();
+    CHECK(std::string(platformEnv("BDEX_FG_TEST_ENV")) == "second");
+    CHECK(std::string(v) == "first");  // (a value handed out stays readable)
+    unsetenv("BDEX_FG_TEST_ENV");
+    unsetenv("BDEX_FG_TEST_ENV_NEW");
+    platformEnvForget();
+    CHECK(platformEnv("BDEX_FG_TEST_ENV") == nullptr);
 }

@@ -10,8 +10,13 @@ inline int setenv(const char* k, const char* v, int) { return _putenv_s(k, v); }
 inline int unsetenv(const char* k) { return _putenv_s(k, ""); }
 #endif
 
+namespace bdex { void platformEnvForget(); }  // (platform.h: the engine reads a copy of the environment)
+
 namespace test {
 struct Case { const char* name; void (*fn)(); };
+// The tests drive Config and the status through the environment.
+inline void setEnv(const char* k, const char* v) { setenv(k, v, 1); bdex::platformEnvForget(); }
+inline void unsetEnv(const char* k) { unsetenv(k); bdex::platformEnvForget(); }
 // Scratch file path in the platform's temp directory.
 inline std::string tmpPath(const char* name) {
 #ifdef _WIN32

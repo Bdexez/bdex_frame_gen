@@ -755,7 +755,7 @@ void Config::loadEnv() {
     static const char prefix[] = "BDEX_FG_";
     // The preset goes first so that individual variables override it
     // whatever the order of the environment.
-    if (const char* p = getenv("BDEX_FG_PRESET")) {
+    if (const char* p = platformEnv("BDEX_FG_PRESET")) {
         if (!applyPreset(p)) BDEX_WARN("unknown preset '%s'", p);
     }
     for (char** e = platformEnviron(); e && *e; ++e) {
@@ -770,7 +770,7 @@ void Config::loadEnv() {
             BDEX_WARN("ignored environment option %s", entry.c_str());
     }
     // BDEX_FG=0 disables generation even though the layer is loaded.
-    if (const char* v = getenv("BDEX_FG")) {
+    if (const char* v = platformEnv("BDEX_FG")) {
         bool b;
         if (parseBool(v, b)) enabled = b;
         if (enabled) {
@@ -785,7 +785,7 @@ Config Config::load(const std::string& extraProcess) {
 }
 
 std::string Config::filePath() {
-    if (const char* p = getenv("BDEX_FG_CONFIG")) return p;
+    if (const char* p = platformEnv("BDEX_FG_CONFIG")) return p;
     return platformConfigPath();
 }
 
