@@ -6,6 +6,21 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### X11 present traces: a tool and a real game in the tests (2026-11-11)
+
+- **`bdex-x11-trace`** (built with the offline tools, not installed):
+  `watch SECONDS` records the X Present completion events of the windows on
+  screen — read-only, a connection of its own, the events x11_clock reads in
+  the layer — and `replay trace.txt [HINT_HZ]` feeds a trace to the layer's
+  refresh-grid estimator and prints the grid it holds, with the intervals in
+  refreshes (on the screen's grid or at the presents' own times). The method
+  behind the refresh-rate fixes of 10/11 and 11/11, kept.
+- A real trace in the unit tests (`tests/data/x11_present_civ6_60fps.txt`):
+  Civilization VI at 60 fps on the 143.9 Hz screen under Hyprland's Xwayland,
+  20 s. Part of its completions are on the screen's grid, part at the
+  game's own 16.67 ms: the estimator of 10/11 held "60 Hz" in 14 estimates
+  of 75, today's in none.
+
 ### The layer reads the environment once (2026-11-11)
 
 - **Fixed: the layer called `getenv` for as long as the game ran** — 10 to

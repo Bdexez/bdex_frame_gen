@@ -165,6 +165,8 @@ bdex-framegen --calibrate [--apply]                     # bdex-calibrate : coût
 tools/train_flow.py [--write]                           # entraîne learned_flow (numpy, flux vrai de synthèse, bdex_offline --dump-flow)
 tools/fetch_translation_layers.py OUT                   # DXVK + VKD3D-Proton épinglés (paquet Windows : injection D3D)
 tools/ci/wayland-capture-check.sh                       # bdex-capture --wayland de bout en bout (sway headless, portail wlr, PipeWire)
+build/tools/x11_trace/bdex-x11-trace watch 20 > t.txt   # complétions X Present des fenêtres à l'écran, en lecture seule (jeu visible) ; replay t.txt 143.912 : ce qu'en fait PresentTimeline
+BDEX_FG_PROFILE=2 bdex_offline SEQ OUT --multiplier 4   # temps GPU par étape du moteur et par passe optionnelle (aussi dans les stats de la couche)
 tools/package-linux.sh [outdir] [version]              # archive Linux précompilée (sur la machine même)
 tools/package-native.sh ARCHIVE [outdir] [version]     # .deb + .rpm depuis une archive (dpkg-deb/rpmbuild, sinon Docker)
 tools/ci/archive-check.sh PAQUET.deb|.rpm [image...]   # installe le paquet (apt/dnf/zypper) : charge, profils lus, x2

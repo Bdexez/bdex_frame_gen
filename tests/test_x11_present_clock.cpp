@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <fstream>
 
 using namespace bdex;
 
@@ -195,4 +196,31 @@ TEST(present_timeline_takes_a_grid_the_intervals_show) {
         t.add(msc, ust + jitter(s, 0.3));
     }
     CHECK(t.valid() && std::fabs(t.refreshHz() - 60.0) < 0.5);
+}
+
+// A real game, as the X server reported it (tools/x11_trace: bdex-x11-trace
+// watch, read-only, 11/11): Civilization VI (VKD3D-Proton) at 60 fps on the
+// 143.912 Hz screen, Hyprland's Xwayland, the layer not generating — 20 s,
+// one MSC a present. Part of the completions are on the screen's grid (two,
+// then three refreshes apart), part at the presents' own times (2.4
+// refreshes: the game's 16.67 ms). The estimator of 10/11 held "60 Hz" in 14
+// estimates of 75 — the game's cadence; a grid, when one is held, must be
+// the screen's.
+TEST(present_timeline_real_trace_of_a_60_fps_game_is_not_a_60_hz_screen) {
+    for (const double hint : {143.912, 0.0}) {
+        std::ifstream f(BDEX_SOURCE_DIR "/tests/data/x11_present_civ6_60fps.txt");
+        CHECK(f.good());
+        PresentTimeline t;
+        t.setHint(hint);
+        unsigned window = 0, mode = 0;
+        unsigned long long msc = 0, ust = 0;
+        int events = 0, wrong = 0;
+        while (f >> window >> msc >> ust >> mode) {
+            t.add(msc, double(ust) / 1000.0);
+            if (++events % 16 == 0 && t.valid() && std::fabs(t.refreshHz() - 143.912) > 0.05 * 143.912) ++wrong;
+        }
+        CHECK(events == 1201);
+        CHECK(wrong == 0);
+        CHECK(t.shown == 1200 && t.replaced == 0);
+    }
 }
