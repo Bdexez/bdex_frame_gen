@@ -53,7 +53,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
   out-of-bounds ones traced and false). The capture tools, `bdex_offline`
   and `bdex-calibrate`, which set variables of their own before loading the
   configuration, say so (`platformEnvForget`). Windows: the same copy (the
-  CRT's `getenv` has the same limit against `_putenv`).
+  CRT's `getenv` has the same limit against `_putenv`), taken from the
+  process's own environment block — the CRT's narrow list, which the
+  `BDEX_FG_*` overrides were read from, does not exist in a program with a
+  wide entry point until its first `getenv`.
 - `gpu_headroom`'s log lines said "-1 % busy" on a GPU whose load is not
   measured: "load not measured".
 

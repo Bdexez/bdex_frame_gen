@@ -5,8 +5,13 @@
 #include <cmath>
 #include <cstdint>
 #include <fstream>
+#include <string>
 
 using namespace bdex;
+
+#ifndef BDEX_SOURCE_DIR  // (set by tests/CMakeLists.txt)
+#define BDEX_SOURCE_DIR "."
+#endif
 
 namespace {
 double jitter(uint32_t& s, double a) {
@@ -208,7 +213,7 @@ TEST(present_timeline_takes_a_grid_the_intervals_show) {
 // the screen's.
 TEST(present_timeline_real_trace_of_a_60_fps_game_is_not_a_60_hz_screen) {
     for (const double hint : {143.912, 0.0}) {
-        std::ifstream f(BDEX_SOURCE_DIR "/tests/data/x11_present_civ6_60fps.txt");
+        std::ifstream f(std::string(BDEX_SOURCE_DIR) + "/tests/data/x11_present_civ6_60fps.txt");
         CHECK(f.good());
         PresentTimeline t;
         t.setHint(hint);

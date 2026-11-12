@@ -18,8 +18,6 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <tlhelp32.h>
-// _environ comes from <stdlib.h> (the UCRT makes it a macro over
-// __p__environ(): redeclaring it here was an inconsistent-linkage warning).
 #else
 #include <cerrno>
 #include <csignal>
@@ -169,11 +167,26 @@ const EnvCopy& envCopy() {
     if (!g_env) {
         auto* copy = new EnvCopy;
 #ifdef _WIN32
-        char** raw = _environ;  // declared at global scope above
+        // The process's own block, not the CRT's narrow copy (_environ): in a
+        // program with a wide entry point the CRT builds that copy at the
+        // first getenv only, and this DLL may be the first to ask. In the
+        // ANSI code page, as getenv gave it ("=C:=..." entries: the shell's
+        // per-drive directories, not variables).
+        if (wchar_t* block = GetEnvironmentStringsW()) {
+            for (const wchar_t* w = block; *w; w += wcslen(w) + 1) {
+                if (*w == L'=') continue;
+                const int n = WideCharToMultiByte(CP_ACP, 0, w, -1, nullptr, 0, nullptr, nullptr);
+                if (n <= 1) continue;
+                std::string entry(size_t(n), '\0');
+                WideCharToMultiByte(CP_ACP, 0, w, -1, entry.data(), n, nullptr, nullptr);
+                entry.resize(size_t(n) - 1);
+                copy->entries.push_back(std::move(entry));
+            }
+            FreeEnvironmentStringsW(block);
+        }
 #else
-        char** raw = environ;  // declared at file scope above
+        for (char** e = environ; e && *e; ++e) copy->entries.emplace_back(*e);  // (declared at file scope above)
 #endif
-        for (char** e = raw; e && *e; ++e) copy->entries.emplace_back(*e);
         for (std::string& entry : copy->entries) copy->list.push_back(entry.data());
         copy->list.push_back(nullptr);
         g_env = copy;
