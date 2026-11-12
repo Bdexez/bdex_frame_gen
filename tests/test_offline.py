@@ -170,6 +170,20 @@ def main():
         if not outs["0"] or outs["0"] != outs["2"]:
             print("profile=2 changed the generated frames")
             return 1
+        # gpu_budget's level 1 turns the passes over the finished frame off
+        # (false_detail, mosaic_blur): asked for or not, the frames are then
+        # the same — and not those of level 0 with them on.
+        frames_of = {}
+        for name, level, passes in (("on", "0", "1"), ("level1-on", "1", "1"), ("level1-off", "1", "0")):
+            out = d / f"quality-{name}"
+            out.mkdir()
+            env = dict(os.environ, BDEX_FG_CONFIG="/dev/null", BDEX_FG_FALSE_DETAIL=passes, BDEX_FG_MOSAIC_BLUR=passes)
+            subprocess.run([str(build / "tools" / "offline" / "bdex_offline"), str(d / "edges"), str(out),
+                            "--quality-level", level], check=True, stderr=subprocess.DEVNULL, env=env)
+            frames_of[name] = {p.name: p.read_bytes() for p in sorted(out.glob("*.ppm"))}
+        if frames_of["level1-on"] != frames_of["level1-off"] or frames_of["level1-on"] == frames_of["on"]:
+            print("gpu_budget level 1 does not turn false_detail / mosaic_blur off")
+            return 1
     return 0
 
 

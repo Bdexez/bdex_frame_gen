@@ -45,6 +45,10 @@
 //                   as the layer reads a game's (FrameGen::recordDepthImport);
 //                   a frame without its file has no depth (make_sequence.py
 //                   and make_game.py write DIR = <sequence>/depth)
+//   --quality-level 1|2   gpu_budget's quality ladder at that level (the
+//                   levels that change settings only: 1 the costly optional
+//                   passes off, 2 also the narrowest search), to measure
+//                   what a level saves (BDEX_FG_PROFILE=2) and costs
 //   --limit-shared KB, --limit-storage-images N   a smaller GPU's limits
 //                   (Vulkan guarantees 16 KB and 4): the engine's fallbacks
 //                   — a lean matcher only, or no generation — on any GPU
@@ -246,6 +250,7 @@ int main(int argc, char** argv) {
     int benchReps = 1;
     std::string flowDumpDir, depthDir;
     bool depthStandard = false;
+    int qualityLevel = 0;
     bool hudCounter = false, refreshKnown = false, reuseEqualOutputs = true, rawDumps = false;
     double refreshHz = 0.0;
     std::string fmtName = "rgba8", csName = "srgb";
@@ -273,6 +278,7 @@ int main(int argc, char** argv) {
         else if (a == "--dump-flow" && i + 1 < argc) flowDumpDir = argv[++i];
         else if (a == "--depth" && i + 1 < argc) depthDir = argv[++i];
         else if (a == "--depth-standard") depthStandard = true;
+        else if (a == "--quality-level" && i + 1 < argc) qualityLevel = std::clamp(atoi(argv[++i]), 0, 2);
         else if (a == "--hud-counter") hudCounter = true;
         else if (a == "--refresh" && i + 1 < argc) refreshHz = atof(argv[++i]);
         else if (a == "--refresh-known") refreshKnown = true;
@@ -433,6 +439,7 @@ int main(int argc, char** argv) {
         auto fgp = std::make_unique<FrameGen>(dev, format, render, extent, static_cast<uint32_t>(mult - 1), sources,
                                               colorSpace);
         FrameGen& fg = *fgp;
+        fg.setQualityLevel(qualityLevel);
         // --depth: a D32_SFLOAT image per history image, as a game's depth
         // buffer, and the staging of its values.
         std::vector<AllocatedImage> depthImg;

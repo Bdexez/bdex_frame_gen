@@ -1859,6 +1859,14 @@ Config FrameGen::effectiveConfig() const {
         c.extrapolateAccel = 0.f;
         c.occlusionStrength = 0.f;
         c.flowIterations = std::min(c.flowIterations, 1);
+        // The two passes over each finished frame: with the options above,
+        // 40 % of the generation at 1440p x3 instead of 9 % (4.24 -> 2.54 ms
+        // a game frame against 3.85, RTX 3060 Ti, profile = 2), for 0.07 dB
+        // on game-like scenes at real speed — far less than the levels after
+        // this one take from the flow. hud_mask and hud_layer stay: a HUD
+        // that wobbles is seen at once.
+        c.falseDetail = 0.f;
+        c.mosaicBlur = 0.f;
     }
     if (qualityLevel_ >= 2) {
         c.searchFine = 1;

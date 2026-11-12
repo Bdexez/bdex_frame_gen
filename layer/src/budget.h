@@ -7,9 +7,10 @@ namespace bdex {
 // there is room again. Fed about once a second with measured timings; pure
 // logic, so it is unit-tested on its own (tests/test_budget.cpp).
 //
-// Levels: 0 the configured settings; 1 the costly opt-in passes off
+// Levels: 0 the configured settings; 1 the costly optional passes off
 // (per-pixel vectors, re-rankings, sub-pixel fits, bicubic sampling,
-// acceleration, extra flow lookups); 2 the narrowest search and no flow lookup iteration; 3 and up
+// acceleration, extra flow lookups, and the passes over the finished frame:
+// false_detail, mosaic_blur); 2 the narrowest search and no flow lookup iteration; 3 and up
 // the flow at half, then a quarter of its resolution (the output stage is
 // rebuilt) — as far as `maxLevel` allows.
 class GpuBudget {

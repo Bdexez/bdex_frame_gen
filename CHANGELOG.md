@@ -6,6 +6,21 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### `gpu_budget`: the first level now frees 40 % of the generation (2026-11-11)
+
+- **`gpu_budget`'s level 1 also turns off the two passes over each finished
+  frame** (`false_detail`, `mosaic_blur`). Measured with `profile = 2`
+  (RTX 3060 Ti, 1440p x3, a game frame): 4.24 ms at the configured settings;
+  level 1 took it to 3.85 ms (−9 %: per-pixel vectors), and now to 2.59 ms
+  (−39 %); level 2, 2.30 ms. On game-like scenes at a 30 fps game's real
+  speed (x4): level 1 −0.11 dB on average (−0.31 to +0.24), level 2 −0.27 —
+  the first step down was nearly free in time, the next ones took it from
+  the flow. `hud_mask` and `hud_layer` stay at every level (a HUD that
+  wobbles is seen at once). The option is still off by default.
+- `bdex_offline --quality-level 1|2`: the ladder's level, offline — what a
+  level saves (`BDEX_FG_PROFILE=2`) and costs (`eval_sequence.py
+  --offline-args "--quality-level 1"`).
+
 ### X11 present traces: a tool and a real game in the tests (2026-11-11)
 
 - **`bdex-x11-trace`** (built with the offline tools, not installed):
